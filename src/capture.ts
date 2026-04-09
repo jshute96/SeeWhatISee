@@ -29,11 +29,16 @@ export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
   /**
-   * Path relative to the user's downloads directory. The embedded compact
-   * timestamp is in *local* time (chosen so filenames sort the way the
-   * user expects when browsing the directory) — note this differs from
-   * `timestamp` above, which is UTC. The two refer to the same instant
-   * but will display different dates near local midnight.
+   * Bare filename (no directory) of the PNG, relative to the same
+   * directory the JSON sidecars live in (`SeeWhatISee/` under the user's
+   * downloads dir). Stored without the subdir prefix so consumers can
+   * resolve it against whichever directory they read the sidecar from.
+   *
+   * The embedded compact timestamp is in *local* time (chosen so
+   * filenames sort the way the user expects when browsing the directory)
+   * — note this differs from `timestamp` above, which is UTC. The two
+   * refer to the same instant but will display different dates near
+   * local midnight.
    */
   filename: string;
   /** URL of the captured tab, or empty string if unavailable. */
@@ -67,7 +72,10 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   // Compute one Date and derive both the filename's compact timestamp and
   // the record's ISO timestamp from it, so the two can never drift.
   const now = new Date();
-  const filename = `${DOWNLOAD_SUBDIR}/screenshot-${compactTimestamp(now)}.png`;
+  // `filename` in the record is the bare basename so it resolves against
+  // whichever directory the sidecar is read from. The downloads API needs
+  // the full subdir-qualified path, which we build separately.
+  const filename = `screenshot-${compactTimestamp(now)}.png`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
     filename,
@@ -86,7 +94,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   // returning. Overkill for v1.
   const downloadId = await chrome.downloads.download({
     url: dataUrl,
-    filename,
+    filename: `${DOWNLOAD_SUBDIR}/${filename}`,
     saveAs: false,
   });
 
@@ -188,7 +196,7 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  *
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
  * produces `20260408-203012-345`, yielding a filename like
- * `SeeWhatISee/screenshot-20260408-203012-345.png`.
+ * `screenshot-20260408-203012-345.png`.
  */
 function compactTimestamp(d: Date): string {
   const pad2 = (n: number) => String(n).padStart(2, '0');

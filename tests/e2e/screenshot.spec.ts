@@ -1,9 +1,10 @@
 import { test, expect } from '../fixtures/extension';
 
-// Filename format: SeeWhatISee/screenshot-YYYYMMDD-HHMMSS-mmm.png
-// (compact local-time stamp with millisecond precision; see
-// compactTimestamp in src/capture.ts).
-const FILENAME_PATTERN = /^SeeWhatISee\/screenshot-\d{8}-\d{6}-\d{3}\.png$/;
+// Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
+// no subdir prefix (the sidecar JSON resolves it against its own
+// directory). Compact local-time stamp with millisecond precision; see
+// compactTimestamp in src/capture.ts.
+const FILENAME_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 
 test('captures the visible tab via the service worker', async ({ context, serviceWorker }) => {
   const page = await context.newPage();

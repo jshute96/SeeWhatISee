@@ -56,7 +56,8 @@ on-disk drop directory that coding agents can read from.
   two JSON sidecars into the same directory:
   - `latest.json` — pretty-printed `{timestamp, filename, url}` of the
     most recent capture, overwritten each time. Lets an agent get the
-    newest capture without having to `ls`.
+    newest capture without having to `ls`. `filename` is the bare PNG
+    file basename, without the directory.
   - `log.json` — newline-delimited JSON (one record per line, same
     schema as `latest.json`), grep-friendly history of recent captures.
     Because the Chrome downloads API can only write whole files, the
