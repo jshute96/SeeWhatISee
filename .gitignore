@@ -1,0 +1,20 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+
+/tmp/
+
+# claude scratch files
+.claude/projects/
+.claude/worktrees/
+
+.gemini/settings.json
+.gemini/policies/
+
+.playwright-mcp/
+
+# chrome extension
+*.crx
+*.pem
+dist/
