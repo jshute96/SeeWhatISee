@@ -40,12 +40,29 @@ on-disk drop directory that coding agents can read from.
   Both the immediate (left-click / "Take screenshot") and the delayed
   paths share a single resolution strategy: `captureVisible` always
   re-queries the active tab in the last-focused window *after* any
-  delay, then captures that tab and records that tab's URL. This keeps
-  the recorded `url` and the captured pixels consistent even if the
-  user switches tabs, switches windows, or interacts with a popup
-  during the delay. The trade-off is that `activeTab` only covers the
-  tab that was active at gesture time, so a delayed capture that lands
-  on a *different* `chrome://` tab will fail (normal http(s) pages are
+  delay, then captures that tab and records that tab's URL. This
+  keeps the recorded `url` and the captured pixels consistent even
+  if the user switches tabs, windows, or interacts with a popup
+  during the delay. If the focused window isn't a regular browser
+  window with an active tab (e.g. DevTools is on top), the query
+  returns nothing and the call throws — we deliberately do *not*
+  fall back to "the previous regular window," because capturing a
+  different window than the one the user is looking at is
+  confusing. Failures are downgraded to `console.warn` by the
+  action / context-menu wrappers, and a targeted
+  `unhandledrejection` handler in `background.ts` catches the SW
+  devtools console invocation path, so the throws don't pollute the
+  chrome://extensions Errors page.
+
+  Practical workflow from the SW devtools console: a no-arg
+  `SeeWhatISee.captureVisible()` will usually fail (DevTools is the
+  focused window). The working pattern is
+  `SeeWhatISee.captureVisible(5000)` — call it, click into the real
+  window, wait, get a screenshot of what's now in front.
+
+  The trade-off is that `activeTab` only covers the tab that was
+  active at gesture time, so a delayed capture that lands on a
+  *different* `chrome://` tab will fail (normal http(s) pages are
   covered by `<all_urls>`).
 
   The same capture functions are also attached to `self.SeeWhatISee` so

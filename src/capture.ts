@@ -58,13 +58,25 @@ export interface CaptureResult extends CaptureRecord {
  * etc. during the wait. The await keeps the MV3 service worker alive
  * for the duration of the timer.
  *
- * We always resolve "active tab in last-focused window" *after* the
- * delay (rather than caching the tab passed in by the action /
- * contextMenus listeners) so that:
+ * We always resolve the active tab *after* the delay (rather than
+ * caching the tab passed in by the action / contextMenus listeners)
+ * so that:
  *   - the recorded `url` and the captured pixels always describe the
  *     same page, even if the user switched tabs / windows / popups
  *     during the delay;
- *   - delayed captures naturally follow focus into popup windows.
+ *   - delayed captures naturally follow focus to whatever window the
+ *     user is now looking at.
+ *
+ * If the last-focused window isn't a regular browser window with an
+ * active tab — e.g. DevTools is on top — the query returns `[]` and
+ * we throw. Capturing a different window just so the call succeeds
+ * would be confusing; the right fix from the user side is to focus
+ * the real window first (or use a `delayMs` and switch focus during
+ * the wait). The throw is downgraded to a `console.warn` by the
+ * action / context-menu wrappers (and the targeted
+ * `unhandledrejection` handler in background.ts catches the SW
+ * devtools console invocation path) so it doesn't pollute the
+ * chrome://extensions Errors page.
  *
  * Trade-off: the `activeTab` permission grant from a toolbar gesture
  * applies to the tab that was active at gesture time. If the user

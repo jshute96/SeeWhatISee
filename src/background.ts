@@ -1,5 +1,27 @@
 import { captureVisible } from './capture.js';
 
+// Targeted suppression for one specific user-actionable failure.
+// Manually poking captureVisible from the SW devtools console (e.g.
+// `SeeWhatISee.captureVisible()` while DevTools itself is the focused
+// window) makes the active-tab lookup fail; without this handler, that
+// rejection bubbles up as unhandled and Chrome promotes it onto the
+// chrome://extensions Errors page, looking like an extension bug.
+//
+// We deliberately match on the error message rather than swallowing
+// every unhandled rejection: a blanket catch would also silence
+// genuine bugs (failed downloads, storage quota errors, future
+// listener bodies that forget their try/catch) — and the Errors page
+// is the only async signal most developers have. Anything we don't
+// recognize is left alone so it still surfaces.
+const SUPPRESSED_UNHANDLED = ['No active tab found to capture'];
+self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  const message = String((event.reason as Error)?.message ?? event.reason);
+  if (SUPPRESSED_UNHANDLED.some((s) => message.includes(s))) {
+    console.warn('[SeeWhatISee] capture failed:', event.reason);
+    event.preventDefault();
+  }
+});
+
 // Toolbar icon click → capture the visible tab.
 //
 // The click counts as a user gesture, which is what makes the `activeTab`
@@ -16,7 +38,11 @@ chrome.action.onClicked.addListener(async () => {
   try {
     await captureVisible();
   } catch (err) {
-    console.error('[SeeWhatISee] capture failed:', err);
+    // console.warn (rather than console.error) so user-actionable
+    // failures like "No active tab found to capture" don't get
+    // promoted onto the chrome://extensions Errors page. They're
+    // still visible in the SW devtools console for debugging.
+    console.warn('[SeeWhatISee] capture failed:', err);
   }
 });
 
@@ -59,7 +85,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   try {
     await captureVisible(item.delayMs);
   } catch (err) {
-    console.error('[SeeWhatISee] context menu capture failed:', err);
+    // See action.onClicked above for why this is warn, not error.
+    console.warn('[SeeWhatISee] context menu capture failed:', err);
   }
 });
 
