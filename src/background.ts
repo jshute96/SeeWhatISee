@@ -9,7 +9,9 @@ import { captureVisible } from './capture.js';
 // without testing on chrome://extensions or you'll silently re-break this.
 chrome.action.onClicked.addListener(async (tab) => {
   try {
-    await captureVisible(tab.windowId);
+    // Pass the tab through so captureVisible has the URL for the metadata
+    // record without re-querying.
+    await captureVisible(tab);
   } catch (err) {
     console.error('[SeeWhatISee] capture failed:', err);
   }

@@ -7,6 +7,21 @@ Click the extension icon to take a screenshot of the current page and share it d
 Screenshots are written to `~/Downloads/SeeWhatISee/` so an agent (Claude
 Code, etc.) can pick up the latest one without any copy-paste.
 
+## Output files
+
+Each capture writes three files into that directory:
+
+- `screenshot-<timestamp>.png` — the image itself, one per capture.
+- `latest.json` — pretty-printed `{timestamp, filename, url}` for the
+  most recent capture, overwritten every time. An agent can read this
+  to find the newest screenshot without having to `ls`.
+- `log.json` — newline-delimited JSON (one record per line, same
+  schema as `latest.json`), grep-friendly history of recent captures.
+  Capped at the 100 most recent entries (FIFO eviction). The
+  authoritative log lives in extension storage and `log.json` is a
+  snapshot rewritten on every capture. If deleted, it will be restored
+  from Chrome storage.
+
 ## Setup
 
 ```bash

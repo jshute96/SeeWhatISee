@@ -3,7 +3,7 @@
   "name": "SeeWhatISee",
   "version": "0.1.0",
   "description": "Take screenshots and hand them to your coding agent.",
-  "permissions": ["activeTab", "downloads", "tabs"],
+  "permissions": ["activeTab", "downloads", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

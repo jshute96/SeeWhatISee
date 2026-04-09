@@ -18,7 +18,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker — handles toolbar click and exposes `self.SeeWhatISee` for tests |
-| `src/capture.ts` | Capture functions (`captureVisible`, future variations) and download helper |
+| `src/capture.ts` | Capture functions (`captureVisible`, future variations), metadata sidecar writing (`latest.json`, `log.json`), and the storage-backed capture log |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (camera emoji), copied into `dist/icons/` by the build |
 
 ## Build Scripts (`scripts/`)

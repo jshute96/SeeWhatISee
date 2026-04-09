@@ -42,12 +42,31 @@ on-disk drop directory that coding agents can read from.
   crop, etc.) will live alongside `captureVisible` as additional
   exported functions.
 - **Save.** Captures are written via `chrome.downloads.download` into
-  `~/Downloads/SeeWhatISee/screenshot-<timestamp>.png`. All capture
-  modes share the same filename prefix so an agent reading the
-  directory only has to look for the newest `screenshot-*.png`. We use the downloads
-  API rather than a native messaging host so v1 has no native
-  dependencies; the trade-off is that the directory must live under the
-  user's configured downloads folder.
+  `~/Downloads/SeeWhatISee/screenshot-<timestamp>.png`. The timestamp
+  is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond precision) which
+  is fine-grained enough that filenames are always unique in practice
+  — Chrome's own `captureVisibleTab` rate limit (2/sec/window) makes
+  it impossible to generate two captures in the same millisecond. All
+  capture modes share the same filename prefix so an agent reading the
+  directory only has to look for the newest `screenshot-*.png`. We use
+  the downloads API rather than a native messaging host so v1 has no
+  native dependencies; the trade-off is that the directory must live
+  under the user's configured downloads folder.
+- **Metadata sidecars.** Alongside the PNG, every capture also writes
+  two JSON sidecars into the same directory:
+  - `latest.json` — pretty-printed `{timestamp, filename, url}` of the
+    most recent capture, overwritten each time. Lets an agent get the
+    newest capture without having to `ls`.
+  - `log.json` — newline-delimited JSON (one record per line, same
+    schema as `latest.json`), grep-friendly history of recent captures.
+    Because the Chrome downloads API can only write whole files, the
+    authoritative log lives in `chrome.storage.local` and `log.json` is
+    a snapshot of it rewritten on every capture. Deleting `log.json`
+    on disk is harmless — the next capture recreates it from storage.
+    To actually clear history, also clear the extension's storage.
+    The log is capped at 100 entries (FIFO eviction of the oldest);
+    without a cap, rewriting the whole file on every capture would be
+    quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
   from `~/Downloads/SeeWhatISee/`. The agent-side skill / slash command
   for this is a follow-up; the extension's only job is to make sure the
