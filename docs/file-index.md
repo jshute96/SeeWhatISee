@@ -9,8 +9,18 @@ One-line descriptions of every source file, grouped by directory.
 | `README.md` | Primary project documentation — setup, features, and commands |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
 | `package.json` | Node project manifest, scripts, and devDependencies |
+| `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `playwright.config.ts` | Playwright test runner config |
+| `.gitignore` | Git ignore rules (`dist/`, `node_modules/`, `tmp/`, etc.) |
+
+## Claude Commands (`.claude/commands/`)
+
+| File | Description |
+|------|-------------|
+| `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
+| `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
+| `.claude/commands/SeeWhatISee.md` | `/SeeWhatISee` slash command — read the latest screenshot taken by the extension |
 
 ## Extension Source (`src/`)
 

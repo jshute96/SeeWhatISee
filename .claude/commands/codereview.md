@@ -14,8 +14,9 @@ The subagent should:
 6. Return a one-line summary like "Review written to <filename> — found N issues"
 
 While the review agent runs in the background, also do your own review:
+- Review current changes against CLAUDE.md project conventions.
 - Check if any docs in `docs/*.md` or elsewhere need updating for this change.
-- Update docs if necessary.
+- Update docs if necessary, including `docs/file-index.md`.
 
 $ARGUMENTS
 
