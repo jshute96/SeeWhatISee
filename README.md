@@ -2,7 +2,7 @@
 
 This is a Chrome extension for taking screenshots, optimized for use during agentic development.
 
-Click the extension icon to take a screenshot of the current page and share it directly with your coding agent.
+Click the extension icon to take a screenshot of the current page and share it directly with your coding agent. Right-click the icon for a menu with **Take screenshot**, **Take screenshot in 2s**, and **Take screenshot in 5s**.
 
 Screenshots are written to `~/Downloads/SeeWhatISee/` so an agent (Claude
 Code, etc.) can pick up the latest one without any copy-paste.

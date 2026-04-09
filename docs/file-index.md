@@ -27,7 +27,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
-| `src/background.ts` | MV3 service worker — handles toolbar click and exposes `self.SeeWhatISee` for tests |
+| `src/background.ts` | MV3 service worker — handles toolbar click + right-click context menu (immediate / 2s / 5s delayed captures) and exposes `self.SeeWhatISee` for tests |
 | `src/capture.ts` | Capture functions (`captureVisible`, future variations), metadata sidecar writing (`latest.json`, `log.json`), and the storage-backed capture log |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (camera emoji), copied into `dist/icons/` by the build |
 
@@ -41,8 +41,8 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture that launches Chromium with the unpacked extension and exposes its service worker |
-| `tests/e2e/screenshot.spec.ts` | Smoke test that triggers `captureVisible` via the service worker |
+| `tests/fixtures/extension.ts` | Playwright fixture: worker-scoped persistent Chromium context with the unpacked extension loaded, plus a `getServiceWorker()` helper that re-resolves the SW handle each call (MV3 SWs idle out aggressively) |
+| `tests/e2e/screenshot.spec.ts` | E2E tests: visible-tab capture smoke test, `delayMs` timing assertion, and two delay-with-navigation tests (same-tab navigation and tab switch) |
 
 ## Design Docs (`docs/`)
 

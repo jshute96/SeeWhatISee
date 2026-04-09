@@ -21,12 +21,38 @@ on-disk drop directory that coding agents can read from.
 ```
 
 - **Trigger.** A click on the toolbar action fires
-  `chrome.action.onClicked` in `src/background.ts`. The same capture
-  functions are also attached to `self.SeeWhatISee` so they can be invoked
-  from the service worker devtools console or from Playwright via
-  `serviceWorker.evaluate(...)`. This is the only way to drive the
-  extension from tests, since Playwright cannot click the browser
-  toolbar.
+  `chrome.action.onClicked` in `src/background.ts`. Right-clicking the
+  toolbar icon opens a context menu (registered on
+  `chrome.runtime.onInstalled` with `contexts: ['action']`) with three
+  entries:
+  - **Take screenshot** — same as left-click; listed for
+    discoverability.
+  - **Take screenshot in 2s** / **Take screenshot in 5s** — pass the
+    chosen delay through to `captureVisible(delayMs)`, which `await`s a
+    `setTimeout` before capturing. The user gets time to activate a
+    hover state, open a menu, etc. on the page; the `await` keeps the
+    service worker alive for the duration of the timer. The menu
+    handler is data-driven over a `MENU_ITEMS` array, so adding another
+    delay (or changing the durations) is a one-line edit. The same
+    `delayMs` argument is callable from the devtools console as
+    `SeeWhatISee.captureVisible(5000)`.
+
+  Both the immediate (left-click / "Take screenshot") and the delayed
+  paths share a single resolution strategy: `captureVisible` always
+  re-queries the active tab in the last-focused window *after* any
+  delay, then captures that tab and records that tab's URL. This keeps
+  the recorded `url` and the captured pixels consistent even if the
+  user switches tabs, switches windows, or interacts with a popup
+  during the delay. The trade-off is that `activeTab` only covers the
+  tab that was active at gesture time, so a delayed capture that lands
+  on a *different* `chrome://` tab will fail (normal http(s) pages are
+  covered by `<all_urls>`).
+
+  The same capture functions are also attached to `self.SeeWhatISee` so
+  they can be invoked from the service worker devtools console or from
+  Playwright via `serviceWorker.evaluate(...)`. This is the only way to
+  drive the extension from tests, since Playwright cannot click the
+  browser toolbar or open its context menu.
 - **Permissions.** The manifest carries both `activeTab` and `<all_urls>`
   host permission because the two trigger paths need different things.
   A real toolbar click counts as a user gesture, which activates
@@ -34,9 +60,14 @@ on-disk drop directory that coding agents can read from.
   like `chrome://` pages, which `<all_urls>` deliberately excludes. The
   Playwright path bypasses the toolbar gesture and instead relies on
   `<all_urls>` to authorize captures of normal http(s) pages. Removing
-  either one will silently break one of the paths. Note that the Chrome
-  Web Store is blocked from `captureVisibleTab` even with `activeTab`;
-  that's a Chrome policy limit, not something the manifest can fix.
+  either one will silently break one of the paths. `contextMenus` is
+  needed to register the right-click menu entries, `downloads` to write
+  the screenshot and sidecar files, `storage` to back the in-extension
+  capture log, and `tabs` so `chrome.tabs.query` can read the active
+  tab's URL after the (possibly delayed) capture fires. Note that the
+  Chrome Web Store is blocked from `captureVisibleTab` even with
+  `activeTab`; that's a Chrome policy limit, not something the manifest
+  can fix.
 - **Capture.** `src/capture.ts` calls `chrome.tabs.captureVisibleTab` to
   get a PNG data URL. Future variations (full-page stitching, element
   crop, etc.) will live alongside `captureVisible` as additional

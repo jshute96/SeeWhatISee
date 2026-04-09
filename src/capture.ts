@@ -1,7 +1,7 @@
-// Capture functions. Each one corresponds to a user-visible action (toolbar
-// click, future context-menu items, etc.) and is responsible for both
-// grabbing the image and writing it (plus its metadata) to the standard
-// download directory.
+// Capture functions. Each one corresponds to a user-visible action
+// (toolbar click, right-click context menu entries, future variations)
+// and is responsible for both grabbing the image and writing it (plus
+// its metadata) to the standard download directory.
 //
 // Each capture writes three files into the download directory:
 //   - screenshot-<timestamp>.png  — the image itself (unique per capture)
@@ -50,22 +50,38 @@ export interface CaptureResult extends CaptureRecord {
 }
 
 /**
- * Capture the currently visible region of the active tab.
+ * Capture the currently visible region of the active tab in the
+ * last-focused window.
  *
- * If `tab` is provided (e.g. from `chrome.action.onClicked`), it's used
- * directly so we don't need to re-query and so we get the most accurate
- * URL for the gesture that triggered us. Otherwise we look up the active
- * tab in the last-focused window — that's the path the test/console use.
+ * `delayMs` (default 0) sleeps for the given number of milliseconds
+ * before capturing, so the user can activate hover states, open menus,
+ * etc. during the wait. The await keeps the MV3 service worker alive
+ * for the duration of the timer.
+ *
+ * We always resolve "active tab in last-focused window" *after* the
+ * delay (rather than caching the tab passed in by the action /
+ * contextMenus listeners) so that:
+ *   - the recorded `url` and the captured pixels always describe the
+ *     same page, even if the user switched tabs / windows / popups
+ *     during the delay;
+ *   - delayed captures naturally follow focus into popup windows.
+ *
+ * Trade-off: the `activeTab` permission grant from a toolbar gesture
+ * applies to the tab that was active at gesture time. If the user
+ * switches to a different `chrome://` page during a delayed capture,
+ * the new tab isn't covered by `activeTab` (and `<all_urls>` doesn't
+ * cover `chrome://`), so the capture will fail. For normal http(s)
+ * pages this isn't an issue.
  */
-export async function captureVisible(tab?: chrome.tabs.Tab): Promise<CaptureResult> {
-  if (!tab) {
-    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!active) throw new Error('No active tab found to capture');
-    tab = active;
+export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!active) throw new Error('No active tab found to capture');
 
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-  return saveCapture(dataUrl, tab.url ?? '');
+  const dataUrl = await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
+  return saveCapture(dataUrl, active.url ?? '');
 }
 
 async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult> {
