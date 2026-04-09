@@ -41,8 +41,10 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: worker-scoped persistent Chromium context with the unpacked extension loaded, plus a `getServiceWorker()` helper that re-resolves the SW handle each call (MV3 SWs idle out aggressively) |
-| `tests/e2e/screenshot.spec.ts` | E2E tests: visible-tab capture smoke test, `delayMs` timing assertion, and two delay-with-navigation tests (same-tab navigation and tab switch) |
+| `tests/fixtures/extension.ts` | Playwright fixture: worker-scoped persistent Chromium context with the unpacked extension loaded, a worker-scoped local HTTP server that serves the solid-color fixture pages, plus a `getServiceWorker()` helper that re-resolves the SW handle each call (MV3 SWs idle out aggressively) |
+| `tests/fixtures/files.ts` | Test helpers: `waitForDownloadPath` resolves a chrome.downloads id to its on-disk path; `pixelColorAt` decodes a saved PNG via pngjs and samples one pixel; `expectColorClose` does tolerant RGB equality; `verifyCapture` is a one-shot helper that checks all three on-disk files (PNG pixel color, latest.json content, log.json last line + optional delta) for a single capture |
+| `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color HTML pages served by the test HTTP server, used to make captured screenshots verifiable by sampling a known pixel color |
+| `tests/e2e/screenshot.spec.ts` | E2E tests: capture + sidecar file verification (PNG pixel color, full latest.json, log.json last-line + delta), `delayMs` timing assertion, and two delay-with-navigation tests (same-tab navigation and tab switch) — all use the local color fixtures so the captured PNGs can be checked pixel-wise |
 
 ## Design Docs (`docs/`)
 

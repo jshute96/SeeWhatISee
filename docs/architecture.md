@@ -88,7 +88,11 @@ on-disk drop directory that coding agents can read from.
 - **Capture.** `src/capture.ts` calls `chrome.tabs.captureVisibleTab` to
   get a PNG data URL. Future variations (full-page stitching, element
   crop, etc.) will live alongside `captureVisible` as additional
-  exported functions.
+  exported functions. The `CaptureResult` returned by `captureVisible`
+  includes the `chrome.downloads` ids of the PNG and both JSON sidecars
+  (`sidecarDownloadIds.{latest,log}`); production callers ignore them,
+  but the e2e tests use them to look up each saved file's actual
+  on-disk path via `chrome.downloads.search`.
 - **Save.** Captures are written via `chrome.downloads.download` into
   `~/Downloads/SeeWhatISee/screenshot-<timestamp>.png`. The timestamp
   is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond precision) which

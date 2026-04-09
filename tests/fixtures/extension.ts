@@ -6,6 +6,8 @@
 // which calls into `self.SeeWhatISee` (set up in src/background.ts).
 
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
+import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +15,7 @@ export type GetServiceWorker = () => Promise<Worker>;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
+const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 
 // `extensionContext` is *worker-scoped* so a single Chromium window
 // (with the extension loaded) is reused across every test in the same
@@ -31,6 +34,19 @@ const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 // hard-wired test-scoped, and Playwright rejects worker fixtures that
 // depend on builtin test fixtures even when you try to override them.
 type WorkerFixtures = {
+  // Local HTTP server fixture: serves the solid-color fixture HTML
+  // pages out of tests/fixtures/pages/. We need a real http:// origin
+  // (rather than file:// or data:) because:
+  //   - Unpacked extensions don't get file:// access by default, so
+  //     chrome.tabs.captureVisibleTab on a file:// page would fail
+  //     without extra per-extension preference plumbing.
+  //   - data: URLs aren't matched by the manifest's <all_urls> host
+  //     permission, so the capture isn't authorized.
+  //
+  // Worker-scoped because it shares its lifetime with `extensionContext`
+  // — one server per Playwright worker, reused across all tests in the
+  // worker — and listens on port 0 so multiple workers don't collide.
+  fixtureServer: { baseUrl: string };
   extensionContext: BrowserContext;
 };
 
@@ -45,6 +61,42 @@ type TestFixtures = {
 };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  fixtureServer: [
+    async ({}, use) => {
+      const server = http.createServer((req, res) => {
+        try {
+          // Serve a fixture page from FIXTURE_PAGES_DIR. Reject path
+          // traversal so a malformed URL can't escape the fixture root.
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+          const name = url.pathname.replace(/^\//, '') || 'index.html';
+          const filePath = path.join(FIXTURE_PAGES_DIR, name);
+          const rel = path.relative(FIXTURE_PAGES_DIR, filePath);
+          if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(filePath)) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end(fs.readFileSync(filePath));
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(String(err));
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const addr = server.address();
+      if (!addr || typeof addr === 'string') throw new Error('server failed to bind');
+      const baseUrl = `http://127.0.0.1:${addr.port}`;
+      await use({ baseUrl });
+      // closeAllConnections() forces any idle keep-alive sockets shut so
+      // server.close() doesn't block on them — without it, teardown hangs
+      // until Playwright's 30s fixture timeout fires.
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+    { scope: 'worker' },
+  ],
+
   extensionContext: [
     async ({}, use) => {
       const ctx = await chromium.launchPersistentContext('', {

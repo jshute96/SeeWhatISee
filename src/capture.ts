@@ -46,7 +46,20 @@ export interface CaptureRecord {
 }
 
 export interface CaptureResult extends CaptureRecord {
+  /** Download id of the PNG image. */
   downloadId: number;
+  /**
+   * Download ids of the JSON sidecars written alongside the PNG.
+   * Production callers (toolbar / context menu) ignore these; they're
+   * primarily there so e2e tests can resolve each sidecar to its
+   * on-disk path via chrome.downloads.search without having to guess
+   * which "most recent download" is which (the two sidecars are
+   * written concurrently, so observation order is non-deterministic).
+   */
+  sidecarDownloadIds: {
+    latest: number;
+    log: number;
+  };
 }
 
 /**
@@ -129,15 +142,16 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   // Update the running log in storage and rewrite the JSON sidecar files.
   // Serialized via writeChain so two rapid captures can't race on the
   // storage read-modify-write.
-  await serializeWrite(async () => {
+  const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
-    await Promise.all([
+    const [latest, logId] = await Promise.all([
       writeJsonFile('latest.json', serializeRecord(record, 2)),
       writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
     ]);
+    return { latest, log: logId };
   });
 
-  return { downloadId, ...record };
+  return { downloadId, sidecarDownloadIds, ...record };
 }
 
 async function appendToLog(record: CaptureRecord): Promise<CaptureRecord[]> {
@@ -157,10 +171,11 @@ async function appendToLog(record: CaptureRecord): Promise<CaptureRecord[]> {
 /**
  * Write a JSON sidecar to the download dir, overwriting any existing file.
  * `text` is the pre-formatted JSON to write (callers use serializeRecord
- * to guarantee canonical key order).
+ * to guarantee canonical key order). Returns the chrome.downloads
+ * download id, which tests use to resolve the on-disk path.
  */
-async function writeJsonFile(name: string, text: string): Promise<void> {
-  await chrome.downloads.download({
+async function writeJsonFile(name: string, text: string): Promise<number> {
+  return await chrome.downloads.download({
     url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
     filename: `${DOWNLOAD_SUBDIR}/${name}`,
     saveAs: false,
