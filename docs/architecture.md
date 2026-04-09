@@ -27,6 +27,16 @@ on-disk drop directory that coding agents can read from.
   `serviceWorker.evaluate(...)`. This is the only way to drive the
   extension from tests, since Playwright cannot click the browser
   toolbar.
+- **Permissions.** The manifest carries both `activeTab` and `<all_urls>`
+  host permission because the two trigger paths need different things.
+  A real toolbar click counts as a user gesture, which activates
+  `activeTab` for the current tab — required to capture restricted URLs
+  like `chrome://` pages, which `<all_urls>` deliberately excludes. The
+  Playwright path bypasses the toolbar gesture and instead relies on
+  `<all_urls>` to authorize captures of normal http(s) pages. Removing
+  either one will silently break one of the paths. Note that the Chrome
+  Web Store is blocked from `captureVisibleTab` even with `activeTab`;
+  that's a Chrome policy limit, not something the manifest can fix.
 - **Capture.** `src/capture.ts` calls `chrome.tabs.captureVisibleTab` to
   get a PNG data URL. Future variations (full-page stitching, element
   crop, etc.) will live alongside `captureVisible` as additional

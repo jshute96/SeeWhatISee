@@ -1,6 +1,12 @@
 import { captureVisible } from './capture.js';
 
 // Toolbar icon click → capture the visible tab.
+//
+// The click counts as a user gesture, which is what makes the `activeTab`
+// permission (declared in manifest.json) kick in for the current tab —
+// including restricted URLs like chrome:// pages, where `<all_urls>` host
+// permission alone is not enough. Don't drop `activeTab` from the manifest
+// without testing on chrome://extensions or you'll silently re-break this.
 chrome.action.onClicked.addListener(async (tab) => {
   try {
     await captureVisible(tab.windowId);
