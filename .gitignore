@@ -18,3 +18,9 @@
 *.crx
 *.pem
 dist/
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
