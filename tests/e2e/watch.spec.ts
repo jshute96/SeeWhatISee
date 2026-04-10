@@ -17,13 +17,14 @@ const test = base;
 // ---- Helpers ---------------------------------------------------------------
 
 /** Start watch.sh and collect its combined stdout+stderr. */
-function startWatch(args: string[]): {
+function startWatch(args: string[], opts?: { cwd?: string }): {
   proc: ChildProcess;
   output: () => string;
   kill: () => void;
 } {
   const proc = spawn('bash', [WATCH_SCRIPT, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: opts?.cwd,
   });
   const chunks: Buffer[] = [];
   proc.stdout!.on('data', (d: Buffer) => chunks.push(d));
@@ -83,11 +84,12 @@ function waitForPattern(
 }
 
 /** Run watch.sh synchronously (for short-lived invocations like --after / --stop). */
-function runWatch(args: string[]): { stdout: string; stderr: string; exitCode: number } {
+function runWatch(args: string[], opts?: { cwd?: string }): { stdout: string; stderr: string; exitCode: number } {
   try {
     const stdout = execSync(`bash ${WATCH_SCRIPT} ${args.join(' ')}`, {
       timeout: 5_000,
       encoding: 'utf8',
+      cwd: opts?.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { stdout, stderr: '', exitCode: 0 };
@@ -335,5 +337,102 @@ test.describe('watch.sh concurrency', () => {
   test('--stop with no watcher reports nothing to stop', () => {
     const stop = runWatch(['--stop', '--directory', tmpDir]);
     expect(stop.stdout).toContain('No existing watcher to stop');
+  });
+});
+
+// ---- Config file (.SeeWhatISee) tests ---------------------------------------
+
+test.describe('watch.sh config file', () => {
+  test.setTimeout(30_000);
+
+  // These tests run watch.sh from a temp directory that contains a
+  // .SeeWhatISee config file pointing at the tmpDir created by the
+  // outer beforeEach. This tests the "look in current directory" path
+  // without touching $HOME (which we can't safely modify in tests).
+  let cfgDir: string;
+
+  test.beforeEach(() => {
+    cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-cfg-'));
+  });
+
+  test.afterEach(() => {
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  });
+
+  test('reads directory from .SeeWhatISee in the current directory', async () => {
+    fs.writeFileSync(path.join(cfgDir, '.SeeWhatISee'), `directory=${tmpDir}\n`);
+
+    // Start watch.sh without --directory; it should find .SeeWhatISee.
+    const watch = startWatch([], { cwd: cfgDir });
+    await new Promise((r) => setTimeout(r, 1200));
+
+    simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const out = watch.output();
+    const { filename } = fakeRecord(1);
+    expect(out).toContain(filename);
+  });
+
+  test('--directory flag overrides .SeeWhatISee config', async () => {
+    // Config points to a nonexistent dir; --directory should override it.
+    fs.writeFileSync(path.join(cfgDir, '.SeeWhatISee'), 'directory=/nonexistent/path\n');
+
+    const watch = startWatch(['--directory', tmpDir], { cwd: cfgDir });
+    await new Promise((r) => setTimeout(r, 1200));
+
+    simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const out = watch.output();
+    const { filename } = fakeRecord(1);
+    expect(out).toContain(filename);
+  });
+
+  test('errors on unrecognized option in config file', () => {
+    fs.writeFileSync(
+      path.join(cfgDir, '.SeeWhatISee'),
+      `directory=${tmpDir}\nbadoption=foo\n`,
+    );
+
+    const r = runWatch([], { cwd: cfgDir });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('unrecognized option');
+    expect(r.stderr).toContain('line 2');
+  });
+
+  test('skips comments and blank lines in config file', async () => {
+    fs.writeFileSync(
+      path.join(cfgDir, '.SeeWhatISee'),
+      `# This is a comment\n\n  # Indented comment\ndirectory=${tmpDir}\n`,
+    );
+
+    const watch = startWatch([], { cwd: cfgDir });
+    await new Promise((r) => setTimeout(r, 1200));
+
+    simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const out = watch.output();
+    const { filename } = fakeRecord(1);
+    expect(out).toContain(filename);
+  });
+
+  test('handles quoted directory values in config', async () => {
+    fs.writeFileSync(path.join(cfgDir, '.SeeWhatISee'), `directory="${tmpDir}"\n`);
+
+    const watch = startWatch([], { cwd: cfgDir });
+    await new Promise((r) => setTimeout(r, 1200));
+
+    simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const out = watch.output();
+    const { filename } = fakeRecord(1);
+    expect(out).toContain(filename);
   });
 });

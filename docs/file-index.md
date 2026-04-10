@@ -38,7 +38,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons and manifest, runs `tsc` |
-| `scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control |
+| `scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
 
 ## Tests (`tests/`)
 
@@ -49,7 +49,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color HTML pages served by the test HTTP server, used to make captured screenshots verifiable by sampling a known pixel color |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test: `savePageContents` HTML capture + sidecar file verification (HTML content substring, latest.json, log.json) |
 | `tests/e2e/screenshot.spec.ts` | E2E tests: capture + sidecar file verification (PNG pixel color, full latest.json, log.json last-line + delta), `delayMs` timing assertion, and two delay-with-navigation tests (same-tab navigation and tab switch) — all use the local color fixtures so the captured PNGs can be checked pixel-wise |
-| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh`: once/loop mode emission, `--after` catch-up, `--help`, error on missing dir, pidfile lifecycle, second-watcher-kills-first, `--stop`. Uses temp dirs with simulated captures (no extension needed) |
+| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh`: once/loop mode emission, `--after` catch-up, `--help`, error on missing dir, pidfile lifecycle, second-watcher-kills-first, `--stop`, `.SeeWhatISee` config file parsing (current-dir lookup, `--directory` override, unrecognized keys, comments/blanks, quoted values). Uses temp dirs with simulated captures (no extension needed) |
 
 ## Design Docs (`docs/`)
 

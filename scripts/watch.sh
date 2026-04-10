@@ -8,13 +8,18 @@
 #   and emit them immediately before watching.
 # --stop: kill any existing watcher on this directory and exit.
 #
+# If --directory is not given, looks for a .SeeWhatISee config file
+# (in . then $HOME) with a directory=<path> setting.
+#
 # Detects changes by polling mtime every 0.5s.
 
 set -euo pipefail
 
 # ---- Defaults ---------------------------------------------------------------
 
-DIR="$HOME/Downloads/SeeWhatISee"
+DEFAULT_DIR="$HOME/Downloads/SeeWhatISee"
+DIR=""
+DIR_FROM_FLAG=false
 LOOP=false
 STOP=false
 AFTER=""
@@ -43,11 +48,54 @@ while [[ $# -gt 0 ]]; do
     --help)      usage; exit 0 ;;
     --loop)      LOOP=true; shift ;;
     --stop)      STOP=true; shift ;;
-    --directory) DIR="$2"; shift 2 ;;
+    --directory) DIR="$2"; DIR_FROM_FLAG=true; shift 2 ;;
     --after)     AFTER="$2"; shift 2 ;;
     *)           echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# ---- Config file (.SeeWhatISee) ---------------------------------------------
+# If --directory was not given, look for a .SeeWhatISee config file in the
+# current directory and then in $HOME. The file uses key=value syntax and
+# currently supports one option: directory=<path>. Unrecognized keys are
+# treated as an error so typos don't silently do nothing.
+
+parse_config() {
+  local file="$1"
+  local line_no=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_no=$((line_no + 1))
+    # Skip blank lines and comments.
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    # Strip leading/trailing whitespace.
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    case "$line" in
+      directory=*)
+        DIR="${line#directory=}"
+        # Strip matched quotes (double or single).
+        case "$DIR" in
+          \"*\") DIR="${DIR#\"}" ; DIR="${DIR%\"}" ;;
+          \'*\') DIR="${DIR#\'}" ; DIR="${DIR%\'}" ;;
+        esac
+        ;;
+      *)
+        echo "Error: unrecognized option in $file line $line_no: $line" >&2
+        exit 1
+        ;;
+    esac
+  done < "$file"
+}
+
+if ! $DIR_FROM_FLAG; then
+  if [[ -f ".SeeWhatISee" ]]; then
+    parse_config ".SeeWhatISee"
+  elif [[ -f "$HOME/.SeeWhatISee" ]]; then
+    parse_config "$HOME/.SeeWhatISee"
+  fi
+  # Fall back to the default if no config or config didn't set directory.
+  [[ -z "$DIR" ]] && DIR="$DEFAULT_DIR"
+fi
 
 FILE="$DIR/latest.json"
 LOG="$DIR/log.json"

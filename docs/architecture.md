@@ -140,7 +140,10 @@ on-disk drop directory that coding agents can read from.
   capture as it arrives), and `/SeeWhatISeeStop` (stop the watcher).
   `scripts/watch.sh` is the underlying filesystem watcher — it detects
   changes to `latest.json` by polling mtime every 0.5s and
-  supports `--after BASENAME` to catch up on missed captures.
+  supports `--after BASENAME` to catch up on missed captures. If
+  `--directory` is not given, watch.sh looks for a `.SeeWhatISee`
+  config file (in the current directory, then `$HOME`) with a
+  `directory=<path>` setting.
 
 ## Why a separate `dist/`
 
