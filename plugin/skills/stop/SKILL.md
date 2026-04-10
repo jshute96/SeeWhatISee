@@ -1,7 +1,7 @@
 ---
 name: stop
 description: Stop the background SeeWhatISee watch loop started by /see-what-i-see:watch.
-allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/../watch/watch.sh *)"
+allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/watch.sh:*)"
 ---
 
 Stop the background SeeWhatISee watch loop started by `/see-what-i-see:watch`.
@@ -10,7 +10,7 @@ Stop the background SeeWhatISee watch loop started by `/see-what-i-see:watch`.
 
 1. Stop the watcher by running:
    ```
-   ${CLAUDE_SKILL_DIR}/../watch/watch.sh --stop
+   ${CLAUDE_SKILL_DIR}/watch.sh --stop
    ```
 2. Relay the script's output to the user (it will say either "Stopping existing watcher" or "No existing watcher to stop").
 

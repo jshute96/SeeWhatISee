@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(skills/watch/watch.sh:*)",
-      "Bash(skills/watch/watch.sh *)",
       "Read(~/Downloads/SeeWhatISee/**)"
     ]
   }
