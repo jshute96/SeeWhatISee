@@ -1,4 +1,4 @@
-Stop the background SeeWhatISee screenshot watch loop started by `/SeeWhatISeeWatch`.
+Stop the background SeeWhatISee watch loop started by `/SeeWhatISeeWatch`.
 
 ## Steps
 
@@ -10,5 +10,5 @@ Stop the background SeeWhatISee screenshot watch loop started by `/SeeWhatISeeWa
 
 ## Notes
 
-- This does NOT affect screenshots already taken — `latest.json` and the PNGs are still on disk.
+- This does NOT affect captures already taken — `latest.json` and the PNG/HTML files are still on disk.
 - The user can restart the watcher at any time with `/SeeWhatISeeWatch`.

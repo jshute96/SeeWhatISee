@@ -1,20 +1,21 @@
 # SeeWhatISee Chrome Extension
 
-This is a Chrome extension for taking screenshots, optimized for use during agentic development.
+This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
 
-Click the extension icon to take a screenshot of the current page and share it directly with your coding agent. Right-click the icon for a menu with **Take screenshot**, **Take screenshot in 2s**, and **Take screenshot in 5s**.
+Click the extension icon to take a screenshot of the current page and share it directly with your coding agent. Right-click the icon for a menu with **Take screenshot**, **Take screenshot in 2s**, **Take screenshot in 5s**, and **Save html contents**.
 
-Screenshots are written to `~/Downloads/SeeWhatISee/` so an agent (Claude
+Captures are written to `~/Downloads/SeeWhatISee/` so an agent (Claude
 Code, etc.) can pick up the latest one without any copy-paste.
 
 ## Output files
 
 Each capture writes three files into that directory:
 
-- `screenshot-<timestamp>.png` — the image itself, one per capture.
+- `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
+  captured content itself, one per capture.
 - `latest.json` — pretty-printed `{timestamp, filename, url}` for the
   most recent capture, overwritten every time. An agent can read this
-  to find the newest screenshot without having to `ls`.
+  to find the newest capture without having to `ls`.
 - `log.json` — newline-delimited JSON (one record per line, same
   schema as `latest.json`), grep-friendly history of recent captures.
   Capped at the 100 most recent entries (FIFO eviction). The

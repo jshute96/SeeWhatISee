@@ -92,6 +92,56 @@ export function expectColorClose(
 }
 
 /**
+ * One-stop verification for an HTML snapshot capture:
+ *
+ *   - the HTML file exists and contains `expectedSubstring`
+ *   - latest.json's content equals the capture record
+ *   - log.json's last line equals the capture record
+ *   - if `prevLogRecords` is given, log.json grew by exactly one line
+ *
+ * Returns the parsed log.json records for chaining (same as verifyCapture).
+ */
+export async function verifyHtmlCapture(
+  sw: Worker,
+  result: CaptureResult,
+  expectedSubstring: string,
+  prevLogRecords?: CaptureRecord[],
+): Promise<CaptureRecord[]> {
+  const [htmlPath, latestPath, logPath] = await Promise.all([
+    waitForDownloadPath(sw, result.downloadId),
+    waitForDownloadPath(sw, result.sidecarDownloadIds.latest),
+    waitForDownloadPath(sw, result.sidecarDownloadIds.log),
+  ]);
+
+  // HTML file: on disk, non-empty, contains the expected content.
+  expect(fs.existsSync(htmlPath)).toBe(true);
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  expect(html.length).toBeGreaterThan(0);
+  expect(html).toContain(expectedSubstring);
+
+  const expectedRecord: CaptureRecord = {
+    timestamp: result.timestamp,
+    filename: result.filename,
+    url: result.url,
+  };
+
+  const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
+  expect(latest).toEqual(expectedRecord);
+
+  const logLines = fs.readFileSync(logPath, 'utf8').split('\n');
+  expect(logLines[logLines.length - 1]).toBe('');
+  const logRecords: CaptureRecord[] = logLines.slice(0, -1).map((l) => JSON.parse(l));
+  expect(logRecords[logRecords.length - 1]).toEqual(expectedRecord);
+
+  if (prevLogRecords !== undefined) {
+    expect(logRecords).toHaveLength(prevLogRecords.length + 1);
+    expect(logRecords.slice(0, prevLogRecords.length)).toEqual(prevLogRecords);
+  }
+
+  return logRecords;
+}
+
+/**
  * One-stop verification that a capture landed on disk consistently:
  *
  *   - the PNG exists, is non-empty, and shows the expected pixel color

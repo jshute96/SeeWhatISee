@@ -13,10 +13,11 @@ on-disk drop directory that coding agents can read from.
                                           |
                                           v
                                 +---------------------+
-                                | src/capture.ts      |
-                                |  - captureVisible() |
-                                |  - (future: full,   |
-                                |     element, ...)   |
+                                | src/capture.ts        |
+                                |  - captureVisible()   |
+                                |  - savePageContents() |
+                                |  - (future: full,     |
+                                |     element, ...)     |
                                 +---------------------+
 ```
 
@@ -36,6 +37,13 @@ on-disk drop directory that coding agents can read from.
     delay (or changing the durations) is a one-line edit. The same
     `delayMs` argument is callable from the devtools console as
     `SeeWhatISee.captureVisible(5000)`.
+  - **Save html contents** — uses `chrome.scripting.executeScript` to
+    grab `document.documentElement.outerHTML` from the active tab and
+    saves it as `contents-<timestamp>.html` in the same download directory.
+    The capture is recorded in `latest.json` / `log.json` just like a
+    screenshot — the only difference is the `.html` filename. Requires
+    the `scripting` permission. Also callable from the devtools console
+    as `SeeWhatISee.savePageContents()`.
 
   Both the immediate (left-click / "Take screenshot") and the delayed
   paths share a single resolution strategy: `captureVisible` always
@@ -79,37 +87,42 @@ on-disk drop directory that coding agents can read from.
   `<all_urls>` to authorize captures of normal http(s) pages. Removing
   either one will silently break one of the paths. `contextMenus` is
   needed to register the right-click menu entries, `downloads` to write
-  the screenshot and sidecar files, `storage` to back the in-extension
-  capture log, and `tabs` so `chrome.tabs.query` can read the active
-  tab's URL after the (possibly delayed) capture fires. Note that the
+  the screenshot and sidecar files, `scripting` to inject the
+  content-retrieval script for "Save html contents", `storage` to back
+  the in-extension capture log, and `tabs` so `chrome.tabs.query` can
+  read the active tab's URL after the (possibly delayed) capture fires. Note that the
   Chrome Web Store is blocked from `captureVisibleTab` even with
   `activeTab`; that's a Chrome policy limit, not something the manifest
   can fix.
-- **Capture.** `src/capture.ts` calls `chrome.tabs.captureVisibleTab` to
-  get a PNG data URL. Future variations (full-page stitching, element
-  crop, etc.) will live alongside `captureVisible` as additional
-  exported functions. The `CaptureResult` returned by `captureVisible`
-  includes the `chrome.downloads` ids of the PNG and both JSON sidecars
+- **Capture.** `src/capture.ts` provides two capture functions:
+  - `captureVisible` calls `chrome.tabs.captureVisibleTab` to get a
+    PNG data URL of the visible tab region.
+  - `savePageContents` uses `chrome.scripting.executeScript` to grab
+    `document.documentElement.outerHTML` from the active tab and saves
+    it as an HTML file.
+
+  Future variations (full-page stitching, element crop, etc.) will
+  live alongside these as additional exported functions. The
+  `CaptureResult` returned by both functions includes the
+  `chrome.downloads` ids of the content file and both JSON sidecars
   (`sidecarDownloadIds.{latest,log}`); production callers ignore them,
   but the e2e tests use them to look up each saved file's actual
   on-disk path via `chrome.downloads.search`.
 - **Save.** Captures are written via `chrome.downloads.download` into
-  `~/Downloads/SeeWhatISee/screenshot-<timestamp>.png`. The timestamp
-  is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond precision) which
-  is fine-grained enough that filenames are always unique in practice
-  — Chrome's own `captureVisibleTab` rate limit (2/sec/window) makes
-  it impossible to generate two captures in the same millisecond. All
-  capture modes share the same filename prefix so an agent reading the
-  directory only has to look for the newest `screenshot-*.png`. We use
-  the downloads API rather than a native messaging host so v1 has no
-  native dependencies; the trade-off is that the directory must live
-  under the user's configured downloads folder.
-- **Metadata sidecars.** Alongside the PNG, every capture also writes
-  two JSON sidecars into the same directory:
+  `~/Downloads/SeeWhatISee/`. Screenshots are saved as
+  `screenshot-<timestamp>.png` and HTML snapshots as
+  `contents-<timestamp>.html`. The timestamp is `YYYYMMDD-HHMMSS-mmm`
+  (local time, millisecond precision) which is fine-grained enough
+  that filenames are always unique in practice. We use the downloads
+  API rather than a native messaging host so v1 has no native
+  dependencies; the trade-off is that the directory must live under
+  the user's configured downloads folder.
+- **Metadata sidecars.** Alongside the content file, every capture also
+  writes two JSON sidecars into the same directory:
   - `latest.json` — pretty-printed `{timestamp, filename, url}` of the
     most recent capture, overwritten each time. Lets an agent get the
-    newest capture without having to `ls`. `filename` is the bare PNG
-    file basename, without the directory.
+    newest capture without having to `ls`. `filename` is the bare
+    content file basename (`.png` or `.html`), without the directory.
   - `log.json` — newline-delimited JSON (one record per line, same
     schema as `latest.json`), grep-friendly history of recent captures.
     Because the Chrome downloads API can only write whole files, the
@@ -122,9 +135,9 @@ on-disk drop directory that coding agents can read from.
     quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
   from `~/Downloads/SeeWhatISee/`. Three Claude Code slash commands are
-  provided: `/SeeWhatISee` (read the latest screenshot),
+  provided: `/SeeWhatISee` (read the latest capture),
   `/SeeWhatISeeWatch` (background loop that describes each new
-  screenshot as it arrives), and `/SeeWhatISeeStop` (stop the watcher).
+  capture as it arrives), and `/SeeWhatISeeStop` (stop the watcher).
   `scripts/watch.sh` is the underlying filesystem watcher — it detects
   changes to `latest.json` by polling mtime every 0.5s and
   supports `--after BASENAME` to catch up on missed captures.

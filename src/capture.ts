@@ -1,10 +1,11 @@
 // Capture functions. Each one corresponds to a user-visible action
 // (toolbar click, right-click context menu entries, future variations)
-// and is responsible for both grabbing the image and writing it (plus
+// and is responsible for grabbing the content and writing it (plus
 // its metadata) to the standard download directory.
 //
 // Each capture writes three files into the download directory:
-//   - screenshot-<timestamp>.png  — the image itself (unique per capture)
+//   - screenshot-<timestamp>.png or contents-<timestamp>.html
+//                                  — the content itself (unique per capture)
 //   - latest.json                  — pretty-printed JSON of the most recent
 //                                    capture record, overwritten each time
 //   - log.json                     — newline-delimited JSON (one record per
@@ -46,7 +47,7 @@ export interface CaptureRecord {
 }
 
 export interface CaptureResult extends CaptureRecord {
-  /** Download id of the PNG image. */
+  /** Download id of the content file (PNG or HTML). */
   downloadId: number;
   /**
    * Download ids of the JSON sidecars written alongside the PNG.
@@ -107,6 +108,56 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
 
   const dataUrl = await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
   return saveCapture(dataUrl, active.url ?? '');
+}
+
+/**
+ * Save the full HTML of the active tab in the last-focused window.
+ *
+ * Uses `chrome.scripting.executeScript` to grab
+ * `document.documentElement.outerHTML` from the page. The result is
+ * saved as an HTML file alongside screenshots in the same download
+ * directory, and recorded in latest.json / log.json exactly like a
+ * screenshot capture — the only difference is the filename extension.
+ *
+ * Requires the `scripting` permission in the manifest.
+ */
+export async function savePageContents(): Promise<CaptureResult> {
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!active) throw new Error('No active tab found to capture');
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: active.id! },
+    func: () => document.documentElement.outerHTML,
+  });
+  const html = results[0]?.result as string;
+  if (!html) throw new Error('Failed to retrieve page contents');
+
+  const now = new Date();
+  const filename = `contents-${compactTimestamp(now)}.html`;
+  const record: CaptureRecord = {
+    timestamp: now.toISOString(),
+    filename,
+    url: active.url ?? '',
+  };
+
+  // Save the HTML first. The metadata files are downstream and
+  // shouldn't be written if the content itself failed to save.
+  const downloadId = await chrome.downloads.download({
+    url: `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+    filename: `${DOWNLOAD_SUBDIR}/${filename}`,
+    saveAs: false,
+  });
+
+  const sidecarDownloadIds = await serializeWrite(async () => {
+    const log = await appendToLog(record);
+    const [latest, logId] = await Promise.all([
+      writeJsonFile('latest.json', serializeRecord(record, 2)),
+      writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
+    ]);
+    return { latest, log: logId };
+  });
+
+  return { downloadId, sidecarDownloadIds, ...record };
 }
 
 async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult> {
@@ -230,16 +281,14 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * Format a Date as `YYYYMMDD-HHMMSS-mmm` in the local timezone.
  *
- * Used as the unique suffix in screenshot filenames so they sort
+ * Used as the unique suffix in capture filenames (both
+ * `screenshot-*.png` and `contents-*.html`) so they sort
  * lexicographically by capture time and stay short / shell-safe. The
  * trailing `-mmm` is milliseconds; including them makes filenames
- * effectively unique without any extra dedup state, since Chrome's own
- * `chrome.tabs.captureVisibleTab` rate limit (2/sec/window) prevents us
- * from ever generating two captures within the same millisecond.
+ * effectively unique without any extra dedup state.
  *
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
- * produces `20260408-203012-345`, yielding a filename like
- * `screenshot-20260408-203012-345.png`.
+ * produces `20260408-203012-345`.
  */
 function compactTimestamp(d: Date): string {
   const pad2 = (n: number) => String(n).padStart(2, '0');

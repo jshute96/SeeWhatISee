@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "SeeWhatISee",
   "version": "0.1.0",
-  "description": "Take screenshots and hand them to your coding agent.",
-  "permissions": ["activeTab", "contextMenus", "downloads", "storage", "tabs"],
+  "description": "Take screenshots and save HTML snapshots for your coding agent.",
+  "permissions": ["activeTab", "contextMenus", "downloads", "scripting", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

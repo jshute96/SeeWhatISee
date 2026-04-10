@@ -1,4 +1,4 @@
-import { captureVisible } from './capture.js';
+import { captureVisible, savePageContents } from './capture.js';
 
 // Targeted suppression for one specific user-actionable failure.
 // Manually poking captureVisible from the SW devtools console (e.g.
@@ -13,7 +13,10 @@ import { captureVisible } from './capture.js';
 // listener bodies that forget their try/catch) — and the Errors page
 // is the only async signal most developers have. Anything we don't
 // recognize is left alone so it still surfaces.
-const SUPPRESSED_UNHANDLED = ['No active tab found to capture'];
+const SUPPRESSED_UNHANDLED = [
+  'No active tab found to capture',
+  'Failed to retrieve page contents',
+];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);
   if (SUPPRESSED_UNHANDLED.some((s) => message.includes(s))) {
@@ -55,10 +58,20 @@ chrome.action.onClicked.addListener(async () => {
 // don't have to know that left-click also captures. The delay (if any)
 // is handled by captureVisible itself; this file just maps menu items
 // to delayMs values.
-const MENU_ITEMS: { id: string; title: string; delayMs: number }[] = [
+interface MenuItem {
+  id: string;
+  title: string;
+  /** For screenshot items: delay before capture. Absent for non-screenshot actions. */
+  delayMs?: number;
+  /** Handler for non-screenshot items. If absent, the item is a screenshot capture. */
+  action?: () => Promise<unknown>;
+}
+
+const MENU_ITEMS: MenuItem[] = [
   { id: 'capture-now', title: 'Take screenshot', delayMs: 0 },
   { id: 'capture-delayed-2s', title: 'Take screenshot in 2s', delayMs: 2000 },
   { id: 'capture-delayed-5s', title: 'Take screenshot in 5s', delayMs: 5000 },
+  { id: 'save-page-contents', title: 'Save html contents', action: () => savePageContents() },
 ];
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -83,10 +96,14 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const item = MENU_ITEMS.find((m) => m.id === info.menuItemId);
   if (!item) return;
   try {
-    await captureVisible(item.delayMs);
+    if (item.action) {
+      await item.action();
+    } else {
+      await captureVisible(item.delayMs ?? 0);
+    }
   } catch (err) {
     // See action.onClicked above for why this is warn, not error.
-    console.warn('[SeeWhatISee] context menu capture failed:', err);
+    console.warn('[SeeWhatISee] context menu action failed:', err);
   }
 });
 
@@ -99,4 +116,5 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 // as a new entry so it stays callable from tests without additional plumbing.
 (self as unknown as { SeeWhatISee: Record<string, unknown> }).SeeWhatISee = {
   captureVisible,
+  savePageContents,
 };
