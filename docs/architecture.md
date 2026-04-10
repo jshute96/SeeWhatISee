@@ -121,9 +121,13 @@ on-disk drop directory that coding agents can read from.
     without a cap, rewriting the whole file on every capture would be
     quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
-  from `~/Downloads/SeeWhatISee/`. The agent-side skill / slash command
-  for this is a follow-up; the extension's only job is to make sure the
-  freshest screenshot is always sitting in that directory.
+  from `~/Downloads/SeeWhatISee/`. Three Claude Code slash commands are
+  provided: `/SeeWhatISee` (read the latest screenshot),
+  `/SeeWhatISeeWatch` (background loop that describes each new
+  screenshot as it arrives), and `/SeeWhatISeeStop` (stop the watcher).
+  `scripts/watch.sh` is the underlying filesystem watcher — it detects
+  changes to `latest.json` by polling mtime every 0.5s and
+  supports `--after BASENAME` to catch up on missed captures.
 
 ## Why a separate `dist/`
 

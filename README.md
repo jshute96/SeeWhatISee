@@ -52,12 +52,23 @@ calling capture functions on the background service worker — Playwright
 can't click the browser toolbar, so each capture mode is also exposed
 on `self.SeeWhatISee` for test/console access.
 
+## Watching for screenshots
+
+```bash
+scripts/watch.sh                # wait for the next capture, print it, exit
+scripts/watch.sh --loop         # keep printing captures until ^C
+scripts/watch.sh --after FILE   # emit any captures newer than FILE, then watch
+scripts/watch.sh --stop         # stop a running watcher
+scripts/watch.sh --help         # full usage
+```
+
 ## Layout
 
 - `src/` — TypeScript sources and `manifest.json`
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
+- `scripts/watch.sh` — filesystem watcher for new screenshots (see above)
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
   exposes its service worker
