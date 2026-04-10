@@ -14,15 +14,37 @@ One-line descriptions of every source file, grouped by directory.
 | `playwright.config.ts` | Playwright test runner config |
 | `.gitignore` | Git ignore rules (`dist/`, `node_modules/`, `tmp/`, etc.) |
 
+## Marketplace (`.claude-plugin/`)
+
+| File | Description |
+|------|-------------|
+| `.claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin |
+
+## Plugin (`plugin/`)
+
+| File | Description |
+|------|-------------|
+| `plugin/.claude-plugin/plugin.json` | Plugin manifest — name, version, description |
+| `plugin/settings.json` | Plugin-level permission defaults for the skills |
+| `plugin/skills/look/SKILL.md` | `/see-what-i-see:look` — read the latest screenshot or HTML snapshot taken by the extension |
+| `plugin/skills/watch/SKILL.md` | `/see-what-i-see:watch` — background loop that describes each new capture as it arrives |
+| `plugin/skills/watch/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
+| `plugin/skills/stop/SKILL.md` | `/see-what-i-see:stop` — stop a running watch loop |
+
+## Local Skills (`.claude/skills/`)
+
+| File | Description |
+|------|-------------|
+| `.claude/skills/look` | Symlink to `plugin/skills/look` — local shortcut for `/look` |
+| `.claude/skills/stop` | Symlink to `plugin/skills/stop` — local shortcut for `/stop` |
+| `.claude/skills/watch` | Symlink to `plugin/skills/watch` — local shortcut for `/watch` |
+
 ## Claude Commands (`.claude/commands/`)
 
 | File | Description |
 |------|-------------|
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
-| `.claude/commands/SeeWhatISee.md` | `/SeeWhatISee` slash command — read the latest screenshot taken by the extension |
-| `.claude/commands/SeeWhatISeeWatch.md` | `/SeeWhatISeeWatch` slash command — background loop that describes each new screenshot as it arrives |
-| `.claude/commands/SeeWhatISeeStop.md` | `/SeeWhatISeeStop` slash command — stop a running SeeWhatISeeWatch loop |
 
 ## Extension Source (`src/`)
 
@@ -38,7 +60,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons and manifest, runs `tsc` |
-| `scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
+| `scripts/watch.sh` | Symlink to `plugin/skills/watch/watch.sh` — preserves existing test and doc references |
 
 ## Tests (`tests/`)
 

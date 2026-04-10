@@ -1,3 +1,9 @@
+---
+name: look
+description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and describe what you see.
+allowed-tools: "Read"
+---
+
 Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and make it available as context so the user can ask questions about what they see.
 
 You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.

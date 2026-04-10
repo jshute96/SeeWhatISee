@@ -134,10 +134,10 @@ on-disk drop directory that coding agents can read from.
     without a cap, rewriting the whole file on every capture would be
     quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
-  from `~/Downloads/SeeWhatISee/`. Three Claude Code slash commands are
-  provided: `/SeeWhatISee` (read the latest capture),
-  `/SeeWhatISeeWatch` (background loop that describes each new
-  capture as it arrives), and `/SeeWhatISeeStop` (stop the watcher).
+  from `~/Downloads/SeeWhatISee/`. Three Claude Code plugin skills are
+  provided: `/see-what-i-see:look` (read the latest capture),
+  `/see-what-i-see:watch` (background loop that describes each new
+  capture as it arrives), and `/see-what-i-see:stop` (stop the watcher).
   `scripts/watch.sh` is the underlying filesystem watcher — it detects
   changes to `latest.json` by polling mtime every 0.5s and
   supports `--after BASENAME` to catch up on missed captures. If

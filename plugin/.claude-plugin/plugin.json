@@ -1,0 +1,7 @@
+{
+  "name": "see-what-i-see",
+  "version": "0.1.0",
+  "description": "Get screenshots taken by the SeeWhatISee Chrome extension",
+  "repository": "https://github.com/jshute96/SeeWhatISee",
+  "license": "MIT"
+}

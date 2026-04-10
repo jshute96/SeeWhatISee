@@ -2,10 +2,56 @@
 
 This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
 
-Click the extension icon to take a screenshot of the current page and share it directly with your coding agent. Right-click the icon for a menu with **Take screenshot**, **Take screenshot in 2s**, **Take screenshot in 5s**, and **Save html contents**.
+This lets you share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
 
-Captures are written to `~/Downloads/SeeWhatISee/` so an agent (Claude
-Code, etc.) can pick up the latest one without any copy-paste.
+## Usage
+
+### Chrome extension
+
+- Click the extension icon to take a screenshot of the current page and share it directly with your coding agent.
+- Right-click the icon for more options:
+  - Take a screenshot after a delay (so you can activate hovers, pop-ups, etc).
+  - Capture the HTML contents of the page.
+
+Captured screenshots are written to `~/Downloads/SeeWhatISee/`. Coding agents can pick up the latest one without any copy-paste using the skills below.
+
+### Claude Code skills
+
+- `/see-what-i-see:look` — read the latest capture and describe it
+- `/see-what-i-see:watch` — watch for new screenshots to appear in the background, and then look at them when they appear
+- `/see-what-i-see:stop` — stop a running watch loop
+
+## Installation
+
+### Chrome extension
+
+1. Clone this repo and install dependencies:
+   ```bash
+   git clone https://github.com/jshute96/SeeWhatISee.git
+   cd SeeWhatISee
+   npm install
+   ```
+2. Build the extension:
+   ```bash
+   npm run build
+   ```
+3. In Chrome: open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select the `dist/` directory.
+
+### Claude Code plugin
+
+Add the marketplace and install the plugin:
+
+```bash
+/plugin marketplace add jshute96/SeeWhatISee
+/plugin install see-what-i-see@SeeWhatISee
+```
+
+For local development, load the plugin directly from a checkout:
+
+```bash
+claude --plugin-dir ~/dev/SeeWhatISee/plugin
+```
 
 ## Output files
 
@@ -23,7 +69,7 @@ Each capture writes three files into that directory:
   snapshot rewritten on every capture. If deleted, it will be restored
   from Chrome storage.
 
-## Setup
+## Development setup
 
 ```bash
 npm install
@@ -37,10 +83,6 @@ npm run build        # one-shot build into dist/
 npm run watch        # rebuild on TS changes
 ```
 
-Then in Chrome: open `chrome://extensions`, enable **Developer mode**,
-click **Load unpacked**, and select the `dist/` directory (**not**
-`src/` — `src/` holds TypeScript sources, `dist/` is what Chrome loads).
-
 ## Testing
 
 ```bash
@@ -53,7 +95,14 @@ calling capture functions on the background service worker — Playwright
 can't click the browser toolbar, so each capture mode is also exposed
 on `self.SeeWhatISee` for test/console access.
 
-## Watching for screenshots
+## Local commands
+
+When working inside this repository, the local versions of the skills are available without the `see-what-i-see:` prefix:
+- `/look`
+- `/watch`
+- `/stop`
+
+## Watching for screenshots from CLI
 
 ```bash
 scripts/watch.sh                # wait for the next capture, print it, exit
@@ -69,7 +118,8 @@ scripts/watch.sh --help         # full usage
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
-- `scripts/watch.sh` — filesystem watcher for new screenshots (see above)
+- `scripts/watch.sh` — symlink to `plugin/skills/watch/watch.sh`
+- `plugin/` — Claude Code plugin (skills, settings, manifest)
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
   exposes its service worker
