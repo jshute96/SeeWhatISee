@@ -100,11 +100,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   extensionContext: [
     async ({}, use) => {
       const ctx = await chromium.launchPersistentContext('', {
-        // Headed: extensions historically required headed mode. The newer
-        // headless ("--headless=new") supports extensions, but headed is the
-        // most reliable default. Override per-test if needed.
+        // Extensions require Chrome's new headless mode (--headless=new,
+        // available since Chrome 112). We set headless: false so Playwright
+        // doesn't inject its own --headless flag, then pass --headless=new
+        // ourselves. This avoids a visible window that steals focus.
         headless: false,
         args: [
+          '--headless=new',
           `--disable-extensions-except=${EXTENSION_PATH}`,
           `--load-extension=${EXTENSION_PATH}`,
         ],
