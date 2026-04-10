@@ -1,10 +1,16 @@
 {
+  "name": "SeeWhatISee",
+  "description": "Get screenshots taken by the SeeWhatISee Chrome extension",
+  "owner": {
+    "name": "Jeff Shute",
+    "email": "jshute96@gmail.com"
+  },
   "plugins": [
     {
       "name": "see-what-i-see",
       "description": "Get screenshots taken by the SeeWhatISee Chrome extension",
       "version": "0.1.0",
-      "path": "./plugin"
+      "source": "./plugin"
     }
   ]
 }
