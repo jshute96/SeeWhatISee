@@ -1,0 +1,1 @@
+../plugin/skills/watch/watch.sh
