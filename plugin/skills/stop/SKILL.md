@@ -1,7 +1,7 @@
 ---
 name: stop
 description: Stop the background SeeWhatISee watch loop started by /see-what-i-see:watch.
-allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/watch.sh:*)"
+allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/stop/watch.sh:*)"
 ---
 
 Stop the background SeeWhatISee watch loop started by `/see-what-i-see:watch`.

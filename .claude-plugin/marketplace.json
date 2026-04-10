@@ -9,7 +9,7 @@
     {
       "name": "see-what-i-see",
       "description": "Get screenshots taken by the SeeWhatISee Chrome extension",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./plugin"
     }
   ]
