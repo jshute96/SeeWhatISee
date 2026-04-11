@@ -1,4 +1,4 @@
-# SeeWhatISee Chrome Extension
+# ![icon](src/icons/icon-48.png) SeeWhatISee Chrome Extension
 
 This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
 
@@ -82,7 +82,7 @@ Each capture writes three files into that directory:
 
 - `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
   captured content itself, one per capture.
-- `latest.json` — describes the the most recent capture, with
+- `latest.json` — describes the most recent capture, with
   - `timestamp`
   - `url`
   - `screenshot` — PNG filename, when a screenshot was saved.
