@@ -103,9 +103,9 @@ plugin directory is keyed on version, so same version = same cache.
 - `plugins[0].description` — the plugin entry; **this is the load-bearing copy** (what users see in `/plugin` discovery).
 - `plugin.json` → `description` — optional metadata.
 
-The other two are optional and can be dropped or left to rot; we keep
-`metadata.description` for the marketplace-level blurb and a
-`description` in `plugin.json` out of habit.
+The other two are optional and can be dropped or left to rot. We keep
+`metadata.description` for the marketplace-level blurb but omit the
+`description` from `plugin.json` to avoid drift between copies.
 
 ## `plugin/settings.json`
 

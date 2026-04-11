@@ -25,7 +25,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `plugin/.claude-plugin/plugin.json` | Plugin manifest — name, version, description |
+| `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
 | `plugin/settings.json` | Plugin-level permission defaults for the skills |
 | `plugin/scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
 | `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — read the latest screenshot or HTML snapshot taken by the extension |

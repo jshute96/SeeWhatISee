@@ -2,7 +2,9 @@
 
 This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
 
-This lets you share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
+You can share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
+
+The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skills read them automatically from there.
 
 ## Usage
 
@@ -12,8 +14,6 @@ This lets you share what you see on a web page with your coding agent (Claude co
 - Right-click the icon for more options:
   - Take a screenshot after a delay (so you can activate hovers, pop-ups, etc).
   - Capture the HTML contents of the page.
-
-Captured screenshots are written to `~/Downloads/SeeWhatISee/`. Coding agents can pick up the latest one without any copy-paste using the skills below.
 
 ### Claude Code skills
 
