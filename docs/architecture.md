@@ -88,12 +88,17 @@ on-disk drop directory that coding agents can read from.
   either one will silently break one of the paths. `contextMenus` is
   needed to register the right-click menu entries, `downloads` to write
   the screenshot and sidecar files, `scripting` to inject the
-  content-retrieval script for "Save html contents", `storage` to back
-  the in-extension capture log, and `tabs` so `chrome.tabs.query` can
-  read the active tab's URL after the (possibly delayed) capture fires. Note that the
-  Chrome Web Store is blocked from `captureVisibleTab` even with
-  `activeTab`; that's a Chrome policy limit, not something the manifest
-  can fix.
+  content-retrieval script for "Save html contents", and `storage` to back
+  the in-extension capture log. We deliberately do not request the `tabs`
+  permission: `chrome.tabs.query` works without it, and `<all_urls>` host
+  permission is enough to expose `tab.url` for http(s) pages. For
+  restricted schemes like `chrome://`, `chrome.tabs.query` leaves
+  `tab.url` undefined regardless of `activeTab`, so the log records an
+  empty URL; the capture itself still succeeds because the `activeTab`
+  grant from a toolbar gesture authorizes `captureVisibleTab` on that
+  tab. Note that the Chrome Web Store is blocked from
+  `captureVisibleTab` even with `activeTab`; that's a Chrome policy
+  limit, not something the manifest can fix.
 - **Capture.** `src/capture.ts` provides two capture functions:
   - `captureVisible` calls `chrome.tabs.captureVisibleTab` to get a
     PNG data URL of the visible tab region.
