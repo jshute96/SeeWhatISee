@@ -94,11 +94,9 @@ on `self.SeeWhatISee` for test/console access.
 
 The plugin won't update if the version is the same.
 
-To make an update possible, bump the plugin version in `.claude-plugin/marketplace.json`.
+To make an update possible, bump `plugins[0].version` in `.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
 
-Users still need to use `/plugin` to ask for a marketplace plugin update.
-
-New installs (and updates, when they happen) will get the head revision from github.
+Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
 
 ## Running the Claude plugin locally
 

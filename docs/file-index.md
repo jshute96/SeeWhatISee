@@ -82,3 +82,4 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `file-index.md` | This file — one-line descriptions of every source file |
 | `architecture.md` | High-level architecture of the extension and capture flow |
+| `claude-plugin.md` | Notes on the Claude Code plugin: marketplace/plugin manifests, install flow, `${CLAUDE_PLUGIN_ROOT}`, local-dev shim, and gotchas we hit |
