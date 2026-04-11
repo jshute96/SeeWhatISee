@@ -30,7 +30,6 @@ One-line descriptions of every source file, grouped by directory.
 | `plugin/skills/watch/SKILL.md` | `/see-what-i-see:watch` — background loop that describes each new capture as it arrives |
 | `plugin/skills/watch/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
 | `plugin/skills/stop/SKILL.md` | `/see-what-i-see:stop` — stop a running watch loop |
-| `plugin/skills/stop/watch.sh` | Symlink to `../watch/watch.sh` — lets the stop skill reference watch.sh without `..` paths |
 
 ## Local Skills (`.claude/skills/`)
 

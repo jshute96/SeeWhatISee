@@ -44,7 +44,7 @@ Add the marketplace and install the plugin:
 
 ```bash
 /plugin marketplace add jshute96/SeeWhatISee
-/plugin install see-what-i-see@SeeWhatISee
+/plugin install see-what-i-see@see-what-i-see-marketplace
 ```
 
 For local development, load the plugin directly from a checkout:
