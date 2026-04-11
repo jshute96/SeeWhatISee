@@ -235,6 +235,47 @@ render cleanly.
   If you want a tooltip, put the extra context in a source comment
   and keep the title short.
 
+## "Capture with details…" — extension page + runtime messaging
+
+The details flow opens a bundled extension page (`capture.html`)
+in a new tab, previews the pre-captured screenshot, and waits for
+the user to pick which artifacts to save before writing anything.
+A few Chrome-specific gotchas surfaced along the way:
+
+- **Extension pages have CSP that forbids inline scripts.** The
+  default extension CSP does not allow `<script>` blocks inside
+  `capture.html`. The controller is a separate file
+  (`src/capture-page.ts`, compiled to `dist/capture-page.js`)
+  referenced via `<script src="capture-page.js">`.
+- **`web_accessible_resources` is not needed.** `capture.html` is
+  opened via `chrome.tabs.create({ url: chrome.runtime.getURL(...)})`,
+  which is a same-origin navigation within the extension. WAR is
+  only required to expose a resource to *non-extension* contexts
+  (content scripts in arbitrary pages, `<iframe>` from a web page).
+- **Module-level state doesn't survive SW idle-out, so the
+  pre-captured screenshot + HTML are stashed in
+  `chrome.storage.session`, keyed by the new tab's id.** Session
+  storage is in-memory (not written to disk) but survives the
+  worker unloading between the menu click and the user clicking
+  Capture on the page.
+- **Runtime message listeners must return `true` to keep the
+  response channel open for an async reply.** `getDetailsData`
+  reads from `chrome.storage.session` asynchronously and calls
+  `sendResponse` later — the listener must return `true` or Chrome
+  drops the channel and the page-side `sendMessage` resolves with
+  `undefined`. `saveDetails` doesn't reply, so it returns `false`.
+- **Don't race the tab close against the save.** The `saveDetails`
+  handler does the save inside `runWithErrorReporting` and
+  only closes the tab in a `finally` block, so the close happens
+  after the download calls return *and* runs even when the save
+  throws — which matters because `chrome.downloads.download`
+  resolves on download *start*, not completion, but for our tiny
+  data-URL payloads that's effectively when the bytes are queued.
+- **Manual tab close cleanup.** If the user closes the details
+  tab without clicking Capture, a `chrome.tabs.onRemoved` handler
+  drops the stashed capture from `chrome.storage.session`. Without
+  this, session storage would grow until the browser restarts.
+
 ## Testing an MV3 extension with Playwright
 
 - **Persistent context with the unpacked extension loaded.** The

@@ -16,14 +16,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 +----------------------+        +-----------------------+        +-----------+
                                           |
                                           v
-                                +---------------------+
-                                | src/capture.ts        |
-                                |  - captureVisible()   |
-                                |  - savePageContents() |
-                                |  - clearCaptureLog()  |
-                                |  - (future: full,     |
-                                |     element, ...)     |
-                                +---------------------+
+                                +---------------------------+
+                                | src/capture.ts              |
+                                |  - captureVisible()         |
+                                |  - savePageContents()       |
+                                |  - captureBothToMemory()    |
+                                |  - saveDetailedCapture()    |
+                                |  - clearCaptureLog()        |
+                                +---------------------------+
 ```
 
 - **Trigger.** A click on the toolbar action fires
@@ -49,6 +49,20 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     screenshot — the only difference is the `.html` filename. Requires
     the `scripting` permission. Also callable from the devtools console
     as `SeeWhatISee.savePageContents()`.
+  - **Capture with details...** — captures *both* the screenshot
+    and the page HTML up-front into memory (via
+    `captureBothToMemory()`), stashes the pair in
+    `chrome.storage.session` keyed by the id of a newly opened tab,
+    and navigates that tab to `capture.html` (a bundled extension
+    page). The page previews the screenshot, lets the user choose
+    which artifacts to keep (checkboxes) and add an optional prompt,
+    then sends a `saveDetails` runtime message back to the
+    background. The background calls `saveDetailedCapture()` with
+    the selected subset and closes the tab. The resulting sidecar
+    record can include any or all of `screenshot`, `contents`, and
+    `prompt`, plus `timestamp` and `url`. See
+    [`chrome-extension.md`](chrome-extension.md) for the
+    runtime-message / session-storage design notes.
   - *(separator)*
   - **Clear Chrome history** — erases the capture log from
     `chrome.storage.local` via `clearCaptureLog()`. The on-disk
@@ -90,12 +104,17 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - See [`chrome-extension.md`](chrome-extension.md) for the reasoning and other
     Chrome-specific permission hazards (including why the Chrome Web Store itself
     blocks `captureVisibleTab`).
-- **Capture.** `src/capture.ts` provides two capture functions:
+- **Capture.** `src/capture.ts` provides these capture functions:
   - `captureVisible` calls `chrome.tabs.captureVisibleTab` to get a
-    PNG data URL of the visible tab region.
+    PNG data URL of the visible tab region and saves it directly.
   - `savePageContents` uses `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and saves
     it as an HTML file.
+  - `captureBothToMemory` does *both* of the above without saving,
+    returning the data for the details flow to stash and preview.
+  - `saveDetailedCapture` takes pre-captured data plus flags for
+    which artifacts to keep and an optional prompt, and writes the
+    selected files + a single combined sidecar record.
 
   Future variations (full-page stitching, element crop, etc.) will live alongside
   these as additional exported functions.
@@ -114,10 +133,19 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - Trade-off: the directory must live under the user's configured downloads folder.
 - **Metadata sidecars.** Alongside the content file, every capture also
   writes two JSON sidecars into the same directory:
-  - `latest.json` — pretty-printed `{timestamp, filename, url}` of the
-    most recent capture, overwritten each time.
-    - Lets an agent get the newest capture without having to `ls`.
-    - `filename` is the bare content file basename (`.png` or `.html`), without the directory.
+  - `latest.json` — pretty-printed record for the most recent capture,
+    overwritten each time. Lets an agent get the newest capture without
+    having to `ls`. Every record has `timestamp` and `url`, plus:
+    - `screenshot` — bare PNG filename, set when a screenshot was saved.
+    - `contents` — bare HTML filename, set when HTML contents were saved.
+    - `prompt` — user-entered text from "Capture with details…", omitted
+      when empty.
+
+    Legacy screenshot captures emit `{timestamp, screenshot, url}`;
+    legacy HTML captures emit `{timestamp, contents, url}`. The
+    detailed-capture path can emit any or all of the optional fields
+    (the screenshot / contents filenames are chosen from the *same*
+    compact timestamp so they share a suffix).
   - `log.json` — newline-delimited JSON (one record per line, same
     schema as `latest.json`), grep-friendly history of recent captures.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
@@ -136,9 +164,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `scripts/watch.sh` is the underlying filesystem watcher:
 
   - Detects changes to `latest.json` by polling mtime every 0.5s.
-  - Supports `--after BASENAME` to catch up on missed captures.
+  - Supports `--after TIMESTAMP` to catch up on missed captures;
+    TIMESTAMP is the ISO `timestamp` field from a previous record
+    (matched against `log.json`).
   - If `--directory` is not given, looks for a `.SeeWhatISee` config file
     (in the current directory, then `$HOME`) with a `directory=<path>` setting.
+  - When a capture has a `prompt`, the skill that consumes it treats
+    the prompt as the user's instruction and acts on it directly
+    instead of just describing the image.
 
 ## Why a separate `dist/`
 

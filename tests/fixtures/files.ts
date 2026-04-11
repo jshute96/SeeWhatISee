@@ -121,7 +121,7 @@ export async function verifyHtmlCapture(
 
   const expectedRecord: CaptureRecord = {
     timestamp: result.timestamp,
-    filename: result.filename,
+    contents: result.contents,
     url: result.url,
   };
 
@@ -191,7 +191,7 @@ export async function verifyCapture(
   // an assertion fails.
   const expectedRecord: CaptureRecord = {
     timestamp: result.timestamp,
-    filename: result.filename,
+    screenshot: result.screenshot,
     url: result.url,
   };
 

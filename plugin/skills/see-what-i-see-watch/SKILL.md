@@ -13,22 +13,26 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 2. **On completion.** When the background task completes, check its exit code:
   - **Non-zero exit (killed / error):** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
   - **Exit 0 (success — a capture arrived):**
-    1. Read the task's captured stdout to get the JSON record.
-    2. Process as described below.
-    3. Immediately launch the next iteration: run `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh --after <filename>` again with `run_in_background: true` (no timeout). The `--after` flag ensures we don't miss any captures added before we restarted. If any captures are reported, process each as described below.
+    1. Read the task's captured stdout to get the JSON record(s).
+    2. Process each record as described below.
+    3. Immediately launch the next iteration: run `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh --after <timestamp>` again with `run_in_background: true` (no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures added before we restarted; if any captures are reported on the next run, process each the same way.
 
 3. **Repeat forever** until the watcher exits non-zero or the user otherwise tells you to stop.
 
 ## Process each snapshot
 
-1. You have a JSON record for this capture. It contains `{timestamp, filename, url}`.
-  - The referenced file is `~/Downloads/SeeWhatISee/<filename>`.
-  - The extension could be `.png` (screenshot) or `.html` (page contents).
+1. You have a JSON record for this capture. It contains `{timestamp, url}` plus some combination of:
+  - `screenshot` — bare filename of a PNG at `~/Downloads/SeeWhatISee/<screenshot>`
+  - `contents` — bare filename of an HTML file at `~/Downloads/SeeWhatISee/<contents>`
+  - `prompt` — the user's instruction for this capture (if present)
 
-2. For PNG:
-  - Read the file using the Read tool.
-  - Briefly describe what you see, mentioning the source `url`.
+  Any record will have at least one of `screenshot` / `contents`.
+  **Look at these files only. Don't go fishing for others unless asked to.**
 
-3. For HTML:
-  - The file could be large so don't read it until you know what to look for.
-  - Just report that you have an HTML snapshot from the source `url` and ask the user what they want to know.
+2. Process the capture:
+  - If `screenshot` is present, Read it with the Read tool.
+  - If `contents` is present, don't Read it up front (HTML can be large); wait until you know what to look for.
+  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot and/or HTML as the subject of that instruction. Mention the source `url` if relevant.
+  - If `prompt` is absent:
+    - For screenshots, briefly describe what you see and mention the source `url`.
+    - For HTML-only captures, report that you have an HTML snapshot from the source `url` and ask the user what they want to know.

@@ -1,4 +1,11 @@
-import { captureVisible, clearCaptureLog, savePageContents } from './capture.js';
+import {
+  captureBothToMemory,
+  captureVisible,
+  clearCaptureLog,
+  saveDetailedCapture,
+  savePageContents,
+  type InMemoryCapture,
+} from './capture.js';
 
 // User-visible error reporting for failed captures.
 //
@@ -109,6 +116,7 @@ async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> 
 const SUPPRESSED_UNHANDLED = [
   'No active tab found to capture',
   'Failed to retrieve page contents',
+  'saveDetailedCapture called with nothing to save',
 ];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);
@@ -169,9 +177,110 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'capture-delayed-2s', title: 'Take screenshot in 2s', delayMs: 2000 },
   { id: 'capture-delayed-5s', title: 'Take screenshot in 5s', delayMs: 5000 },
   { id: 'save-page-contents', title: 'Save html contents', action: () => savePageContents() },
+  { id: 'capture-with-details', title: 'Capture with details...', action: () => startCaptureWithDetails() },
   { id: 'sep-clear', type: 'separator' },
   { id: 'clear-log', title: 'Clear Chrome history', action: () => clearCaptureLog() },
 ];
+
+// "Capture with details…" flow. We grab both the screenshot and
+// the HTML up-front (so the user can decide which to save without
+// worrying that the page will have changed in the meantime) and
+// stash them under a per-tab key in chrome.storage.session.
+// The capture.html extension page fetches its data by sending a
+// runtime message; we match sender.tab.id to the stored key.
+//
+// Storage lives in `session` rather than a module-level Map because
+// the MV3 service worker can be torn down between the menu click
+// and the user clicking Capture on the page — session storage is
+// in-memory but survives SW idle-out.
+const DETAILS_STORAGE_PREFIX = 'captureDetails_';
+
+function detailsStorageKey(tabId: number): string {
+  return `${DETAILS_STORAGE_PREFIX}${tabId}`;
+}
+
+async function startCaptureWithDetails(): Promise<void> {
+  // Capture both artifacts *before* opening the new tab so we
+  // snapshot the user's current page (not the empty capture.html
+  // tab). captureBothToMemory queries the active tab itself.
+  const data = await captureBothToMemory();
+  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('capture.html') });
+  if (tab.id === undefined) {
+    throw new Error('Failed to open capture details tab');
+  }
+  await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: data });
+}
+
+interface GetDetailsMessage {
+  action: 'getDetailsData';
+}
+interface SaveDetailsMessage {
+  action: 'saveDetails';
+  screenshot: boolean;
+  html: boolean;
+  prompt: string;
+}
+type DetailsMessage = GetDetailsMessage | SaveDetailsMessage;
+
+chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
+  const tabId = sender.tab?.id;
+  if (tabId === undefined) return false;
+
+  if (msg.action === 'getDetailsData') {
+    void (async () => {
+      const key = detailsStorageKey(tabId);
+      const stored = await chrome.storage.session.get(key);
+      sendResponse(stored[key] as InMemoryCapture | undefined);
+    })();
+    return true; // keep the message channel open for the async response
+  }
+
+  if (msg.action === 'saveDetails') {
+    void runWithErrorReporting(async () => {
+      const key = detailsStorageKey(tabId);
+      const stored = await chrome.storage.session.get(key);
+      const capture = stored[key] as InMemoryCapture | undefined;
+      if (!capture) throw new Error('Capture data missing for details tab');
+      try {
+        await saveDetailedCapture({
+          capture,
+          includeScreenshot: msg.screenshot,
+          includeHtml: msg.html,
+          prompt: msg.prompt,
+        });
+      } finally {
+        // Always clean up the stored capture and close the tab, even
+        // if saveDetailedCapture throws: the stashed data is no longer
+        // useful and the user can click the menu item again to retry.
+        //
+        // Trade-off: on failure the details tab disappears out from
+        // under the user, and the only visible signal is the usual
+        // error-icon / tooltip swap from runWithErrorReporting. That's
+        // consistent with every other capture path (they all fail
+        // silently on-screen and surface the error on the toolbar),
+        // and leaving the tab open on failure would strand a
+        // now-stale preview the user would have to close by hand.
+        await chrome.storage.session.remove(key);
+        try {
+          await chrome.tabs.remove(tabId);
+        } catch (err) {
+          console.warn('[SeeWhatISee] failed to close details tab:', err);
+        }
+      }
+    });
+    // No response expected — background closes the tab when done.
+    return false;
+  }
+
+  return false;
+});
+
+// If the user closes a details tab manually (without clicking
+// Capture), drop its stashed data so session storage doesn't grow
+// until the browser restarts.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void chrome.storage.session.remove(detailsStorageKey(tabId));
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   // removeAll first because onInstalled fires on `install`, `update`,
@@ -221,6 +330,9 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 (self as unknown as { SeeWhatISee: Record<string, unknown> }).SeeWhatISee = {
   captureVisible,
   savePageContents,
+  captureBothToMemory,
+  saveDetailedCapture,
+  startCaptureWithDetails,
   clearCaptureLog,
   reportCaptureError,
   clearCaptureError,

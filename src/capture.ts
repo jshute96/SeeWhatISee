@@ -30,23 +30,44 @@ export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
   /**
-   * Bare filename (no directory) of the PNG, relative to the same
-   * directory the JSON sidecars live in (`SeeWhatISee/` under the user's
-   * downloads dir). Stored without the subdir prefix so consumers can
-   * resolve it against whichever directory they read the sidecar from.
+   * Bare filename of the captured PNG (no directory). Set on
+   * screenshot captures — the immediate / delayed screenshot paths,
+   * and the "Capture with details…" path when the user keeps the
+   * screenshot.
    *
    * The embedded compact timestamp is in *local* time (chosen so
-   * filenames sort the way the user expects when browsing the directory)
-   * — note this differs from `timestamp` above, which is UTC. The two
-   * refer to the same instant but will display different dates near
-   * local midnight.
+   * filenames sort the way the user expects when browsing the
+   * directory) — note this differs from `timestamp` above, which is
+   * UTC. The two refer to the same instant but will display different
+   * dates near local midnight.
    */
-  filename: string;
+  screenshot?: string;
+  /**
+   * Bare filename of the captured HTML file (no directory). Set on
+   * HTML captures — the "Save html contents" menu entry, and the
+   * "Capture with details…" path when the user keeps the HTML.
+   */
+  contents?: string;
+  /**
+   * User-entered prompt text from the "Capture with details…" flow,
+   * trimmed. Omitted entirely when empty so the field's presence
+   * implies there is something to act on.
+   */
+  prompt?: string;
   /** URL of the captured tab, or empty string if unavailable. */
   url: string;
 }
 
 export interface CaptureResult extends CaptureRecord {
+  /**
+   * Bare filename of the content file (PNG or HTML) written by this
+   * specific capture. Denormalized copy of whichever of `screenshot`
+   * / `contents` the underlying save path set — callers that don't
+   * need to care which kind of capture ran can read this directly.
+   * The detailed-capture path (which may write both files) doesn't
+   * return a CaptureResult, so there's never ambiguity here.
+   */
+  filename: string;
   /** Download id of the content file (PNG or HTML). */
   downloadId: number;
   /**
@@ -136,7 +157,7 @@ export async function savePageContents(): Promise<CaptureResult> {
   const filename = `contents-${compactTimestamp(now)}.html`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    filename,
+    contents: filename,
     url: active.url ?? '',
   };
 
@@ -151,13 +172,134 @@ export async function savePageContents(): Promise<CaptureResult> {
   const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
     const [latest, logId] = await Promise.all([
-      writeJsonFile('latest.json', serializeRecord(record, 2)),
+      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
       writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
     ]);
     return { latest, log: logId };
   });
 
-  return { downloadId, sidecarDownloadIds, ...record };
+  return { downloadId, sidecarDownloadIds, filename, ...record };
+}
+
+/**
+ * Capture the visible tab's screenshot *and* full HTML without
+ * writing anything to disk. Used by the "Capture with details…"
+ * flow: the extension page previews the screenshot while the user
+ * decides which artifacts to keep, then calls saveDetailedCapture
+ * with the selected subset.
+ *
+ * The active-tab query happens once and both the screenshot and the
+ * HTML scrape target that tab, so the two artifacts are guaranteed
+ * to describe the same page. If the user switches tabs during the
+ * details flow, the tab identifier we capture here is stable.
+ */
+export interface InMemoryCapture {
+  screenshotDataUrl: string;
+  html: string;
+  url: string;
+}
+
+export async function captureBothToMemory(): Promise<InMemoryCapture> {
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!active) throw new Error('No active tab found to capture');
+
+  const screenshotDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, {
+    format: 'png',
+  });
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: active.id! },
+    func: () => document.documentElement.outerHTML,
+  });
+  const html = results[0]?.result as string;
+  if (!html) throw new Error('Failed to retrieve page contents');
+
+  return { screenshotDataUrl, html, url: active.url ?? '' };
+}
+
+export interface SaveDetailedOptions {
+  capture: InMemoryCapture;
+  /** Save the screenshot PNG as part of this capture. */
+  includeScreenshot: boolean;
+  /** Save the captured HTML as part of this capture. */
+  includeHtml: boolean;
+  /**
+   * Optional user-entered prompt. Trimmed by the caller; an empty
+   * string is treated the same as omitting the field. Stored on the
+   * sidecar record under `prompt` when non-empty.
+   */
+  prompt?: string;
+}
+
+/**
+ * Save a "Capture with details…" result: writes the screenshot
+ * and/or HTML files requested by `opts`, plus a single combined
+ * latest.json / log.json record that references whichever artifacts
+ * were saved and includes the prompt (when non-empty). Reuses the
+ * same `compactTimestamp` for both artifacts so they share a
+ * basename suffix and the record timestamps match exactly.
+ *
+ * Callers must ensure at least one of `includeScreenshot` /
+ * `includeHtml` is true; we throw if both are false rather than
+ * writing an empty record.
+ */
+export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
+  if (!opts.includeScreenshot && !opts.includeHtml) {
+    throw new Error('saveDetailedCapture called with nothing to save');
+  }
+
+  const now = new Date();
+  const ts = compactTimestamp(now);
+  const record: CaptureRecord = {
+    timestamp: now.toISOString(),
+    url: opts.capture.url,
+  };
+
+  // Write the requested artifact files in parallel. Errors here
+  // propagate out before we touch the sidecars, same as the legacy
+  // paths: we never want a sidecar to reference a file that didn't
+  // land on disk. Same download-start-vs-on-disk caveat as
+  // saveCapture: chrome.downloads.download resolves on download
+  // start, not completion; overkill to wait on onChanged for our
+  // tiny data-URL payloads.
+  const writes: Promise<unknown>[] = [];
+  if (opts.includeScreenshot) {
+    const filename = `screenshot-${ts}.png`;
+    record.screenshot = filename;
+    writes.push(
+      chrome.downloads.download({
+        url: opts.capture.screenshotDataUrl,
+        filename: `${DOWNLOAD_SUBDIR}/${filename}`,
+        saveAs: false,
+      }),
+    );
+  }
+  if (opts.includeHtml) {
+    const filename = `contents-${ts}.html`;
+    record.contents = filename;
+    writes.push(
+      chrome.downloads.download({
+        url: `data:text/html;charset=utf-8,${encodeURIComponent(opts.capture.html)}`,
+        filename: `${DOWNLOAD_SUBDIR}/${filename}`,
+        saveAs: false,
+      }),
+    );
+  }
+  await Promise.all(writes);
+
+  if (opts.prompt && opts.prompt.length > 0) {
+    record.prompt = opts.prompt;
+  }
+
+  await serializeWrite(async () => {
+    const log = await appendToLog(record);
+    await Promise.all([
+      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
+      writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
+    ]);
+  });
+
+  return record;
 }
 
 async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult> {
@@ -170,7 +312,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   const filename = `screenshot-${compactTimestamp(now)}.png`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    filename,
+    screenshot: filename,
     url,
   };
 
@@ -196,13 +338,13 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
     const [latest, logId] = await Promise.all([
-      writeJsonFile('latest.json', serializeRecord(record, 2)),
+      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
       writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
     ]);
     return { latest, log: logId };
   });
 
-  return { downloadId, sidecarDownloadIds, ...record };
+  return { downloadId, sidecarDownloadIds, filename, ...record };
 }
 
 /**
@@ -266,11 +408,15 @@ async function writeJsonFile(name: string, text: string): Promise<number> {
  * compact NDJSON-style output, 2 for human-readable.
  */
 function serializeRecord(r: CaptureRecord, indent = 0): string {
-  const ordered = {
-    timestamp: r.timestamp,
-    filename: r.filename,
-    url: r.url,
-  };
+  // Build the output object field by field so optional entries are
+  // *absent* (not `undefined`) when unset — JSON.stringify drops
+  // undefined values, but writing them explicitly is noisier. Fixed
+  // key order keeps log.json diff-stable.
+  const ordered: Record<string, unknown> = { timestamp: r.timestamp };
+  if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
+  if (r.contents !== undefined) ordered.contents = r.contents;
+  if (r.prompt !== undefined) ordered.prompt = r.prompt;
+  ordered.url = r.url;
   return JSON.stringify(ordered, null, indent);
 }
 

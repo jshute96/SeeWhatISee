@@ -100,23 +100,32 @@ function runWatch(args: string[], opts?: { cwd?: string }): { stdout: string; st
 }
 
 /** Build a fake capture record. */
-function fakeRecord(index: number): { json: string; filename: string } {
+function fakeRecord(index: number): { json: string; timestamp: string; screenshot: string } {
   const ms = String(index).padStart(3, '0');
-  const filename = `screenshot-20260409-120000-${ms}.png`;
+  const screenshot = `screenshot-20260409-120000-${ms}.png`;
+  const timestamp = `2026-04-09T12:00:00.${ms}Z`;
   const record = {
-    timestamp: `2026-04-09T12:00:00.${ms}Z`,
-    filename,
+    timestamp,
+    screenshot,
     url: `http://example.com/page${index}`,
   };
-  return { json: JSON.stringify(record), filename };
+  return { json: JSON.stringify(record), timestamp, screenshot };
 }
 
-/** Simulate a capture by rewriting latest.json (and appending to log.json). */
-function simulateCapture(dir: string, index: number): string {
-  const { json, filename } = fakeRecord(index);
+/**
+ * Simulate a capture by rewriting latest.json (and appending to
+ * log.json). Returns the synthetic record so callers can assert on
+ * either `timestamp` (the `--after` key) or `screenshot` (the content
+ * filename, useful for spotting the record in output).
+ */
+function simulateCapture(dir: string, index: number): {
+  timestamp: string;
+  screenshot: string;
+} {
+  const { json, timestamp, screenshot } = fakeRecord(index);
   fs.writeFileSync(path.join(dir, 'latest.json'), json + '\n');
   fs.appendFileSync(path.join(dir, 'log.json'), json + '\n');
-  return filename;
+  return { timestamp, screenshot };
 }
 
 // ---- Temp dir management ---------------------------------------------------
@@ -166,13 +175,13 @@ test.describe('watch.sh', () => {
     await new Promise((r) => setTimeout(r, 1200));
 
     // Simulate a capture — rewrite latest.json.
-    const filename = simulateCapture(tmpDir, 1);
+    const { screenshot } = simulateCapture(tmpDir, 1);
 
     const exitCode = await waitForExit(watch.proc, 5_000);
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    expect(out).toContain(filename);
+    expect(out).toContain(screenshot);
   });
 
   test('loop mode: emits on 3 captures', async () => {
@@ -180,22 +189,22 @@ test.describe('watch.sh', () => {
     // Wait >1s so the first simulated capture has a strictly newer mtime.
     await new Promise((r) => setTimeout(r, 1200));
 
-    const filenames: string[] = [];
+    const screenshots: string[] = [];
     for (let i = 1; i <= 3; i++) {
-      filenames.push(simulateCapture(tmpDir, i));
+      screenshots.push(simulateCapture(tmpDir, i).screenshot);
       // Small gap so the mtime definitely advances (filesystem mtime
       // granularity is typically 1s; we write each capture to a temp
       // file then rename, and our emit() deduplicates on mtime).
       await new Promise((r) => setTimeout(r, 1100));
     }
 
-    // Wait for all 3 filenames to appear in the output.
-    await waitForPattern(watch.output, filenames[2], 1, 10_000);
+    // Wait for all 3 screenshots to appear in the output.
+    await waitForPattern(watch.output, screenshots[2], 1, 10_000);
 
     watch.kill();
     const out = watch.output();
 
-    for (const fn of filenames) {
+    for (const fn of screenshots) {
       expect(out).toContain(fn);
     }
   });
@@ -205,27 +214,27 @@ test.describe('watch.sh', () => {
     simulateCapture(tmpDir, 1);
     simulateCapture(tmpDir, 2);
 
-    const { filename: fn0 } = fakeRecord(0);
-    const { filename: fn1 } = fakeRecord(1);
-    const { filename: fn2 } = fakeRecord(2);
+    const r0 = fakeRecord(0);
+    const r1 = fakeRecord(1);
+    const r2 = fakeRecord(2);
 
     // --after record 0: should show 2 pending (records 1 and 2).
-    const after0 = runWatch(['--after', fn0, '--directory', tmpDir]);
+    const after0 = runWatch(['--after', r0.timestamp, '--directory', tmpDir]);
     expect(after0.exitCode).toBe(0);
     expect(after0.stdout).toContain('2 pending captures');
-    expect(after0.stdout).toContain(fn1);
-    expect(after0.stdout).toContain(fn2);
-    expect(after0.stdout).not.toContain(fn0);
+    expect(after0.stdout).toContain(r1.screenshot);
+    expect(after0.stdout).toContain(r2.screenshot);
+    expect(after0.stdout).not.toContain(r0.screenshot);
 
     // --after record 1: should show 1 pending (record 2).
-    const after1 = runWatch(['--after', fn1, '--directory', tmpDir]);
+    const after1 = runWatch(['--after', r1.timestamp, '--directory', tmpDir]);
     expect(after1.exitCode).toBe(0);
     expect(after1.stdout).toContain('1 pending capture:');
-    expect(after1.stdout).toContain(fn2);
+    expect(after1.stdout).toContain(r2.screenshot);
 
     // --after record 2: nothing pending — script would block, so verify
     // it doesn't exit immediately.
-    const after2 = startWatch(['--after', fn2, '--directory', tmpDir]);
+    const after2 = startWatch(['--after', r2.timestamp, '--directory', tmpDir]);
     const code2 = await waitForExit(after2.proc, 1_500);
     // Should still be running (null = didn't exit within timeout).
     expect(code2).toBeNull();
@@ -236,27 +245,27 @@ test.describe('watch.sh', () => {
     // log.json has record 0 from beforeEach. Add record 1.
     simulateCapture(tmpDir, 1);
 
-    const { filename: fn0 } = fakeRecord(0);
-    const { filename: fn1 } = fakeRecord(1);
+    const r0 = fakeRecord(0);
+    const r1 = fakeRecord(1);
 
-    // Start with --after fn0 --loop. Should immediately emit the
-    // pending capture (record 1), then keep watching.
-    const watch = startWatch(['--after', fn0, '--loop', '--directory', tmpDir]);
+    // Start with --after r0.timestamp --loop. Should immediately emit
+    // the pending capture (record 1), then keep watching.
+    const watch = startWatch(['--after', r0.timestamp, '--loop', '--directory', tmpDir]);
 
     // Wait for the pending capture to appear in the output.
-    await waitForPattern(watch.output, fn1, 1, 5_000);
+    await waitForPattern(watch.output, r1.screenshot, 1, 5_000);
 
     // Verify it emitted the pending capture.
     const out1 = watch.output();
     expect(out1).toContain('1 pending capture:');
-    expect(out1).toContain(fn1);
+    expect(out1).toContain(r1.screenshot);
 
     // The process should still be running (loop mode).
     expect(watch.proc.exitCode).toBeNull();
 
     // Now simulate another capture and verify the watcher picks it up.
     await new Promise((r) => setTimeout(r, 1200));
-    const fn2 = simulateCapture(tmpDir, 2);
+    const { screenshot: fn2 } = simulateCapture(tmpDir, 2);
     await waitForPattern(watch.output, fn2, 1, 5_000);
 
     watch.kill();
@@ -264,8 +273,10 @@ test.describe('watch.sh', () => {
     expect(out2).toContain(fn2);
   });
 
-  test('--after with nonexistent filename warns and watches', async () => {
-    const watch = startWatch(['--after', 'nonexistent.png', '--directory', tmpDir]);
+  test('--after with nonexistent timestamp warns and watches', async () => {
+    const watch = startWatch([
+      '--after', '2099-01-01T00:00:00.000Z', '--directory', tmpDir,
+    ]);
     // Give it a moment to print the warning and enter the watch loop.
     await new Promise((r) => setTimeout(r, 1_000));
 
@@ -371,8 +382,8 @@ test.describe('watch.sh config file', () => {
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    const { filename } = fakeRecord(1);
-    expect(out).toContain(filename);
+    const { screenshot } = fakeRecord(1);
+    expect(out).toContain(screenshot);
   });
 
   test('--directory flag overrides .SeeWhatISee config', async () => {
@@ -387,8 +398,8 @@ test.describe('watch.sh config file', () => {
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    const { filename } = fakeRecord(1);
-    expect(out).toContain(filename);
+    const { screenshot } = fakeRecord(1);
+    expect(out).toContain(screenshot);
   });
 
   test('errors on unrecognized option in config file', () => {
@@ -417,8 +428,8 @@ test.describe('watch.sh config file', () => {
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    const { filename } = fakeRecord(1);
-    expect(out).toContain(filename);
+    const { screenshot } = fakeRecord(1);
+    expect(out).toContain(screenshot);
   });
 
   test('handles quoted directory values in config', async () => {
@@ -432,7 +443,7 @@ test.describe('watch.sh config file', () => {
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    const { filename } = fakeRecord(1);
-    expect(out).toContain(filename);
+    const { screenshot } = fakeRecord(1);
+    expect(out).toContain(screenshot);
   });
 });

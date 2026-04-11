@@ -12,7 +12,8 @@
 // Run with `npm run build`. Pass --watch to keep tsc running.
 //
 // Note on watch mode: only TypeScript is watched. If you edit
-// src/manifest.json or swap out icon files, re-run `npm run build`.
+// src/manifest.json, src/capture.html, or swap out icon files,
+// re-run `npm run build`.
 
 import { rm, mkdir, cp } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
@@ -34,6 +35,11 @@ await cp(resolve(root, 'src/icons'), resolve(dist, 'icons'), { recursive: true }
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
 //    unpacked from dist/.
 await cp(resolve(root, 'src/manifest.json'), resolve(dist, 'manifest.json'));
+
+// 3b. Copy the capture-details extension page HTML into dist/. The
+//     accompanying TypeScript controller (src/capture-page.ts) is
+//     picked up by tsc along with the rest of src/.
+await cp(resolve(root, 'src/capture.html'), resolve(dist, 'capture.html'));
 
 // 4. Run tsc. Watch mode keeps tsc running until the user Ctrl-C's; we
 //    await its exit so signals route through the build script and a spawn

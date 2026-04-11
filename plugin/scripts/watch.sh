@@ -4,8 +4,10 @@
 #
 # Default mode: wait for the next change, emit, and exit.
 # --loop: keep watching and emitting until killed.
-# --after BASENAME: check log.json for captures newer than BASENAME
-#   and emit them immediately before watching.
+# --after TIMESTAMP: check log.json for captures newer than the record
+#   whose timestamp matches TIMESTAMP, and emit them immediately before
+#   watching. TIMESTAMP is the `timestamp` field (ISO 8601) from a
+#   previous capture, which uniquely identifies it.
 # --stop: kill any existing watcher on this directory and exit.
 #
 # If --directory is not given, looks for a .SeeWhatISee config file
@@ -35,9 +37,9 @@ Watch for new screenshots from the SeeWhatISee Chrome extension.
 Options:
   --directory DIR   Directory to watch (default: ~/Downloads/SeeWhatISee)
   --loop            Keep watching after each emission (default: exit after one)
-  --after BASENAME  Check log.json for captures newer than BASENAME and emit
-                    them immediately. BASENAME is the filename field from a
-                    previous capture (e.g. screenshot-20260408-234518-224.png).
+  --after TIMESTAMP Check log.json for captures newer than TIMESTAMP and emit
+                    them immediately. TIMESTAMP is the `timestamp` field from a
+                    previous capture (e.g. 2026-04-08T23:45:18.224Z).
   --stop            Stop any existing watcher on this directory and exit.
   --help            Show this help and exit.
 EOF
@@ -194,13 +196,13 @@ if [[ -n "$AFTER" ]]; then
   if [[ ! -f "$LOG" ]]; then
     echo "Warning: $LOG not found; ignoring --after and watching as usual" >&2
   else
-    # Grep for the line containing the --after basename. -n gives us the
-    # line number so we can tail everything after it.
-    # Anchor to the "filename" field so we don't false-match the same
-    # string appearing in a url value. `|| true` because grep exits 1
-    # on no-match, which `set -eo pipefail` would otherwise promote to
+    # Grep for the line containing the --after timestamp. -n gives us
+    # the line number so we can tail everything after it. Anchor to
+    # the "timestamp" field so we don't false-match the same string
+    # appearing in a url value. `|| true` because grep exits 1 on
+    # no-match, which `set -eo pipefail` would otherwise promote to
     # a script-terminating error.
-    line_num=$(grep -n "\"filename\":.*\"$AFTER\"" "$LOG" | head -1 | cut -d: -f1 || true)
+    line_num=$(grep -n "\"timestamp\":[[:space:]]*\"$AFTER\"" "$LOG" | head -1 | cut -d: -f1 || true)
     if [[ -z "$line_num" ]]; then
       echo "Warning: '$AFTER' not found in $LOG; ignoring --after and watching as usual" >&2
     else
