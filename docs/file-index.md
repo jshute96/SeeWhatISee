@@ -26,18 +26,21 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `plugin/.claude-plugin/plugin.json` | Plugin manifest — name, version, description |
 | `plugin/settings.json` | Plugin-level permission defaults for the skills |
-| `plugin/skills/look/SKILL.md` | `/see-what-i-see:look` — read the latest screenshot or HTML snapshot taken by the extension |
-| `plugin/skills/watch/SKILL.md` | `/see-what-i-see:watch` — background loop that describes each new capture as it arrives |
-| `plugin/skills/watch/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
-| `plugin/skills/stop/SKILL.md` | `/see-what-i-see:stop` — stop a running watch loop |
+| `plugin/scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after BASENAME` to catch up from a known capture, `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
+| `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — read the latest screenshot or HTML snapshot taken by the extension |
+| `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — background loop that describes each new capture as it arrives |
+| `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop a running watch loop |
+| `plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — print a summary of the see-what-i-see commands |
 
-## Local Skills (`.claude/skills/`)
+## Local Claude Config (`.claude/`)
 
 | File | Description |
 |------|-------------|
-| `.claude/skills/look` | Symlink to `plugin/skills/look` — local shortcut for `/look` |
-| `.claude/skills/stop` | Symlink to `plugin/skills/stop` — local shortcut for `/stop` |
-| `.claude/skills/watch` | Symlink to `plugin/skills/watch` — local shortcut for `/watch` |
+| `.claude/settings.json` | Local development settings: sets `CLAUDE_PLUGIN_ROOT=plugin` so plugin permissions resolve correctly when running Claude Code from this repo |
+| `.claude/skills/see-what-i-see` | Symlink to `plugin/skills/see-what-i-see` — local shortcut for `/see-what-i-see` |
+| `.claude/skills/see-what-i-see-watch` | Symlink to `plugin/skills/see-what-i-see-watch` — local shortcut for `/see-what-i-see-watch` |
+| `.claude/skills/see-what-i-see-stop` | Symlink to `plugin/skills/see-what-i-see-stop` — local shortcut for `/see-what-i-see-stop` |
+| `.claude/skills/see-what-i-see-help` | Symlink to `plugin/skills/see-what-i-see-help` — local shortcut for `/see-what-i-see-help` |
 
 ## Claude Commands (`.claude/commands/`)
 
@@ -60,7 +63,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons and manifest, runs `tsc` |
-| `scripts/watch.sh` | Symlink to `plugin/skills/watch/watch.sh` — preserves existing test and doc references |
+| `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` — preserves existing test and doc references |
 
 ## Tests (`tests/`)
 

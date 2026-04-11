@@ -1,1 +1,1 @@
-../plugin/skills/watch/watch.sh
+../plugin/scripts/watch.sh

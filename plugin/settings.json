@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(${CLAUDE_PLUGIN_ROOT}/skills/watch/watch.sh:*)",
+      "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)",
       "Read(~/Downloads/SeeWhatISee/**)"
     ]
   }

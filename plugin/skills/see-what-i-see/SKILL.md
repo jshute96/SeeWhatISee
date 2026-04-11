@@ -1,5 +1,5 @@
 ---
-name: look
+name: see-what-i-see
 description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and describe what you see.
 allowed-tools: "Read"
 ---

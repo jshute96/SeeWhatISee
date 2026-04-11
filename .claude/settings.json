@@ -1,0 +1,10 @@
+{
+  "env": {
+    "CLAUDE_PLUGIN_ROOT": "plugin"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(plugin/scripts/watch.sh:*)"
+    ]
+  }
+}

@@ -17,9 +17,10 @@ Captured screenshots are written to `~/Downloads/SeeWhatISee/`. Coding agents ca
 
 ### Claude Code skills
 
-- `/see-what-i-see:look` — read the latest capture and describe it
-- `/see-what-i-see:watch` — watch for new screenshots to appear in the background, and then look at them when they appear
-- `/see-what-i-see:stop` — stop a running watch loop
+- `/see-what-i-see` — read the latest capture and describe it
+- `/see-what-i-see-watch` — watch for new screenshots to appear in the background, and then look at them when they appear
+- `/see-what-i-see-stop` — stop a running watch loop
+- `/see-what-i-see-help` — print a summary of the commands
 
 ## Installation
 
@@ -95,13 +96,6 @@ calling capture functions on the background service worker — Playwright
 can't click the browser toolbar, so each capture mode is also exposed
 on `self.SeeWhatISee` for test/console access.
 
-## Local commands
-
-When working inside this repository, the local versions of the skills are available without the `see-what-i-see:` prefix:
-- `/look`
-- `/watch`
-- `/stop`
-
 ## Watching for screenshots from CLI
 
 ```bash
@@ -118,7 +112,7 @@ scripts/watch.sh --help         # full usage
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
-- `scripts/watch.sh` — symlink to `plugin/skills/watch/watch.sh`
+- `scripts/watch.sh` — symlink to `plugin/scripts/watch.sh`
 - `plugin/` — Claude Code plugin (skills, settings, manifest)
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
