@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SeeWhatISee — Privacy Policy</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.55;
+      color: #222;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    h2 { margin-top: 2rem; }
+    .updated { color: #666; font-size: 0.9rem; }
+    code { background: #f4f4f4; padding: 0 0.25rem; border-radius: 3px; }
+    ul { padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>SeeWhatISee Privacy Policy</h1>
+  <p class="updated">Last updated: 2026-04-10</p>
+
+  <h2>Summary</h2>
+  <p>
+    <strong>SeeWhatISee does not collect, transmit, sell, or share any
+    data.</strong> The extension has no backend, no analytics,
+    and no network requests to any server. All
+    data stays on your own computer.
+  </p>
+
+  <h2>What the extension does</h2>
+  <p>
+    SeeWhatISee is a tool for quickly sharing screenshots of what you see in your
+    browser with a local coding agent (e.g. Claude Code).
+    When you click the toolbar icon, or choose an
+    option from its right-click menu, the extension:
+  </p>
+  <ul>
+    <li>Captures a PNG screenshot of the currently visible tab, or</li>
+    <li>Captures the HTML source of the currently visible tab, and</li>
+    <li>
+      Writes the capture to your local <code>Downloads/SeeWhatISee</code> folder,
+      along with two sidecar
+      files (<code>latest.json</code> and <code>log.json</code>) that
+      describe recent captures so a local agent can find them quickly.
+    </li>
+  </ul>
+  <p>
+    Everything happens on your machine. Nothing is ever sent over the network.
+  </p>
+
+  <h2>Local storage: the capture log</h2>
+  <p>
+    The extension writes a log (<code>log.json</code>) of recent captures so coding agents can
+    read multiple recent screenshots. Each log entry contains
+    only a timestamp, snapshot filename, and the URL of the page.
+  </p>
+  <p>
+    Since extensions cannot append to a file, the extension maintains the log
+    in Chrome's local storage (<code>chrome.storage.local</code>), and
+    rewrites a copy in <code>Downloads</code> after new screenshots.
+  </p>
+  <p>
+    The log is limited to the <strong>100 most recent captures</strong>;
+    older entries are dropped.
+  </p>
+  <p>
+    The log in Chrome local storage can be cleared
+    by removing the extension, or choosing <em>Clear Chrome history</em>
+    from the extension's context menu.
+  </p>
+
+  <h2>Extension permissions</h2>
+  <p>
+    The extension requests only these permissions, which are required for the
+    capture-and-save workflow described above.
+  </p>
+  <ul>
+    <li>
+      <strong><code>activeTab</code></strong> — allows
+      screenshots of the tab you are currently looking at.
+    </li>
+    <li>
+      <strong><code>contextMenus</code></strong> — adds right-click
+      menu entries on the extension's toolbar icon.
+    </li>
+    <li>
+      <strong><code>downloads</code></strong> — writes the captured
+      PNG/HTML and JSON metadata files into your 
+      <code>Downloads</code> folder.
+    </li>
+    <li>
+      <strong><code>storage</code></strong> — persists the capture log described above.
+    </li>
+    <li>
+      <strong><code>scripting</code></strong> — used solely to read
+      the HTML of the current page, only when you ask to save an HTML snapshot.
+      No other code is injected or run.
+    </li>
+    <li>
+      <strong>Host permission <code>&lt;all_urls&gt;</code></strong> —
+      required so the screenshot and HTML-snapshot commands work on any
+      site you are viewing.
+    </li>
+  </ul>
+
+  <h2>Third parties</h2>
+  <p>
+    There are no third parties. The extension does not use any
+    third-party SDKs, analytics, advertising, or remote services.
+  </p>
+
+  <h2>Source code</h2>
+  <p>
+    SeeWhatISee is open source. You can review exactly what the
+    extension does at
+    <a href="https://github.com/jshute96/SeeWhatISee">github.com/jshute96/SeeWhatISee</a>.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    Questions or concerns can be filed as an issue on the GitHub repository linked above.
+  </p>
+</body>
+</html>
