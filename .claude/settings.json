@@ -6,5 +6,8 @@
     "allow": [
       "Bash(plugin/scripts/watch.sh:*)"
     ]
+  },
+  "enabledPlugins": {
+    "see-what-i-see@see-what-i-see-marketplace": false
   }
 }
