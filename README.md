@@ -10,48 +10,45 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon to take a screenshot of the current page and share it directly with your coding agent.
+- Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot of the current page and share it directly with your coding agent.
 - Right-click the icon for more options:
   - Take a screenshot after a delay (so you can activate hovers, pop-ups, etc).
   - Capture the HTML contents of the page.
-  - **Capture with details…** — opens a review page (see below).
+  - **Capture with details…** opens a review page (see below).
 
-#### Capturing screenshots with details
+#### Capturing with details
 
-The right-click menu has a **Capture with details…** entry that opens a
-page where you can add more info before saving.
-
-You can use this to highlight something on the page and add a prompt telling
+Use this to draw highlights on the page and/or add a prompt telling
 the agent what you want to do.
 
-On the capture tab, you can:
+Here, you can:
 
-- See the page URL and HTML size before saving.
+- See the page URL and HTML size.
 - Pick whether to save the screenshot, the HTML, or both.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
-  - **Click** to drop a red dot.
+  - **Click** to add a red dot.
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
   - **Undo** or **Clear** to roll back edits.
-- Click **Capture** to save (or press **Enter** while the prompt has focus).
+- Click **Capture** to save (or press **Enter** in the prompt field).
   - The highlights are baked into the saved PNG.
   - The prompt is attached for the agent to read.
 
 ### Claude Code skills
 
-- `/see-what-i-see` — read the latest snapshot and describe it
-- `/see-what-i-see-watch` — watch for new snapshots to appear in the background, and then look at them when they appear
-- `/see-what-i-see-stop` — stop a running watch loop
-- `/see-what-i-see-help` — print a summary of the commands
+- $\color{darkred}\text{/see-what-i-see}$ — read the latest snapshot and describe it
+- $\color{darkred}\text{/see-what-i-see-watch}$ — watch for new snapshots to appear in the background, and then look at them when they appear
+- $\color{darkred}\text{/see-what-i-see-stop}$ — stop a running watch loop
+- $\color{darkred}\text{/see-what-i-see-help}$ — print a summary of the commands
 
 If you've added a prompt with the snapshot, Claude will follow it.
 
 You can also add prompts after the commands above and they'll be applied
 on each snapshot. For example,
 
-- `/see-what-i-see What font is the heading on this page?`
-- `/see-what-i-see-watch Just report the snapshot filenames`
+- $\color{darkred}\text{/see-what-i-see}$ $\color{green}\text{What font is the heading on this page?}$
+- $\color{darkred}\text{/see-what-i-see-watch}$ $\color{green}\text{Just report the snapshot filenames}$
 
 ## Installation
 
@@ -85,15 +82,13 @@ Each capture writes three files into that directory:
 
 - `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
   captured content itself, one per capture.
-- `latest.json` — pretty-printed record for the most recent capture,
-  overwritten every time. An agent can read this to find the newest
-  capture without having to `ls`. Always has `timestamp` and `url`,
-  plus any of:
+- `latest.json` — describes the the most recent capture, with
+  - `timestamp`
+  - `url`
   - `screenshot` — PNG filename, when a screenshot was saved.
   - `contents` — HTML filename, when HTML was saved.
   - `prompt` — user prompt from the "Capture with details…" flow.
-  - `highlights: true` — only when the saved PNG has user-drawn red
-    annotations baked into it.
+  - `highlights: true` — when the saved PNG includes user-drawn highlights.
 - `log.json` — newline-delimited JSON (one record per line, same
   schema as `latest.json`), grep-friendly history of recent captures.
   Capped at the 100 most recent entries (FIFO eviction). The
