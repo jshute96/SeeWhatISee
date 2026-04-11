@@ -1,5 +1,98 @@
 import { captureVisible, clearCaptureLog, savePageContents } from './capture.js';
 
+// User-visible error reporting for failed captures.
+//
+// The service worker has no modal-dialog API. We surface failures on
+// two `chrome.action` channels so the user can see both *that*
+// something failed and *what* failed, without requesting a noisy
+// permission like `notifications`:
+//   - The icon itself is the glanceable signal: we swap in a
+//     pre-rendered "error" variant of each icon size (small red `!`
+//     painted in the bottom-right corner) until the *next*
+//     successful capture restores the originals. We deliberately
+//     avoid `chrome.action.setBadgeText` because Chrome's badge pill
+//     is uncomfortably large relative to the icon and there's no
+//     API to shrink it; `setIcon` gives us pixel-level control.
+//   - The tooltip (action title) is the reference channel: hovering
+//     the icon shows the default tooltip plus a second line with
+//     the last error message, so the user can go back and read
+//     *what* failed without digging through the devtools console.
+//
+// Both calls are fire-and-forget: a follow-on error here shouldn't
+// mask the original capture error. Logged to console but not
+// re-thrown.
+//
+// Matches the manifest's `action.default_title` — kept in sync
+// manually because we need to restore exactly this string as the
+// tooltip after a successful capture clears the error state.
+const DEFAULT_ACTION_TITLE = 'SeeWhatISee — capture visible tab';
+
+// Icon paths (relative to the extension root) for the normal and
+// error states. Same three sizes as in the manifest's
+// `action.default_icon`; the error variants are committed alongside
+// the base icons in `src/icons/` and produced by
+// `scripts/generate-error-icons.mjs` (re-run only when the base
+// icons change).
+const NORMAL_ICON_PATHS = {
+  16: 'icons/icon-16.png',
+  48: 'icons/icon-48.png',
+  128: 'icons/icon-128.png',
+};
+const ERROR_ICON_PATHS = {
+  16: 'icons/icon-error-16.png',
+  48: 'icons/icon-error-48.png',
+  128: 'icons/icon-error-128.png',
+};
+
+async function reportCaptureError(err: unknown): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn('[SeeWhatISee] capture failed:', err);
+  try {
+    await chrome.action.setIcon({ path: ERROR_ICON_PATHS });
+  } catch (iconErr) {
+    console.warn('[SeeWhatISee] failed to set error icon:', iconErr);
+  }
+  try {
+    // Second line shows the error. Chrome's toolbar tooltip honors
+    // embedded newlines on macOS / Windows / most Linux DEs.
+    await chrome.action.setTitle({
+      title: `${DEFAULT_ACTION_TITLE}\nLast error: ${message}`,
+    });
+  } catch (titleErr) {
+    console.warn('[SeeWhatISee] failed to set error tooltip:', titleErr);
+  }
+}
+
+async function clearCaptureError(): Promise<void> {
+  try {
+    await chrome.action.setIcon({ path: NORMAL_ICON_PATHS });
+  } catch (err) {
+    console.warn('[SeeWhatISee] failed to restore normal icon:', err);
+  }
+  try {
+    await chrome.action.setTitle({ title: DEFAULT_ACTION_TITLE });
+  } catch (err) {
+    console.warn('[SeeWhatISee] failed to reset tooltip:', err);
+  }
+}
+
+/**
+ * Run a capture-like action with unified error reporting. A
+ * successful run clears any lingering error state (restores the
+ * normal icon + default tooltip); a failure swaps in the error
+ * icon variant and appends a `Last error: …` line to the tooltip.
+ * Used by every user-initiated capture path (toolbar click,
+ * context-menu entries).
+ */
+async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+    await clearCaptureError();
+  } catch (err) {
+    await reportCaptureError(err);
+  }
+}
+
 // Targeted suppression for one specific user-actionable failure.
 // Manually poking captureVisible from the SW devtools console (e.g.
 // `SeeWhatISee.captureVisible()` while DevTools itself is the focused
@@ -38,15 +131,11 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // itself, so the immediate and delayed paths share one resolution
 // strategy (active tab in the last-focused window).
 chrome.action.onClicked.addListener(async () => {
-  try {
-    await captureVisible();
-  } catch (err) {
-    // console.warn (rather than console.error) so user-actionable
-    // failures like "No active tab found to capture" don't get
-    // promoted onto the chrome://extensions Errors page. They're
-    // still visible in the SW devtools console for debugging.
-    console.warn('[SeeWhatISee] capture failed:', err);
-  }
+  // runWithErrorReporting downgrades rejection to console.warn +
+  // user-visible icon swap + tooltip "Last error:" line, so
+  // user-actionable failures like "No active tab found to capture"
+  // don't get promoted onto the chrome://extensions Errors page.
+  await runWithErrorReporting(() => captureVisible());
 });
 
 // Right-click context menu on the toolbar action. Created on
@@ -110,16 +199,16 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info) => {
   const item = MENU_ITEMS.find((m) => m.id === info.menuItemId);
   if (!item) return;
-  try {
-    if (item.action) {
-      await item.action();
-    } else {
-      await captureVisible(item.delayMs ?? 0);
-    }
-  } catch (err) {
-    // See action.onClicked above for why this is warn, not error.
-    console.warn('[SeeWhatISee] context menu action failed:', err);
-  }
+  // Every user-initiated menu entry flows through runWithErrorReporting
+  // for uniform error surfacing. For the "Clear Chrome history" entry
+  // that's arguably a category error — it isn't a capture — but in
+  // practice the same feedback channels (error icon + tooltip) still
+  // make sense for telling the user it failed, and on success clearing
+  // the error state is harmless.
+  await runWithErrorReporting(() => {
+    if (item.action) return item.action();
+    return captureVisible(item.delayMs ?? 0);
+  });
 });
 
 // Expose capture functions on the service worker global so they can be
@@ -133,4 +222,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   captureVisible,
   savePageContents,
   clearCaptureLog,
+  reportCaptureError,
+  clearCaptureError,
+  runWithErrorReporting,
 };

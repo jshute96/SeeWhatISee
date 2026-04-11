@@ -8,6 +8,9 @@ repository. See `README.md` for setup instructions and available commands.
 - **Documentation**:
   - Keep `docs/*.md` design documents in sync with behavioral changes.
   - Update `docs/file-index.md` when adding, renaming, or removing source files.
+  - Avoid long paragraphs of text. They are hard to read.
+    - Break up into smaller paragraphs.
+    - Prefer using bullets for lists or ordered steps.
 - **Commit Preparation**:
   - Ensure `README.md` is updated if setup or debugging commands change.
   - Include all significant changes in the commit message.

@@ -3,6 +3,10 @@
 SeeWhatISee is a small Manifest V3 Chrome extension plus a standard
 on-disk drop directory that coding agents can read from.
 
+This doc is a high-level overview of components and data flow.
+Chrome-specific hazards, workarounds, and the error-reporting
+design live in [`chrome-extension.md`](chrome-extension.md).
+
 ## Components
 
 ```
@@ -61,52 +65,30 @@ on-disk drop directory that coding agents can read from.
   if the user switches tabs, windows, or interacts with a popup
   during the delay. If the focused window isn't a regular browser
   window with an active tab (e.g. DevTools is on top), the query
-  returns nothing and the call throws — we deliberately do *not*
-  fall back to "the previous regular window," because capturing a
-  different window than the one the user is looking at is
-  confusing. Failures are downgraded to `console.warn` by the
-  action / context-menu wrappers, and a targeted
-  `unhandledrejection` handler in `background.ts` catches the SW
-  devtools console invocation path, so the throws don't pollute the
-  chrome://extensions Errors page.
+  returns nothing and the call throws.
 
-  Practical workflow from the SW devtools console: a no-arg
-  `SeeWhatISee.captureVisible()` will usually fail (DevTools is the
-  focused window). The working pattern is
-  `SeeWhatISee.captureVisible(5000)` — call it, click into the real
-  window, wait, get a screenshot of what's now in front.
-
-  The trade-off is that `activeTab` only covers the tab that was
-  active at gesture time, so a delayed capture that lands on a
-  *different* `chrome://` tab will fail (normal http(s) pages are
-  covered by `<all_urls>`).
+  Every user-initiated click flows through `runWithErrorReporting`
+  in `background.ts`, which on failure swaps the toolbar icon to a
+  pre-rendered error variant and appends a `Last error: …` line to
+  the tooltip; a later success restores both. See
+  [`chrome-extension.md`](chrome-extension.md) for the design
+  rationale (why not badge text, why not `chrome.notifications`)
+  and for how the error icon variants are generated.
 
   The same capture functions are also attached to `self.SeeWhatISee` so
   they can be invoked from the service worker devtools console or from
   Playwright via `serviceWorker.evaluate(...)`. This is the only way to
   drive the extension from tests, since Playwright cannot click the
   browser toolbar or open its context menu.
-- **Permissions.** The manifest carries both `activeTab` and `<all_urls>`
-  host permission because the two trigger paths need different things.
-  A real toolbar click counts as a user gesture, which activates
-  `activeTab` for the current tab — required to capture restricted URLs
-  like `chrome://` pages, which `<all_urls>` deliberately excludes. The
-  Playwright path bypasses the toolbar gesture and instead relies on
-  `<all_urls>` to authorize captures of normal http(s) pages. Removing
-  either one will silently break one of the paths. `contextMenus` is
-  needed to register the right-click menu entries, `downloads` to write
-  the screenshot and sidecar files, `scripting` to inject the
-  content-retrieval script for "Save html contents", and `storage` to back
-  the in-extension capture log. We deliberately do not request the `tabs`
-  permission: `chrome.tabs.query` works without it, and `<all_urls>` host
-  permission is enough to expose `tab.url` for http(s) pages. For
-  restricted schemes like `chrome://`, `chrome.tabs.query` leaves
-  `tab.url` undefined regardless of `activeTab`, so the log records an
-  empty URL; the capture itself still succeeds because the `activeTab`
-  grant from a toolbar gesture authorizes `captureVisibleTab` on that
-  tab. Note that the Chrome Web Store is blocked from
-  `captureVisibleTab` even with `activeTab`; that's a Chrome policy
-  limit, not something the manifest can fix.
+- **Permissions.** The manifest declares `activeTab`, `<all_urls>`
+  host permission, `contextMenus`, `downloads`, `scripting`, and
+  `storage`. Both `activeTab` and `<all_urls>` are needed because
+  they serve different trigger paths (real toolbar gesture vs.
+  Playwright-driven `evaluate`), and dropping either one silently
+  breaks one of them. We deliberately do *not* request the `tabs`
+  permission. The reasoning and the other Chrome-specific permission
+  hazards (including why the Chrome Web Store itself blocks
+  `captureVisibleTab`) are in [`chrome-extension.md`](chrome-extension.md).
 - **Capture.** `src/capture.ts` provides two capture functions:
   - `captureVisible` calls `chrome.tabs.captureVisibleTab` to get a
     PNG data URL of the visible tab region.
