@@ -6,14 +6,14 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `README.md` | Primary project documentation — setup, features, and commands |
-| `privacy_policy.md` | User-facing privacy policy (linked from Chrome Web Store listing) — explains that nothing is collected or transmitted and why each manifest permission is required |
+| `README.md` | Primary project documentation: setup, usage, commands |
+| `privacy_policy.md` | User-facing privacy policy linked from the Chrome Web Store listing |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
-| `package.json` | Node project manifest, scripts, and devDependencies |
+| `package.json` | Node project manifest, scripts, devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `playwright.config.ts` | Playwright test runner config |
-| `.gitignore` | Git ignore rules (`dist/`, `node_modules/`, `tmp/`, etc.) |
+| `.gitignore` | Git ignore rules |
 
 ## Marketplace (`.claude-plugin/`)
 
@@ -27,21 +27,21 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
 | `plugin/settings.json` | Plugin-level permission defaults for the skills |
-| `plugin/scripts/watch.sh` | CLI watcher for `latest.json`: default once-mode or `--loop`, `--after TIMESTAMP` to catch up from a known capture (matches the record's ISO `timestamp` field), `--stop` to kill existing watcher, `.watch.pid` concurrency control, `.SeeWhatISee` config file support for directory override |
-| `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — read the latest screenshot or HTML snapshot taken by the extension |
-| `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — background loop that describes each new capture as it arrives |
-| `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop a running watch loop |
-| `plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — print a summary of the see-what-i-see commands |
+| `plugin/scripts/watch.sh` | CLI watcher for `latest.json` (`--loop`, `--after`, `--stop`, `--directory`) |
+| `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
+| `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
+| `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
+| `plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — summary of see-what-i-see commands |
 
 ## Local Claude Config (`.claude/`)
 
 | File | Description |
 |------|-------------|
-| `.claude/settings.json` | Local development settings: sets `CLAUDE_PLUGIN_ROOT=plugin` so plugin permissions resolve correctly when running Claude Code from this repo |
-| `.claude/skills/see-what-i-see` | Symlink to `plugin/skills/see-what-i-see` — local shortcut for `/see-what-i-see` |
-| `.claude/skills/see-what-i-see-watch` | Symlink to `plugin/skills/see-what-i-see-watch` — local shortcut for `/see-what-i-see-watch` |
-| `.claude/skills/see-what-i-see-stop` | Symlink to `plugin/skills/see-what-i-see-stop` — local shortcut for `/see-what-i-see-stop` |
-| `.claude/skills/see-what-i-see-help` | Symlink to `plugin/skills/see-what-i-see-help` — local shortcut for `/see-what-i-see-help` |
+| `.claude/settings.json` | Local dev settings — sets `CLAUDE_PLUGIN_ROOT=plugin` |
+| `.claude/skills/see-what-i-see` | Symlink to `plugin/skills/see-what-i-see` |
+| `.claude/skills/see-what-i-see-watch` | Symlink to `plugin/skills/see-what-i-see-watch` |
+| `.claude/skills/see-what-i-see-stop` | Symlink to `plugin/skills/see-what-i-see-stop` |
+| `.claude/skills/see-what-i-see-help` | Symlink to `plugin/skills/see-what-i-see-help` |
 
 ## Claude Commands (`.claude/commands/`)
 
@@ -55,32 +55,33 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
-| `src/background.ts` | MV3 service worker — handles toolbar click + right-click context menu (immediate / 2s / 5s delayed captures, save html contents, capture-with-details, clear Chrome history), runs the details flow (captures both artifacts into `chrome.storage.session`, opens `capture.html`, handles the `getDetailsData` / `saveDetails` runtime messages, cleans up on tab close), surfaces capture errors by swapping the action icon to an error variant + updating the tooltip through `runWithErrorReporting`, and exposes `self.SeeWhatISee` for tests |
-| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`), metadata sidecar writing (`latest.json`, `log.json`) — records use `screenshot` / `contents` fields for the saved filenames plus an optional `prompt` — and the storage-backed capture log |
-| `src/capture.html` | Extension page shown in a new tab by the "Capture with details…" menu item — previews the screenshot, lets the user pick which artifacts to save, enter an optional prompt, and trigger the save (which closes the tab). Copied verbatim into `dist/` by the build |
-| `src/capture-page.ts` | Controller script for `capture.html` — fetches the pre-captured data from the background service worker via `chrome.runtime.sendMessage`, wires up the checkbox/prompt/keyboard behavior, and sends the save request back to the background |
-| `src/icons/icon-{16,48,128}.png` | Toolbar action icons (camera emoji), copied into `dist/icons/` by the build |
-| `src/icons/icon-error-{16,48,128}.png` | Error-state variants of the action icons (generated by `scripts/generate-error-icons.mjs`), swapped in via `chrome.action.setIcon` when a capture fails |
+| `src/background.ts` | MV3 service worker — toolbar/menu handlers, details-flow tab lifecycle, runtime-message router, and `runWithErrorReporting` icon/tooltip error surface |
+| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`) and metadata sidecar writing (`latest.json`, `log.json`) |
+| `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options, prompt, highlight overlay) |
+| `src/capture-page.ts` | Controller script for `capture.html`: data fetch, prompt/textarea behavior, SVG highlight overlay, canvas bake-in on save, image fit-to-viewport |
+| `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
+| `src/icons/icon-error-{16,48,128}.png` | Error-state variants of the action icons |
 
 ## Scripts (`scripts/`)
 
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, and `capture.html`, then runs `tsc` |
-| `scripts/generate-error-icons.mjs` | One-shot utility: reads each `src/icons/icon-*.png` and writes an `icon-error-*.png` variant with an error badge overlaid |
-| `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` — preserves existing test and doc references |
+| `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
+| `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` |
 
 ## Tests (`tests/`)
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: worker-scoped persistent Chromium context with the unpacked extension loaded, a worker-scoped local HTTP server that serves the solid-color fixture pages, plus a `getServiceWorker()` helper that re-resolves the SW handle each call (MV3 SWs idle out aggressively) |
-| `tests/fixtures/files.ts` | Test helpers: `waitForDownloadPath` resolves a chrome.downloads id to its on-disk path; `pixelColorAt` decodes a saved PNG via pngjs and samples one pixel; `expectColorClose` does tolerant RGB equality; `verifyCapture` is a one-shot helper that checks all three on-disk files (PNG pixel color, latest.json content, log.json last line + optional delta) for a single capture |
-| `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color HTML pages served by the test HTTP server, used to make captured screenshots verifiable by sampling a known pixel color |
-| `tests/e2e/html-snapshot.spec.ts` | E2E test: `savePageContents` HTML capture + sidecar file verification (HTML content substring, latest.json, log.json) |
-| `tests/e2e/screenshot.spec.ts` | E2E tests: capture + sidecar file verification (PNG pixel color, full latest.json, log.json last-line + delta), `delayMs` timing assertion, two delay-with-navigation tests (same-tab navigation and tab switch), and a `clearCaptureLog` test that verifies the next capture after a clear produces a single-record `log.json` — all use the local color fixtures so the captured PNGs can be checked pixel-wise |
-| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh`: once/loop mode emission, `--after` catch-up, `--help`, error on missing dir, pidfile lifecycle, second-watcher-kills-first, `--stop`, `.SeeWhatISee` config file parsing (current-dir lookup, `--directory` override, unrecognized keys, comments/blanks, quoted values). Uses temp dirs with simulated captures (no extension needed) |
-| `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface in `background.ts`: installs a `chrome.action.setIcon` spy in the SW and asserts `reportCaptureError` swaps to the error icon + sets the tooltip, `clearCaptureError` restores both, `runWithErrorReporting` surfaces rejections and clears stale error state on success, and repeat failures always reflect the most recent error in the tooltip |
+| `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context with the extension loaded, fixture HTTP server, and a `getServiceWorker()` helper |
+| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, and verifying capture sidecars |
+| `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
+| `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
+| `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
+| `tests/e2e/capture-with-details.spec.ts` | E2E tests for the "Capture with details…" flow — combinations of png/html/both, prompt/no prompt, highlights/no highlights, and tab positioning + opener focus return |
+| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file) |
+| `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
 
 ## Design Docs (`docs/`)
 
@@ -88,5 +89,5 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `file-index.md` | This file — one-line descriptions of every source file |
 | `architecture.md` | High-level architecture of the extension and capture flow |
-| `chrome-extension.md` | Chrome-extension implementation notes: MV3 service-worker lifecycle, permission hazards, the two-channel error surface (icon swap + tooltip) and why we rejected badge text and `chrome.notifications`, context-menu quirks, and Playwright testing patterns |
-| `claude-plugin.md` | Notes on the Claude Code plugin: marketplace/plugin manifests, install flow, `${CLAUDE_PLUGIN_ROOT}`, local-dev shim, and gotchas we hit |
+| `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, details flow, Playwright patterns) |
+| `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |

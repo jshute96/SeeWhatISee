@@ -49,20 +49,11 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     screenshot — the only difference is the `.html` filename. Requires
     the `scripting` permission. Also callable from the devtools console
     as `SeeWhatISee.savePageContents()`.
-  - **Capture with details...** — captures *both* the screenshot
-    and the page HTML up-front into memory (via
-    `captureBothToMemory()`), stashes the pair in
-    `chrome.storage.session` keyed by the id of a newly opened tab,
-    and navigates that tab to `capture.html` (a bundled extension
-    page). The page previews the screenshot, lets the user choose
-    which artifacts to keep (checkboxes) and add an optional prompt,
-    then sends a `saveDetails` runtime message back to the
-    background. The background calls `saveDetailedCapture()` with
-    the selected subset and closes the tab. The resulting sidecar
-    record can include any or all of `screenshot`, `contents`, and
-    `prompt`, plus `timestamp` and `url`. See
-    [`chrome-extension.md`](chrome-extension.md) for the
-    runtime-message / session-storage design notes.
+  - **Capture with details...** — opens a bundled extension page
+    (`capture.html`) where the user picks which artifacts to save,
+    adds an optional prompt, and optionally annotates the
+    screenshot. See ["Capture with details flow"](#capture-with-details-flow)
+    below for the full design.
   - *(separator)*
   - **Clear Chrome history** — erases the capture log from
     `chrome.storage.local` via `clearCaptureLog()`. The on-disk
@@ -137,6 +128,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     overwritten each time. Lets an agent get the newest capture without
     having to `ls`. Every record has `timestamp` and `url`, plus:
     - `screenshot` — bare PNG filename, set when a screenshot was saved.
+    - `highlights` — `true` when the saved PNG has user-drawn red
+      markup (boxes, lines, dots) baked into it. Only present when
+      `screenshot` is also present, and only ever set to `true`
+      (absent otherwise) so the field's presence is itself the
+      signal. The see-what-i-see skills check this and steer their
+      attention to the marked regions.
     - `contents` — bare HTML filename, set when HTML contents were saved.
     - `prompt` — user-entered text from "Capture with details…", omitted
       when empty.
@@ -172,6 +169,79 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - When a capture has a `prompt`, the skill that consumes it treats
     the prompt as the user's instruction and acts on it directly
     instead of just describing the image.
+
+## Capture with details flow
+
+- A right-click menu entry opens `capture.html` so the user can
+  review and annotate the capture before it's saved.
+- Implementation lives in `src/background.ts`, `src/capture.html`,
+  and `src/capture-page.ts`.
+
+### Pre-capture and tab open
+
+- `captureBothToMemory()` snapshots the screenshot + HTML up-front,
+  *before* opening the new tab. This way the preview shows the
+  user's current page, not the empty `capture.html` tab.
+- `startCaptureWithDetails()` then opens `capture.html` immediately
+  to the right of the active tab (`index: active.index + 1`) and
+  links it via `openerTabId`.
+- The capture data and the opener id are stashed in
+  `chrome.storage.session` keyed by the new tab's id, in a
+  `DetailsSession` wrapper.
+
+### What the page shows
+
+- **Captured URL** — read-only single-line monospace input.
+- **HTML byte size** — `formatBytes(new Blob([html]).size)` →
+  `B` / `KB` / `MB` / `GB` / `TB`.
+- **Save checkboxes** — pick screenshot, HTML, or both.
+- **Prompt** — auto-growing textarea (capped at 200px). Enter
+  submits, Shift+Enter inserts a newline.
+- **Highlight overlay** — see [Image annotation](#image-annotation).
+- **Preview image** — fits 90% of body width and shrinks vertically
+  via JS-managed `max-height` so the page never scrolls.
+
+### Image annotation
+
+The screenshot preview is wrapped in an SVG overlay where the user
+can draw red markup on the regions they want the agent to focus on.
+
+- **Left-click** — drops a red filled circle ("dot"), 10px diameter.
+- **Left-click-drag** — draws a 3px-bordered red rectangle.
+- **Right-click-drag** — draws a 3px red line. The browser context
+  menu is suppressed on the overlay.
+- **Undo / Clear** — single edit stack; buttons disabled when empty.
+- Edits are stored as percentages of the image dimensions so they
+  stay aligned across window resizes and prompt growth.
+
+### Save and close
+
+- On Capture click, if there are highlights *and* the screenshot is
+  being saved, the page bakes the SVG overlay onto a `<canvas>` at
+  the screenshot's natural resolution and produces a fresh PNG data
+  URL. Stroke widths and dot radii scale by the display→natural
+  ratio so they look the same in the saved file as during editing.
+- The page sends a `saveDetails` runtime message back to the
+  background with the selected save options, the prompt, a
+  `highlights: boolean` flag, and the `screenshotOverride` data URL
+  when present.
+- The background swaps the override into the stashed
+  `InMemoryCapture` and calls `saveDetailedCapture()`. The saved
+  sidecar record can include any of `screenshot`, `contents`,
+  `prompt`, and `highlights: true`, on top of the always-present
+  `timestamp` and `url`.
+- After the save resolves, the background re-activates the opener
+  tab and then removes the details tab — the user lands back on
+  the page they captured from. Chrome's natural close-time pick is
+  not reliably the immediate right neighbor (we tested this and
+  Chrome activated a tab two positions right of the closed slot in
+  the headless e2e environment), so the explicit re-activation is
+  required for deterministic behavior. `openerTabId` alone has no
+  effect on close-time focus.
+
+See [`chrome-extension.md`](chrome-extension.md) for the
+runtime-message and session-storage hazards (CSP, SW idle-out,
+permission gaps).
 
 ## Why a separate `dist/`
 

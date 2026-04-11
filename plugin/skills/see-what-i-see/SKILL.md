@@ -17,6 +17,9 @@ You can't run this autonomously since it requires the user to have just clicked 
 
 2. The record contains `{timestamp, url}` plus some combination of:
    * `screenshot` — bare filename of a PNG at `~/Downloads/SeeWhatISee/<screenshot>`
+   * `highlights` — `true` when the screenshot has user-drawn red markup baked
+     into it (boxes, lines, and/or dots calling attention to specific regions
+     of the image).
    * `contents` — bare filename of an HTML file at `~/Downloads/SeeWhatISee/<contents>`
    * `prompt` — the user's instruction for this capture (if present)
 
@@ -25,6 +28,10 @@ You can't run this autonomously since it requires the user to have just clicked 
 
 3. Process the capture:
    * If `screenshot` is present, Read it with the Read tool.
+     - **If `highlights` is `true`, the user has drawn red markup to call attention to 
+       specific regions. Focus your description on those marked areas. 
+       If a `prompt` is present, it is likely referring to those regions specifically — interpret 
+       it in that context.**
    * If `contents` is present, don't Read it up front (HTML can be large);
      wait until you know what to look for.
    * **If `prompt` is present, treat it as the user's instruction for this
@@ -32,6 +39,6 @@ You can't run this autonomously since it requires the user to have just clicked 
      subject of that instruction. Mention the source `url` if relevant.
    * If `prompt` is absent:
      - For screenshots, briefly describe what you see and mention the source
-       `url`.
+       `url`. When `highlights` is `true`, lead with what's highlighted.
      - For HTML-only captures, report that you have an HTML snapshot from
        the source `url` and ask the user what they want to know.

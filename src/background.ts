@@ -193,7 +193,23 @@ const MENU_ITEMS: MenuItem[] = [
 // the MV3 service worker can be torn down between the menu click
 // and the user clicking Capture on the page — session storage is
 // in-memory but survives SW idle-out.
+//
+// We wrap the InMemoryCapture so we can also remember the opener
+// tab id for re-focusing on close. Re-reading
+// `chrome.tabs.get(detailsTabId).openerTabId` later isn't reliable —
+// `Tab.openerTabId` is one of the fields Chrome strips when the
+// extension lacks the `tabs` permission, and `<all_urls>` host
+// permission doesn't cover our own `chrome-extension://` details
+// tab. Stashing it at create time sidesteps the gap.
 const DETAILS_STORAGE_PREFIX = 'captureDetails_';
+
+interface DetailsSession {
+  capture: InMemoryCapture;
+  // Tab id of the page the user captured from, so we can re-focus
+  // it when the details tab closes. Optional: the active-tab
+  // lookup can in principle return no id (chrome:// pages, races).
+  openerTabId?: number;
+}
 
 function detailsStorageKey(tabId: number): string {
   return `${DETAILS_STORAGE_PREFIX}${tabId}`;
@@ -204,11 +220,39 @@ async function startCaptureWithDetails(): Promise<void> {
   // snapshot the user's current page (not the empty capture.html
   // tab). captureBothToMemory queries the active tab itself.
   const data = await captureBothToMemory();
-  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('capture.html') });
+
+  // Re-query the active tab so we can position the details tab
+  // immediately to its right and remember it as the opener. The
+  // tab strip hasn't moved between captureBothToMemory's query
+  // and now (no async user input in between), so this resolves to
+  // the same tab the screenshot came from.
+  //
+  // We also tried `index: active.index` (left of the opener) on
+  // the theory that Chrome's "activate the right neighbor on
+  // close" behavior would naturally restore focus to the opener
+  // and let us drop the explicit re-activation in `saveDetails`.
+  // It didn't pan out: in the headless Playwright tests, after
+  // closing a programmatically-opened tab Chrome activates the
+  // tab two positions to the right of the closed slot in the
+  // original ordering, not the immediate right neighbor. The
+  // e2e test caught this. We stick with right-of-active position
+  // + explicit re-activation in the finally block.
+  //
+  // openerTabId helps Chrome group the new tab visually with
+  // its opener; it has no role in close-time activation.
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const createProps: chrome.tabs.CreateProperties = {
+    url: chrome.runtime.getURL('capture.html'),
+  };
+  if (active?.index !== undefined) createProps.index = active.index + 1;
+  if (active?.id !== undefined) createProps.openerTabId = active.id;
+
+  const tab = await chrome.tabs.create(createProps);
   if (tab.id === undefined) {
     throw new Error('Failed to open capture details tab');
   }
-  await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: data });
+  const session: DetailsSession = { capture: data, openerTabId: active?.id };
+  await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: session });
 }
 
 interface GetDetailsMessage {
@@ -219,6 +263,20 @@ interface SaveDetailsMessage {
   screenshot: boolean;
   html: boolean;
   prompt: string;
+  /**
+   * True when the user drew at least one highlight on the preview.
+   * Causes the saved record to carry `highlights: true` (only when
+   * `screenshot` is also true — see capture.ts).
+   */
+  highlights: boolean;
+  /**
+   * Optional replacement screenshot data URL with the user's
+   * highlights baked into the PNG bytes. The capture page sends this
+   * only when the user both drew highlights and chose to save the
+   * screenshot — otherwise the original (un-annotated) capture in
+   * session storage is used as-is.
+   */
+  screenshotOverride?: string;
 }
 type DetailsMessage = GetDetailsMessage | SaveDetailsMessage;
 
@@ -230,7 +288,10 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
     void (async () => {
       const key = detailsStorageKey(tabId);
       const stored = await chrome.storage.session.get(key);
-      sendResponse(stored[key] as InMemoryCapture | undefined);
+      const session = stored[key] as DetailsSession | undefined;
+      // The page only needs the capture itself, not the opener id
+      // bookkeeping — keep the wire shape unchanged.
+      sendResponse(session?.capture);
     })();
     return true; // keep the message channel open for the async response
   }
@@ -239,14 +300,23 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
     void runWithErrorReporting(async () => {
       const key = detailsStorageKey(tabId);
       const stored = await chrome.storage.session.get(key);
-      const capture = stored[key] as InMemoryCapture | undefined;
-      if (!capture) throw new Error('Capture data missing for details tab');
+      const session = stored[key] as DetailsSession | undefined;
+      if (!session) throw new Error('Capture data missing for details tab');
+      const capture = session.capture;
+      // Swap in the highlight-baked PNG when the page sent one. We
+      // shallow-clone so we don't mutate the session-storage object
+      // (still owned by Chrome until we remove it in the finally block
+      // below) and so a re-read elsewhere wouldn't see the override.
+      const captureForSave: InMemoryCapture = msg.screenshotOverride
+        ? { ...capture, screenshotDataUrl: msg.screenshotOverride }
+        : capture;
       try {
         await saveDetailedCapture({
-          capture,
+          capture: captureForSave,
           includeScreenshot: msg.screenshot,
           includeHtml: msg.html,
           prompt: msg.prompt,
+          hasHighlights: msg.highlights,
         });
       } finally {
         // Always clean up the stored capture and close the tab, even
@@ -261,6 +331,28 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         // and leaving the tab open on failure would strand a
         // now-stale preview the user would have to close by hand.
         await chrome.storage.session.remove(key);
+        // Re-activate the opener (the page the user captured from)
+        // *before* removing the details tab.
+        //
+        // We tested removing this and relying on Chrome's natural
+        // close behavior. Chrome's pick is not reliably the right
+        // neighbor — in headless Playwright tests it activated the
+        // tab two positions right of the closed slot, not the
+        // immediate right neighbor. The e2e test pins this down.
+        //
+        // Order matters: activate first, then remove. If we removed
+        // first, Chrome would briefly flash its own pick before
+        // our update could land.
+        const openerTabId = session.openerTabId;
+        if (openerTabId !== undefined) {
+          try {
+            await chrome.tabs.update(openerTabId, { active: true });
+          } catch (err) {
+            // Best-effort: if the opener was closed during the
+            // details flow, just log and proceed with the close.
+            console.warn('[SeeWhatISee] failed to focus opener tab:', err);
+          }
+        }
         try {
           await chrome.tabs.remove(tabId);
         } catch (err) {

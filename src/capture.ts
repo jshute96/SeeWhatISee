@@ -54,6 +54,18 @@ export interface CaptureRecord {
    * implies there is something to act on.
    */
   prompt?: string;
+  /**
+   * Set to `true` only when the saved screenshot has user-drawn red
+   * highlights (boxes / lines / dots) baked into it. Omitted when
+   * absent so its presence is itself the signal: a downstream
+   * consumer (the see-what-i-see skills) treats `highlights: true`
+   * as "the user marked specific regions on this image — focus on
+   * those, and any prompt is likely about them."
+   *
+   * Only meaningful on records that also have a `screenshot` field;
+   * the capture page only sends the flag when an image was saved.
+   */
+  highlights?: true;
   /** URL of the captured tab, or empty string if unavailable. */
   url: string;
 }
@@ -229,6 +241,14 @@ export interface SaveDetailedOptions {
    * sidecar record under `prompt` when non-empty.
    */
   prompt?: string;
+  /**
+   * True when `capture.screenshotDataUrl` already has user-drawn red
+   * highlights baked into the PNG bytes. Causes the saved record to
+   * carry `highlights: true`. Ignored unless `includeScreenshot` is
+   * also true — there's no point flagging highlights on a record
+   * that didn't save the image they're on.
+   */
+  hasHighlights?: boolean;
 }
 
 /**
@@ -266,6 +286,7 @@ export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<Ca
   if (opts.includeScreenshot) {
     const filename = `screenshot-${ts}.png`;
     record.screenshot = filename;
+    if (opts.hasHighlights) record.highlights = true;
     writes.push(
       chrome.downloads.download({
         url: opts.capture.screenshotDataUrl,
@@ -414,6 +435,7 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   // key order keeps log.json diff-stable.
   const ordered: Record<string, unknown> = { timestamp: r.timestamp };
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
+  if (r.highlights !== undefined) ordered.highlights = r.highlights;
   if (r.contents !== undefined) ordered.contents = r.contents;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;
   ordered.url = r.url;

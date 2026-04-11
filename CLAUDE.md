@@ -8,11 +8,14 @@ repository. See `README.md` for setup instructions and available commands.
 - **Documentation**:
   - Keep `docs/*.md` design documents in sync with behavioral changes.
   - Update `docs/file-index.md` when adding, renaming, or removing source files.
-  - Avoid long paragraphs of text. They are hard to read.
-    - Break up into smaller paragraphs.
-    - Prefer using bullets for lists or ordered steps.
+  - **`docs/file-index.md` is a one-line-per-file index, NOT a place for design summaries.** Each row gets a single short sentence (≈ 80–120 chars). If you find yourself wanting to explain *how* a file works, that belongs in `architecture.md` or other docs, not the index.
+  - **No prose blobs in design docs.** Hard rule: any block of text longer than ~4 lines must be broken up into bullets, sub-sections, or smaller paragraphs. Reviewers should be able to scan the page without reading any single chunk top-to-bottom.
+    - If a single concept needs multiple sentences, split it across bullets.
+    - If a doc section grows past ~8 lines, give it sub-headings.
+    - Prefer bullets to paragraphs; prefer short bullets to long bullets.
+  - When adding a new feature, you can add new sections in the relevant design doc rather than appending to an existing one.
 - **Commit Preparation**:
-  - Ensure `README.md` is updated if setup or debugging commands change.
+  - Ensure `README.md` is updated if setup, commands, or user-visible features change.
   - Include all significant changes in the commit message.
 
 ## Development Conventions

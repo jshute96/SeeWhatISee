@@ -240,7 +240,119 @@ render cleanly.
 The details flow opens a bundled extension page (`capture.html`)
 in a new tab, previews the pre-captured screenshot, and waits for
 the user to pick which artifacts to save before writing anything.
-A few Chrome-specific gotchas surfaced along the way:
+
+This section is split by topic:
+
+- [Page contents](#page-contents)
+- [Image annotation pane](#image-annotation-pane)
+- [Highlight bake-in on save](#highlight-bake-in-on-save)
+- [Image fit-to-viewport](#image-fit-to-viewport)
+- [Tab positioning + return-to-opener](#tab-positioning--return-to-opener)
+- [Chrome-specific gotchas](#chrome-specific-gotchas)
+
+### Page contents
+
+- **Captured URL** — read-only single-line input (monospace,
+  horizontal scroll for long URLs).
+- **HTML byte size** — `new Blob([html]).size`, formatted as
+  `B` / `KB` / `MB` / `GB` / `TB` so the user can sanity-check
+  before saving.
+- **Save checkboxes** — pick screenshot, HTML, or both. The
+  Capture button disables when neither is checked.
+- **Prompt textarea** — auto-growing, capped at 200px. `rows="1"`
+  initially; on each `input` event we set `style.height = 'auto'`
+  then `style.height = scrollHeight + 'px'`. Once `scrollHeight`
+  exceeds the cap we flip `overflow-y` from `hidden` to `auto` so
+  the scrollbar only appears when needed. Plain Enter submits;
+  Shift+Enter inserts a newline.
+- **Preview image** — see [fit-to-viewport](#image-fit-to-viewport).
+
+### Image annotation pane
+
+The screenshot preview is layered with an SVG overlay that lets
+the user draw red markup on the regions they want the agent to
+focus on.
+
+- **Left-click** — drops a red filled circle ("dot"), 10px diameter.
+- **Left-click-drag** — draws a 3px-bordered red rectangle.
+- **Right-click-drag** — draws a 3px red line. The browser
+  context menu is suppressed on the overlay.
+- **Undo / Clear** — single edit stack; both buttons disable when
+  empty.
+- **Resize-stable coordinates** — edits are stored as percentages
+  of the image dimensions, not CSS pixels, so they stay aligned
+  across window resizes and after the prompt grows.
+- **Click-vs-drag threshold** — movement under 4 CSS pixels
+  between mousedown and mouseup counts as a click and produces a
+  dot, not a degenerate rectangle.
+
+### Highlight bake-in on save
+
+If the user has drawn any highlights *and* is saving the screenshot:
+
+- The page renders the preview image plus the overlay onto a
+  `<canvas>` at the screenshot's *natural* resolution.
+- Stroke widths and dot radii scale by the display→natural ratio
+  so the markup looks the same in the saved PNG as during editing.
+- The resulting `canvas.toDataURL('image/png')` is sent back to
+  the background as a `screenshotOverride` field on the
+  `saveDetails` runtime message, alongside a `highlights: true`
+  flag.
+- The background swaps `screenshotOverride` into the stashed
+  `InMemoryCapture` (a shallow clone, so the still-stored object
+  isn't mutated) and calls `saveDetailedCapture()` with
+  `hasHighlights: true`.
+- The resulting sidecar record gets `highlights: true` so the
+  see-what-i-see skills know to focus on the marked regions.
+- If there are no edits, or the screenshot isn't being saved, no
+  override is sent and the record never gets the `highlights` field.
+
+### Image fit-to-viewport
+
+- The preview image must not produce a vertical scrollbar.
+- CSS caps it at `max-width: calc((100vw - 48px) * 0.9 - 2px)`
+  (90% of body content width minus the 1px wrap border each side).
+- A `fitImage()` function sets `max-height` inline based on the
+  remaining viewport height (`window.innerHeight - top - reserved`).
+- It re-runs on window resize, after the prompt textarea grows
+  (which pushes the image's top down), and after the image loads.
+- Resetting `max-height` before measuring is safe: the image's top
+  is determined by elements above it, which don't depend on the
+  image's own size.
+
+### Tab positioning + return-to-opener
+
+`startCaptureWithDetails` opens the details tab at
+`index: active.index + 1` and sets `openerTabId: active.id`, so it
+appears immediately to the right of the tab the user captured from.
+
+On close, the `saveDetails` finally block:
+
+1. Removes the session-storage entry.
+2. Re-activates the opener tab via `chrome.tabs.update`.
+3. Removes the details tab.
+
+The ordering matters and the explicit re-activation is required:
+
+- **Why not rely on Chrome's natural close behavior?** Chrome
+  activates the *right neighbor* of a closed tab, not its opener.
+  Setting `openerTabId` does not influence close-time activation.
+  The "details: tab opens next to opener and returns focus on
+  close" e2e test pins this down.
+- **Why activate before remove?** If we removed first, Chrome
+  would briefly flash the right neighbor before our update could
+  land. Activating first means a single, direct focus jump.
+- **Why use a stashed `openerTabId` instead of `chrome.tabs.get`?**
+  `Tab.openerTabId` is one of the fields Chrome strips when the
+  extension lacks the `tabs` permission, and `<all_urls>` host
+  permission doesn't cover our own `chrome-extension://` details
+  tab. We stash the opener id in the `DetailsSession` wrapper at
+  create time and read it back from there.
+- **Best-effort.** If the opener was closed during the details
+  flow, `chrome.tabs.update` rejects; we log and proceed with the
+  close.
+
+### Chrome-specific gotchas
 
 - **Extension pages have CSP that forbids inline scripts.** The
   default extension CSP does not allow `<script>` blocks inside
@@ -252,9 +364,9 @@ A few Chrome-specific gotchas surfaced along the way:
   which is a same-origin navigation within the extension. WAR is
   only required to expose a resource to *non-extension* contexts
   (content scripts in arbitrary pages, `<iframe>` from a web page).
-- **Module-level state doesn't survive SW idle-out, so the
+- **Module-level state doesn't survive SW idle-out**, so the
   pre-captured screenshot + HTML are stashed in
-  `chrome.storage.session`, keyed by the new tab's id.** Session
+  `chrome.storage.session`, keyed by the new tab's id. Session
   storage is in-memory (not written to disk) but survives the
   worker unloading between the menu click and the user clicking
   Capture on the page.
@@ -265,12 +377,12 @@ A few Chrome-specific gotchas surfaced along the way:
   drops the channel and the page-side `sendMessage` resolves with
   `undefined`. `saveDetails` doesn't reply, so it returns `false`.
 - **Don't race the tab close against the save.** The `saveDetails`
-  handler does the save inside `runWithErrorReporting` and
-  only closes the tab in a `finally` block, so the close happens
-  after the download calls return *and* runs even when the save
-  throws — which matters because `chrome.downloads.download`
-  resolves on download *start*, not completion, but for our tiny
-  data-URL payloads that's effectively when the bytes are queued.
+  handler does the save inside `runWithErrorReporting` and only
+  closes the tab in a `finally` block, so the close happens after
+  the download calls return *and* runs even when the save throws
+  — which matters because `chrome.downloads.download` resolves on
+  download *start*, not completion (overkill for our tiny data-URL
+  payloads in practice).
 - **Manual tab close cleanup.** If the user closes the details
   tab without clicking Capture, a `chrome.tabs.onRemoved` handler
   drops the stashed capture from `chrome.storage.session`. Without
