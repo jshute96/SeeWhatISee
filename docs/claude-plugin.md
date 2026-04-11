@@ -97,11 +97,13 @@ plugin directory is keyed on version, so same version = same cache.
 
 ### Duplicated description fields
 
-`description` can appear in three places too: `metadata.description`
-(the marketplace), `plugins[0].description` (the plugin entry, which is
-what users see in `/plugin` discovery), and `plugin.json` →
-`description`. The plugin-entry copy is the load-bearing one. The other
-two are optional and can be dropped or left to rot; we keep
+`description` can appear in three places:
+
+- `metadata.description` — the marketplace.
+- `plugins[0].description` — the plugin entry; **this is the load-bearing copy** (what users see in `/plugin` discovery).
+- `plugin.json` → `description` — optional metadata.
+
+The other two are optional and can be dropped or left to rot; we keep
 `metadata.description` for the marketplace-level blurb and a
 `description` in `plugin.json` out of habit.
 
@@ -175,28 +177,22 @@ roughly this happens:
 4. Skills, hooks, MCP servers, etc. are registered from the cached
    copy. `${CLAUDE_PLUGIN_ROOT}` resolves to that cache directory.
 
-Updates go through `/plugin marketplace update` followed by
-`/plugin` → update. An update is *only* triggered if the plugin's
-effective version has changed (see the version section above). If you
-push new plugin code with the same version, nothing happens on the
-user's machine.
+Updates go through `/plugin marketplace update` followed by `/plugin` → update.
 
-**No auto-update for third-party marketplaces.** At the time of
-writing, Claude Code auto-refreshes the official Anthropic marketplace
-on startup but does *not* auto-refresh third-party marketplaces — users
-have to run `/plugin marketplace update` manually (or `git pull` inside
-`~/.claude/plugins/marketplaces/<name>/`) before `/plugin` will see new
-versions. There's an open feature request for an auto-update flag, but
-it's not implemented yet.
+- An update is *only* triggered if the plugin's effective version has changed (see the version section above).
+- If you push new plugin code with the same version, nothing happens on the user's machine.
 
-**The full marketplace repo gets cloned, even though we only need
-`./plugin`.** This is a git limitation, not a Claude Code one: git
-can't clone a subdirectory. `source: "./plugin"` controls what gets
-copied into the plugin *cache* at install time, but the marketplace
-clone in `~/.claude/plugins/marketplaces/` always contains the whole
-repo. The workaround would be splitting the plugin into its own repo
-(cleaner, but more overhead); for now we live with the full clone
-since this repo is small.
+**No auto-update for third-party marketplaces.**
+
+- Claude Code auto-refreshes the official Anthropic marketplace on startup but does *not* auto-refresh third-party marketplaces.
+- Users have to run `/plugin marketplace update` manually (or `git pull` inside `~/.claude/plugins/marketplaces/<name>/`) before `/plugin` will see new versions.
+- There's an open feature request for an auto-update flag, but it's not implemented yet.
+
+**The full marketplace repo gets cloned, even though we only need `./plugin`.**
+
+- This is a git limitation, not a Claude Code one: git can't clone a subdirectory.
+- `source: "./plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole repo.
+- The workaround would be splitting the plugin into its own repo (cleaner, but more overhead); for now we live with the full clone since this repo is small.
 
 ## `${CLAUDE_PLUGIN_ROOT}`
 
@@ -208,15 +204,16 @@ Usable in:
 - Skill body text (it gets substituted inline).
 - Any subprocess spawned by the plugin (it's exported as an env var).
 
-We use it so that `plugin/skills/see-what-i-see-watch/SKILL.md` can
-refer to `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` and have that resolve
-to wherever the plugin is installed — the cache directory in the
-installed case, or the repo checkout in local development. That means
-both skills can share a single copy of `watch.sh` without the stop
-skill needing a `../see-what-i-see-watch/watch.sh`-style relative path.
+We use it so that `plugin/skills/see-what-i-see-watch/SKILL.md` can refer to
+`${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` and have that resolve to wherever the
+plugin is installed — the cache directory in the installed case, or the repo
+checkout in local development.
 
-There's a companion `${CLAUDE_PLUGIN_DATA}` for persistent state that
-should survive plugin updates; we don't use it.
+- This lets both skills share a single copy of `watch.sh` without the stop
+  skill needing a `../see-what-i-see-watch/watch.sh`-style relative path.
+
+There's a companion `${CLAUDE_PLUGIN_DATA}` for persistent state that should
+survive plugin updates; we don't use it.
 
 ## Local development
 
@@ -241,22 +238,21 @@ Two pieces of glue make it work:
 }
 ```
 
-- `CLAUDE_PLUGIN_ROOT=plugin` manually sets the env var that would
-  otherwise point into the plugin cache. `plugin` is a working-directory
-  relative path to the in-repo plugin root.
-- The `Bash(plugin/scripts/watch.sh:*)` permission is a string match,
-  not a resolved-path match, so the permission pattern in the skill
-  frontmatter (`Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)`) expands
-  to literally `Bash(plugin/scripts/watch.sh:*)`, which matches. It's a
-  little fragile — the two strings have to line up exactly — but it
-  avoids every invocation triggering a permission prompt.
+- `CLAUDE_PLUGIN_ROOT=plugin` manually sets the env var that would otherwise
+  point into the plugin cache. `plugin` is a working-directory-relative path
+  to the in-repo plugin root.
+- The `Bash(plugin/scripts/watch.sh:*)` permission is a string match, not a
+  resolved-path match.
+  - The skill frontmatter pattern `Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)`
+    expands to literally `Bash(plugin/scripts/watch.sh:*)`, which matches.
+  - It's a little fragile — the two strings have to line up exactly — but it
+    avoids every invocation triggering a permission prompt.
 
 ### `.claude/skills/` symlinks
 
 Claude Code auto-discovers user-scope skills from `.claude/skills/<name>/`.
-We add symlinks into `plugin/skills/` so that running `/see-what-i-see`
-in a local checkout picks up the same SKILL.md files the installed
-plugin would use:
+We add symlinks into `plugin/skills/` so that running `/see-what-i-see` in a
+local checkout picks up the same SKILL.md files the installed plugin would use:
 
 ```
 .claude/skills/see-what-i-see       -> ../../plugin/skills/see-what-i-see
@@ -305,16 +301,14 @@ check — run it before committing any manifest changes.
 - **Space vs comma in `allowed-tools`.** Space-separated values look
   like they work but silently register only the first tool. Use
   commas.
-- **The "contains expansion" permission prompt on `${VAR}/script`
-  commands with arguments.** Running
-  `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` on its own is allowed
-  silently, but running the same script with arguments like `--stop`
-  or `--after FILE` triggers a one-time "Contains expansion — do you
-  want to proceed?" prompt. Claude Code is being cautious about
-  variable expansion combined with additional tokens. It's per-pattern
-  and remembered for the session, so it's an annoyance rather than a
-  blocker, but it's why `watch.sh --after ...` still prompts even
-  though the plain `watch.sh` invocation doesn't.
+- **The "contains expansion" permission prompt on `${VAR}/script` commands with arguments.**
+  - Running `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` on its own is allowed silently.
+  - Running the same script with arguments like `--stop` or `--after FILE` triggers a
+    one-time "Contains expansion — do you want to proceed?" prompt.
+  - Claude Code is being cautious about variable expansion combined with additional tokens.
+  - It's per-pattern and remembered for the session — an annoyance rather than a blocker —
+    but it's why `watch.sh --after ...` still prompts even though the plain `watch.sh`
+    invocation doesn't.
 - **Version bumping only works if the plugin's version changes.**
   Bumping *just* `metadata.version` in `marketplace.json` doesn't
   update installed plugins. You have to bump the plugin entry version
