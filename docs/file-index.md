@@ -7,7 +7,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `README.md` | Primary project documentation — setup, features, and commands |
-| `privacy_policy.html` | User-facing privacy policy (linked from Chrome Web Store listing) — explains that nothing is collected or transmitted and why each manifest permission is required |
+| `privacy_policy.md` | User-facing privacy policy (linked from Chrome Web Store listing) — explains that nothing is collected or transmitted and why each manifest permission is required |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
 | `package.json` | Node project manifest, scripts, and devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |
