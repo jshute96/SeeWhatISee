@@ -48,12 +48,6 @@ Add the marketplace and install the plugin:
 /plugin install see-what-i-see@see-what-i-see-marketplace
 ```
 
-For local development, load the plugin directly from a checkout:
-
-```bash
-claude --plugin-dir ~/dev/SeeWhatISee/plugin
-```
-
 ## Output files
 
 Each capture writes three files into that directory:
@@ -95,6 +89,24 @@ The tests load the unpacked extension from `dist/` and drive it by
 calling capture functions on the background service worker — Playwright
 can't click the browser toolbar, so each capture mode is also exposed
 on `self.SeeWhatISee` for test/console access.
+
+## Updating the Claude plugin in marketplace
+
+The plugin won't update if the version is the same.
+
+To make an update possible, bump the plugin version in `.claude-plugin/marketplace.json`.
+
+Users still need to use `/plugin` to ask for a marketplace plugin update.
+
+New installs (and updates, when they happen) will get the head revision from github.
+
+## Running the Claude plugin locally
+
+For local development, a plugin directory can be set manually:
+
+```bash
+claude --plugin-dir ~/dev/SeeWhatISee/plugin
+```
 
 ## Watching for screenshots from CLI
 
