@@ -1,4 +1,4 @@
-import { captureVisible, savePageContents } from './capture.js';
+import { captureVisible, clearCaptureLog, savePageContents } from './capture.js';
 
 // Targeted suppression for one specific user-actionable failure.
 // Manually poking captureVisible from the SW devtools console (e.g.
@@ -60,18 +60,28 @@ chrome.action.onClicked.addListener(async () => {
 // to delayMs values.
 interface MenuItem {
   id: string;
-  title: string;
+  /** 'separator' for a horizontal divider, 'normal' (default) for a clickable entry. */
+  type?: 'normal' | 'separator';
+  /** Label shown in the menu. Required for normal items, ignored for separators. */
+  title?: string;
   /** For screenshot items: delay before capture. Absent for non-screenshot actions. */
   delayMs?: number;
   /** Handler for non-screenshot items. If absent, the item is a screenshot capture. */
   action?: () => Promise<unknown>;
 }
 
+// Note: chrome.contextMenus entries have no per-item tooltip field —
+// the `title` is the only user-visible text. The intended tooltip for
+// "Clear Chrome history" ("Erase capture log from Chrome storage") is
+// preserved here as documentation of intent so the title can stay
+// short in the menu.
 const MENU_ITEMS: MenuItem[] = [
   { id: 'capture-now', title: 'Take screenshot', delayMs: 0 },
   { id: 'capture-delayed-2s', title: 'Take screenshot in 2s', delayMs: 2000 },
   { id: 'capture-delayed-5s', title: 'Take screenshot in 5s', delayMs: 5000 },
   { id: 'save-page-contents', title: 'Save html contents', action: () => savePageContents() },
+  { id: 'sep-clear', type: 'separator' },
+  { id: 'clear-log', title: 'Clear Chrome history', action: () => clearCaptureLog() },
 ];
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -83,11 +93,16 @@ chrome.runtime.onInstalled.addListener(() => {
   // three cases identically.
   chrome.contextMenus.removeAll(() => {
     for (const item of MENU_ITEMS) {
-      chrome.contextMenus.create({
+      // `title` is required by the contextMenus API for normal items
+      // but must be omitted for separators. Build the properties
+      // object conditionally rather than passing `title: undefined`.
+      const props: chrome.contextMenus.CreateProperties = {
         id: item.id,
-        title: item.title,
+        type: item.type ?? 'normal',
         contexts: ['action'],
-      });
+      };
+      if (item.title !== undefined) props.title = item.title;
+      chrome.contextMenus.create(props);
     }
   });
 });
@@ -117,4 +132,5 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 (self as unknown as { SeeWhatISee: Record<string, unknown> }).SeeWhatISee = {
   captureVisible,
   savePageContents,
+  clearCaptureLog,
 };

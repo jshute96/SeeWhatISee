@@ -16,6 +16,7 @@ on-disk drop directory that coding agents can read from.
                                 | src/capture.ts        |
                                 |  - captureVisible()   |
                                 |  - savePageContents() |
+                                |  - clearCaptureLog()  |
                                 |  - (future: full,     |
                                 |     element, ...)     |
                                 +---------------------+
@@ -24,8 +25,8 @@ on-disk drop directory that coding agents can read from.
 - **Trigger.** A click on the toolbar action fires
   `chrome.action.onClicked` in `src/background.ts`. Right-clicking the
   toolbar icon opens a context menu (registered on
-  `chrome.runtime.onInstalled` with `contexts: ['action']`) with three
-  entries:
+  `chrome.runtime.onInstalled` with `contexts: ['action']`) with the
+  following entries:
   - **Take screenshot** — same as left-click; listed for
     discoverability.
   - **Take screenshot in 2s** / **Take screenshot in 5s** — pass the
@@ -44,6 +45,13 @@ on-disk drop directory that coding agents can read from.
     screenshot — the only difference is the `.html` filename. Requires
     the `scripting` permission. Also callable from the devtools console
     as `SeeWhatISee.savePageContents()`.
+  - *(separator)*
+  - **Clear Chrome history** — erases the capture log from
+    `chrome.storage.local` via `clearCaptureLog()`. The on-disk
+    `log.json` is intentionally *not* rewritten at clear time; it
+    catches up on the next capture, at which point it will contain
+    exactly one entry (the new one). Also callable as
+    `SeeWhatISee.clearCaptureLog()`.
 
   Both the immediate (left-click / "Take screenshot") and the delayed
   paths share a single resolution strategy: `captureVisible` always
@@ -134,7 +142,11 @@ on-disk drop directory that coding agents can read from.
     authoritative log lives in `chrome.storage.local` and `log.json` is
     a snapshot of it rewritten on every capture. Deleting `log.json`
     on disk is harmless — the next capture recreates it from storage.
-    To actually clear history, also clear the extension's storage.
+    To actually clear history, use the **Clear Chrome history** entry
+    on the toolbar right-click menu (`clearCaptureLog()`), which wipes
+    the `captureLog` key from `chrome.storage.local`; the on-disk
+    `log.json` then catches up on the next capture (at which point it
+    contains exactly the new entry).
     The log is capped at 100 entries (FIFO eviction of the oldest);
     without a cap, rewriting the whole file on every capture would be
     quadratic in capture count.

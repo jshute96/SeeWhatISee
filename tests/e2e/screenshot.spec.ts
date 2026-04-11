@@ -180,6 +180,88 @@ test('delayed capture records the new URL after a same-tab navigation', async ({
   await page.close();
 });
 
+test('clearCaptureLog empties storage so the next capture starts a fresh log', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Start from a clean slate so the log-length assertions below are
+  // about the behavior under test, not leftover state from an earlier
+  // test in the same worker.
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  // Capture #1 (purple): log grows to one record.
+  const sw1 = await getServiceWorker();
+  const result1 = await sw1.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+  const log1 = await verifyCapture(sw1, result1, PURPLE, []);
+  expect(log1).toHaveLength(1);
+
+  // Capture #2 (orange): log grows to two records. This is the state
+  // we want to prove `clearCaptureLog` actually collapses — if it only
+  // ever drops the single most recent entry, a test that starts from
+  // one record can't tell the difference.
+  await page.goto(`${fixtureServer.baseUrl}/orange.html`);
+  await page.bringToFront();
+  await page.waitForTimeout(600); // stay under captureVisibleTab rate limit
+
+  const sw2 = await getServiceWorker();
+  const result2 = await sw2.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+  const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
+  expect(log2).toHaveLength(2);
+
+  // Clear the in-storage log. Verified directly against chrome.storage.local
+  // — the on-disk log.json intentionally lags until the next capture.
+  const sw3 = await getServiceWorker();
+  await sw3.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { clearCaptureLog: () => Promise<void> };
+    }).SeeWhatISee;
+    await api.clearCaptureLog();
+  });
+  const afterClear = await sw3.evaluate(
+    async () => (await chrome.storage.local.get('captureLog')).captureLog,
+  );
+  expect(afterClear).toBeUndefined();
+
+  // Capture #3 (green): the next capture after the clear should produce
+  // a log.json containing exactly one record — the new one — not three.
+  await page.goto(`${fixtureServer.baseUrl}/green.html`);
+  await page.bringToFront();
+  await page.waitForTimeout(600);
+
+  const sw4 = await getServiceWorker();
+  const result3 = await sw4.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+
+  // Passing `[]` as the baseline makes verifyCapture assert the log is
+  // exactly length 1 — i.e. the previous two entries are gone, only
+  // the post-clear green capture remains.
+  const log3 = await verifyCapture(sw4, result3, GREEN, []);
+  expect(log3).toHaveLength(1);
+  expect(log3[0].filename).toBe(result3.filename);
+
+  await page.close();
+});
+
 test('delayed capture records the new tab URL after a tab switch', async ({
   extensionContext,
   fixtureServer,
