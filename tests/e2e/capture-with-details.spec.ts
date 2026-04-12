@@ -552,3 +552,148 @@ test('details: tab opens next to opener and returns focus on close', async ({
   await leftDistractor.close();
   await rightDistractor.close();
 });
+
+// ─── Default click action dispatch ────────────────────────────────
+//
+// The toolbar action's onClicked listener routes through
+// `handleActionClick`, which looks up the current default click
+// action from `chrome.storage.local` and runs it. Playwright can't
+// actually click the toolbar, so we drive the dispatcher directly
+// via `self.SeeWhatISee` and observe the side effect (a screenshot
+// file written, or a capture.html tab opening).
+
+test('default click action (fresh install): handleActionClick takes a direct screenshot', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(async () => {
+    await chrome.storage.local.clear();
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  // If a capture.html tab opens, the test should fail — fresh
+  // install should dispatch to capture-now, not the details flow.
+  let detailsOpened = false;
+  const onPage = (p: Page) => {
+    if (p.url().endsWith('/capture.html')) detailsOpened = true;
+  };
+  extensionContext.on('page', onPage);
+
+  const sw = await getServiceWorker();
+  await sw.evaluate(async () => {
+    await (
+      self as unknown as {
+        SeeWhatISee: { handleActionClick: () => Promise<void> };
+      }
+    ).SeeWhatISee.handleActionClick();
+  });
+
+  // Give Chrome a moment to fire any stray page event before
+  // checking the flag.
+  await new Promise((r) => setTimeout(r, 200));
+  extensionContext.off('page', onPage);
+  expect(detailsOpened).toBe(false);
+
+  // The screenshot should have landed via the direct path.
+  const sw2 = await getServiceWorker();
+  const stored = await sw2.evaluate(async () => {
+    return await chrome.storage.local.get('captureLog');
+  });
+  const log = (stored.captureLog ?? []) as { screenshot?: string }[];
+  expect(log.length).toBeGreaterThan(0);
+  expect(log[log.length - 1].screenshot).toMatch(SCREENSHOT_PATTERN);
+
+  await openerPage.close();
+});
+
+test('default click action set to capture-with-details: handleActionClick opens the details page', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(async () => {
+    await chrome.storage.local.clear();
+    await (
+      self as unknown as {
+        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      }
+    ).SeeWhatISee.setDefaultClickActionId('capture-with-details');
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+
+  const sw = await getServiceWorker();
+  await sw.evaluate(async () => {
+    await (
+      self as unknown as {
+        SeeWhatISee: { handleActionClick: () => Promise<void> };
+      }
+    ).SeeWhatISee.handleActionClick();
+  });
+
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  // Close the details tab cleanly so it doesn't leak into the next
+  // test. Default checkbox state (screenshot only) keeps Capture
+  // enabled.
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#capture').click(),
+  ]);
+
+  // Reset the preference so subsequent tests in this worker get
+  // the default behavior.
+  const sw2 = await getServiceWorker();
+  await sw2.evaluate(async () => {
+    await (
+      self as unknown as {
+        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      }
+    ).SeeWhatISee.setDefaultClickActionId('capture-now');
+  });
+
+  await openerPage.close();
+});
+
+test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const titles = await sw.evaluate(async () => {
+    const api = (
+      self as unknown as {
+        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      }
+    ).SeeWhatISee;
+    await api.setDefaultClickActionId('capture-now');
+    const a = await chrome.action.getTitle({});
+    await api.setDefaultClickActionId('capture-delayed-2s');
+    const b = await chrome.action.getTitle({});
+    await api.setDefaultClickActionId('save-page-contents');
+    const c = await chrome.action.getTitle({});
+    await api.setDefaultClickActionId('capture-with-details');
+    const d = await chrome.action.getTitle({});
+    // Restore default so the rest of the suite is unaffected.
+    await api.setDefaultClickActionId('capture-now');
+    return { a, b, c, d };
+  });
+
+  expect(titles.a).toBe('SeeWhatISee — Capture visible tab');
+  expect(titles.b).toBe('SeeWhatISee — Capture visible tab in 2s');
+  expect(titles.c).toBe('SeeWhatISee — Save HTML contents');
+  expect(titles.d).toBe('SeeWhatISee — Capture with details');
+});

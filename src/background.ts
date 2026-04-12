@@ -29,11 +29,6 @@ import {
 // mask the original capture error. Logged to console but not
 // re-thrown.
 //
-// Matches the manifest's `action.default_title` — kept in sync
-// manually because we need to restore exactly this string as the
-// tooltip after a successful capture clears the error state.
-const DEFAULT_ACTION_TITLE = 'SeeWhatISee — capture visible tab';
-
 // Icon paths (relative to the extension root) for the normal and
 // error states. Same three sizes as in the manifest's
 // `action.default_icon`; the error variants are committed alongside
@@ -60,10 +55,13 @@ async function reportCaptureError(err: unknown): Promise<void> {
     console.warn('[SeeWhatISee] failed to set error icon:', iconErr);
   }
   try {
+    // Base tooltip is whichever CAPTURE_ACTIONS entry the user has
+    // picked as the default click action (falls back to capture-now).
     // Second line shows the error. Chrome's toolbar tooltip honors
     // embedded newlines on macOS / Windows / most Linux DEs.
+    const baseTitle = await getDefaultActionTooltip();
     await chrome.action.setTitle({
-      title: `${DEFAULT_ACTION_TITLE}\nLast error: ${message}`,
+      title: `${baseTitle}\nLast error: ${message}`,
     });
   } catch (titleErr) {
     console.warn('[SeeWhatISee] failed to set error tooltip:', titleErr);
@@ -77,7 +75,9 @@ async function clearCaptureError(): Promise<void> {
     console.warn('[SeeWhatISee] failed to restore normal icon:', err);
   }
   try {
-    await chrome.action.setTitle({ title: DEFAULT_ACTION_TITLE });
+    // Dynamic: reflects the user's currently selected default
+    // click action, not a hardcoded manifest string.
+    await chrome.action.setTitle({ title: await getDefaultActionTooltip() });
   } catch (err) {
     console.warn('[SeeWhatISee] failed to reset tooltip:', err);
   }
@@ -126,7 +126,124 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   }
 });
 
-// Toolbar icon click → capture the visible tab.
+// Capture actions surfaced to the user. Each entry appears both as
+// a top-level context-menu entry (for one-off invocation) and as a
+// radio entry inside the "Set default click action" submenu (where the
+// user picks which one runs on a plain left-click on the toolbar
+// icon). The tooltip is what `chrome.action.setTitle` shows on the
+// icon when the given action is the current default — e.g. picking
+// "Take screenshot in 2s" updates the hover text so the user knows
+// what a click is about to do.
+//
+// Keep `capture-now` first: it's the default fallback when nothing
+// is stored yet, and its tooltip matches the manifest's
+// `action.default_title` so the hover text is correct during the
+// brief window between a fresh install and the first tooltip
+// refresh from `refreshActionTooltip()`.
+interface CaptureAction {
+  /** Stable id — used as the menu item id, the submenu child id
+   * (with a prefix), and the storage value. */
+  id: string;
+  /** Short label shown in the context menu. */
+  title: string;
+  /** Tooltip shown on the toolbar icon when this action is the
+   * current default. */
+  tooltip: string;
+  /** Runs when the user picks this action (either from the top-level
+   * menu entry or via a toolbar click when it's the default). */
+  run: () => Promise<unknown>;
+}
+
+const CAPTURE_ACTIONS: CaptureAction[] = [
+  {
+    id: 'capture-now',
+    title: 'Take screenshot',
+    tooltip: 'SeeWhatISee — Capture visible tab',
+    run: () => captureVisible(0),
+  },
+  {
+    id: 'capture-delayed-2s',
+    title: 'Take screenshot in 2s',
+    tooltip: 'SeeWhatISee — Capture visible tab in 2s',
+    run: () => captureVisible(2000),
+  },
+  {
+    id: 'save-page-contents',
+    title: 'Save html contents',
+    tooltip: 'SeeWhatISee — Save HTML contents',
+    run: () => savePageContents(),
+  },
+  {
+    id: 'capture-with-details',
+    title: 'Capture with details...',
+    tooltip: 'SeeWhatISee — Capture with details',
+    run: () => startCaptureWithDetails(),
+  },
+];
+
+const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
+const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
+// Child radio items under "Set default click action" use this prefix on
+// their ids so the onClicked handler can tell "pick this default"
+// clicks apart from the top-level "run this now" entries, which
+// share the CAPTURE_ACTIONS ids verbatim.
+const DEFAULT_CLICK_CHILD_PREFIX = 'set-default-';
+
+function findCaptureAction(id: string | undefined): CaptureAction | undefined {
+  return CAPTURE_ACTIONS.find((a) => a.id === id);
+}
+
+async function getDefaultClickActionId(): Promise<string> {
+  const stored = await chrome.storage.local.get(DEFAULT_CLICK_ACTION_KEY);
+  const id = stored[DEFAULT_CLICK_ACTION_KEY];
+  // Fall back to the first action if storage is empty or holds a
+  // stale id (e.g. after a release that renamed an action).
+  return typeof id === 'string' && findCaptureAction(id)
+    ? id
+    : CAPTURE_ACTIONS[0]!.id;
+}
+
+async function getDefaultClickAction(): Promise<CaptureAction> {
+  const id = await getDefaultClickActionId();
+  return findCaptureAction(id) ?? CAPTURE_ACTIONS[0]!;
+}
+
+async function getDefaultActionTooltip(): Promise<string> {
+  return (await getDefaultClickAction()).tooltip;
+}
+
+/**
+ * Persist a new default click action and update the toolbar
+ * tooltip to match. Safe to call from the contextMenus onClicked
+ * handler — Chrome has already auto-flipped the radio's visual
+ * state by the time we run, so we only need to mirror it to
+ * storage and refresh the title.
+ */
+async function setDefaultClickActionId(id: string): Promise<void> {
+  if (!findCaptureAction(id)) {
+    throw new Error(`Unknown capture action id: ${id}`);
+  }
+  await chrome.storage.local.set({ [DEFAULT_CLICK_ACTION_KEY]: id });
+  await refreshActionTooltip();
+}
+
+/**
+ * Update `chrome.action.setTitle` to match the currently selected
+ * default click action. Called after the preference changes and on
+ * service-worker install/startup so a stale title from a previous
+ * session doesn't linger.
+ */
+async function refreshActionTooltip(): Promise<void> {
+  try {
+    await chrome.action.setTitle({ title: await getDefaultActionTooltip() });
+  } catch (err) {
+    console.warn('[SeeWhatISee] failed to refresh action tooltip:', err);
+  }
+}
+
+// Toolbar icon click → run whichever capture action is the current
+// default. Default (on fresh install or if storage is wiped) is
+// `capture-now`, matching the pre-submenu behavior.
 //
 // The click counts as a user gesture, which is what makes the `activeTab`
 // permission (declared in manifest.json) kick in for the current tab —
@@ -138,49 +255,57 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // captureVisible — instead captureVisible re-queries the active tab
 // itself, so the immediate and delayed paths share one resolution
 // strategy (active tab in the last-focused window).
-chrome.action.onClicked.addListener(async () => {
-  // runWithErrorReporting downgrades rejection to console.warn +
-  // user-visible icon swap + tooltip "Last error:" line, so
-  // user-actionable failures like "No active tab found to capture"
-  // don't get promoted onto the chrome://extensions Errors page.
-  await runWithErrorReporting(() => captureVisible());
-});
-
-// Right-click context menu on the toolbar action. Created on
-// install/update; Chrome persists the entries across service worker
-// restarts so we don't need to recreate them on every wakeup.
 //
-// Note that the "Take screenshot" entry is functionally identical to a
-// plain left-click — listed in the menu for discoverability so users
-// don't have to know that left-click also captures. The delay (if any)
-// is handled by captureVisible itself; this file just maps menu items
-// to delayMs values.
-interface MenuItem {
-  id: string;
-  /** 'separator' for a horizontal divider, 'normal' (default) for a clickable entry. */
-  type?: 'normal' | 'separator';
-  /** Label shown in the menu. Required for normal items, ignored for separators. */
-  title?: string;
-  /** For screenshot items: delay before capture. Absent for non-screenshot actions. */
-  delayMs?: number;
-  /** Handler for non-screenshot items. If absent, the item is a screenshot capture. */
-  action?: () => Promise<unknown>;
+// runWithErrorReporting downgrades rejection to console.warn +
+// user-visible icon swap + tooltip "Last error:" line, so
+// user-actionable failures like "No active tab found to capture"
+// don't get promoted onto the chrome://extensions Errors page.
+//
+// Extracted from the listener body so tests can drive the dispatch
+// directly via `self.SeeWhatISee.handleActionClick()` — Playwright
+// has no way to trigger `chrome.action.onClicked` from outside.
+async function handleActionClick(): Promise<void> {
+  await runWithErrorReporting(async () => {
+    const action = await getDefaultClickAction();
+    await action.run();
+  });
 }
 
-// Note: chrome.contextMenus entries have no per-item tooltip field —
-// the `title` is the only user-visible text. The intended tooltip for
-// "Clear Chrome history" ("Erase capture log from Chrome storage") is
-// preserved here as documentation of intent so the title can stay
-// short in the menu.
-const MENU_ITEMS: MenuItem[] = [
-  { id: 'capture-now', title: 'Take screenshot', delayMs: 0 },
-  { id: 'capture-delayed-2s', title: 'Take screenshot in 2s', delayMs: 2000 },
-  { id: 'capture-delayed-5s', title: 'Take screenshot in 5s', delayMs: 5000 },
-  { id: 'save-page-contents', title: 'Save html contents', action: () => savePageContents() },
-  { id: 'capture-with-details', title: 'Capture with details...', action: () => startCaptureWithDetails() },
-  { id: 'sep-clear', type: 'separator' },
-  { id: 'clear-log', title: 'Clear Chrome history', action: () => clearCaptureLog() },
-];
+chrome.action.onClicked.addListener(handleActionClick);
+
+// Right-click context menu on the toolbar action. Structure:
+//
+//   Take screenshot
+//   Take screenshot in 2s
+//   Save html contents
+//   Capture with details...
+//   Set default click action  ▸   (submenu)
+//       • Take screenshot           (radio group, exactly one checked)
+//       • Take screenshot in 2s
+//       • Save html contents
+//       • Capture with details...
+//   Clear log history
+//
+// Chrome allows an extension up to 6 top-level items in the action
+// context menu — above that, Chrome collapses the overflow under a
+// parent item named after the extension, which is ugly. The menu
+// above is exactly 6: four CAPTURE_ACTIONS entries + the submenu
+// parent + clear-log. No separator, for the same reason. Adding
+// another top-level entry means pushing something into a submenu.
+//
+// The top-level action entries and the submenu radio entries are
+// both built from the same CAPTURE_ACTIONS array so their ids,
+// titles, and run functions can't drift out of sync.
+//
+// The registration runs on `chrome.runtime.onInstalled`; Chrome
+// persists the entries across service-worker restarts so we don't
+// have to recreate them on every wakeup.
+//
+// Note that the "Take screenshot" entry is functionally identical to
+// a plain left-click when `capture-now` is the default action —
+// listed in the menu for discoverability so users don't have to
+// know left-click also captures.
+const CLEAR_LOG_MENU_ID = 'clear-log';
 
 // "Capture with details…" flow. We grab both the screenshot and
 // the HTML up-front (so the user can decide which to save without
@@ -374,6 +499,64 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void chrome.storage.session.remove(detailsStorageKey(tabId));
 });
 
+async function installContextMenu(): Promise<void> {
+  // Read the current default up front so each submenu radio child
+  // can be created with the correct initial `checked` value —
+  // `removeAll` wipes Chrome's per-item state along with the
+  // entries themselves, so we can't rely on persisted state.
+  const defaultId = await getDefaultClickActionId();
+
+  // Top-level entries: run the action immediately when clicked.
+  for (const action of CAPTURE_ACTIONS) {
+    chrome.contextMenus.create({
+      id: action.id,
+      title: action.title,
+      contexts: ['action'],
+    });
+  }
+
+  // Submenu parent. Chrome automatically renders a ▸ indicator
+  // because the entry has children (set via parentId below).
+  chrome.contextMenus.create({
+    id: DEFAULT_CLICK_PARENT_ID,
+    title: 'Set default click action',
+    contexts: ['action'],
+  });
+
+  // Radio children. Consecutive radio items with the same
+  // `parentId` form a mutually exclusive group: Chrome handles the
+  // check/uncheck flip on click; our onClicked listener just
+  // persists the new choice. We set the initial `checked` state
+  // from storage here so the right entry shows up pre-selected
+  // after a fresh install / update.
+  for (const action of CAPTURE_ACTIONS) {
+    chrome.contextMenus.create({
+      id: DEFAULT_CLICK_CHILD_PREFIX + action.id,
+      parentId: DEFAULT_CLICK_PARENT_ID,
+      type: 'radio',
+      title: action.title,
+      checked: action.id === defaultId,
+      contexts: ['action'],
+    });
+  }
+
+  // Clear history. Not grouped with the submenu radios — it's a
+  // one-shot action at the root, not a preference.
+  //
+  // No separator above this: we're at Chrome's
+  // `ACTION_MENU_TOP_LEVEL_LIMIT = 6` cap, and separators count
+  // against it. Adding one silently drops a real entry — Chrome
+  // reports the failure via `chrome.runtime.lastError` on the
+  // offending create() call, which our loop never checks, so the
+  // overflow is invisible until someone notices a missing menu
+  // item. See docs/chrome-extension.md for the full story.
+  chrome.contextMenus.create({
+    id: CLEAR_LOG_MENU_ID,
+    title: 'Clear log history',
+    contexts: ['action'],
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   // removeAll first because onInstalled fires on `install`, `update`,
   // and `chrome_update`. On the update paths the previously-created
@@ -382,34 +565,71 @@ chrome.runtime.onInstalled.addListener(() => {
   // with duplicate id". `removeAll` is a clean wipe that handles all
   // three cases identically.
   chrome.contextMenus.removeAll(() => {
-    for (const item of MENU_ITEMS) {
-      // `title` is required by the contextMenus API for normal items
-      // but must be omitted for separators. Build the properties
-      // object conditionally rather than passing `title: undefined`.
-      const props: chrome.contextMenus.CreateProperties = {
-        id: item.id,
-        type: item.type ?? 'normal',
-        contexts: ['action'],
-      };
-      if (item.title !== undefined) props.title = item.title;
-      chrome.contextMenus.create(props);
-    }
+    void installContextMenu();
   });
+  // Also make sure the icon tooltip reflects the stored default
+  // after an update — the old build may have written a title that's
+  // no longer accurate.
+  void refreshActionTooltip();
+});
+
+// Browser restart: onInstalled doesn't fire, but we still want the
+// tooltip to match the stored preference. Chrome persists the
+// `chrome.action.setTitle` value across restarts, so this is a
+// belt-and-suspenders refresh in case anything has fallen out of
+// sync (e.g. a storage write that raced the previous shutdown).
+chrome.runtime.onStartup.addListener(() => {
+  void refreshActionTooltip();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
-  const item = MENU_ITEMS.find((m) => m.id === info.menuItemId);
-  if (!item) return;
-  // Every user-initiated menu entry flows through runWithErrorReporting
-  // for uniform error surfacing. For the "Clear Chrome history" entry
-  // that's arguably a category error — it isn't a capture — but in
-  // practice the same feedback channels (error icon + tooltip) still
-  // make sense for telling the user it failed, and on success clearing
-  // the error state is harmless.
-  await runWithErrorReporting(() => {
-    if (item.action) return item.action();
-    return captureVisible(item.delayMs ?? 0);
-  });
+  const id = String(info.menuItemId);
+
+  // "Set default click action" submenu: a radio click just persists
+  // the new preference. Deliberately not routed through
+  // runWithErrorReporting — flipping a setting isn't a capture,
+  // and painting the error icon on a failed storage write would
+  // be misleading.
+  //
+  // On a storage-write failure Chrome has already auto-flipped the
+  // radio UI to the new selection, but the stored id and the
+  // toolbar tooltip will still reflect the *old* one. The radio
+  // snaps back to the old choice on the next install/update when
+  // installContextMenu re-reads storage. We accept that small UX
+  // drift rather than trying to un-flip the radio (no API for it),
+  // and just log the failure.
+  if (id.startsWith(DEFAULT_CLICK_CHILD_PREFIX)) {
+    const actionId = id.slice(DEFAULT_CLICK_CHILD_PREFIX.length);
+    try {
+      await setDefaultClickActionId(actionId);
+    } catch (err) {
+      console.warn('[SeeWhatISee] failed to set default click action:', err);
+    }
+    return;
+  }
+
+  // Top-level capture entry: run its action.
+  const action = findCaptureAction(id);
+  if (action) {
+    await runWithErrorReporting(() => action.run());
+    return;
+  }
+
+  // Clear history. Routed through runWithErrorReporting for
+  // consistency with the capture paths: on success the error
+  // state is cleared, and on failure the same icon/tooltip
+  // channels tell the user something went wrong.
+  if (id === CLEAR_LOG_MENU_ID) {
+    await runWithErrorReporting(() => clearCaptureLog());
+    return;
+  }
+
+  // Fallthrough: a click on a menu item we don't recognize.
+  // Shouldn't happen in the current menu, but if a future
+  // contextMenus.create call adds an id without a matching branch
+  // above, this warning makes the drop visible in the SW console
+  // instead of silently doing nothing.
+  console.warn('[SeeWhatISee] unhandled context menu id:', id);
 });
 
 // Expose capture functions on the service worker global so they can be
@@ -429,4 +649,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   reportCaptureError,
   clearCaptureError,
   runWithErrorReporting,
+  handleActionClick,
+  getDefaultClickActionId,
+  setDefaultClickActionId,
+  refreshActionTooltip,
 };

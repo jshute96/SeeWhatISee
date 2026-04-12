@@ -11,7 +11,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "SeeWhatISee — capture visible tab",
+    "default_title": "SeeWhatISee — Capture visible tab",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",

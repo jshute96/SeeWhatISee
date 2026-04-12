@@ -19,10 +19,10 @@ The background script is an MV3 service worker. That means:
 - **`await` keeps it alive.** Inside a listener, awaiting a promise
   (including an `await new Promise(r => setTimeout(r, ms))`) holds
   the worker awake for the duration.
-  - This is what makes "Take screenshot in 5s" work: the handler
+  - This is what makes "Take screenshot in 2s" work: the handler
     sleeps on an awaited timer and Chrome doesn't reclaim the worker
     until the handler returns.
-  - Don't `setTimeout(() => captureVisible(), 5000)` without
+  - Don't `setTimeout(() => captureVisible(), 2000)` without
     awaiting — the timer fires in a dead worker.
 - **`chrome.downloads.download` resolves on download *start*, not
   completion.**
@@ -103,7 +103,7 @@ Not worth it. See the error-reporting section below.
 A real toolbar click grants `activeTab` for *the tab that was
 active when the click happened*.
 
-- The "Take screenshot in 5s" path `await`s a timer, then
+- The "Take screenshot in 2s" path `await`s a timer, then
   re-queries the active tab. If the user switches to a different
   tab during the delay, the captured tab won't be covered by
   `activeTab` anymore — it has to fall back to the host permission.
@@ -229,11 +229,52 @@ render cleanly.
 - **Separators.** `chrome.contextMenus.create` accepts
   `type: 'separator'`, but separator items must *not* include a
   `title` field at all (passing `title: undefined` still throws).
-  The code builds the properties object conditionally.
+  The current action menu has no separators — see the top-level
+  item-limit bullet below for why — but this is the trap waiting
+  if you add one.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment
   and keep the title short.
+- **Radio items.** `type: 'radio'` items render with a radio
+  indicator. A contiguous run of radio items with the same
+  `parentId` forms a mutually exclusive group; Chrome auto-flips
+  the selection on click and fires `onClicked` with `info.checked`
+  reflecting the *new* state of the clicked item. The "Set default
+  click action" submenu uses this for its CAPTURE_ACTIONS radios.
+  Our `onClicked` handler ignores `info.checked` and extracts the
+  action id from `info.menuItemId` instead — the click *is* the
+  selection, so the checked state adds no information.
+- **Submenus via `parentId`.** Any item created with a `parentId`
+  becomes a child of the named parent, which Chrome then renders
+  with a ▸ indicator automatically. No explicit "submenu" type.
+- **Persisted state doesn't survive `removeAll`.** The install
+  handler wipes the menu on every install / update / chrome_update,
+  so initial `checked` values have to be re-read from
+  `chrome.storage.local` and passed back to `create({checked})` on
+  every recreate. The "Set default click action" submenu does this for
+  its current selection.
+- **Top-level item limit.** Chrome caps each extension at
+  `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
+  items per context. The constant is read-only — it's reporting a
+  hard limit baked into Chrome, not a setting.
+  - **Separators count.** A `type: 'separator'` entry takes one of
+    the six slots. That's why the action menu has none; spending a
+    slot on a divider would cost us a real entry.
+  - **Overflow fails silently.** When you exceed the cap,
+    `chrome.contextMenus.create()` sets `chrome.runtime.lastError`
+    to *"You cannot add more than 6 …"* on the offending call and
+    the item simply doesn't register. Because the loop in
+    `background.ts` doesn't pass a `create()` callback, we never
+    read `lastError` and the failure is invisible until someone
+    notices the menu entry is gone. This has already bitten us
+    once: commit 8e100d1 added "Capture with details..." as a 7th
+    entry, which silently dropped "Clear Chrome history" off the
+    menu until the regression was spotted later. Keep the top
+    level at 6 or below, or move entries into a submenu.
+  - Our action menu currently has exactly 6 top-level entries —
+    four capture actions, the "Set default click action" submenu
+    parent, and "Clear log history".
 
 ## "Capture with details…" — extension page + runtime messaging
 
@@ -443,9 +484,10 @@ The ordering matters and the explicit re-activation is required:
   worker link on the SeeWhatISee card.
 - **A no-arg `SeeWhatISee.captureVisible()` usually fails** with
   `No active tab found to capture` because DevTools itself is the
-  focused window. `SeeWhatISee.captureVisible(5000)` is the working
+  focused window. `SeeWhatISee.captureVisible(2000)` is the working
   pattern: start the delayed capture, click into the real window,
-  wait for the capture.
+  wait for the capture. Any `delayMs` is fine — pick a longer one
+  if 2s doesn't give you enough time to switch windows.
 - The SW devtools console is also the fastest way to exercise:
   - `savePageContents()` — grab the current tab's HTML.
   - `clearCaptureLog()` — wipe the storage log.

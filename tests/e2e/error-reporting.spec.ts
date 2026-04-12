@@ -23,12 +23,18 @@
 
 import { test, expect } from '../fixtures/extension';
 
-const DEFAULT_TITLE = 'SeeWhatISee — capture visible tab';
+// Base tooltip for the `capture-now` default click action. The
+// background script derives the toolbar title from whichever
+// CAPTURE_ACTIONS entry the user has picked as the default; the
+// tests here pin that selection to `capture-now` in beforeEach so
+// the expected baseline is stable.
+const DEFAULT_TITLE = 'SeeWhatISee — Capture visible tab';
 
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;
   clearCaptureError: () => Promise<void>;
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
+  setDefaultClickActionId: (id: string) => Promise<void>;
 }
 
 // Per-test harness that hooks chrome.action.setIcon in the service
@@ -66,13 +72,17 @@ async function getSetIconCalls(
 }
 
 test.beforeEach(async ({ getServiceWorker }) => {
-  // Reset the action title and install a fresh setIcon spy so each
-  // test starts from a known-clean state. Lives in the service
-  // worker so we don't have to bridge chrome.* APIs across the test
-  // boundary.
+  // Pin the stored default click action to `capture-now` so
+  // `clearCaptureError()`'s dynamic tooltip resolves to the
+  // expected baseline, then reset the icon-swap spy. Lives in the
+  // service worker so we don't have to bridge chrome.* APIs across
+  // the test boundary.
   const sw = await getServiceWorker();
   await sw.evaluate(async () => {
-    await chrome.action.setTitle({ title: 'SeeWhatISee — capture visible tab' });
+    const api = (self as unknown as {
+      SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+    }).SeeWhatISee;
+    await api.setDefaultClickActionId('capture-now');
   });
   await installSetIconSpy(sw);
 });

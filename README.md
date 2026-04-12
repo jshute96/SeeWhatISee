@@ -10,11 +10,15 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot of the current page and share it directly with your coding agent.
+- Click the extension icon (![icon](src/icons/icon-16.png)) to run your currently selected default capture action — by default, a plain screenshot of the current tab. Hover the icon to see what a click will do.
 - Right-click the icon for more options:
   - Take a screenshot after a delay (so you can activate hovers, pop-ups, etc).
   - Capture the HTML contents of the page.
   - **Capture with details…** opens a review page (see below).
+  - **Set default click action ▸** — submenu of the entries above. Pick
+    one to change what a plain left-click on the icon does. The
+    setting persists across browser restarts, and the icon's
+    hover-tooltip updates to match.
 
 #### Capturing with details
 

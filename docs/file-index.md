@@ -55,7 +55,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
-| `src/background.ts` | MV3 service worker — toolbar/menu handlers, details-flow tab lifecycle, runtime-message router, and `runWithErrorReporting` icon/tooltip error surface |
+| `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + submenu, details-flow, runtime messages, error surface |
 | `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`) and metadata sidecar writing (`latest.json`, `log.json`) |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options, prompt, highlight overlay) |
 | `src/capture-page.ts` | Controller script for `capture.html`: data fetch, prompt/textarea behavior, SVG highlight overlay, canvas bake-in on save, image fit-to-viewport |
@@ -79,7 +79,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
-| `tests/e2e/capture-with-details.spec.ts` | E2E tests for the "Capture with details…" flow — combinations of png/html/both, prompt/no prompt, highlights/no highlights, and tab positioning + opener focus return |
+| `tests/e2e/capture-with-details.spec.ts` | E2E for the details flow and `handleActionClick` dispatch — save combos, highlights, tab positioning, tooltip sync |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
 

@@ -26,66 +26,112 @@ design live in [`chrome-extension.md`](chrome-extension.md).
                                 +---------------------------+
 ```
 
-- **Trigger.** A click on the toolbar action fires
-  `chrome.action.onClicked` in `src/background.ts`. Right-clicking the
-  toolbar icon opens a context menu (registered on
-  `chrome.runtime.onInstalled` with `contexts: ['action']`) with the
-  following entries:
-  - **Take screenshot** — same as left-click; listed for
-    discoverability.
-  - **Take screenshot in 2s** / **Take screenshot in 5s** — pass the
-    chosen delay through to `captureVisible(delayMs)`, which `await`s a
-    `setTimeout` before capturing. The user gets time to activate a
-    hover state, open a menu, etc. on the page; the `await` keeps the
-    service worker alive for the duration of the timer. The menu
-    handler is data-driven over a `MENU_ITEMS` array, so adding another
-    delay (or changing the durations) is a one-line edit. The same
-    `delayMs` argument is callable from the devtools console as
-    `SeeWhatISee.captureVisible(5000)`.
-  - **Save html contents** — uses `chrome.scripting.executeScript` to
-    grab `document.documentElement.outerHTML` from the active tab and
-    saves it as `contents-<timestamp>.html` in the same download directory.
-    The capture is recorded in `latest.json` / `log.json` just like a
-    screenshot — the only difference is the `.html` filename. Requires
-    the `scripting` permission. Also callable from the devtools console
-    as `SeeWhatISee.savePageContents()`.
-  - **Capture with details...** — opens a bundled extension page
-    (`capture.html`) where the user picks which artifacts to save,
-    adds an optional prompt, and optionally annotates the
-    screenshot. See ["Capture with details flow"](#capture-with-details-flow)
-    below for the full design.
-  - *(separator)*
-  - **Clear Chrome history** — erases the capture log from
+- **Capture actions.** A single `CAPTURE_ACTIONS` array in
+  `src/background.ts` is the source of truth for every user-visible
+  way to grab content. Each entry has an id, a menu title, an icon
+  tooltip, and a `run()` function:
+
+  - **`capture-now` — "Take screenshot".** Calls
+    `captureVisible(0)`. Immediate PNG of the visible tab.
+  - **`capture-delayed-2s` — "Take screenshot in 2s".** Calls
+    `captureVisible(2000)`, which `await`s a `setTimeout` before
+    capturing so the user can activate hover states, open menus,
+    etc. on the page. The `await` keeps the service worker alive
+    for the duration of the timer. Any `delayMs` value is also
+    callable from the devtools console as
+    `SeeWhatISee.captureVisible(2000)`.
+  - **`save-page-contents` — "Save html contents".** Uses
+    `chrome.scripting.executeScript` to grab
+    `document.documentElement.outerHTML` from the active tab and
+    saves it as `contents-<timestamp>.html`. The capture is
+    recorded in `latest.json` / `log.json` just like a screenshot
+    — only the filename differs. Requires the `scripting`
+    permission. Also callable as `SeeWhatISee.savePageContents()`.
+  - **`capture-with-details` — "Capture with details...".** Opens
+    a bundled extension page (`capture.html`) where the user picks
+    which artifacts to save, adds an optional prompt, and
+    optionally annotates the screenshot. See ["Capture with
+    details flow"](#capture-with-details-flow) below for the full
+    design.
+
+- **Default click action.** The id of one `CAPTURE_ACTIONS` entry
+  is persisted in `chrome.storage.local` under the
+  `defaultClickAction` key.
+
+  - A click on the toolbar icon fires `chrome.action.onClicked`,
+    which routes through `handleActionClick`: read the stored id,
+    look up the matching `CAPTURE_ACTIONS` entry, run it.
+  - Fresh installs default to `capture-now` (plain immediate
+    screenshot) so nothing changes until the user picks a new
+    default.
+  - The toolbar icon's hover tooltip is set from the selected
+    action's `tooltip` field via `chrome.action.setTitle`, so the
+    icon always tells the user what a click is about to do.
+    `refreshActionTooltip()` rewrites it whenever the preference
+    changes and on `onInstalled` / `onStartup`.
+
+- **Right-click menu.** The toolbar icon's context menu is
+  registered on `chrome.runtime.onInstalled` with
+  `contexts: ['action']`. Its top level contains:
+
+  - One entry per `CAPTURE_ACTIONS` item, running that action
+    immediately when clicked. **"Take screenshot"** is functionally
+    identical to a plain left-click when `capture-now` is the
+    default — listed for discoverability.
+  - **Set default click action ▸** — submenu with one radio entry
+    per `CAPTURE_ACTIONS` item. Picking one persists its id as the
+    `defaultClickAction` preference and refreshes the tooltip.
+    Chrome handles the radio group's mutual-exclusion automatically
+    and the onClicked handler just mirrors the new state to
+    storage.
+  - **Clear log history** — erases the capture log from
     `chrome.storage.local` via `clearCaptureLog()`. The on-disk
     `log.json` is intentionally *not* rewritten at clear time; it
     catches up on the next capture, at which point it will contain
     exactly one entry (the new one). Also callable as
     `SeeWhatISee.clearCaptureLog()`.
 
-  Both paths share a single resolution strategy: `captureVisible` always
-  re-queries the active tab in the last-focused window *after* any delay,
+  **Top-level item cap.** Chrome enforces
+  `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6`, and
+  separators count against it. The menu above is already at the
+  cap, so **do not add another top-level entry** — nest new items
+  under an existing submenu parent (or introduce a new one) so
+  they don't consume a top-level slot. Overflow fails silently
+  via `chrome.runtime.lastError`, so a careless addition will
+  drop a previously-working entry without any build- or
+  runtime-time error. See
+  [chrome-extension.md → Context menus on the toolbar action](chrome-extension.md#context-menus-on-the-toolbar-action)
+  for the full story, including the 8e100d1 regression this
+  caused.
+
+- **Active-tab resolution.** `captureVisible` always re-queries
+  the active tab in the last-focused window *after* any delay,
   then captures that tab and records its URL.
 
-  - This keeps `url` and captured pixels consistent even if the user switches tabs,
-    windows, or interacts with a popup during the delay.
-  - If the focused window isn't a regular browser window with an active tab
-    (e.g. DevTools is on top), the query returns nothing and the call throws.
+  - This keeps `url` and captured pixels consistent even if the
+    user switches tabs, windows, or interacts with a popup during
+    the delay.
+  - If the focused window isn't a regular browser window with an
+    active tab (e.g. DevTools is on top), the query returns
+    nothing and the call throws.
 
-  Every user-initiated click flows through `runWithErrorReporting` in `background.ts`:
+- **Error reporting.** Every user-initiated click flows through
+  `runWithErrorReporting` in `background.ts`.
 
-  - On failure: swaps the toolbar icon to a pre-rendered error variant and appends
-    `Last error: …` to the tooltip.
+  - On failure: swaps the toolbar icon to a pre-rendered error
+    variant and appends `Last error: …` to the tooltip.
   - On later success: restores both.
-  - See [`chrome-extension.md`](chrome-extension.md) for the design rationale
-    (why not badge text, why not `chrome.notifications`) and how error icon variants
-    are generated.
+  - See [`chrome-extension.md`](chrome-extension.md) for the
+    design rationale (why not badge text, why not
+    `chrome.notifications`) and how error icon variants are
+    generated.
 
-  The same capture functions are also attached to `self.SeeWhatISee` so they can be
-  invoked from the service worker devtools console or from Playwright via
-  `serviceWorker.evaluate(...)`.
-
-  - This is the only way to drive the extension from tests, since Playwright cannot
-    click the browser toolbar or open its context menu.
+- **Test hook.** The same capture functions are attached to
+  `self.SeeWhatISee` so they can be invoked from the service
+  worker devtools console or from Playwright via
+  `serviceWorker.evaluate(...)`. This is the only way to drive
+  the extension from tests, since Playwright cannot click the
+  browser toolbar or open its context menu.
 - **Permissions.** The manifest declares `activeTab`, `<all_urls>` host permission,
   `contextMenus`, `downloads`, `scripting`, and `storage`.
   - Both `activeTab` and `<all_urls>` are needed because they serve different trigger
@@ -147,7 +193,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     schema as `latest.json`), grep-friendly history of recent captures.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage.
-    - To clear history, use the **Clear Chrome history** entry on the toolbar right-click menu (`clearCaptureLog()`): wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry).
+    - To clear history, use the **Clear log history** entry on the toolbar right-click menu (`clearCaptureLog()`): wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry).
     - The log is capped at 100 entries (FIFO eviction of the oldest); without a cap, rewriting the whole file on every capture would be quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
   from `~/Downloads/SeeWhatISee/`. Four Claude Code plugin skills are
@@ -254,8 +300,20 @@ permission gaps).
 
 1. Add a new exported function to `src/capture.ts` (e.g.
    `captureFullPage`).
-2. Register it on `self.SeeWhatISee` in `src/background.ts` so it is
-   reachable from tests and the devtools console.
-3. Wire it to its trigger — typically a `chrome.contextMenus` entry
-   created in the background service worker on `onInstalled`.
-4. Add a Playwright test that drives it via `serviceWorker.evaluate`.
+2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
+   is reachable from tests and the devtools console.
+3. Add a new entry to the `CAPTURE_ACTIONS` array in
+   `src/background.ts` with an id, menu title, icon tooltip, and a
+   `run()` that calls your new function. The menu-install loop and
+   the "Set default click action" submenu pick up the new entry
+   automatically; picking it as the default also sets the icon
+   tooltip correctly via `refreshActionTooltip`.
+   - **Watch the top-level cap.** Chrome allows at most
+     `ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level items per action
+     context menu. Adding a 5th `CAPTURE_ACTIONS` entry pushes the
+     top level to 7 and Chrome will silently drop one entry. If
+     you need to go past 4 capture actions, move some of them into
+     their own submenu (like the "Set default click action" one)
+     so only the submenu parent counts against the cap.
+4. Add a Playwright test that drives the new function via
+   `serviceWorker.evaluate`.

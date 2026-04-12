@@ -372,7 +372,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
  * Erase the in-storage capture log. The on-disk `log.json` is left
  * alone — it will be overwritten with the (now single-record) log the
  * next time a capture is saved. This matches the user-visible promise
- * of the "Clear Chrome history" context menu item: the Chrome-side
+ * of the "Clear log history" context menu item: the in-storage
  * history is gone immediately, and disk catches up on the next write.
  *
  * Goes through `serializeWrite` so it can't race with a capture that's

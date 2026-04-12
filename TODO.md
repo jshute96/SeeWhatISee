@@ -1,12 +1,10 @@
 Features
 * For html snapshots, capture other files too, like ^S SavePage does.
-* Save with dialog, enter a description to use as a prompt
-* Save screenshot and html together
-* Highlight regions on the screenshot
 * Record and save video
 * Flash the screen when it snapshots
 * Avoid making 3 files show up as Chrome downloads each time
-* Options dialog for what menu items to include, default click action.
+* Countdown clock on the icon for delayed screenshot
+* Add a way to get a longer delay (once). Maybe with a long-click.
 
 Claude plugin
 * Re-run of `watch.sh --after ...` still causes a permission prompt, why?
@@ -17,5 +15,7 @@ Claude plugin
 Release and Packaging
 * Publish Chrome extension
 * Update docs
-* License files
 * Custom icon
+
+Wishlist
+* I wanted shift-click on the icon for selecting between screenshot and screenshot-with-details. Chrome doesn't give allow getting click modifiers.
