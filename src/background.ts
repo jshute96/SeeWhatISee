@@ -17,9 +17,12 @@ import {
 //     pre-rendered "error" variant of each icon size (small red `!`
 //     painted in the bottom-right corner) until the *next*
 //     successful capture restores the originals. We deliberately
-//     avoid `chrome.action.setBadgeText` because Chrome's badge pill
-//     is uncomfortably large relative to the icon and there's no
-//     API to shrink it; `setIcon` gives us pixel-level control.
+//     avoid `chrome.action.setBadgeText` for error state because
+//     Chrome's badge pill is uncomfortably large relative to the
+//     icon and there's no API to shrink it; `setIcon` gives us
+//     pixel-level control. (The badge *is* used for the countdown
+//     timer during delayed captures — see `countdownSleep` in
+//     capture.ts — where the large size is actually a plus.)
 //   - The tooltip (action title) is the reference channel: hovering
 //     the icon shows the default tooltip plus a second line with
 //     the last error message, so the user can go back and read

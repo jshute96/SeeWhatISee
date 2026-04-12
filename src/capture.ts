@@ -19,6 +19,41 @@
 // log.json, the next capture will recreate it from storage.
 
 const DOWNLOAD_SUBDIR = 'SeeWhatISee';
+
+/**
+ * Sleep for `delayMs` milliseconds, showing a countdown on the toolbar
+ * badge (e.g. "5", "4", "3", "2", "1") that ticks every second.
+ * The badge is cleared when the countdown finishes.
+ */
+async function countdownSleep(delayMs: number): Promise<void> {
+  const end = Date.now() + delayMs;
+  await chrome.action.setBadgeBackgroundColor({ color: '#FF8C00' });
+
+  const updateBadge = async (remaining: number) => {
+    if (remaining > 0) {
+      await chrome.action.setBadgeText({ text: String(remaining) });
+    }
+  };
+  await updateBadge(Math.ceil(delayMs / 1000));
+
+  // Poll at 250ms so the displayed number updates within a quarter-
+  // second of each real second boundary.
+  await new Promise<void>((resolve, reject) => {
+    const id = setInterval(() => {
+      const remaining = Math.ceil((end - Date.now()) / 1000);
+      if (remaining <= 0) {
+        clearInterval(id);
+        chrome.action.setBadgeText({ text: '' }).then(resolve, reject);
+      } else {
+        updateBadge(remaining).catch((err) => {
+          clearInterval(id);
+          chrome.action.setBadgeText({ text: '' }).finally(() => reject(err));
+        });
+      }
+    }, 250);
+  });
+}
+
 const LOG_STORAGE_KEY = 'captureLog';
 // Cap the in-storage log so we don't grow unbounded and so rewriting
 // log.json on every capture stays cheap (otherwise it's quadratic in the
@@ -134,7 +169,7 @@ export interface CaptureResult extends CaptureRecord {
  */
 export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
   if (delayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await countdownSleep(delayMs);
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
@@ -161,7 +196,7 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
  */
 export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   if (delayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await countdownSleep(delayMs);
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
@@ -226,7 +261,7 @@ export interface InMemoryCapture {
  */
 export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture> {
   if (delayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await countdownSleep(delayMs);
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');

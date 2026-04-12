@@ -43,10 +43,10 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   - **`capture-now` — "Take screenshot".** Calls
     `captureVisible(delayMs)`. Immediate PNG of the visible tab.
-    The delayed variants `await` a `setTimeout` before capturing
-    so the user can activate hover states, open menus, etc. on
-    the page. The `await` keeps the service worker alive for the
-    duration of the timer. Any `delayMs` value is also callable
+    The delayed variants show a countdown badge on the toolbar
+    icon ("5", "4", "3", …) before capturing, so the user can
+    activate hover states, open menus, etc. on the page. The
+    `await` keeps the service worker alive for the duration. Any `delayMs` value is also callable
     from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
   - **`save-page-contents` — "Save html contents".** Uses
@@ -178,8 +178,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 - **Capture.** `src/capture.ts` provides these capture functions:
   - `captureVisible(delayMs?)` calls `chrome.tabs.captureVisibleTab`
     to get a PNG data URL of the visible tab region and saves it
-    directly. `delayMs` awaits a `setTimeout` before the active-tab
-    lookup so the user can reposition / hover during the wait.
+    directly. `delayMs` runs a countdown (with a toolbar badge)
+    before the active-tab lookup so the user can reposition / hover
+    during the wait.
   - `savePageContents(delayMs?)` uses
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
@@ -354,8 +355,8 @@ permission gaps).
 
 1. Add a new exported function to `src/capture.ts` (e.g.
    `captureFullPage`). If delayed variants are wanted, accept an
-   optional `delayMs` first and `await` a `setTimeout` on it
-   before the real work, matching `captureVisible` /
+   optional `delayMs` and call `countdownSleep(delayMs)` before
+   the real work, matching `captureVisible` /
    `savePageContents` / `captureBothToMemory`.
 2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
    is reachable from tests and the devtools console.

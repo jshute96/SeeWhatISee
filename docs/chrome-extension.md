@@ -162,6 +162,9 @@ The Errors page on `chrome://extensions` was also noisy because
     no font size, no pill shape, no inset.
   - At 16px icon sizes the badge consumes a ridiculous fraction of
     the space.
+  - Rejected for errors, but the badge *is* used for the countdown
+    timer during delayed captures (see `countdownSleep` in
+    `capture.ts`), where the large size helps visibility.
 - **`chrome.action.setIcon`** — swap the whole toolbar icon to a
   pre-rendered variant.
   - Full pixel control, no extra permission, matches the visual
@@ -213,6 +216,34 @@ Why code instead of hand-drawn art:
 There's no anti-aliasing — pngjs is raw RGBA — but at these sizes
 jagged edges aren't visible and the solid color + straight edges
 render cleanly.
+
+## Countdown badge for delayed captures
+
+When a delayed capture starts (2s or 5s), a `countdownSleep` helper
+in `capture.ts` shows a countdown on the toolbar badge via
+`chrome.action.setBadgeText`: "5", "4", "3", "2", "1". The badge
+clears when the timer finishes and the capture fires.
+
+### Implementation details
+
+- **Orange background** (`#FF8C00`) — set once before the countdown
+  loop starts. The large badge pill that made `setBadgeText`
+  unsuitable for the error surface works in the countdown's favor:
+  the number is easy to read at a glance.
+- **250ms polling interval** — a `setInterval` checks `Date.now()`
+  against the target end time and updates the displayed number via
+  `Math.ceil`. The 250ms tick means the badge updates within a
+  quarter-second of each real second boundary.
+- **Non-async interval callback** — the `setInterval` callback is
+  deliberately synchronous, chaining `.then` / `.catch` on the
+  Chrome API promises. An `async` callback would produce unhandled
+  promise rejections invisible to the outer `Promise` (since
+  `setInterval` ignores the return value). On failure, the interval
+  is cleared and the outer promise is rejected so the capture
+  surfaces the error through `runWithErrorReporting`.
+- **Shared across all three capture paths** — `captureVisible`,
+  `savePageContents`, and `captureBothToMemory` all call
+  `countdownSleep(delayMs)` when `delayMs > 0`.
 
 ## Toolbar tooltip (`chrome.action.setTitle`)
 
