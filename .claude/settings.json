@@ -4,7 +4,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(plugin/scripts/watch.sh:*)"
+      "Bash(plugin/scripts/watch.sh:*)",
+      "Bash(plugin/scripts/get-latest.sh:*)"
     ]
   },
   "enabledPlugins": {

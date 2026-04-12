@@ -1,0 +1,1 @@
+../plugin/scripts/get-latest.sh

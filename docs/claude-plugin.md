@@ -31,7 +31,9 @@ SeeWhatISee/
 │   │   └── plugin.json           # plugin manifest (name, version, ...)
 │   ├── settings.json             # plugin-level default settings
 │   ├── scripts/
-│   │   └── watch.sh              # bundled helper script used by skills
+│   │   ├── _common.sh            # shared helpers (dir resolution, path absolutization)
+│   │   ├── get-latest.sh         # print latest capture JSON with absolute paths
+│   │   └── watch.sh              # filesystem watcher, emits JSON with absolute paths
 │   └── skills/
 │       ├── see-what-i-see/SKILL.md
 │       ├── see-what-i-see-watch/SKILL.md
@@ -232,7 +234,8 @@ Two pieces of glue make it work:
   },
   "permissions": {
     "allow": [
-      "Bash(plugin/scripts/watch.sh:*)"
+      "Bash(plugin/scripts/watch.sh:*)",
+      "Bash(plugin/scripts/get-latest.sh:*)"
     ]
   }
 }
@@ -241,10 +244,10 @@ Two pieces of glue make it work:
 - `CLAUDE_PLUGIN_ROOT=plugin` manually sets the env var that would otherwise
   point into the plugin cache. `plugin` is a working-directory-relative path
   to the in-repo plugin root.
-- The `Bash(plugin/scripts/watch.sh:*)` permission is a string match, not a
-  resolved-path match.
-  - The skill frontmatter pattern `Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)`
-    expands to literally `Bash(plugin/scripts/watch.sh:*)`, which matches.
+- The `Bash(plugin/scripts/watch.sh:*)` and `Bash(plugin/scripts/get-latest.sh:*)`
+  permissions are string matches, not resolved-path matches.
+  - The skill frontmatter patterns like `Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)`
+    expand to literally `Bash(plugin/scripts/watch.sh:*)`, which matches.
   - It's a little fragile — the two strings have to line up exactly — but it
     avoids every invocation triggering a permission prompt.
 

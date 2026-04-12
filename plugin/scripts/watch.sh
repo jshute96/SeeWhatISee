@@ -19,9 +19,9 @@ set -euo pipefail
 
 # ---- Defaults ---------------------------------------------------------------
 
-DEFAULT_DIR="$HOME/Downloads/SeeWhatISee"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
+
 DIR=""
-DIR_FROM_FLAG=false
 LOOP=false
 STOP=false
 AFTER=""
@@ -50,54 +50,13 @@ while [[ $# -gt 0 ]]; do
     --help)      usage; exit 0 ;;
     --loop)      LOOP=true; shift ;;
     --stop)      STOP=true; shift ;;
-    --directory) DIR="$2"; DIR_FROM_FLAG=true; shift 2 ;;
+    --directory) DIR="$2"; shift 2 ;;
     --after)     AFTER="$2"; shift 2 ;;
     *)           echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
 
-# ---- Config file (.SeeWhatISee) ---------------------------------------------
-# If --directory was not given, look for a .SeeWhatISee config file in the
-# current directory and then in $HOME. The file uses key=value syntax and
-# currently supports one option: directory=<path>. Unrecognized keys are
-# treated as an error so typos don't silently do nothing.
-
-parse_config() {
-  local file="$1"
-  local line_no=0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line_no=$((line_no + 1))
-    # Skip blank lines and comments.
-    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-    # Strip leading/trailing whitespace.
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    case "$line" in
-      directory=*)
-        DIR="${line#directory=}"
-        # Strip matched quotes (double or single).
-        case "$DIR" in
-          \"*\") DIR="${DIR#\"}" ; DIR="${DIR%\"}" ;;
-          \'*\') DIR="${DIR#\'}" ; DIR="${DIR%\'}" ;;
-        esac
-        ;;
-      *)
-        echo "Error: unrecognized option in $file line $line_no: $line" >&2
-        exit 1
-        ;;
-    esac
-  done < "$file"
-}
-
-if ! $DIR_FROM_FLAG; then
-  if [[ -f ".SeeWhatISee" ]]; then
-    parse_config ".SeeWhatISee"
-  elif [[ -f "$HOME/.SeeWhatISee" ]]; then
-    parse_config "$HOME/.SeeWhatISee"
-  fi
-  # Fall back to the default if no config or config didn't set directory.
-  [[ -z "$DIR" ]] && DIR="$DEFAULT_DIR"
-fi
+resolve_dir
 
 FILE="$DIR/latest.json"
 LOG="$DIR/log.json"
@@ -185,8 +144,7 @@ emit() {
   cur=$(mtime)
   [[ -n "$cur" && "$cur" != "$last_mtime" ]] || return 1
   last_mtime="$cur"
-  printf -- '---- %s ----\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-  cat -- "$FILE"
+  absolutize_paths < "$FILE"
   printf '\n'
 }
 
@@ -213,13 +171,12 @@ if [[ -n "$AFTER" ]]; then
       [[ $remaining -lt 0 ]] && remaining=0
       if [[ $remaining -gt 0 ]]; then
         # There are captures after the --after line. Emit them.
-        pending=$(tail -n "$remaining" "$LOG")
+        pending=$(tail -n "$remaining" "$LOG" | absolutize_paths)
         count=$(echo "$pending" | wc -l)
         label="captures"
         [[ "$count" -eq 1 ]] && label="capture"
-        echo "$count pending $label:"
+        echo "$count pending $label:" >&2
         echo "$pending"
-        printf '\n'
         # We've caught up. If not looping, we're done.
         if ! $LOOP; then
           exit 0
@@ -234,12 +191,6 @@ fi
 
 # Don't emit the current contents on startup — only changes after this point.
 last_mtime=$(mtime)
-
-if $LOOP; then
-  echo "Watching for changes in $FILE (loop mode, ^C to stop)"
-else
-  echo "Watching for the next change to $FILE"
-fi
 
 # ---- Watch loop -------------------------------------------------------------
 

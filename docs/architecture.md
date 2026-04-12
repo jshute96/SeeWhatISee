@@ -245,17 +245,30 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     - `/see-what-i-see-stop` — stop the watcher
     - `/see-what-i-see-help` — print a summary of the commands
 
-  `scripts/watch.sh` is the underlying filesystem watcher:
+  Three helper scripts live in `plugin/scripts/` (symlinked from
+  `scripts/`):
 
-  - Detects changes to `latest.json` by polling mtime every 0.5s.
-  - Supports `--after TIMESTAMP` to catch up on missed captures;
+  - `_common.sh` — shared helpers sourced by the other two:
+    directory resolution (config file, `--directory`, default),
+    config parsing, and `absolutize_paths` (rewrites bare filenames
+    in JSON to absolute paths via sed).
+  - `get-latest.sh` — reads `latest.json` and prints a single JSON
+    record with absolute paths to stdout. Used by `/see-what-i-see`.
+  - `watch.sh` — filesystem watcher used by `/see-what-i-see-watch`.
+    Detects changes to `latest.json` by polling mtime every 0.5s.
+    Supports `--after TIMESTAMP` to catch up on missed captures;
     TIMESTAMP is the ISO `timestamp` field from a previous record
-    (matched against `log.json`).
-  - If `--directory` is not given, looks for a `.SeeWhatISee` config file
-    (in the current directory, then `$HOME`) with a `directory=<path>` setting.
-  - When a capture has a `prompt`, the skill that consumes it treats
-    the prompt as the user's instruction and acts on it directly
-    instead of just describing the image.
+    (matched against `log.json`). Emits JSON records with absolute
+    paths to stdout; status messages go to stderr.
+
+  All three resolve the download directory the same way: if
+  `--directory` is not given, look for a `.SeeWhatISee` config file
+  (in `.` then `$HOME`) with a `directory=<path>` setting, falling
+  back to `~/Downloads/SeeWhatISee`.
+
+  When a capture has a `prompt`, the skill that consumes it treats
+  the prompt as the user's instruction and acts on it directly
+  instead of just describing the image.
 
 ## Capture with details flow
 

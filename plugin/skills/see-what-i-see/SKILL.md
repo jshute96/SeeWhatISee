@@ -1,27 +1,28 @@
 ---
 name: see-what-i-see
 description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and describe what you see.
-allowed-tools: "Read"
+allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/get-latest.sh:*),Read"
 ---
 
 Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and make it available as context so the user can ask questions about what they see.
 
 You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
 
+**If you get any failures, just report them. Don't try to find other solutions.**
+
 ## Steps
 
-1. Read `~/Downloads/SeeWhatISee/latest.json` to find the most recent capture.
-   * If that file doesn't exist, report an error that the SeeWhatISee
-     Chrome extension hasn't taken any captures yet — nothing in
-     `~/Downloads/SeeWhatISee/`.
+1. Run `${CLAUDE_PLUGIN_ROOT}/scripts/get-latest.sh` and parse its JSON output.
+   * If the script fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
+   * The JSON output has absolute paths already filled in for `screenshot` and `contents`.
 
-2. The record contains `{timestamp, url}` plus some combination of:
-   * `screenshot` — bare filename of a PNG at `~/Downloads/SeeWhatISee/<screenshot>`
+2. The JSON contains `{timestamp, url}` plus some combination of:
+   * `screenshot` — absolute path to a PNG file.
    * `highlights` — `true` when the screenshot has user-drawn red markup baked
      into it (boxes, lines, and/or dots calling attention to specific regions
      of the image).
-   * `contents` — bare filename of an HTML file at `~/Downloads/SeeWhatISee/<contents>`
-   * `prompt` — the user's instruction for this capture (if present)
+   * `contents` — absolute path to an HTML file.
+   * `prompt` — the user's instruction for this capture.
 
    Any record will have at least one of `screenshot` / `contents`.
    **Look at these files only. Don't go fishing for others unless asked to.**

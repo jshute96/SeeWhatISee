@@ -37,20 +37,15 @@ fi
 TARGET_LATEST_JSON="$TARGET_DIR/latest.json"
 cp "$LATEST_JSON" "$TARGET_LATEST_JSON"
 
-# Extract filenames (they are in the same dir as latest.json)
+# Copy referenced files into TARGET_DIR
 CONTENTS=$(grep -oP '"contents":\s*"\K[^"]+' "$LATEST_JSON" || true)
 SCREENSHOT=$(grep -oP '"screenshot":\s*"\K[^"]+' "$LATEST_JSON" || true)
+[ -n "$CONTENTS" ] && [ -f "$DIR/$CONTENTS" ] && cp "$DIR/$CONTENTS" "$TARGET_DIR/"
+[ -n "$SCREENSHOT" ] && [ -f "$DIR/$SCREENSHOT" ] && cp "$DIR/$SCREENSHOT" "$TARGET_DIR/"
 
-# Copy and rewrite paths if fields exist
-if [ -n "$CONTENTS" ] && [ -f "$DIR/$CONTENTS" ]; then
-    cp "$DIR/$CONTENTS" "$TARGET_DIR/"
-    sed -i "s|\"contents\": *\"$CONTENTS\"|\"contents\": \"$TARGET_DIR/$CONTENTS\"|g" "$TARGET_LATEST_JSON"
-fi
-
-if [ -n "$SCREENSHOT" ] && [ -f "$DIR/$SCREENSHOT" ]; then
-    cp "$DIR/$SCREENSHOT" "$TARGET_DIR/"
-    sed -i "s|\"screenshot\": *\"$SCREENSHOT\"|\"screenshot\": \"$TARGET_DIR/$SCREENSHOT\"|g" "$TARGET_LATEST_JSON"
-fi
-
-# Output the modified JSON file content
-cat "$TARGET_LATEST_JSON"
+# Output JSON with bare filenames replaced by absolute paths into TARGET_DIR.
+# Same approach as absolutize_paths in plugin/scripts/_common.sh, but
+# rewriting to TARGET_DIR (the copy destination) rather than DIR (the source).
+sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$TARGET_DIR/\\1\"|" \
+    -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$TARGET_DIR/\\1\"|" \
+    "$TARGET_LATEST_JSON"

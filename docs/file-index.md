@@ -21,12 +21,14 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `.claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin |
 
-## Plugin (`plugin/`)
+## Claude Plugin (`plugin/`)
 
 | File | Description |
 |------|-------------|
 | `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
 | `plugin/settings.json` | Plugin-level permission defaults for the skills |
+| `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
+| `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
 | `plugin/scripts/watch.sh` | CLI watcher for `latest.json` (`--loop`, `--after`, `--stop`, `--directory`) |
 | `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
 | `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
@@ -50,6 +52,13 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
 
+## Gemini CLI Commands (`.gemini/`)
+
+| File | Description |
+|------|-------------|
+| `.gemini/commands/see-what-i-see.toml` | Gemini CLI command — describes the latest capture (uses `copy-last-snapshot.sh`) |
+| `.gemini/scripts/copy-last-snapshot.sh` | Copies latest snapshot files into `.gemini/tmp/` and prints JSON with rewritten paths |
+
 ## Extension Source (`src/`)
 
 | File | Description |
@@ -68,6 +77,8 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, and `capture.html`, then runs `tsc` |
 | `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
+| `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
+| `scripts/get-latest.sh` | Symlink to `plugin/scripts/get-latest.sh` |
 | `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` |
 
 ## Tests (`tests/`)
@@ -80,7 +91,9 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the details flow and `handleActionClick` dispatch — save combos, highlights, tab positioning, tooltip sync |
-| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file) |
+| `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
+| `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
+| `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
 
 ## Design Docs (`docs/`)

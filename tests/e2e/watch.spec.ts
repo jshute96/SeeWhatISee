@@ -1,5 +1,5 @@
 import { test as base, expect } from '@playwright/test';
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -83,20 +83,27 @@ function waitForPattern(
   });
 }
 
+/** Run a script synchronously. */
+function runScript(
+  script: string, args: string[], opts?: { cwd?: string; env?: Record<string, string> },
+): { stdout: string; stderr: string; exitCode: number } {
+  const result = spawnSync('bash', [script, ...args], {
+    timeout: 5_000,
+    encoding: 'utf8',
+    cwd: opts?.cwd,
+    env: { ...process.env, ...opts?.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return {
+    stdout: (result.stdout as string) ?? '',
+    stderr: (result.stderr as string) ?? '',
+    exitCode: result.status ?? 1,
+  };
+}
+
 /** Run watch.sh synchronously (for short-lived invocations like --after / --stop). */
 function runWatch(args: string[], opts?: { cwd?: string }): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(`bash ${WATCH_SCRIPT} ${args.join(' ')}`, {
-      timeout: 5_000,
-      encoding: 'utf8',
-      cwd: opts?.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { stdout, stderr: '', exitCode: 0 };
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; status?: number };
-    return { stdout: e.stdout ?? '', stderr: e.stderr ?? '', exitCode: e.status ?? 1 };
-  }
+  return runScript(WATCH_SCRIPT, args, opts);
 }
 
 /** Build a fake capture record. */
@@ -181,7 +188,19 @@ test.describe('watch.sh', () => {
     expect(exitCode).toBe(0);
 
     const out = watch.output();
-    expect(out).toContain(screenshot);
+    expect(out).toContain(`${tmpDir}/${screenshot}`);
+  });
+
+  test('once mode: output contains absolute paths', async () => {
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const parsed = JSON.parse(watch.output().trim());
+    expect(parsed.screenshot).toBe(`${tmpDir}/${fakeRecord(1).screenshot}`);
   });
 
   test('loop mode: emits on 3 captures', async () => {
@@ -205,7 +224,7 @@ test.describe('watch.sh', () => {
     const out = watch.output();
 
     for (const fn of screenshots) {
-      expect(out).toContain(fn);
+      expect(out).toContain(`${tmpDir}/${fn}`);
     }
   });
 
@@ -221,16 +240,16 @@ test.describe('watch.sh', () => {
     // --after record 0: should show 2 pending (records 1 and 2).
     const after0 = runWatch(['--after', r0.timestamp, '--directory', tmpDir]);
     expect(after0.exitCode).toBe(0);
-    expect(after0.stdout).toContain('2 pending captures');
-    expect(after0.stdout).toContain(r1.screenshot);
-    expect(after0.stdout).toContain(r2.screenshot);
+    expect(after0.stderr).toContain('2 pending captures');
+    expect(after0.stdout).toContain(`${tmpDir}/${r1.screenshot}`);
+    expect(after0.stdout).toContain(`${tmpDir}/${r2.screenshot}`);
     expect(after0.stdout).not.toContain(r0.screenshot);
 
     // --after record 1: should show 1 pending (record 2).
     const after1 = runWatch(['--after', r1.timestamp, '--directory', tmpDir]);
     expect(after1.exitCode).toBe(0);
-    expect(after1.stdout).toContain('1 pending capture:');
-    expect(after1.stdout).toContain(r2.screenshot);
+    expect(after1.stderr).toContain('1 pending capture:');
+    expect(after1.stdout).toContain(`${tmpDir}/${r2.screenshot}`);
 
     // --after record 2: nothing pending — script would block, so verify
     // it doesn't exit immediately.
@@ -253,12 +272,12 @@ test.describe('watch.sh', () => {
     const watch = startWatch(['--after', r0.timestamp, '--loop', '--directory', tmpDir]);
 
     // Wait for the pending capture to appear in the output.
-    await waitForPattern(watch.output, r1.screenshot, 1, 5_000);
+    await waitForPattern(watch.output, `${tmpDir}/${r1.screenshot}`, 1, 5_000);
 
     // Verify it emitted the pending capture.
     const out1 = watch.output();
     expect(out1).toContain('1 pending capture:');
-    expect(out1).toContain(r1.screenshot);
+    expect(out1).toContain(`${tmpDir}/${r1.screenshot}`);
 
     // The process should still be running (loop mode).
     expect(watch.proc.exitCode).toBeNull();
@@ -266,11 +285,11 @@ test.describe('watch.sh', () => {
     // Now simulate another capture and verify the watcher picks it up.
     await new Promise((r) => setTimeout(r, 1200));
     const { screenshot: fn2 } = simulateCapture(tmpDir, 2);
-    await waitForPattern(watch.output, fn2, 1, 5_000);
+    await waitForPattern(watch.output, `${tmpDir}/${fn2}`, 1, 5_000);
 
     watch.kill();
     const out2 = watch.output();
-    expect(out2).toContain(fn2);
+    expect(out2).toContain(`${tmpDir}/${fn2}`);
   });
 
   test('--after with nonexistent timestamp warns and watches', async () => {
@@ -282,7 +301,7 @@ test.describe('watch.sh', () => {
 
     const out = watch.output();
     expect(out).toContain('not found');
-    expect(out).toContain('Watching');
+    expect(out).toContain('watching');
 
     // It should still be running (in watch mode after the warning).
     expect(watch.proc.exitCode).toBeNull();

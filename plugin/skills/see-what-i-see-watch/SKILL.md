@@ -6,6 +6,8 @@ allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*),Read"
 
 Start a background loop that watches for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
 
+**If you get any failures, just report them. Don't try to find other solutions.**
+
 ## Getting snapshots in a loop
 
 1. **Start the loop.** Run `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` via the Bash tool with `run_in_background: true` (no timeout — let it run indefinitely). This blocks until the next capture arrives. (`watch.sh` auto-kills any previous watcher via its `.watch.pid` file, so no manual guard is needed.)
@@ -13,7 +15,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 2. **On completion.** When the background task completes, check its exit code:
   - **Non-zero exit (killed / error):** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
   - **Exit 0 (success — a capture arrived):**
-    1. Read the task's captured stdout to get the JSON record(s).
+    1. Read the task's captured stdout to get the JSON record(s). The JSON has absolute paths already filled in for `screenshot` and `contents`.
     2. Process each record as described below.
     3. Immediately launch the next iteration: run `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh --after <timestamp>` again with `run_in_background: true` (no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures added before we restarted; if any captures are reported on the next run, process each the same way.
 
@@ -22,11 +24,11 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 ## Process each snapshot
 
 1. You have a JSON record for this capture. It contains `{timestamp, url}` plus some combination of:
-  - `screenshot` — bare filename of a PNG at `~/Downloads/SeeWhatISee/<screenshot>`
+  - `screenshot` — absolute path to a PNG file.
   - `highlights` — `true` when the screenshot has user-drawn red markup baked
     into it (boxes, lines, and/or dots calling attention to specific regions
     of the image).
-  - `contents` — bare filename of an HTML file at `~/Downloads/SeeWhatISee/<contents>`
+  - `contents` — absolute path to an HTML file.
   - `prompt` — the user's instruction for this capture (if present)
 
   Any record will have at least one of `screenshot` / `contents`.
