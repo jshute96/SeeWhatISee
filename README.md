@@ -41,22 +41,22 @@ Here, you can:
 
 ### Claude Code skills
 
-- $\color{darkred}\text{/see-what-i-see}$ — read the latest snapshot and describe it
-- $\color{darkred}\text{/see-what-i-see-watch}$ — watch for new snapshots to appear in the background, and then look at them when they appear
-- $\color{darkred}\text{/see-what-i-see-stop}$ — stop a running watch loop
-- $\color{darkred}\text{/see-what-i-see-help}$ — print a summary of the commands
+- $\color{darkred}\texttt{/see-what-i-see}$ — read the latest snapshot and describe it
+- $\color{darkred}\texttt{/see-what-i-see-watch}$ — watch for new snapshots to appear in the background, and then look at them when they appear
+- $\color{darkred}\texttt{/see-what-i-see-stop}$ — stop a running watch loop
+- $\color{darkred}\texttt{/see-what-i-see-help}$ — print a summary of the commands
 
 If you've added a prompt with the snapshot, Claude will follow it.
 
 You can also add prompts after the commands above and they'll be applied
 on each snapshot. For example,
 
-- $\color{darkred}\text{/see-what-i-see}$ $\color{green}\text{What font is the heading on this page?}$
-- $\color{darkred}\text{/see-what-i-see-watch}$ $\color{green}\text{Just report the snapshot filenames}$
+- $\color{darkred}\texttt{/see-what-i-see}$ $\color{green}\texttt{What font is the heading on this page?}$
+- $\color{darkred}\texttt{/see-what-i-see-watch}$ $\color{green}\texttt{Just report the snapshot filenames}$
 
 ### Gemini CLI commands
 
-$\color{darkred}\text{/see-what-i-see}$ $\color{green}\text{[prompt]}$
+$\color{darkred}\texttt{/see-what-i-see}$ $\color{green}\texttt{[prompt]}$
 is the only supported command.
 
 The first time you run it, Gemini may ask you to run a `/directory add` command to get permission to read the snapshot files.
