@@ -4,47 +4,25 @@ Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome exte
 You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
 """
 prompt = """
-**ONLY LOOK AT THE EXACT FILENAMES REFERENCED BELOW. DO NOT LOOK FOR OTHER FILES.**
+**If anything fails, do not try to debug or fix anything. Just report the failure.**
 
-## Setup
+1. Run the script `.gemini/scripts/copy-last-snapshot.sh` and parse its JSON output.
+   * If the script fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
+   * The JSON output will contain absolute paths for `screenshot` and/or `contents`.
 
-If `$SNAP_REAL_HOME/Downloads/SeeWhatISee/latest.json` is not in an allowed workspace, run this to give the user a suggestion on how to add it:
-```
-echo "Run this:/directory add $SNAP_REAL_HOME/Downloads/SeeWhatISee/"
-```
-
-## Steps
-
-1. Read `$SNAP_REAL_HOME/Downloads/SeeWhatISee/latest.json` to find the most recent capture.
-   * If that file doesn't exist, report an error that the SeeWhatISee
-     Chrome extension hasn't taken any captures yet.
-   * **Do not run `ls` or search for other files.**
-
-2. That file contains a JSON record with `{timestamp, url}` plus some combination of:
-   * `screenshot` — bare filename of a PNG at `$SNAP_REAL_HOME/Downloads/SeeWhatISee/<screenshot>`
-   * `highlights` — `true` when the screenshot has user-drawn red markup baked
-     into it (boxes, lines, and/or dots calling attention to specific regions
-     of the image).
-   * `contents` — bare filename of an HTML file at `$SNAP_REAL_HOME/Downloads/SeeWhatISee/<contents>`
-   * `prompt` — the user's instruction for this capture (if present)
-
-   Any record will have at least one of `screenshot` / `contents`.
-   **Look at these files only. Don't go fishing for others unless asked to.**
+2. The JSON contains:
+   * `screenshot` — absolute path to a PNG file.
+   * `highlights` — `true` if user-drawn red markup is baked into the screenshot.
+   * `contents` — absolute path to an HTML file.
+   * `prompt` — the user's instruction for this capture.
+   * `url` — the source URL.
 
 3. Process the capture:
-   * If `screenshot` is present, Read it with the Read tool.
-     - **If `highlights` is `true`, the user has drawn red markup to call attention to 
-       specific regions. Focus your description on those marked areas. 
-       If a `prompt` is present, it is likely referring to those regions specifically — interpret 
-       it in that context.**
-   * If `contents` is present, don't Read it up front (HTML can be large);
-     wait until you know what to look for.
-   * **If `prompt` is present, treat it as the user's instruction for this
-     capture and act on it directly.** Use the screenshot and/or HTML as the
-     subject of that instruction. Mention the source `url` if relevant.
+   * If `screenshot` is present, read it.
+     - If `highlights` is `true`, focus on the red marked areas.
+   * If `contents` is present, read it only if needed to answer the user's prompt.
+   * If `prompt` is present, treat it as the user's instruction for this capture.
    * If `prompt` is absent:
-     - For screenshots, briefly describe what you see and mention the source
-       `url`. When `highlights` is `true`, lead with what's highlighted.
-     - For HTML-only captures, report that you have an HTML snapshot from
-       the source `url` and ask the user what they want to know.
+     - For screenshots, describe what you see and mention the `url`.
+     - For HTML-only, report the `url` and ask what they want to know.
 """

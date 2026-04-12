@@ -59,8 +59,6 @@ on each snapshot. For example,
 `/see-what-i-see` `[prompt]`
 is the only supported command.
 
-The first time you run it, Gemini may ask you to run a `/directory add` command to get permission to read the snapshot files.
-
 Gemini doesn't support asynchronous background so the *watch* commands don't work yet.
 
 ## Installation
@@ -91,7 +89,10 @@ Add the marketplace and install the plugin:
 
 ### Gemini CLI commands
 
-Copy [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml) into the same path under your home directory or project directory.
+Copy these files into the same directories in your `.gemini` directory:
+
+* [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml)
+* [`.gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/copy-last-snapshot.sh)
 
 ## Output files
 

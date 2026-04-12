@@ -14,8 +14,7 @@ Claude plugin
   - Maybe a separate repository for just the "released" version of the plugin.
 
 Gemini plugin
-* It's pretty janky so far. It just has a modified command to pick up the latest snapshot.
-* It requires running a `/directory` command for permission once per session.
+* It has copies of the code from Claude skills. Can I share this somehow?
 * Watching doesn't work because asynchronous background commands aren't supported.
 
 Release and Packaging
