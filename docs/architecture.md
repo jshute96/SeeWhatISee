@@ -28,17 +28,26 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
 - **Capture actions.** A single `CAPTURE_ACTIONS` array in
   `src/background.ts` is the source of truth for every user-visible
-  way to grab content. Each entry has an id, a menu title, an icon
-  tooltip, and a `run()` function:
+  way to grab content.
+
+  - Generated at module load from `BASE_CAPTURE_ACTIONS ×
+    CAPTURE_DELAYS_SEC` — three bases times three delays (0, 2,
+    5 seconds).
+  - Each generated entry has an id (`<baseId>` for delay 0,
+    `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
+    `baseId` + `delaySec` fields for routing into the right menu
+    section, and a zero-arg `run()` that forwards the delay to
+    the base action's handler.
+
+  The three bases are:
 
   - **`capture-now` — "Take screenshot".** Calls
-    `captureVisible(0)`. Immediate PNG of the visible tab.
-  - **`capture-delayed-2s` — "Take screenshot in 2s".** Calls
-    `captureVisible(2000)`, which `await`s a `setTimeout` before
-    capturing so the user can activate hover states, open menus,
-    etc. on the page. The `await` keeps the service worker alive
-    for the duration of the timer. Any `delayMs` value is also
-    callable from the devtools console as
+    `captureVisible(delayMs)`. Immediate PNG of the visible tab.
+    The delayed variants `await` a `setTimeout` before capturing
+    so the user can activate hover states, open menus, etc. on
+    the page. The `await` keeps the service worker alive for the
+    duration of the timer. Any `delayMs` value is also callable
+    from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
   - **`save-page-contents` — "Save html contents".** Uses
     `chrome.scripting.executeScript` to grab
@@ -46,13 +55,17 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     saves it as `contents-<timestamp>.html`. The capture is
     recorded in `latest.json` / `log.json` just like a screenshot
     — only the filename differs. Requires the `scripting`
-    permission. Also callable as `SeeWhatISee.savePageContents()`.
+    permission. Takes the same optional `delayMs` as
+    `captureVisible`; also callable as
+    `SeeWhatISee.savePageContents(2000)`.
   - **`capture-with-details` — "Capture with details...".** Opens
     a bundled extension page (`capture.html`) where the user picks
     which artifacts to save, adds an optional prompt, and
-    optionally annotates the screenshot. See ["Capture with
-    details flow"](#capture-with-details-flow) below for the full
-    design.
+    optionally annotates the screenshot. Takes the same
+    `delayMs`, forwarded through `captureBothToMemory` so the
+    delay applies to the pre-open screenshot + HTML snapshot.
+    See ["Capture with details flow"](#capture-with-details-flow)
+    below for the full design.
 
 - **Default click action.** The id of one `CAPTURE_ACTIONS` entry
   is persisted in `chrome.storage.local` under the
@@ -64,6 +77,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - Fresh installs default to `capture-now` (plain immediate
     screenshot) so nothing changes until the user picks a new
     default.
+  - Only the 0s and 2s variants are exposed as defaultable — 5s
+    lives in the "Capture with delay" submenu but can't be set as
+    the default. (`DEFAULTABLE_DELAYS_SEC` in `background.ts`.)
   - The toolbar icon's hover tooltip is set from the selected
     action's `tooltip` field via `chrome.action.setTitle`, so the
     icon always tells the user what a click is about to do.
@@ -72,37 +88,47 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
-  `contexts: ['action']`. Its top level contains:
+  `contexts: ['action']`. Top level (5 entries):
 
-  - One entry per `CAPTURE_ACTIONS` item, running that action
-    immediately when clicked. **"Take screenshot"** is functionally
-    identical to a plain left-click when `capture-now` is the
-    default — listed for discoverability.
-  - **Set default click action ▸** — submenu with one radio entry
-    per `CAPTURE_ACTIONS` item. Picking one persists its id as the
-    `defaultClickAction` preference and refreshes the tooltip.
-    Chrome handles the radio group's mutual-exclusion automatically
-    and the onClicked handler just mirrors the new state to
-    storage.
-  - **Clear log history** — erases the capture log from
-    `chrome.storage.local` via `clearCaptureLog()`. The on-disk
-    `log.json` is intentionally *not* rewritten at clear time; it
-    catches up on the next capture, at which point it will contain
-    exactly one entry (the new one). Also callable as
-    `SeeWhatISee.clearCaptureLog()`.
+  - The three **undelayed** `CAPTURE_ACTIONS` items (Take
+    screenshot, Save html contents, Capture with details...),
+    each running its action immediately when clicked. "Take
+    screenshot" is functionally identical to a plain left-click
+    when `capture-now` is the default — listed for discoverability.
+  - **Capture with delay ▸** — submenu with the 2s and 5s variants
+    of each base action, separator-grouped by delay. In-submenu
+    separators don't count against the top-level cap, so the
+    visual grouping is free.
+  - **Set default click action ▸** — submenu of radios, one per
+    defaultable `CAPTURE_ACTIONS` item: three undelayed radios,
+    a separator, then three 2s-delay radios. Picking one persists
+    its id as `defaultClickAction` and refreshes the tooltip.
+    - Chrome's built-in radio mutual-exclusion only applies to a
+      *contiguous* run of same-parent radio items — the separator
+      splits this submenu into two independent groups.
+    - To keep the "exactly one checked" UX, `setDefaultClickActionId`
+      explicitly `chrome.contextMenus.update`s every defaultable
+      radio on each change.
 
-  **Top-level item cap.** Chrome enforces
-  `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6`, and
-  separators count against it. The menu above is already at the
-  cap, so **do not add another top-level entry** — nest new items
-  under an existing submenu parent (or introduce a new one) so
-  they don't consume a top-level slot. Overflow fails silently
-  via `chrome.runtime.lastError`, so a careless addition will
-  drop a previously-working entry without any build- or
-  runtime-time error. See
-  [chrome-extension.md → Context menus on the toolbar action](chrome-extension.md#context-menus-on-the-toolbar-action)
-  for the full story, including the 8e100d1 regression this
-  caused.
+  **(hidden) Clear log history** — `clearCaptureLog()` erases the
+  in-storage capture log; the on-disk `log.json` catches up on the
+  next capture. The menu entry is temporarily hidden (see TODO.md),
+  but the function is still on `SeeWhatISee.clearCaptureLog()`.
+
+  **Top-level item cap.**
+
+  - Chrome enforces `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT
+    = 6`. Top-level separators count against it.
+  - The menu currently has 5 top-level entries (3 undelayed + 2
+    submenu parents), leaving one slot of headroom.
+  - Past 6, **do not add another top-level entry** — nest new
+    items under an existing submenu parent (or introduce a new
+    one).
+  - Overflow fails silently via `chrome.runtime.lastError`, so a
+    careless addition drops a previously-working entry without any
+    build- or runtime-time error. See
+    [chrome-extension.md → Context menus on the toolbar action](chrome-extension.md#context-menus-on-the-toolbar-action)
+    for the full story, including the 8e100d1 regression this caused.
 
 - **Active-tab resolution.** `captureVisible` always re-queries
   the active tab in the last-focused window *after* any delay,
@@ -142,26 +168,33 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     Chrome-specific permission hazards (including why the Chrome Web Store itself
     blocks `captureVisibleTab`).
 - **Capture.** `src/capture.ts` provides these capture functions:
-  - `captureVisible` calls `chrome.tabs.captureVisibleTab` to get a
-    PNG data URL of the visible tab region and saves it directly.
-  - `savePageContents` uses `chrome.scripting.executeScript` to grab
-    `document.documentElement.outerHTML` from the active tab and saves
-    it as an HTML file.
-  - `captureBothToMemory` does *both* of the above without saving,
-    returning the data for the details flow to stash and preview.
+  - `captureVisible(delayMs?)` calls `chrome.tabs.captureVisibleTab`
+    to get a PNG data URL of the visible tab region and saves it
+    directly. `delayMs` awaits a `setTimeout` before the active-tab
+    lookup so the user can reposition / hover during the wait.
+  - `savePageContents(delayMs?)` uses
+    `chrome.scripting.executeScript` to grab
+    `document.documentElement.outerHTML` from the active tab and
+    saves it as an HTML file. Same delay semantics as
+    `captureVisible`.
+  - `captureBothToMemory(delayMs?)` does *both* of the above
+    without saving, returning the data for the details flow to
+    stash and preview. Same delay semantics.
   - `saveDetailedCapture` takes pre-captured data plus flags for
     which artifacts to keep and an optional prompt, and writes the
     selected files + a single combined sidecar record.
 
-  Future variations (full-page stitching, element crop, etc.) will live alongside
-  these as additional exported functions.
+  Future variations (full-page stitching, element crop, etc.)
+  live here as additional exported functions.
 
-  The `CaptureResult` returned by both functions includes the `chrome.downloads` ids
-  of the content file and both JSON sidecars (`sidecarDownloadIds.{latest,log}`):
+  The `CaptureResult` returned by `captureVisible` and
+  `savePageContents` includes the `chrome.downloads` ids of the
+  content file and both JSON sidecars
+  (`sidecarDownloadIds.{latest,log}`):
 
   - Production callers ignore them.
-  - The e2e tests use them to look up each saved file's actual on-disk path via
-    `chrome.downloads.search`.
+  - The e2e tests use them to look up each saved file's actual
+    on-disk path via `chrome.downloads.search`.
 - **Save.** Captures are written via `chrome.downloads.download` into
   `~/Downloads/SeeWhatISee/`.
   - Screenshots are saved as `screenshot-<timestamp>.png`; HTML snapshots as `contents-<timestamp>.html`.
@@ -193,7 +226,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     schema as `latest.json`), grep-friendly history of recent captures.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage.
-    - To clear history, use the **Clear log history** entry on the toolbar right-click menu (`clearCaptureLog()`): wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry).
+    - To clear history, call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console: wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry). The right-click menu entry that used to drive this is temporarily hidden — see TODO.md.
     - The log is capped at 100 entries (FIFO eviction of the oldest); without a cap, rewriting the whole file on every capture would be quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
   from `~/Downloads/SeeWhatISee/`. Four Claude Code plugin skills are
@@ -299,21 +332,27 @@ permission gaps).
 ## Adding a new capture mode
 
 1. Add a new exported function to `src/capture.ts` (e.g.
-   `captureFullPage`).
+   `captureFullPage`). If delayed variants are wanted, accept an
+   optional `delayMs` first and `await` a `setTimeout` on it
+   before the real work, matching `captureVisible` /
+   `savePageContents` / `captureBothToMemory`.
 2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
    is reachable from tests and the devtools console.
-3. Add a new entry to the `CAPTURE_ACTIONS` array in
-   `src/background.ts` with an id, menu title, icon tooltip, and a
-   `run()` that calls your new function. The menu-install loop and
-   the "Set default click action" submenu pick up the new entry
-   automatically; picking it as the default also sets the icon
-   tooltip correctly via `refreshActionTooltip`.
+3. Add a new entry to the `BASE_CAPTURE_ACTIONS` array in
+   `src/background.ts` with a base id, base title, base tooltip,
+   and a `run(delayMs)` that calls your new function. The flat
+   `CAPTURE_ACTIONS` array is generated from
+   `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load, so
+   the new base automatically gains immediate + 2s + 5s variants
+   across the top-level menu, the "Capture with delay" submenu, and
+   the "Set default click action" submenu. No other plumbing.
    - **Watch the top-level cap.** Chrome allows at most
      `ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level items per action
-     context menu. Adding a 5th `CAPTURE_ACTIONS` entry pushes the
-     top level to 7 and Chrome will silently drop one entry. If
-     you need to go past 4 capture actions, move some of them into
-     their own submenu (like the "Set default click action" one)
-     so only the submenu parent counts against the cap.
+     context menu, and separators count. The menu is currently at
+     5 (3 undelayed entries + Capture with delay submenu + Set
+     default submenu), leaving one slot of headroom. If a future
+     change would push it past 6, move the undelayed top-level
+     slots into a submenu of their own (e.g. "Capture now") so
+     the top-level count stays under cap.
 4. Add a Playwright test that drives the new function via
    `serviceWorker.evaluate`.

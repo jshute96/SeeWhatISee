@@ -229,22 +229,33 @@ render cleanly.
 - **Separators.** `chrome.contextMenus.create` accepts
   `type: 'separator'`, but separator items must *not* include a
   `title` field at all (passing `title: undefined` still throws).
-  The current action menu has no separators — see the top-level
-  item-limit bullet below for why — but this is the trap waiting
-  if you add one.
+  At the top level of the action menu, separators count against
+  the 6-item cap, so we don't use any there. Inside submenus
+  they're free and we use them to group "Capture with delay" by
+  delay and "Set default click action" by defaultable delay.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment
   and keep the title short.
 - **Radio items.** `type: 'radio'` items render with a radio
-  indicator. A contiguous run of radio items with the same
-  `parentId` forms a mutually exclusive group; Chrome auto-flips
-  the selection on click and fires `onClicked` with `info.checked`
-  reflecting the *new* state of the clicked item. The "Set default
-  click action" submenu uses this for its CAPTURE_ACTIONS radios.
-  Our `onClicked` handler ignores `info.checked` and extracts the
-  action id from `info.menuItemId` instead — the click *is* the
-  selection, so the checked state adds no information.
+  indicator. Used by the "Set default click action" submenu.
+  - A *contiguous* run of radio items with the same `parentId`
+    forms a mutually exclusive group; Chrome auto-flips the
+    selection on click.
+  - `onClicked` fires with `info.checked` reflecting the *new*
+    state of the clicked item. Our handler ignores `info.checked`
+    and extracts the action id from `info.menuItemId` — the click
+    *is* the selection.
+  - **Separators break the group.** Inserting a separator between
+    two same-parent radios splits them into two *independent*
+    mutual-exclusion groups, so the user can end up with one item
+    checked in each.
+  - The "Set default click action" submenu deliberately has a
+    separator between the 0s and 2s radios, so
+    `setDefaultClickActionId` explicitly `contextMenus.update`s
+    every defaultable child's `checked` state on each change to
+    enforce a single selection. Drop the separator and you can
+    drop that sync too.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.
@@ -269,12 +280,13 @@ render cleanly.
     read `lastError` and the failure is invisible until someone
     notices the menu entry is gone. This has already bitten us
     once: commit 8e100d1 added "Capture with details..." as a 7th
-    entry, which silently dropped "Clear Chrome history" off the
+    entry, which silently dropped "Clear log history" off the
     menu until the regression was spotted later. Keep the top
     level at 6 or below, or move entries into a submenu.
-  - Our action menu currently has exactly 6 top-level entries —
-    four capture actions, the "Set default click action" submenu
-    parent, and "Clear log history".
+  - Our action menu currently has 5 top-level entries — three
+    undelayed capture actions, the "Capture with delay" submenu
+    parent, and the "Set default click action" submenu parent.
+    ("Clear log history" is temporarily hidden; see TODO.md.)
 
 ## "Capture with details…" — extension page + runtime messaging
 

@@ -36,8 +36,7 @@ in `Downloads` after new screenshots.
 The log is limited to the **100 most recent captures**; older entries are
 dropped.
 
-The log in Chrome local storage can be cleared by removing the extension,
-or choosing _Clear log history_ from the extension's context menu.
+The log in Chrome local storage gets cleared when the extension is removed.
 
 ## Extension permissions
 

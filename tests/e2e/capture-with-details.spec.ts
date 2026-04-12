@@ -562,6 +562,51 @@ test('details: tab opens next to opener and returns focus on close', async ({
 // via `self.SeeWhatISee` and observe the side effect (a screenshot
 // file written, or a capture.html tab opening).
 
+test('captureBothToMemory(delayMs) sleeps before snapshotting', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/green.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  const elapsedMs = await sw.evaluate(async () => {
+    const api = (
+      self as unknown as {
+        SeeWhatISee: {
+          captureBothToMemory: (delayMs?: number) => Promise<{
+            screenshotDataUrl: string;
+            html: string;
+            url: string;
+          }>;
+        };
+      }
+    ).SeeWhatISee;
+    const start = performance.now();
+    const data = await api.captureBothToMemory(200);
+    const elapsed = performance.now() - start;
+    // Sanity check: we actually grabbed something. The data URL
+    // prefix and a non-empty HTML body prove both legs ran.
+    if (!data.screenshotDataUrl.startsWith('data:image/png')) {
+      throw new Error('missing screenshot data URL');
+    }
+    if (!data.html.includes('background: #00c000')) {
+      throw new Error('html scrape did not land on green.html');
+    }
+    return elapsed;
+  });
+
+  // Delay must actually fire — the details-flow delayed path shares
+  // the same timer. A missing `await` on the setTimeout would make
+  // this near-zero.
+  expect(elapsedMs).toBeGreaterThanOrEqual(190);
+  expect(elapsedMs).toBeLessThan(500);
+
+  await page.close();
+});
+
 test('default click action (fresh install): handleActionClick takes a direct screenshot', async ({
   extensionContext,
   fixtureServer,
@@ -681,7 +726,7 @@ test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
     ).SeeWhatISee;
     await api.setDefaultClickActionId('capture-now');
     const a = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('capture-delayed-2s');
+    await api.setDefaultClickActionId('capture-now-2s');
     const b = await chrome.action.getTitle({});
     await api.setDefaultClickActionId('save-page-contents');
     const c = await chrome.action.getTitle({});

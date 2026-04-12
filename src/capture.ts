@@ -152,9 +152,17 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
  * directory, and recorded in latest.json / log.json exactly like a
  * screenshot capture — the only difference is the filename extension.
  *
+ * `delayMs` (default 0) behaves the same as `captureVisible`'s delay:
+ * the SW awaits a timer, and the active-tab lookup happens *after*
+ * the wait so the scrape follows focus changes / navigations during
+ * the delay.
+ *
  * Requires the `scripting` permission in the manifest.
  */
-export async function savePageContents(): Promise<CaptureResult> {
+export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
@@ -193,6 +201,12 @@ export async function savePageContents(): Promise<CaptureResult> {
   return { downloadId, sidecarDownloadIds, filename, ...record };
 }
 
+export interface InMemoryCapture {
+  screenshotDataUrl: string;
+  html: string;
+  url: string;
+}
+
 /**
  * Capture the visible tab's screenshot *and* full HTML without
  * writing anything to disk. Used by the "Capture with details…"
@@ -204,14 +218,16 @@ export async function savePageContents(): Promise<CaptureResult> {
  * HTML scrape target that tab, so the two artifacts are guaranteed
  * to describe the same page. If the user switches tabs during the
  * details flow, the tab identifier we capture here is stable.
+ *
+ * `delayMs` (default 0) sleeps before the active-tab lookup so the
+ * user can activate hover states / open menus before the capture
+ * freezes. Same semantics as `captureVisible`'s delay — focus
+ * follows wherever the user ends up by the time the timer fires.
  */
-export interface InMemoryCapture {
-  screenshotDataUrl: string;
-  html: string;
-  url: string;
-}
-
-export async function captureBothToMemory(): Promise<InMemoryCapture> {
+export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture> {
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
@@ -370,13 +386,14 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
 
 /**
  * Erase the in-storage capture log. The on-disk `log.json` is left
- * alone — it will be overwritten with the (now single-record) log the
- * next time a capture is saved. This matches the user-visible promise
- * of the "Clear log history" context menu item: the in-storage
- * history is gone immediately, and disk catches up on the next write.
+ * alone — it will be overwritten with the (now single-record) log
+ * the next time a capture is saved. Exposed on `self.SeeWhatISee`
+ * for the devtools console; the right-click menu entry that used
+ * to drive this is currently hidden (see TODO.md).
  *
- * Goes through `serializeWrite` so it can't race with a capture that's
- * in the middle of its read-modify-write of the same storage key.
+ * Goes through `serializeWrite` so it can't race with a capture
+ * that's in the middle of its read-modify-write of the same
+ * storage key.
  */
 export async function clearCaptureLog(): Promise<void> {
   await serializeWrite(async () => {

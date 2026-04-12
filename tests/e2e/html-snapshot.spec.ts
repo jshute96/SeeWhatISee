@@ -37,3 +37,39 @@ test('savePageContents captures HTML and writes sidecar files', async ({
 
   await page.close();
 });
+
+test('savePageContents(delayMs) sleeps before scraping', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/green.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  const { elapsedMs, result } = await sw.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: {
+        savePageContents: (delayMs?: number) => Promise<CaptureResult>;
+      };
+    }).SeeWhatISee;
+    const start = performance.now();
+    const result = await api.savePageContents(200);
+    return { elapsedMs: performance.now() - start, result };
+  });
+
+  // Timer must actually fire before the scrape. A missing `await`
+  // on the setTimeout would make this near-zero.
+  expect(elapsedMs).toBeGreaterThanOrEqual(190);
+  expect(elapsedMs).toBeLessThan(500);
+  expect(result.filename).toMatch(FILENAME_PATTERN);
+  expect(result.url).toBe(`${fixtureServer.baseUrl}/green.html`);
+
+  // No baseline arg → skip the delta/length check (storage is
+  // dirty from earlier tests in the worker). All other on-disk
+  // checks still run.
+  await verifyHtmlCapture(sw, result, 'background: #00c000');
+
+  await page.close();
+});

@@ -126,20 +126,43 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   }
 });
 
-// Capture actions surfaced to the user. Each entry appears both as
-// a top-level context-menu entry (for one-off invocation) and as a
-// radio entry inside the "Set default click action" submenu (where the
-// user picks which one runs on a plain left-click on the toolbar
-// icon). The tooltip is what `chrome.action.setTitle` shows on the
-// icon when the given action is the current default — e.g. picking
-// "Take screenshot in 2s" updates the hover text so the user knows
-// what a click is about to do.
+// Capture actions surfaced to the user.
 //
-// Keep `capture-now` first: it's the default fallback when nothing
-// is stored yet, and its tooltip matches the manifest's
-// `action.default_title` so the hover text is correct during the
-// brief window between a fresh install and the first tooltip
-// refresh from `refreshActionTooltip()`.
+// Each action is a (base, delay) pair: the base says *what* to
+// capture (plain screenshot, HTML contents, or the details flow)
+// and the delay says *when* to capture (immediate, 2s, or 5s). We
+// define the three bases once and expand them across the delays at
+// module load so the top-level menu, the "Capture with delay" submenu,
+// and the "Set default click action" submenu all stay in sync from
+// a single source.
+//
+// The resulting flat `CAPTURE_ACTIONS` array drives three things:
+//   - the top-level menu entries (delay 0 only)
+//   - the "Capture with delay" submenu children (delay > 0)
+//   - the "Set default click action" submenu radios (delays in
+//     `DEFAULTABLE_DELAYS_SEC`, i.e. 0 and 2)
+// and is the lookup table `handleActionClick` uses to run the
+// currently-selected default.
+//
+// Keep the first base action at delay 0 first: that's the default
+// fallback when nothing is stored yet, and its tooltip matches the
+// manifest's `action.default_title` so the hover text is correct
+// during the brief window between a fresh install and the first
+// tooltip refresh from `refreshActionTooltip()`.
+
+interface BaseCaptureAction {
+  /** Stable base id, e.g. `capture-now`. Delayed variants append
+   * `-<N>s`. */
+  baseId: string;
+  /** Short label for the undelayed variant, e.g. "Take screenshot". */
+  baseTitle: string;
+  /** Tooltip for the undelayed variant. */
+  baseTooltip: string;
+  /** Runs the action with the given delay (ms). `delayMs === 0` is
+   * the immediate / no-delay path. */
+  run: (delayMs: number) => Promise<unknown>;
+}
+
 interface CaptureAction {
   /** Stable id — used as the menu item id, the submenu child id
    * (with a prefix), and the storage value. */
@@ -149,44 +172,94 @@ interface CaptureAction {
   /** Tooltip shown on the toolbar icon when this action is the
    * current default. */
   tooltip: string;
+  /** Which base action this came from (for grouping / rendering). */
+  baseId: string;
+  /** 0 for immediate; >0 for a delayed variant. Used to slot the
+   * entry into the right menu section. */
+  delaySec: number;
   /** Runs when the user picks this action (either from the top-level
-   * menu entry or via a toolbar click when it's the default). */
+   * menu entry, the Capture with delay submenu, or a toolbar click
+   * when it's the current default). */
   run: () => Promise<unknown>;
 }
 
-const CAPTURE_ACTIONS: CaptureAction[] = [
+const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
-    id: 'capture-now',
-    title: 'Take screenshot',
-    tooltip: 'SeeWhatISee — Capture visible tab',
-    run: () => captureVisible(0),
+    baseId: 'capture-now',
+    baseTitle: 'Take screenshot',
+    baseTooltip: 'SeeWhatISee — Capture visible tab',
+    run: (delayMs) => captureVisible(delayMs),
   },
   {
-    id: 'capture-delayed-2s',
-    title: 'Take screenshot in 2s',
-    tooltip: 'SeeWhatISee — Capture visible tab in 2s',
-    run: () => captureVisible(2000),
+    baseId: 'save-page-contents',
+    baseTitle: 'Save html contents',
+    baseTooltip: 'SeeWhatISee — Save HTML contents',
+    run: (delayMs) => savePageContents(delayMs),
   },
   {
-    id: 'save-page-contents',
-    title: 'Save html contents',
-    tooltip: 'SeeWhatISee — Save HTML contents',
-    run: () => savePageContents(),
-  },
-  {
-    id: 'capture-with-details',
-    title: 'Capture with details...',
-    tooltip: 'SeeWhatISee — Capture with details',
-    run: () => startCaptureWithDetails(),
+    baseId: 'capture-with-details',
+    baseTitle: 'Capture with details...',
+    baseTooltip: 'SeeWhatISee — Capture with details',
+    run: (delayMs) => startCaptureWithDetails(delayMs),
   },
 ];
 
+// All delays (in seconds) we surface in the menu. 0 is the plain
+// top-level entry set; 2 and 5 go into the "Capture with delay" submenu.
+const CAPTURE_DELAYS_SEC = [0, 2, 5] as const;
+
+// Delays that are settable as the default click action. 0 and 2
+// cover the common cases; 5s is available from the Capture with delay
+// submenu but can't be made the default — that would cost an extra
+// radio row per base action without much real-world value.
+const DEFAULTABLE_DELAYS_SEC = [0, 2] as const;
+
+function delayedId(baseId: string, delaySec: number): string {
+  return delaySec === 0 ? baseId : `${baseId}-${delaySec}s`;
+}
+
+// Build a delayed title. For base titles that end in "..." (the
+// "opens a dialog" convention used by "Capture with details..."),
+// we slot the "in Ns" phrase *before* the ellipsis so the ellipsis
+// still trails the whole label: "Capture with details in 2s...".
+function delayedTitle(baseTitle: string, delaySec: number): string {
+  if (delaySec === 0) return baseTitle;
+  if (baseTitle.endsWith('...')) {
+    return `${baseTitle.slice(0, -3)} in ${delaySec}s...`;
+  }
+  return `${baseTitle} in ${delaySec}s`;
+}
+
+function delayedTooltip(baseTooltip: string, delaySec: number): string {
+  return delaySec === 0 ? baseTooltip : `${baseTooltip} in ${delaySec}s`;
+}
+
+const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) =>
+  CAPTURE_DELAYS_SEC.map((delaySec) => ({
+    id: delayedId(base.baseId, delaySec),
+    title: delayedTitle(base.baseTitle, delaySec),
+    tooltip: delayedTooltip(base.baseTooltip, delaySec),
+    baseId: base.baseId,
+    delaySec,
+    run: () => base.run(delaySec * 1000),
+  })),
+);
+
+function captureActionsWithDelay(delaySec: number): CaptureAction[] {
+  return CAPTURE_ACTIONS.filter((a) => a.delaySec === delaySec);
+}
+
+function isDefaultableDelay(delaySec: number): boolean {
+  return (DEFAULTABLE_DELAYS_SEC as readonly number[]).includes(delaySec);
+}
+
 const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
+const DELAYED_PARENT_ID = 'delayed-capture-parent';
 // Child radio items under "Set default click action" use this prefix on
 // their ids so the onClicked handler can tell "pick this default"
-// clicks apart from the top-level "run this now" entries, which
-// share the CAPTURE_ACTIONS ids verbatim.
+// clicks apart from the top-level / Delayed-capture "run this now"
+// entries, which share the CAPTURE_ACTIONS ids verbatim.
 const DEFAULT_CLICK_CHILD_PREFIX = 'set-default-';
 
 function findCaptureAction(id: string | undefined): CaptureAction | undefined {
@@ -214,16 +287,40 @@ async function getDefaultActionTooltip(): Promise<string> {
 
 /**
  * Persist a new default click action and update the toolbar
- * tooltip to match. Safe to call from the contextMenus onClicked
- * handler — Chrome has already auto-flipped the radio's visual
- * state by the time we run, so we only need to mirror it to
- * storage and refresh the title.
+ * tooltip to match. Also force the `checked` state on every
+ * defaultable radio in the "Set default click action" submenu so
+ * the visual selection matches the stored value.
+ *
+ * The explicit sync is necessary because the submenu has a
+ * separator between the 0s and 2s radio groups. Chrome's
+ * auto-mutual-exclusion only covers a *contiguous* run of radio
+ * items with the same parent, so without this sync, flipping a 2s
+ * radio would leave a 0s radio checked and vice versa (and the
+ * submenu would show two selected entries).
+ *
+ * Setting the state on entries that are already in the right state
+ * is a no-op. Updating a not-yet-created menu id throws
+ * `No item with id "…"`; we suppress that because
+ * `setDefaultClickActionId` is also called from tests before the
+ * first menu install.
  */
 async function setDefaultClickActionId(id: string): Promise<void> {
   if (!findCaptureAction(id)) {
     throw new Error(`Unknown capture action id: ${id}`);
   }
   await chrome.storage.local.set({ [DEFAULT_CLICK_ACTION_KEY]: id });
+  const defaultables = CAPTURE_ACTIONS.filter((a) => isDefaultableDelay(a.delaySec));
+  await Promise.all(
+    defaultables.map(async (a) => {
+      const childId = DEFAULT_CLICK_CHILD_PREFIX + a.id;
+      try {
+        await chrome.contextMenus.update(childId, { checked: a.id === id });
+      } catch {
+        // Menu not installed yet — first install will pick up the
+        // stored preference via installContextMenu.
+      }
+    }),
+  );
   await refreshActionTooltip();
 }
 
@@ -276,35 +373,60 @@ chrome.action.onClicked.addListener(handleActionClick);
 // Right-click context menu on the toolbar action. Structure:
 //
 //   Take screenshot
-//   Take screenshot in 2s
 //   Save html contents
 //   Capture with details...
-//   Set default click action  ▸   (submenu)
-//       • Take screenshot           (radio group, exactly one checked)
+//   Capture with delay  ▸              (submenu)
 //       • Take screenshot in 2s
-//       • Save html contents
-//       • Capture with details...
-//   Clear log history
+//       • Save html contents in 2s
+//       • Capture with details in 2s...
+//       ─────────
+//       • Take screenshot in 5s
+//       • Save html contents in 5s
+//       • Capture with details in 5s...
+//   Set default click action  ▸     (submenu, radios)
+//       ● Take screenshot
+//       ● Save html contents
+//       ● Capture with details...
+//       ─────────
+//       ● Take screenshot in 2s
+//       ● Save html contents in 2s
+//       ● Capture with details in 2s...
 //
-// Chrome allows an extension up to 6 top-level items in the action
-// context menu — above that, Chrome collapses the overflow under a
-// parent item named after the extension, which is ugly. The menu
-// above is exactly 6: four CAPTURE_ACTIONS entries + the submenu
-// parent + clear-log. No separator, for the same reason. Adding
-// another top-level entry means pushing something into a submenu.
+// Chrome caps each extension at
+// `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
+// items in the action context menu. Overflow fails silently via
+// `chrome.runtime.lastError`, so a careless addition silently drops
+// a previously-working entry. The menu above has 5 top-level
+// entries (3 undelayed + 2 submenu parents). "Clear log history"
+// is temporarily hidden from the menu — the underlying
+// `clearCaptureLog()` is still on `self.SeeWhatISee` for the
+// devtools console. **Do not add another top-level entry past 6**
+// — nest new items under an existing submenu or introduce a new
+// one.
 //
-// The top-level action entries and the submenu radio entries are
-// both built from the same CAPTURE_ACTIONS array so their ids,
-// titles, and run functions can't drift out of sync.
+// In-submenu separators are free (they don't count against the
+// top-level cap) so we use them to group the submenu contents by
+// delay.
+//
+// Every top-level entry, every "Capture with delay" child, and every
+// "Set default click action" radio is built from the same
+// CAPTURE_ACTIONS array, so ids / titles / run functions can't
+// drift. `handleActionClick` looks up the current default out of
+// the same array.
 //
 // The registration runs on `chrome.runtime.onInstalled`; Chrome
 // persists the entries across service-worker restarts so we don't
 // have to recreate them on every wakeup.
 //
-// Note that the "Take screenshot" entry is functionally identical to
-// a plain left-click when `capture-now` is the default action —
-// listed in the menu for discoverability so users don't have to
-// know left-click also captures.
+// Note: "Take screenshot" is functionally identical to a plain
+// left-click when `capture-now` is the default — listed in the
+// menu for discoverability so users don't have to know the toolbar
+// click also captures.
+
+// Id used by the (currently hidden) "Clear log history" entry.
+// Kept alongside the onClicked branch below so re-adding the
+// menu item is a one-line change in installContextMenu — don't
+// delete as dead code.
 const CLEAR_LOG_MENU_ID = 'clear-log';
 
 // "Capture with details…" flow. We grab both the screenshot and
@@ -340,11 +462,13 @@ function detailsStorageKey(tabId: number): string {
   return `${DETAILS_STORAGE_PREFIX}${tabId}`;
 }
 
-async function startCaptureWithDetails(): Promise<void> {
+async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   // Capture both artifacts *before* opening the new tab so we
   // snapshot the user's current page (not the empty capture.html
-  // tab). captureBothToMemory queries the active tab itself.
-  const data = await captureBothToMemory();
+  // tab). captureBothToMemory queries the active tab itself, after
+  // the optional delay, so delayed details captures follow focus /
+  // hover state the same way delayed screenshots do.
+  const data = await captureBothToMemory(delayMs);
 
   // Re-query the active tab so we can position the details tab
   // immediately to its right and remember it as the opener. The
@@ -506,8 +630,9 @@ async function installContextMenu(): Promise<void> {
   // entries themselves, so we can't rely on persisted state.
   const defaultId = await getDefaultClickActionId();
 
-  // Top-level entries: run the action immediately when clicked.
-  for (const action of CAPTURE_ACTIONS) {
+  // ── Top-level entries (delay 0 only) ────────────────────────
+  // The three undelayed capture actions, one per base action.
+  for (const action of captureActionsWithDelay(0)) {
     chrome.contextMenus.create({
       id: action.id,
       title: action.title,
@@ -515,46 +640,75 @@ async function installContextMenu(): Promise<void> {
     });
   }
 
-  // Submenu parent. Chrome automatically renders a ▸ indicator
-  // because the entry has children (set via parentId below).
+  // ── "Capture with delay" submenu ──────────────────────────────
+  // One parent row; Chrome renders the ▸ because it has children
+  // (set via parentId below).
+  chrome.contextMenus.create({
+    id: DELAYED_PARENT_ID,
+    title: 'Capture with delay',
+    contexts: ['action'],
+  });
+  const delayedDelays = CAPTURE_DELAYS_SEC.filter((d) => d !== 0);
+  for (let i = 0; i < delayedDelays.length; i++) {
+    const delaySec = delayedDelays[i]!;
+    if (i > 0) {
+      // Visual separator between delay groups. Separators inside a
+      // submenu don't count against the top-level cap.
+      chrome.contextMenus.create({
+        id: `${DELAYED_PARENT_ID}-sep-${delaySec}`,
+        parentId: DELAYED_PARENT_ID,
+        type: 'separator',
+        contexts: ['action'],
+      });
+    }
+    for (const action of captureActionsWithDelay(delaySec)) {
+      chrome.contextMenus.create({
+        id: action.id,
+        parentId: DELAYED_PARENT_ID,
+        title: action.title,
+        contexts: ['action'],
+      });
+    }
+  }
+
+  // ── "Set default click action" submenu ──────────────────────
+  // Radio group(s). Chrome's mutual-exclusion only applies to a
+  // contiguous same-parent run of radio items, and the separator
+  // below breaks the run into two groups as far as Chrome is
+  // concerned. We compensate in `setDefaultClickActionId` by
+  // syncing `checked` state across all defaultable entries on
+  // every change, so the user still sees exactly one selection.
   chrome.contextMenus.create({
     id: DEFAULT_CLICK_PARENT_ID,
     title: 'Set default click action',
     contexts: ['action'],
   });
-
-  // Radio children. Consecutive radio items with the same
-  // `parentId` form a mutually exclusive group: Chrome handles the
-  // check/uncheck flip on click; our onClicked listener just
-  // persists the new choice. We set the initial `checked` state
-  // from storage here so the right entry shows up pre-selected
-  // after a fresh install / update.
-  for (const action of CAPTURE_ACTIONS) {
-    chrome.contextMenus.create({
-      id: DEFAULT_CLICK_CHILD_PREFIX + action.id,
-      parentId: DEFAULT_CLICK_PARENT_ID,
-      type: 'radio',
-      title: action.title,
-      checked: action.id === defaultId,
-      contexts: ['action'],
-    });
+  for (let i = 0; i < DEFAULTABLE_DELAYS_SEC.length; i++) {
+    const delaySec = DEFAULTABLE_DELAYS_SEC[i]!;
+    if (i > 0) {
+      chrome.contextMenus.create({
+        id: `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,
+        parentId: DEFAULT_CLICK_PARENT_ID,
+        type: 'separator',
+        contexts: ['action'],
+      });
+    }
+    for (const action of captureActionsWithDelay(delaySec)) {
+      chrome.contextMenus.create({
+        id: DEFAULT_CLICK_CHILD_PREFIX + action.id,
+        parentId: DEFAULT_CLICK_PARENT_ID,
+        type: 'radio',
+        title: action.title,
+        checked: action.id === defaultId,
+        contexts: ['action'],
+      });
+    }
   }
 
-  // Clear history. Not grouped with the submenu radios — it's a
-  // one-shot action at the root, not a preference.
-  //
-  // No separator above this: we're at Chrome's
-  // `ACTION_MENU_TOP_LEVEL_LIMIT = 6` cap, and separators count
-  // against it. Adding one silently drops a real entry — Chrome
-  // reports the failure via `chrome.runtime.lastError` on the
-  // offending create() call, which our loop never checks, so the
-  // overflow is invisible until someone notices a missing menu
-  // item. See docs/chrome-extension.md for the full story.
-  chrome.contextMenus.create({
-    id: CLEAR_LOG_MENU_ID,
-    title: 'Clear log history',
-    contexts: ['action'],
-  });
+  // "Clear log history" is temporarily hidden — we left the
+  // handler branch in `onClicked` and kept `clearCaptureLog()`
+  // exposed on `self.SeeWhatISee`, so restoring the entry later is
+  // just un-skipping this create call.
 }
 
 chrome.runtime.onInstalled.addListener(() => {

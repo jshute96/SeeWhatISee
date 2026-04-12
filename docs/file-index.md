@@ -55,7 +55,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
-| `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + submenu, details-flow, runtime messages, error surface |
+| `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default submenus, details-flow, error surface |
 | `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`) and metadata sidecar writing (`latest.json`, `log.json`) |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options, prompt, highlight overlay) |
 | `src/capture-page.ts` | Controller script for `capture.html`: data fetch, prompt/textarea behavior, SVG highlight overlay, canvas bake-in on save, image fit-to-viewport |

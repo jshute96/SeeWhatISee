@@ -4,7 +4,8 @@ Features
 * Flash the screen when it snapshots
 * Avoid making 3 files show up as Chrome downloads each time
 * Countdown clock on the icon for delayed screenshot
-* Add a way to get a longer delay (once). Maybe with a long-click.
+* Add a way to get a longer delay (once). Maybe with a long-click. Maybe user-chosen delay.
+* Re-add the "Clear log history" action somewhere. It's currently hidden.
 
 Claude plugin
 * Re-run of `watch.sh --after ...` still causes a permission prompt, why?
