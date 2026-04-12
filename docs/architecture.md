@@ -109,16 +109,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     of each base action, separator-grouped by delay. In-submenu
     separators don't count against the top-level cap, so the
     visual grouping is free.
-  - **Set default click action ▸** — submenu of radios, one per
-    defaultable `CAPTURE_ACTIONS` item: three undelayed radios,
-    a separator, then three 2s-delay radios. Picking one persists
-    its id as `defaultClickAction` and refreshes the tooltip.
-    - Chrome's built-in radio mutual-exclusion only applies to a
-      *contiguous* run of same-parent radio items — the separator
-      splits this submenu into two independent groups.
-    - To keep the "exactly one checked" UX, `setDefaultClickActionId`
-      explicitly `chrome.contextMenus.update`s every defaultable
-      radio on each change.
+  - **Set default click action ▸** — submenu of normal items, one
+    per defaultable `CAPTURE_ACTIONS` entry: three undelayed items,
+    a separator, then three 2s-delay items. The selected item gets
+    a `✓ ` title prefix; picking one persists its id as
+    `defaultClickAction` and refreshes the tooltip.
+    - Uses normal items instead of `type: 'radio'` because Chrome's
+      radio mutual-exclusion only covers a contiguous run — the
+      separator would cause two items to appear selected.
 
   **(hidden) Clear log history** — `clearCaptureLog()` erases the
   in-storage capture log; the on-disk `log.json` catches up on the

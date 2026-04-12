@@ -287,24 +287,17 @@ promising — the main issue was the `onActivated` restore logic.
   If you want a tooltip, put the extra context in a source comment
   and keep the title short.
 - **Radio items.** `type: 'radio'` items render with a radio
-  indicator. Used by the "Set default click action" submenu.
+  indicator.
   - A *contiguous* run of radio items with the same `parentId`
     forms a mutually exclusive group; Chrome auto-flips the
     selection on click.
-  - `onClicked` fires with `info.checked` reflecting the *new*
-    state of the clicked item. Our handler ignores `info.checked`
-    and extracts the action id from `info.menuItemId` — the click
-    *is* the selection.
   - **Separators break the group.** Inserting a separator between
     two same-parent radios splits them into two *independent*
     mutual-exclusion groups, so the user can end up with one item
     checked in each.
-  - The "Set default click action" submenu deliberately has a
-    separator between the 0s and 2s radios, so
-    `setDefaultClickActionId` explicitly `contextMenus.update`s
-    every defaultable child's `checked` state on each change to
-    enforce a single selection. Drop the separator and you can
-    drop that sync too.
+  - The "Set default click action" submenu avoids radio items for
+    this reason — it uses normal items with a `✓ ` title prefix
+    on the selected entry, updated by `setDefaultClickActionId`.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.

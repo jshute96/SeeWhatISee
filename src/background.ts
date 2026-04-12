@@ -289,21 +289,21 @@ async function getDefaultActionTooltip(): Promise<string> {
   return (await getDefaultClickAction()).tooltip;
 }
 
+const DEFAULT_SELECTED_PREFIX = '✓ ';
+const DEFAULT_UNSELECTED_PREFIX = '    ';
+
+function defaultMenuTitle(action: CaptureAction, selected: boolean): string {
+  const prefix = selected ? DEFAULT_SELECTED_PREFIX : DEFAULT_UNSELECTED_PREFIX;
+  return prefix + action.title;
+}
+
 /**
  * Persist a new default click action and update the toolbar
- * tooltip to match. Also force the `checked` state on every
- * defaultable radio in the "Set default click action" submenu so
- * the visual selection matches the stored value.
+ * tooltip to match. Also update every entry in the "Set default
+ * click action" submenu so only the chosen one shows a ✓
+ * prefix.
  *
- * The explicit sync is necessary because the submenu has a
- * separator between the 0s and 2s radio groups. Chrome's
- * auto-mutual-exclusion only covers a *contiguous* run of radio
- * items with the same parent, so without this sync, flipping a 2s
- * radio would leave a 0s radio checked and vice versa (and the
- * submenu would show two selected entries).
- *
- * Setting the state on entries that are already in the right state
- * is a no-op. Updating a not-yet-created menu id throws
+ * Updating a not-yet-created menu id throws
  * `No item with id "…"`; we suppress that because
  * `setDefaultClickActionId` is also called from tests before the
  * first menu install.
@@ -318,7 +318,9 @@ async function setDefaultClickActionId(id: string): Promise<void> {
     defaultables.map(async (a) => {
       const childId = DEFAULT_CLICK_CHILD_PREFIX + a.id;
       try {
-        await chrome.contextMenus.update(childId, { checked: a.id === id });
+        await chrome.contextMenus.update(childId, {
+          title: defaultMenuTitle(a, a.id === id),
+        });
       } catch {
         // Menu not installed yet — first install will pick up the
         // stored preference via installContextMenu.
@@ -435,14 +437,14 @@ chrome.action.onClicked.addListener(handleActionClick);
 //       • Take screenshot in 5s
 //       • Save html contents in 5s
 //       • Capture with details in 5s...
-//   Set default click action  ▸     (submenu, radios)
-//       ● Take screenshot
-//       ● Save html contents
-//       ● Capture with details...
+//   Set default click action  ▸     (submenu, ✓ on selected)
+//       ✓ Take screenshot
+//         Save html contents
+//         Capture with details...
 //       ─────────
-//       ● Take screenshot in 2s
-//       ● Save html contents in 2s
-//       ● Capture with details in 2s...
+//         Take screenshot in 2s
+//         Save html contents in 2s
+//         Capture with details in 2s...
 //
 // Chrome caps each extension at
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
@@ -461,7 +463,7 @@ chrome.action.onClicked.addListener(handleActionClick);
 // delay.
 //
 // Every top-level entry, every "Capture with delay" child, and every
-// "Set default click action" radio is built from the same
+// "Set default click action" entry is built from the same
 // CAPTURE_ACTIONS array, so ids / titles / run functions can't
 // drift. `handleActionClick` looks up the current default out of
 // the same array.
@@ -676,10 +678,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 async function installContextMenu(): Promise<void> {
-  // Read the current default up front so each submenu radio child
-  // can be created with the correct initial `checked` value —
-  // `removeAll` wipes Chrome's per-item state along with the
-  // entries themselves, so we can't rely on persisted state.
+  // Read the current default up front so each submenu child can be
+  // created with the correct title prefix — `removeAll` wipes
+  // Chrome's per-item state along with the entries themselves, so
+  // we can't rely on persisted state.
   const defaultId = await getDefaultClickActionId();
 
   // ── Top-level entries (delay 0 only) ────────────────────────
@@ -724,12 +726,10 @@ async function installContextMenu(): Promise<void> {
   }
 
   // ── "Set default click action" submenu ──────────────────────
-  // Radio group(s). Chrome's mutual-exclusion only applies to a
-  // contiguous same-parent run of radio items, and the separator
-  // below breaks the run into two groups as far as Chrome is
-  // concerned. We compensate in `setDefaultClickActionId` by
-  // syncing `checked` state across all defaultable entries on
-  // every change, so the user still sees exactly one selection.
+  // Uses normal items with a ✓ prefix on the selected entry
+  // instead of radio items. Chrome's radio mutual-exclusion only
+  // covers a contiguous run, so a separator causes two items to
+  // appear selected. Normal items with a text marker avoid that.
   chrome.contextMenus.create({
     id: DEFAULT_CLICK_PARENT_ID,
     title: 'Set default click action',
@@ -749,9 +749,7 @@ async function installContextMenu(): Promise<void> {
       chrome.contextMenus.create({
         id: DEFAULT_CLICK_CHILD_PREFIX + action.id,
         parentId: DEFAULT_CLICK_PARENT_ID,
-        type: 'radio',
-        title: action.title,
-        checked: action.id === defaultId,
+        title: defaultMenuTitle(action, action.id === defaultId),
         contexts: ['action'],
       });
     }
@@ -791,19 +789,14 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info) => {
   const id = String(info.menuItemId);
 
-  // "Set default click action" submenu: a radio click just persists
-  // the new preference. Deliberately not routed through
-  // runWithErrorReporting — flipping a setting isn't a capture,
-  // and painting the error icon on a failed storage write would
-  // be misleading.
+  // "Set default click action" submenu: a click just persists the
+  // new preference. Not routed through runWithErrorReporting —
+  // flipping a setting isn't a capture, and painting the error
+  // icon on a failed storage write would be misleading.
   //
-  // On a storage-write failure Chrome has already auto-flipped the
-  // radio UI to the new selection, but the stored id and the
-  // toolbar tooltip will still reflect the *old* one. The radio
-  // snaps back to the old choice on the next install/update when
-  // installContextMenu re-reads storage. We accept that small UX
-  // drift rather than trying to un-flip the radio (no API for it),
-  // and just log the failure.
+  // On failure the ✓ prefix stays on the old item (the title
+  // updates happen after the storage write), so the menu remains
+  // consistent with the stored value.
   if (id.startsWith(DEFAULT_CLICK_CHILD_PREFIX)) {
     const actionId = id.slice(DEFAULT_CLICK_CHILD_PREFIX.length);
     try {
