@@ -72,11 +72,19 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `defaultClickAction` key.
 
   - A click on the toolbar icon fires `chrome.action.onClicked`,
-    which routes through `handleActionClick`: read the stored id,
-    look up the matching `CAPTURE_ACTIONS` entry, run it.
-  - Fresh installs default to `capture-now` (plain immediate
-    screenshot) so nothing changes until the user picks a new
-    default.
+    which routes through `handleActionClick`. Three cases:
+    1. **Viewing the capture page** — if the active tab is a
+       `capture.html` page with stashed session data, the click
+       sends it a `triggerCapture` message, which programmatically
+       clicks the Capture button.
+    2. **Double-click** — a second click within 250 ms runs an
+       alternate action: screenshot when the default is
+       `capture-with-details`, or capture-with-details when
+       the default is anything else.
+    3. **Single click** — waits 250 ms for a potential second
+       click, then runs the default action.
+  - Fresh installs default to `capture-with-details` — the details
+    page with double-click screenshot shortcut.
   - Only the 0s and 2s variants are exposed as defaultable — 5s
     lives in the "Capture with delay" submenu but can't be set as
     the default. (`DEFAULTABLE_DELAYS_SEC` in `background.ts`.)
@@ -85,6 +93,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     icon always tells the user what a click is about to do.
     `refreshActionTooltip()` rewrites it whenever the preference
     changes and on `onInstalled` / `onStartup`.
+  - Every tooltip includes a second line ("Double-click for …")
+    describing the alternate action.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with

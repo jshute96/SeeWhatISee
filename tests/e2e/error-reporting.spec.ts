@@ -28,7 +28,7 @@ import { test, expect } from '../fixtures/extension';
 // CAPTURE_ACTIONS entry the user has picked as the default; the
 // tests here pin that selection to `capture-now` in beforeEach so
 // the expected baseline is stable.
-const DEFAULT_TITLE = 'SeeWhatISee — Capture visible tab';
+const DEFAULT_TITLE = 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details';
 
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;

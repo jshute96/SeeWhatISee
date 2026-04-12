@@ -56,8 +56,8 @@ async function reportCaptureError(err: unknown): Promise<void> {
   }
   try {
     // Base tooltip is whichever CAPTURE_ACTIONS entry the user has
-    // picked as the default click action (falls back to capture-now).
-    // Second line shows the error. Chrome's toolbar tooltip honors
+    // picked as the default click action (falls back to capture-with-details).
+    // Final line shows the error. Chrome's toolbar tooltip honors
     // embedded newlines on macOS / Windows / most Linux DEs.
     const baseTitle = await getDefaultActionTooltip();
     await chrome.action.setTitle({
@@ -187,19 +187,19 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-now',
     baseTitle: 'Take screenshot',
-    baseTooltip: 'SeeWhatISee — Capture visible tab',
+    baseTooltip: 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details',
     run: (delayMs) => captureVisible(delayMs),
   },
   {
     baseId: 'save-page-contents',
     baseTitle: 'Save html contents',
-    baseTooltip: 'SeeWhatISee — Save HTML contents',
+    baseTooltip: 'SeeWhatISee — Save HTML contents\nDouble-click for capture with details',
     run: (delayMs) => savePageContents(delayMs),
   },
   {
     baseId: 'capture-with-details',
     baseTitle: 'Capture with details...',
-    baseTooltip: 'SeeWhatISee — Capture with details',
+    baseTooltip: 'SeeWhatISee — Capture with details\nDouble-click for screenshot',
     run: (delayMs) => startCaptureWithDetails(delayMs),
   },
 ];
@@ -231,7 +231,10 @@ function delayedTitle(baseTitle: string, delaySec: number): string {
 }
 
 function delayedTooltip(baseTooltip: string, delaySec: number): string {
-  return delaySec === 0 ? baseTooltip : `${baseTooltip} in ${delaySec}s`;
+  if (delaySec === 0) return baseTooltip;
+  const [firstLine, ...rest] = baseTooltip.split('\n');
+  const delayed = `${firstLine} in ${delaySec}s`;
+  return rest.length > 0 ? `${delayed}\n${rest.join('\n')}` : delayed;
 }
 
 const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) =>
@@ -254,6 +257,7 @@ function isDefaultableDelay(delaySec: number): boolean {
 }
 
 const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
+const DEFAULT_CLICK_ACTION_ID = 'capture-with-details';
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 const DELAYED_PARENT_ID = 'delayed-capture-parent';
 // Child radio items under "Set default click action" use this prefix on
@@ -269,11 +273,11 @@ function findCaptureAction(id: string | undefined): CaptureAction | undefined {
 async function getDefaultClickActionId(): Promise<string> {
   const stored = await chrome.storage.local.get(DEFAULT_CLICK_ACTION_KEY);
   const id = stored[DEFAULT_CLICK_ACTION_KEY];
-  // Fall back to the first action if storage is empty or holds a
-  // stale id (e.g. after a release that renamed an action).
+  // Fall back to capture-with-details if storage is empty or holds
+  // a stale id (e.g. after a release that renamed an action).
   return typeof id === 'string' && findCaptureAction(id)
     ? id
-    : CAPTURE_ACTIONS[0]!.id;
+    : DEFAULT_CLICK_ACTION_ID;
 }
 
 async function getDefaultClickAction(): Promise<CaptureAction> {
@@ -340,7 +344,7 @@ async function refreshActionTooltip(): Promise<void> {
 
 // Toolbar icon click → run whichever capture action is the current
 // default. Default (on fresh install or if storage is wiped) is
-// `capture-now`, matching the pre-submenu behavior.
+// `capture-with-details`.
 //
 // The click counts as a user gesture, which is what makes the `activeTab`
 // permission (declared in manifest.json) kick in for the current tab —
@@ -361,10 +365,58 @@ async function refreshActionTooltip(): Promise<void> {
 // Extracted from the listener body so tests can drive the dispatch
 // directly via `self.SeeWhatISee.handleActionClick()` — Playwright
 // has no way to trigger `chrome.action.onClicked` from outside.
+//
+// Double-click detection state. A second click within the window
+// runs an alternate action:
+//   - Default is capture-with-details → double-click takes a screenshot
+//   - Any other default → double-click opens capture with details
+let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
+
+const DOUBLE_CLICK_MS = 250;
+
 async function handleActionClick(): Promise<void> {
-  await runWithErrorReporting(async () => {
-    const action = await getDefaultClickAction();
-    await action.run();
+  // If the user is currently looking at a capture.html tab, clicking
+  // the toolbar icon triggers its Capture button — same as clicking
+  // it on the page. Only the active tab is affected; background
+  // capture tabs are left alone.
+  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (activeTab?.id !== undefined) {
+    const stored = await chrome.storage.session.get(detailsStorageKey(activeTab.id));
+    if (stored[detailsStorageKey(activeTab.id)]) {
+      if (pendingClickTimer !== undefined) {
+        clearTimeout(pendingClickTimer);
+        pendingClickTimer = undefined;
+      }
+      await chrome.tabs.sendMessage(activeTab.id, { action: 'triggerCapture' });
+      return;
+    }
+  }
+
+  const actionId = await getDefaultClickActionId();
+
+  // Double-click: run the alternate action.
+  if (pendingClickTimer !== undefined) {
+    clearTimeout(pendingClickTimer);
+    pendingClickTimer = undefined;
+    if (actionId === DEFAULT_CLICK_ACTION_ID) {
+      await runWithErrorReporting(() => captureVisible());
+    } else {
+      await runWithErrorReporting(() => startCaptureWithDetails());
+    }
+    return;
+  }
+
+  // First click: wait for a potential second click before running
+  // the default action. If the user switches tabs during the 250 ms
+  // window, the capture targets whatever tab is visible when the
+  // timer fires — captureVisibleTab can only capture what's on
+  // screen, and re-activating the original tab would be surprising.
+  await new Promise<void>((resolve) => {
+    pendingClickTimer = setTimeout(() => {
+      pendingClickTimer = undefined;
+      const action = findCaptureAction(actionId) ?? CAPTURE_ACTIONS[0]!;
+      void runWithErrorReporting(() => action.run()).then(resolve, resolve);
+    }, DOUBLE_CLICK_MS);
   });
 }
 

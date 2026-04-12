@@ -431,6 +431,15 @@ captureBtn.addEventListener('click', () => {
   }
 });
 
+// Let the background script trigger the Capture button remotely
+// (e.g. when the user clicks the toolbar icon while this page is
+// already open).
+chrome.runtime.onMessage.addListener((msg: { action: string }) => {
+  if (msg.action === 'triggerCapture' && !captureBtn.disabled) {
+    captureBtn.click();
+  }
+});
+
 // Initial sizing: autoGrowPrompt sizes the textarea and then
 // internally calls fitImage. That first fitImage runs before the
 // image has loaded (`naturalWidth`/`naturalHeight` are 0), which

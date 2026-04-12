@@ -180,8 +180,8 @@ Two-channel error surface routed through one helper.
   solid red rounded-rect badge and a white `!` centered inside it,
   painted in the bottom-right corner. The base icons are restored
   explicitly on next success.
-- **`chrome.action.setTitle`** appends `Last error: <message>` as a
-  second line on the toolbar tooltip so a user can hover the icon
+- **`chrome.action.setTitle`** appends `Last error: <message>` as
+  an extra line on the toolbar tooltip so a user can hover the icon
   and read what happened without digging into devtools.
 
 Both calls are wrapped in `runWithErrorReporting(fn)`:
@@ -213,6 +213,55 @@ Why code instead of hand-drawn art:
 There's no anti-aliasing — pngjs is raw RGBA — but at these sizes
 jagged edges aren't visible and the solid color + straight edges
 render cleanly.
+
+## Toolbar tooltip (`chrome.action.setTitle`)
+
+### Scope: global, not per-tab
+
+`chrome.action.setTitle({ title })` (without `tabId`) sets a
+**single global tooltip** shared across all browser windows.
+There is no per-window variant.
+
+`setTitle({ tabId, title })` creates a tab-scoped override that
+Chrome is *supposed* to show when that tab is active, falling back
+to the global title on other tabs. In practice we found this
+**unreliable**: `getTitle({ tabId })` confirmed the override was
+stored, but the tooltip Chrome actually rendered on hover still
+showed the global title. We don't use per-tab titles.
+
+### Our tooltip strategy
+
+- **Default tooltip.** `refreshActionTooltip()` reads the current
+  default click action's `tooltip` field and calls `setTitle`.
+  Runs on preference change, `onInstalled`, and `onStartup`.
+- **Double-click hint.** Every action's tooltip includes a second
+  line (via embedded `\n`) describing the double-click alternate
+  action.
+- **Error tooltip.** `reportCaptureError()` appends a
+  `Last error: <message>` line. See the error-reporting
+  section above.
+
+### Abandoned: capture-page tooltip override
+
+Goal: show "SeeWhatISee — Capture" when the capture page is
+active. Approaches tried:
+
+- **`setTitle` from background after `chrome.tabs.create`** —
+  Chrome overwrote it. Cause unconfirmed; possibly Chrome's own
+  tooltip text (e.g. "Wants access to this site") lands
+  asynchronously after our call.
+- **Per-tab `setTitle({ tabId })`** — `getTitle({ tabId })`
+  confirmed the value was stored, but Chrome rendered the global
+  title on hover anyway.
+- **`setTitle` from `capture-page.ts` after a 200 ms delay** —
+  worked for the initial display, but required an `onActivated`
+  listener to restore the default tooltip on tab switch. Problems:
+  - Fired on *every* tab switch, not just away from capture tabs.
+  - Erased "Last error:" tooltip messages.
+  - Didn't survive switching away and back to the capture tab.
+
+If revisited, the delayed-set-from-page approach was the most
+promising — the main issue was the `onActivated` restore logic.
 
 ## Context menus on the toolbar action
 

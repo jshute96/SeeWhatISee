@@ -10,7 +10,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot. (This default action is configurable.)
+
+- Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
+  - Double-click it to bypass the details page and take a screenshot immediately.
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
@@ -19,13 +21,16 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Choose which action to apply
     when clicking the icon.
+    - If you choose another default single-click action, double-click will open *Capture with details*.
 
 #### Capturing with details
 
 Use this to draw highlights on the page and/or add a prompt telling
 the agent what you want to do.
 
-Here, you can:
+Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submit.
+
+On this page, you can:
 
 - See the page URL and HTML size.
 - Pick whether to save the screenshot, the HTML, or both.
@@ -35,9 +40,9 @@ Here, you can:
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
   - **Undo** or **Clear** to roll back edits.
-- Click **Capture** to save (or press **Enter** in the prompt field).
-  - The highlights are baked into the saved PNG.
-  - The prompt is attached for the agent to read.
+
+If you add a prompt, the agent will follow it when reading this snapshot,
+focusing on highlighted areas in the screenshot.
 
 ### Claude Code skills
 

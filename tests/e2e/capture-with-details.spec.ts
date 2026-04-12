@@ -607,7 +607,7 @@ test('captureBothToMemory(delayMs) sleeps before snapshotting', async ({
   await page.close();
 });
 
-test('default click action (fresh install): handleActionClick takes a direct screenshot', async ({
+test('default click action set to capture-now: handleActionClick takes a direct screenshot', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -615,14 +615,19 @@ test('default click action (fresh install): handleActionClick takes a direct scr
   const sw0 = await getServiceWorker();
   await sw0.evaluate(async () => {
     await chrome.storage.local.clear();
+    await (
+      self as unknown as {
+        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      }
+    ).SeeWhatISee.setDefaultClickActionId('capture-now');
   });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
   await openerPage.bringToFront();
 
-  // If a capture.html tab opens, the test should fail — fresh
-  // install should dispatch to capture-now, not the details flow.
+  // If a capture.html tab opens, the test should fail — capture-now
+  // should dispatch directly, not open the details flow.
   let detailsOpened = false;
   const onPage = (p: Page) => {
     if (p.url().endsWith('/capture.html')) detailsOpened = true;
@@ -737,8 +742,8 @@ test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
     return { a, b, c, d };
   });
 
-  expect(titles.a).toBe('SeeWhatISee — Capture visible tab');
-  expect(titles.b).toBe('SeeWhatISee — Capture visible tab in 2s');
-  expect(titles.c).toBe('SeeWhatISee — Save HTML contents');
-  expect(titles.d).toBe('SeeWhatISee — Capture with details');
+  expect(titles.a).toBe('SeeWhatISee — Capture visible tab\nDouble-click for capture with details');
+  expect(titles.b).toBe('SeeWhatISee — Capture visible tab in 2s\nDouble-click for capture with details');
+  expect(titles.c).toBe('SeeWhatISee — Save HTML contents\nDouble-click for capture with details');
+  expect(titles.d).toBe('SeeWhatISee — Capture with details\nDouble-click for screenshot');
 });
