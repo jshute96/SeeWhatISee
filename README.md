@@ -54,6 +54,15 @@ on each snapshot. For example,
 - $\color{darkred}\text{/see-what-i-see}$ $\color{green}\text{What font is the heading on this page?}$
 - $\color{darkred}\text{/see-what-i-see-watch}$ $\color{green}\text{Just report the snapshot filenames}$
 
+### Gemini CLI commands
+
+$\color{darkred}\text{/see-what-i-see}$ $\color{green}\text{[prompt]}$
+is the only supported command.
+
+The first time you run it, Gemini may ask you to run a `/directory add` command to get permission to read the snapshot files.
+
+Gemini doesn't support asynchronous background so the *watch* commands don't work yet.
+
 ## Installation
 
 ### Chrome extension
@@ -79,6 +88,10 @@ Add the marketplace and install the plugin:
 /plugin marketplace add jshute96/SeeWhatISee
 /plugin install see-what-i-see@see-what-i-see-marketplace
 ```
+
+### Gemini CLI commands
+
+Copy [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml) into the same path under your home directory or project directory.
 
 ## Output files
 
