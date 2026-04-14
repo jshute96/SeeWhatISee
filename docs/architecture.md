@@ -85,9 +85,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
        click, then runs the default action.
   - Fresh installs default to `capture-with-details` — the details
     page with double-click screenshot shortcut.
-  - Only the 0s and 2s variants are exposed as defaultable — 5s
-    lives in the "Capture with delay" submenu but can't be set as
-    the default. (`DEFAULTABLE_DELAYS_SEC` in `background.ts`.)
+  - All delay variants (0s, 2s, 5s) are defaultable — the "Set
+    default click action" submenu mirrors the full delay set.
   - The toolbar icon's hover tooltip is set from the selected
     action's `tooltip` field via `chrome.action.setTitle`, so the
     icon always tells the user what a click is about to do.
@@ -110,10 +109,11 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     separators don't count against the top-level cap, so the
     visual grouping is free.
   - **Set default click action ▸** — submenu of normal items, one
-    per defaultable `CAPTURE_ACTIONS` entry: three undelayed items,
-    a separator, then three 2s-delay items. The selected item gets
-    a `✓ ` title prefix; picking one persists its id as
-    `defaultClickAction` and refreshes the tooltip.
+    per `CAPTURE_ACTIONS` entry: three undelayed items, a separator,
+    three 2s-delay items, a separator, then three 5s-delay items.
+    The selected item gets a `✓ ` title prefix; picking one
+    persists its id as `defaultClickAction` and refreshes the
+    tooltip.
     - Uses normal items instead of `type: 'radio'` because Chrome's
       radio mutual-exclusion only covers a contiguous run — the
       separator would cause two items to appear selected.

@@ -142,8 +142,8 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // The resulting flat `CAPTURE_ACTIONS` array drives three things:
 //   - the top-level menu entries (delay 0 only)
 //   - the "Capture with delay" submenu children (delay > 0)
-//   - the "Set default click action" submenu radios (delays in
-//     `DEFAULTABLE_DELAYS_SEC`, i.e. 0 and 2)
+//   - the "Set default click action" submenu radios (all delays in
+//     `CAPTURE_DELAYS_SEC`)
 // and is the lookup table `handleActionClick` uses to run the
 // currently-selected default.
 //
@@ -211,12 +211,6 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
 // top-level entry set; 2 and 5 go into the "Capture with delay" submenu.
 const CAPTURE_DELAYS_SEC = [0, 2, 5] as const;
 
-// Delays that are settable as the default click action. 0 and 2
-// cover the common cases; 5s is available from the Capture with delay
-// submenu but can't be made the default — that would cost an extra
-// radio row per base action without much real-world value.
-const DEFAULTABLE_DELAYS_SEC = [0, 2] as const;
-
 function delayedId(baseId: string, delaySec: number): string {
   return delaySec === 0 ? baseId : `${baseId}-${delaySec}s`;
 }
@@ -256,7 +250,7 @@ function captureActionsWithDelay(delaySec: number): CaptureAction[] {
 }
 
 function isDefaultableDelay(delaySec: number): boolean {
-  return (DEFAULTABLE_DELAYS_SEC as readonly number[]).includes(delaySec);
+  return (CAPTURE_DELAYS_SEC as readonly number[]).includes(delaySec);
 }
 
 const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
@@ -448,6 +442,10 @@ chrome.action.onClicked.addListener(handleActionClick);
 //         Take screenshot in 2s
 //         Save html contents in 2s
 //         Capture with details in 2s...
+//       ─────────
+//         Take screenshot in 5s
+//         Save html contents in 5s
+//         Capture with details in 5s...
 //
 // Chrome caps each extension at
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
@@ -738,8 +736,8 @@ async function installContextMenu(): Promise<void> {
     title: 'Set default click action',
     contexts: ['action'],
   });
-  for (let i = 0; i < DEFAULTABLE_DELAYS_SEC.length; i++) {
-    const delaySec = DEFAULTABLE_DELAYS_SEC[i]!;
+  for (let i = 0; i < CAPTURE_DELAYS_SEC.length; i++) {
+    const delaySec = CAPTURE_DELAYS_SEC[i]!;
     if (i > 0) {
       chrome.contextMenus.create({
         id: `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,

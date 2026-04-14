@@ -312,7 +312,7 @@ promising — the main issue was the `onActivated` restore logic.
   At the top level of the action menu, separators count against
   the 6-item cap, so we don't use any there. Inside submenus
   they're free and we use them to group "Capture with delay" by
-  delay and "Set default click action" by defaultable delay.
+  delay and "Set default click action" by delay.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment
