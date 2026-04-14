@@ -7,25 +7,18 @@
 
 set -e
 
-# Gemini CLI is only willing to read files out of the current project dir.
-# Try to detect we're in that, and use .gemini/tmp/.
-if [ "$GEMINI_CLI" = "1" ]; then
-  if [ ! -d ".gemini" ]; then
-    echo "Error: .gemini/ not found in $(pwd)." >&2
-    exit 1
-  fi
-  TARGET_DIR=".gemini/tmp"
-fi
-TARGET_DIR="${TARGET_DIR:-/tmp}"
-TARGET_DIR="$TARGET_DIR/SeeWhatISee"
+# Gemini CLI is only willing to read files out this tmp dir, with a workspace
+# name matching the current dir's basename.  ${WORKSPACE,,} lowercases the name.
+WORKSPACE="$(basename "$(pwd)")"
+TARGET_DIR="$HOME/.gemini/tmp/${WORKSPACE,,}/SeeWhatISee"
 mkdir -p "$TARGET_DIR"
 
-# Default DIR to $HOME, override with $SNAP_REAL_HOME if set.
-# With Gemini CLI installed by snap, $HOME is an internal gemini dir, and
+# Compute $SRC_DIR, overriding $HOME with $SNAP_REAL_HOME if set.
+# With Gemini CLI installed by snap, $HOME is mangled garbage, and
 # $SNAP_REAL_HOME is the real home directory.
-BASE_DIR="${SNAP_REAL_HOME:-$HOME}"
-DIR="$BASE_DIR/Downloads/SeeWhatISee"
-LATEST_JSON="$DIR/latest.json"
+REAL_HOME="${SNAP_REAL_HOME:-$HOME}"
+SRC_DIR="$REAL_HOME/Downloads/SeeWhatISee"
+LATEST_JSON="$SRC_DIR/latest.json"
 
 # Fail if latest.json is not found
 if [ ! -f "$LATEST_JSON" ]; then
@@ -40,12 +33,12 @@ cp "$LATEST_JSON" "$TARGET_LATEST_JSON"
 # Copy referenced files into TARGET_DIR
 CONTENTS=$(grep -oP '"contents":\s*"\K[^"]+' "$LATEST_JSON" || true)
 SCREENSHOT=$(grep -oP '"screenshot":\s*"\K[^"]+' "$LATEST_JSON" || true)
-[ -n "$CONTENTS" ] && [ -f "$DIR/$CONTENTS" ] && cp "$DIR/$CONTENTS" "$TARGET_DIR/"
-[ -n "$SCREENSHOT" ] && [ -f "$DIR/$SCREENSHOT" ] && cp "$DIR/$SCREENSHOT" "$TARGET_DIR/"
+[ -n "$CONTENTS" ] && [ -f "$SRC_DIR/$CONTENTS" ] && cp "$SRC_DIR/$CONTENTS" "$TARGET_DIR/"
+[ -n "$SCREENSHOT" ] && [ -f "$SRC_DIR/$SCREENSHOT" ] && cp "$SRC_DIR/$SCREENSHOT" "$TARGET_DIR/"
 
 # Output JSON with bare filenames replaced by absolute paths into TARGET_DIR.
 # Same approach as absolutize_paths in plugin/scripts/_common.sh, but
-# rewriting to TARGET_DIR (the copy destination) rather than DIR (the source).
+# rewriting to TARGET_DIR (the copy destination) rather than SRC_DIR (the source).
 sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$TARGET_DIR/\\1\"|" \
     -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$TARGET_DIR/\\1\"|" \
     "$TARGET_LATEST_JSON"

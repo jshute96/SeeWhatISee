@@ -6,18 +6,18 @@ You can't run this autonomously since it requires the user to have just clicked 
 prompt = """
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
-1. Run the script `.gemini/scripts/copy-last-snapshot.sh` and parse its JSON output.
-   * If the script fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
-   * The JSON output will contain absolute paths for `screenshot` and/or `contents`.
+1. Read this JSON object:
+!{$HOME/.gemini/scripts/copy-last-snapshot.sh}
 
 2. The JSON contains:
-   * `screenshot` — absolute path to a PNG file.
+   * `screenshot` — absolute path to a PNG file (optional)
+   * `contents` — absolute path to an HTML file (optional)
    * `highlights` — `true` if user-drawn red markup is baked into the screenshot.
-   * `contents` — absolute path to an HTML file.
    * `prompt` — the user's instruction for this capture.
    * `url` — the source URL.
 
 3. Process the capture:
+   * One or both of `screenshot` and `contents` should be present.
    * If `screenshot` is present, read it.
      - If `highlights` is `true`, focus on the red marked areas.
    * If `contents` is present, read it only if needed to answer the user's prompt.
