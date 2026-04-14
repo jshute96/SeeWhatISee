@@ -94,7 +94,15 @@ Add the marketplace and install the plugin:
 
 ### Gemini CLI commands
 
-Copy these files into the same directories in your `.gemini` directory:
+Run `scripts/gemini-install.sh` from inside `gemini`, so it can install into Gemini's sandbox home directory.
+
+```bash
+git clone https://github.com/jshute96/SeeWhatISee.git
+cd SeeWhatISee
+gemini 'Run `scripts/gemini-install.sh`'
+```
+
+Alternative: Copy these files into the same directories in your `.gemini` directory:
 
 * [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml)
 * [`.gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/copy-last-snapshot.sh)

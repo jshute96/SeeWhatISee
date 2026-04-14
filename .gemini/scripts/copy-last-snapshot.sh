@@ -9,7 +9,7 @@ set -e
 
 # Gemini CLI is only willing to read files out this tmp dir, with a workspace
 # name matching the current dir's basename.  ${WORKSPACE,,} lowercases the name.
-WORKSPACE="$(basename $(pwd))"
+WORKSPACE="$(basename "$(pwd)")"
 TARGET_DIR="$HOME/.gemini/tmp/${WORKSPACE,,}/SeeWhatISee"
 mkdir -p "$TARGET_DIR"
 
