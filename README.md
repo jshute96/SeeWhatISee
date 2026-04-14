@@ -10,7 +10,6 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-
 - Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
 - Right-click the icon for more options:
@@ -109,23 +108,24 @@ Alternative: Copy these files into the same directories in your `.gemini` direct
 
 ## Output files
 
-Each capture writes three files into that directory:
+Each capture writes two files into that directory:
 
 - `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
   captured content itself, one per capture.
-- `latest.json` — describes the most recent capture, with
+- `log.json` — newline-delimited JSON (one record per line),
+  grep-friendly history of recent captures. Each record contains:
   - `timestamp`
   - `url`
   - `screenshot` — PNG filename, when a screenshot was saved.
   - `contents` — HTML filename, when HTML was saved.
   - `prompt` — user prompt from the "Capture with details…" flow.
   - `highlights: true` — when the saved PNG includes user-drawn highlights.
-- `log.json` — newline-delimited JSON (one record per line, same
-  schema as `latest.json`), grep-friendly history of recent captures.
-  Capped at the 100 most recent entries (FIFO eviction). The
-  authoritative log lives in extension storage and `log.json` is a
-  snapshot rewritten on every capture. If deleted, it will be restored
-  from Chrome storage.
+
+The log is capped at the 100 most recent entries (FIFO eviction). The
+authoritative log lives in extension storage and `log.json` is a
+snapshot rewritten on every capture. If deleted, it will be restored
+from Chrome storage. Scripts use `tail -1 log.json` to get the
+latest record.
 
 ## Development setup
 

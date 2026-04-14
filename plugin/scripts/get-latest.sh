@@ -16,10 +16,10 @@ done
 
 resolve_dir
 
-LATEST="$DIR/latest.json"
-if [[ ! -f "$LATEST" ]]; then
-  echo "Error: $LATEST not found. No captures yet?" >&2
+LOG="$DIR/log.json"
+if [[ ! -f "$LOG" ]]; then
+  echo "Error: $LOG not found. No captures yet?" >&2
   exit 1
 fi
 
-absolutize_paths < "$LATEST"
+tail -1 "$LOG" | absolutize_paths

@@ -53,7 +53,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
     saves it as `contents-<timestamp>.html`. The capture is
-    recorded in `latest.json` / `log.json` just like a screenshot
+    recorded in `log.json` just like a screenshot
     — only the filename differs. Requires the `scripting`
     permission. Takes the same optional `delayMs` as
     `captureVisible`; also callable as
@@ -198,8 +198,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   The `CaptureResult` returned by `captureVisible` and
   `savePageContents` includes the `chrome.downloads` ids of the
-  content file and both JSON sidecars
-  (`sidecarDownloadIds.{latest,log}`):
+  content file and the JSON sidecar (`sidecarDownloadIds.log`):
 
   - Production callers ignore them.
   - The e2e tests use them to look up each saved file's actual
@@ -210,11 +209,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - The timestamp is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond precision) — fine-grained enough that filenames are always unique in practice.
   - We use the downloads API rather than a native messaging host so v1 has no native dependencies.
   - Trade-off: the directory must live under the user's configured downloads folder.
-- **Metadata sidecars.** Alongside the content file, every capture also
-  writes two JSON sidecars into the same directory:
-  - `latest.json` — pretty-printed record for the most recent capture,
-    overwritten each time. Lets an agent get the newest capture without
-    having to `ls`. Every record has `timestamp` and `url`, plus:
+- **Metadata sidecar.** Alongside the content file, every capture also
+  writes a JSON sidecar into the same directory:
+  - `log.json` — newline-delimited JSON (one record per line),
+    grep-friendly history of recent captures. Scripts use
+    `tail -1 log.json` to get the latest record. Every record has
+    `timestamp` and `url`, plus optional fields:
     - `screenshot` — bare PNG filename, set when a screenshot was saved.
     - `highlights` — `true` when the saved PNG has user-drawn red
       markup (boxes, lines, dots) baked into it. Only present when
@@ -231,8 +231,6 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     detailed-capture path can emit any or all of the optional fields
     (the screenshot / contents filenames are chosen from the *same*
     compact timestamp so they share a suffix).
-  - `log.json` — newline-delimited JSON (one record per line, same
-    schema as `latest.json`), grep-friendly history of recent captures.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage.
     - To clear history, call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console: wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry). The right-click menu entry that used to drive this is temporarily hidden — see TODO.md.
@@ -253,10 +251,11 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     directory resolution (config file, `--directory`, default),
     config parsing, and `absolutize_paths` (rewrites bare filenames
     in JSON to absolute paths via sed).
-  - `get-latest.sh` — reads `latest.json` and prints a single JSON
-    record with absolute paths to stdout. Used by `/see-what-i-see`.
+  - `get-latest.sh` — reads the last line of `log.json` and prints a
+    single JSON record with absolute paths to stdout. Used by
+    `/see-what-i-see`.
   - `watch.sh` — filesystem watcher used by `/see-what-i-see-watch`.
-    Detects changes to `latest.json` by polling mtime every 0.5s.
+    Detects changes to `log.json` by polling mtime every 0.5s.
     Supports `--after TIMESTAMP` to catch up on missed captures;
     TIMESTAMP is the ISO `timestamp` field from a previous record
     (matched against `log.json`). Emits JSON records with absolute

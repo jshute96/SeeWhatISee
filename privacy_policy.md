@@ -18,8 +18,8 @@ extension:
 - Captures a PNG screenshot of the currently visible tab, or
 - Captures the HTML source of the currently visible tab, and
 - Writes the capture to your local `Downloads/SeeWhatISee` folder, along
-  with two sidecar files (`latest.json` and `log.json`) that describe
-  recent captures so a local agent can find them quickly.
+  with a sidecar file (`log.json`) that describes recent captures so
+  a local agent can find them quickly.
 
 Everything happens on your machine. Nothing is ever sent over the network.
 

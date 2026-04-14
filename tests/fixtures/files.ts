@@ -95,7 +95,6 @@ export function expectColorClose(
  * One-stop verification for an HTML snapshot capture:
  *
  *   - the HTML file exists and contains `expectedSubstring`
- *   - latest.json's content equals the capture record
  *   - log.json's last line equals the capture record
  *   - if `prevLogRecords` is given, log.json grew by exactly one line
  *
@@ -107,9 +106,8 @@ export async function verifyHtmlCapture(
   expectedSubstring: string,
   prevLogRecords?: CaptureRecord[],
 ): Promise<CaptureRecord[]> {
-  const [htmlPath, latestPath, logPath] = await Promise.all([
+  const [htmlPath, logPath] = await Promise.all([
     waitForDownloadPath(sw, result.downloadId),
-    waitForDownloadPath(sw, result.sidecarDownloadIds.latest),
     waitForDownloadPath(sw, result.sidecarDownloadIds.log),
   ]);
 
@@ -124,9 +122,6 @@ export async function verifyHtmlCapture(
     contents: result.contents,
     url: result.url,
   };
-
-  const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
-  expect(latest).toEqual(expectedRecord);
 
   const logLines = fs.readFileSync(logPath, 'utf8').split('\n');
   expect(logLines[logLines.length - 1]).toBe('');
@@ -145,7 +140,6 @@ export async function verifyHtmlCapture(
  * One-stop verification that a capture landed on disk consistently:
  *
  *   - the PNG exists, is non-empty, and shows the expected pixel color
- *   - latest.json's content equals the capture record
  *   - log.json's last line equals the capture record (and has the
  *     trailing newline writeJsonFile is supposed to add)
  *   - if `prevLogRecords` is given, log.json grew by exactly one line
@@ -171,13 +165,8 @@ export async function verifyCapture(
   expectedColor: [number, number, number],
   prevLogRecords?: CaptureRecord[],
 ): Promise<CaptureRecord[]> {
-  // Resolve all three on-disk paths in parallel — they're independent
-  // chrome.downloads.search polls and the sidecars are written
-  // concurrently anyway, so serializing the polls just inflates
-  // wall-clock time (and inflates the error budget when one is slow).
-  const [pngPath, latestPath, logPath] = await Promise.all([
+  const [pngPath, logPath] = await Promise.all([
     waitForDownloadPath(sw, result.downloadId),
-    waitForDownloadPath(sw, result.sidecarDownloadIds.latest),
     waitForDownloadPath(sw, result.sidecarDownloadIds.log),
   ]);
 
@@ -186,18 +175,14 @@ export async function verifyCapture(
   expect(fs.statSync(pngPath).size).toBeGreaterThan(0);
   expectColorClose(pixelColorAt(pngPath), expectedColor);
 
-  // The record we expect to find written into both sidecars. Built
-  // here in canonical key order so toEqual diffs read sensibly when
-  // an assertion fails.
+  // The record we expect to find in the log sidecar. Built here in
+  // canonical key order so toEqual diffs read sensibly when an
+  // assertion fails.
   const expectedRecord: CaptureRecord = {
     timestamp: result.timestamp,
     screenshot: result.screenshot,
     url: result.url,
   };
-
-  // latest.json: full content equality (it only ever holds one record).
-  const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
-  expect(latest).toEqual(expectedRecord);
 
   // log.json: NDJSON. Always check the trailing newline + last record.
   // The .split('\n') of a file ending in '\n' has '' as its last

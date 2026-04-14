@@ -34,6 +34,11 @@ function makeFakeHome(): { fakeHome: string; srcDir: string } {
   return { fakeHome, srcDir };
 }
 
+function writeLog(dir: string, records: Record<string, unknown>[]) {
+  const ndjson = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  fs.writeFileSync(path.join(dir, 'log.json'), ndjson);
+}
+
 let targetDir: string;
 
 test.beforeEach(() => {
@@ -56,7 +61,7 @@ test.describe('copy-last-snapshot.sh', () => {
       contents: contentsFile,
       url: 'http://example.com/page0',
     };
-    fs.writeFileSync(path.join(srcDir, 'latest.json'), JSON.stringify(record) + '\n');
+    writeLog(srcDir, [record]);
     fs.writeFileSync(path.join(srcDir, screenshotFile), 'fake-png-data');
     fs.writeFileSync(path.join(srcDir, contentsFile), '<html>test</html>');
 
@@ -83,7 +88,7 @@ test.describe('copy-last-snapshot.sh', () => {
       screenshot: screenshotFile,
       url: 'http://example.com/page0',
     };
-    fs.writeFileSync(path.join(srcDir, 'latest.json'), JSON.stringify(record) + '\n');
+    writeLog(srcDir, [record]);
     fs.writeFileSync(path.join(srcDir, screenshotFile), 'fake-png-data');
 
     const r = run({ HOME: fakeHome, TARGET_DIR: targetDir });
@@ -106,7 +111,7 @@ test.describe('copy-last-snapshot.sh', () => {
       contents: contentsFile,
       url: 'http://example.com/page0',
     };
-    fs.writeFileSync(path.join(srcDir, 'latest.json'), JSON.stringify(record) + '\n');
+    writeLog(srcDir, [record]);
     fs.writeFileSync(path.join(srcDir, contentsFile), '<html>test</html>');
 
     const r = run({ HOME: fakeHome, TARGET_DIR: targetDir });
@@ -120,7 +125,36 @@ test.describe('copy-last-snapshot.sh', () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   });
 
-  test('errors when latest.json does not exist', () => {
+  test('returns the last record when log has multiple entries', () => {
+    const { fakeHome, srcDir } = makeFakeHome();
+
+    const screenshotFile = 'screenshot-20260409-120000-001.png';
+    writeLog(srcDir, [
+      {
+        timestamp: '2026-04-09T12:00:00.000Z',
+        screenshot: 'screenshot-20260409-120000-000.png',
+        url: 'http://example.com/page0',
+      },
+      {
+        timestamp: '2026-04-09T12:00:00.001Z',
+        screenshot: screenshotFile,
+        url: 'http://example.com/page1',
+      },
+    ]);
+    fs.writeFileSync(path.join(srcDir, screenshotFile), 'fake-png-data');
+
+    const r = run({ HOME: fakeHome, TARGET_DIR: targetDir });
+    expect(r.exitCode).toBe(0);
+
+    const parsed = JSON.parse(r.stdout.trim());
+    const outDir = `${targetDir}/SeeWhatISee`;
+    expect(parsed.screenshot).toBe(`${outDir}/${screenshotFile}`);
+    expect(parsed.timestamp).toBe('2026-04-09T12:00:00.001Z');
+
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  test('errors when log.json does not exist', () => {
     const { fakeHome } = makeFakeHome();
     const r = run({ HOME: fakeHome, TARGET_DIR: targetDir });
     expect(r.exitCode).not.toBe(0);

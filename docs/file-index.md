@@ -29,7 +29,7 @@ One-line descriptions of every source file, grouped by directory.
 | `plugin/settings.json` | Plugin-level permission defaults for the skills |
 | `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
 | `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
-| `plugin/scripts/watch.sh` | CLI watcher for `latest.json` (`--loop`, `--after`, `--stop`, `--directory`) |
+| `plugin/scripts/watch.sh` | CLI watcher for `log.json` (`--loop`, `--after`, `--stop`, `--directory`) |
 | `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
 | `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
 | `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
@@ -65,7 +65,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default submenus, details-flow, error surface |
-| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`) and metadata sidecar writing (`latest.json`, `log.json`) |
+| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `saveDetailedCapture`, `clearCaptureLog`) and `log.json` sidecar writing |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options, prompt, highlight overlay) |
 | `src/capture-page.ts` | Controller script for `capture.html`: data fetch, prompt/textarea behavior, SVG highlight overlay, canvas bake-in on save, image fit-to-viewport |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |

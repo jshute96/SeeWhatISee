@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Watch ~/Downloads/SeeWhatISee/latest.json and emit its contents each
+# Watch ~/Downloads/SeeWhatISee/log.json and emit its last line each
 # time the SeeWhatISee Chrome extension rewrites it.
 #
 # Default mode: wait for the next change, emit, and exit.
@@ -58,8 +58,7 @@ done
 
 resolve_dir
 
-FILE="$DIR/latest.json"
-LOG="$DIR/log.json"
+FILE="$DIR/log.json"
 PIDFILE="$DIR/.watch.pid"
 
 # ---- PID-file helpers -------------------------------------------------------
@@ -135,7 +134,7 @@ mtime() {
   stat -c %Y "$FILE" 2>/dev/null || stat -f %m "$FILE"
 }
 
-# Emit the current contents of latest.json if the mtime has advanced since
+# Emit the last line of log.json if the mtime has advanced since
 # the last emission. Returns 0 if it actually printed, 1 if it skipped
 # (used to debounce rapid polls that land in the same mtime second).
 last_mtime=""
@@ -144,15 +143,15 @@ emit() {
   cur=$(mtime)
   [[ -n "$cur" && "$cur" != "$last_mtime" ]] || return 1
   last_mtime="$cur"
-  absolutize_paths < "$FILE"
+  tail -1 "$FILE" | absolutize_paths
   printf '\n'
 }
 
 # ---- --after: check log.json for pending captures ---------------------------
 
 if [[ -n "$AFTER" ]]; then
-  if [[ ! -f "$LOG" ]]; then
-    echo "Warning: $LOG not found; ignoring --after and watching as usual" >&2
+  if [[ ! -f "$FILE" ]]; then
+    echo "Warning: $FILE not found; ignoring --after and watching as usual" >&2
   else
     # Grep for the line containing the --after timestamp. -n gives us
     # the line number so we can tail everything after it. Anchor to
@@ -160,18 +159,18 @@ if [[ -n "$AFTER" ]]; then
     # appearing in a url value. `|| true` because grep exits 1 on
     # no-match, which `set -eo pipefail` would otherwise promote to
     # a script-terminating error.
-    line_num=$(grep -n "\"timestamp\":[[:space:]]*\"$AFTER\"" "$LOG" | head -1 | cut -d: -f1 || true)
+    line_num=$(grep -n "\"timestamp\":[[:space:]]*\"$AFTER\"" "$FILE" | head -1 | cut -d: -f1 || true)
     if [[ -z "$line_num" ]]; then
-      echo "Warning: '$AFTER' not found in $LOG; ignoring --after and watching as usual" >&2
+      echo "Warning: '$AFTER' not found in $FILE; ignoring --after and watching as usual" >&2
     else
-      total=$(wc -l < "$LOG")
+      total=$(wc -l < "$FILE")
       remaining=$((total - line_num))
       # Guard: wc -l counts newlines, so a file missing its final \n
       # can undercount by 1, making remaining negative. Clamp to 0.
       [[ $remaining -lt 0 ]] && remaining=0
       if [[ $remaining -gt 0 ]]; then
         # There are captures after the --after line. Emit them.
-        pending=$(tail -n "$remaining" "$LOG" | absolutize_paths)
+        pending=$(tail -n "$remaining" "$FILE" | absolutize_paths)
         count=$(echo "$pending" | wc -l)
         label="captures"
         [[ "$count" -eq 1 ]] && label="capture"

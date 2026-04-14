@@ -4,7 +4,7 @@ import { verifyHtmlCapture, type CaptureResult } from '../fixtures/files';
 // Filename format: contents-YYYYMMDD-HHMMSS-mmm.html
 const FILENAME_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
 
-test('savePageContents captures HTML and writes sidecar files', async ({
+test('savePageContents captures HTML and writes sidecar file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -28,7 +28,6 @@ test('savePageContents captures HTML and writes sidecar files', async ({
   expect(result.filename).toMatch(FILENAME_PATTERN);
   expect(result.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  expect(result.sidecarDownloadIds.latest).toBeGreaterThan(0);
   expect(result.sidecarDownloadIds.log).toBeGreaterThan(0);
 
   // The saved HTML should contain the fixture page's background color

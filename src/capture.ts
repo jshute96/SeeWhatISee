@@ -3,11 +3,9 @@
 // and is responsible for grabbing the content and writing it (plus
 // its metadata) to the standard download directory.
 //
-// Each capture writes three files into the download directory:
+// Each capture writes two files into the download directory:
 //   - screenshot-<timestamp>.png or contents-<timestamp>.html
 //                                  — the content itself (unique per capture)
-//   - latest.json                  — pretty-printed JSON of the most recent
-//                                    capture record, overwritten each time
 //   - log.json                     — newline-delimited JSON (one record per
 //                                    line), regenerated each time from
 //                                    chrome.storage.local
@@ -118,15 +116,12 @@ export interface CaptureResult extends CaptureRecord {
   /** Download id of the content file (PNG or HTML). */
   downloadId: number;
   /**
-   * Download ids of the JSON sidecars written alongside the PNG.
-   * Production callers (toolbar / context menu) ignore these; they're
-   * primarily there so e2e tests can resolve each sidecar to its
-   * on-disk path via chrome.downloads.search without having to guess
-   * which "most recent download" is which (the two sidecars are
-   * written concurrently, so observation order is non-deterministic).
+   * Download id of the JSON sidecar (log.json) written alongside the
+   * content file. Production callers (toolbar / context menu) ignore
+   * this; it's primarily there so e2e tests can resolve the sidecar
+   * to its on-disk path via chrome.downloads.search.
    */
   sidecarDownloadIds: {
-    latest: number;
     log: number;
   };
 }
@@ -184,7 +179,7 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
  * Uses `chrome.scripting.executeScript` to grab
  * `document.documentElement.outerHTML` from the page. The result is
  * saved as an HTML file alongside screenshots in the same download
- * directory, and recorded in latest.json / log.json exactly like a
+ * directory, and recorded in log.json exactly like a
  * screenshot capture — the only difference is the filename extension.
  *
  * `delayMs` (default 0) behaves the same as `captureVisible`'s delay:
@@ -226,11 +221,8 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
 
   const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
-    const [latest, logId] = await Promise.all([
-      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
-      writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
-    ]);
-    return { latest, log: logId };
+    const logId = await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
+    return { log: logId };
   });
 
   return { downloadId, sidecarDownloadIds, filename, ...record };
@@ -304,9 +296,9 @@ export interface SaveDetailedOptions {
 
 /**
  * Save a "Capture with details…" result: writes the screenshot
- * and/or HTML files requested by `opts`, plus a single combined
- * latest.json / log.json record that references whichever artifacts
- * were saved and includes the prompt (when non-empty). Reuses the
+ * and/or HTML files requested by `opts`, plus a log.json record
+ * that references whichever artifacts were saved and includes the
+ * prompt (when non-empty). Reuses the
  * same `compactTimestamp` for both artifacts so they share a
  * basename suffix and the record timestamps match exactly.
  *
@@ -365,10 +357,7 @@ export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<Ca
 
   await serializeWrite(async () => {
     const log = await appendToLog(record);
-    await Promise.all([
-      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
-      writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
-    ]);
+    await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
   });
 
   return record;
@@ -409,11 +398,8 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   // storage read-modify-write.
   const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
-    const [latest, logId] = await Promise.all([
-      writeJsonFile('latest.json', serializeRecord(record, 2) + '\n'),
-      writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n'),
-    ]);
-    return { latest, log: logId };
+    const logId = await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
+    return { log: logId };
   });
 
   return { downloadId, sidecarDownloadIds, filename, ...record };
@@ -461,8 +447,8 @@ async function writeJsonFile(name: string, text: string): Promise<number> {
     url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
     filename: `${DOWNLOAD_SUBDIR}/${name}`,
     saveAs: false,
-    // Required so latest.json / log.json get replaced rather than ending up
-    // as `latest (1).json`, `latest (2).json`, ...
+    // Required so log.json gets replaced rather than ending up
+    // as `log (1).json`, `log (2).json`, ...
     conflictAction: 'overwrite',
   });
 }

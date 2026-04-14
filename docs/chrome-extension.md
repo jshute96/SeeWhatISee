@@ -26,7 +26,7 @@ The background script is an MV3 service worker. That means:
     awaiting — the timer fires in a dead worker.
 - **`chrome.downloads.download` resolves on download *start*, not
   completion.**
-  - For our tiny data-URL payloads (PNG + JSON sidecars) this is
+  - For our tiny data-URL payloads (PNG + JSON sidecar) this is
     effectively immediate.
   - If we ever see partial files or interleaving in `log.json`, the
     fix is to wait on `chrome.downloads.onChanged` for

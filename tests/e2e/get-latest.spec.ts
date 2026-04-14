@@ -34,17 +34,18 @@ test.afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function writeLatest(dir: string, record: Record<string, unknown>) {
-  fs.writeFileSync(path.join(dir, 'latest.json'), JSON.stringify(record) + '\n');
+function writeLog(dir: string, records: Record<string, unknown>[]) {
+  const ndjson = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  fs.writeFileSync(path.join(dir, 'log.json'), ndjson);
 }
 
 test.describe('get-latest.sh', () => {
   test('prints JSON with absolute screenshot path', () => {
-    writeLatest(tmpDir, {
+    writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',
       screenshot: 'screenshot-20260409-120000-001.png',
       url: 'http://example.com/page1',
-    });
+    }]);
 
     const r = run(['--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -56,11 +57,11 @@ test.describe('get-latest.sh', () => {
   });
 
   test('prints JSON with absolute contents path', () => {
-    writeLatest(tmpDir, {
+    writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
       contents: 'contents-20260409-120000-000.html',
       url: 'http://example.com/page0',
-    });
+    }]);
 
     const r = run(['--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -70,12 +71,12 @@ test.describe('get-latest.sh', () => {
   });
 
   test('absolutizes both screenshot and contents', () => {
-    writeLatest(tmpDir, {
+    writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
       screenshot: 'screenshot-20260409-120000-000.png',
       contents: 'contents-20260409-120000-000.html',
       url: 'http://example.com/page0',
-    });
+    }]);
 
     const r = run(['--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -86,11 +87,11 @@ test.describe('get-latest.sh', () => {
   });
 
   test('does not double-absolutize already-absolute paths', () => {
-    writeLatest(tmpDir, {
+    writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
       screenshot: '/already/absolute/screenshot.png',
       url: 'http://example.com/page0',
-    });
+    }]);
 
     const r = run(['--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -99,7 +100,29 @@ test.describe('get-latest.sh', () => {
     expect(parsed.screenshot).toBe('/already/absolute/screenshot.png');
   });
 
-  test('errors when latest.json does not exist', () => {
+  test('returns the last record when log has multiple entries', () => {
+    writeLog(tmpDir, [
+      {
+        timestamp: '2026-04-09T12:00:00.000Z',
+        screenshot: 'screenshot-20260409-120000-000.png',
+        url: 'http://example.com/page0',
+      },
+      {
+        timestamp: '2026-04-09T12:00:00.001Z',
+        screenshot: 'screenshot-20260409-120000-001.png',
+        url: 'http://example.com/page1',
+      },
+    ]);
+
+    const r = run(['--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+
+    const parsed = JSON.parse(r.stdout.trim());
+    expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
+    expect(parsed.timestamp).toBe('2026-04-09T12:00:00.001Z');
+  });
+
+  test('errors when log.json does not exist', () => {
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-empty-'));
     const r = run(['--directory', emptyDir]);
     expect(r.exitCode).not.toBe(0);
@@ -108,11 +131,11 @@ test.describe('get-latest.sh', () => {
   });
 
   test('resolves directory from .SeeWhatISee config', () => {
-    writeLatest(tmpDir, {
+    writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',
       screenshot: 'screenshot-20260409-120000-001.png',
       url: 'http://example.com/page1',
-    });
+    }]);
 
     const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-cfg-'));
     fs.writeFileSync(path.join(cfgDir, '.SeeWhatISee'), `directory=${tmpDir}\n`);

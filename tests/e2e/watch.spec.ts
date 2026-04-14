@@ -8,10 +8,9 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WATCH_SCRIPT = path.resolve(__dirname, '../../scripts/watch.sh');
 
-// These tests are standalone — they create a temp directory with fake
-// latest.json / log.json files and simulate captures by rewriting
-// those files, then verify watch.sh reacts correctly. No extension or
-// browser needed.
+// These tests are standalone — they create a temp directory with a fake
+// log.json file and simulate captures by appending to it, then verify
+// watch.sh reacts correctly. No extension or browser needed.
 const test = base;
 
 // ---- Helpers ---------------------------------------------------------------
@@ -120,17 +119,17 @@ function fakeRecord(index: number): { json: string; timestamp: string; screensho
 }
 
 /**
- * Simulate a capture by rewriting latest.json (and appending to
- * log.json). Returns the synthetic record so callers can assert on
- * either `timestamp` (the `--after` key) or `screenshot` (the content
- * filename, useful for spotting the record in output).
+ * Simulate a capture by appending to log.json. The extension now only
+ * writes log.json (no separate latest.json). Returns the synthetic
+ * record so callers can assert on either `timestamp` (the `--after`
+ * key) or `screenshot` (the content filename, useful for spotting the
+ * record in output).
  */
 function simulateCapture(dir: string, index: number): {
   timestamp: string;
   screenshot: string;
 } {
   const { json, timestamp, screenshot } = fakeRecord(index);
-  fs.writeFileSync(path.join(dir, 'latest.json'), json + '\n');
   fs.appendFileSync(path.join(dir, 'log.json'), json + '\n');
   return { timestamp, screenshot };
 }
@@ -141,9 +140,8 @@ let tmpDir: string;
 
 test.beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-watch-'));
-  // Seed with an initial capture so the directory + files exist.
+  // Seed with an initial capture so the directory + file exist.
   const { json } = fakeRecord(0);
-  fs.writeFileSync(path.join(tmpDir, 'latest.json'), json + '\n');
   fs.writeFileSync(path.join(tmpDir, 'log.json'), json + '\n');
 });
 
@@ -175,13 +173,13 @@ test.describe('watch.sh', () => {
     expect(r.stderr).toContain('does not exist');
   });
 
-  test('once mode: emits on the next latest.json rewrite and exits', async () => {
+  test('once mode: emits on the next log.json append and exits', async () => {
     const watch = startWatch(['--directory', tmpDir]);
     // Wait >1s so the simulated capture's mtime is strictly greater
     // than the seed file's (filesystem mtime granularity is 1 second).
     await new Promise((r) => setTimeout(r, 1200));
 
-    // Simulate a capture — rewrite latest.json.
+    // Simulate a capture — append to log.json.
     const { screenshot } = simulateCapture(tmpDir, 1);
 
     const exitCode = await waitForExit(watch.proc, 5_000);

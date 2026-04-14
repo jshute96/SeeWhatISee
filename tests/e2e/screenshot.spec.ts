@@ -26,7 +26,7 @@ test.beforeEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 600));
 });
 
-test('captures the visible tab and writes png + sidecar files', async ({
+test('captures the visible tab and writes png + sidecar file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -58,12 +58,11 @@ test('captures the visible tab and writes png + sidecar files', async ({
   expect(result1.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   // ISO 8601 with milliseconds and trailing Z.
   expect(result1.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  expect(result1.sidecarDownloadIds.latest).toBeGreaterThan(0);
   expect(result1.sidecarDownloadIds.log).toBeGreaterThan(0);
 
   // Single helper covers: PNG exists, PNG pixel color matches PURPLE,
-  // latest.json equals the record, log.json's last line equals the
-  // record (and ends with a trailing newline). Passing `[]` as the
+  // log.json's last line equals the record (and ends with a trailing
+  // newline). Passing `[]` as the
   // baseline turns on the delta check, which here implies length 1.
   // Returns the parsed log.json records so we can pass them to the
   // next call as the baseline for the next delta check.

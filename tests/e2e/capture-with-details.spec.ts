@@ -35,7 +35,7 @@ test.beforeEach(async () => {
 // filenames* to download ids. Without this we can't tell the
 // detailed-capture downloads apart: `chrome.downloads.search`
 // returns the Playwright-managed temp UUID path, not the original
-// `latest.json` / `screenshot-…png` filename we asked for. Only
+// `log.json` / `screenshot-…png` filename we asked for. Only
 // the `download()` call sees the requested name.
 //
 // The spy install runs *inside the same `evaluate` block* that
@@ -43,7 +43,7 @@ test.beforeEach(async () => {
 // lose the patch between install and use. See openDetailsFlow.
 
 // Resolve the recorded download whose requested filename ends with
-// `suffix` (e.g. `'latest.json'`, `'.png'`). Returns the on-disk
+// `suffix` (e.g. `'log.json'`, `'.png'`). Returns the on-disk
 // path via the existing `waitForDownloadPath` poll.
 async function findCapturedDownload(sw: Worker, suffix: string): Promise<string> {
   const id = await sw.evaluate((sfx) => {
@@ -61,8 +61,9 @@ async function findCapturedDownload(sw: Worker, suffix: string): Promise<string>
 }
 
 async function readLatestRecord(sw: Worker): Promise<CaptureRecord> {
-  const path = await findCapturedDownload(sw, 'latest.json');
-  return JSON.parse(fs.readFileSync(path, 'utf8'));
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const lines = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n');
+  return JSON.parse(lines[lines.length - 1]);
 }
 
 // Open a fixture page (the "opener") and trigger the details flow.
@@ -74,8 +75,8 @@ async function openDetailsFlow(
   getServiceWorker: () => Promise<Worker>,
   fixturePath = 'purple.html',
 ): Promise<{ openerPage: Page; capturePage: Page }> {
-  // Clean log so a stale latest.json from an earlier test in the
-  // same worker can't satisfy our assertions.
+  // Clean log so stale entries from an earlier test in the same
+  // worker can't satisfy our assertions.
   const sw0 = await getServiceWorker();
   await sw0.evaluate(() => chrome.storage.local.clear());
 
