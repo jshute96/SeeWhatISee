@@ -302,15 +302,11 @@ export interface SaveDetailedOptions {
  * same `compactTimestamp` for both artifacts so they share a
  * basename suffix and the record timestamps match exactly.
  *
- * Callers must ensure at least one of `includeScreenshot` /
- * `includeHtml` is true; we throw if both are false rather than
- * writing an empty record.
+ * Saves with neither file are allowed — the record still carries
+ * `timestamp`, `url`, and any `prompt`, so a downstream agent can
+ * act on just the URL (and prompt) without ever reading a file.
  */
 export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
-  if (!opts.includeScreenshot && !opts.includeHtml) {
-    throw new Error('saveDetailedCapture called with nothing to save');
-  }
-
   const now = new Date();
   const ts = compactTimestamp(now);
   const record: CaptureRecord = {

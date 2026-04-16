@@ -17,12 +17,17 @@ prompt = """
    * `url` — the source URL.
 
 3. Process the capture:
-   * One or both of `screenshot` and `contents` should be present.
+   * `screenshot` and `contents` are each optional — the record may have either,
+     both, or neither. If neither is present, the URL (and optional prompt) is
+     the whole payload.
    * If `screenshot` is present, read it.
      - If `highlights` is `true`, focus on the red marked areas.
    * If `contents` is present, read it only if needed to answer the user's prompt.
    * If `prompt` is present, treat it as the user's instruction for this capture.
+     If no screenshot or HTML was saved, the `url` is what the prompt is about.
    * If `prompt` is absent:
      - For screenshots, describe what you see and mention the `url`.
      - For HTML-only, report the `url` and ask what they want to know.
+     - For URL-only (no screenshot, no HTML), report the `url` and ask what
+       they want to know about it.
 """

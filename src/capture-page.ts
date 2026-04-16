@@ -39,14 +39,6 @@ const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 
-function updateCaptureState(): void {
-  captureBtn.disabled = !screenshotBox.checked && !htmlBox.checked;
-}
-
-screenshotBox.addEventListener('change', updateCaptureState);
-htmlBox.addEventListener('change', updateCaptureState);
-updateCaptureState();
-
 promptInput.focus();
 
 // Auto-grow the prompt textarea to fit its content, capped by CSS
@@ -78,11 +70,9 @@ document.addEventListener('keydown', (e) => {
   if (key === 's') {
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
-    updateCaptureState();
   } else if (key === 'h') {
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
-    updateCaptureState();
   }
 });
 
@@ -396,11 +386,10 @@ captureBtn.addEventListener('click', () => {
   } catch (err) {
     // If renderHighlightedPng (canvas / toDataURL) or sendMessage
     // throws synchronously, we'd otherwise leave the button stuck
-    // disabled with no way for the user to retry. Re-enable, log
-    // the error, and let updateCaptureState reconcile against the
-    // current checkbox state in case the user toggled them off.
+    // disabled with no way for the user to retry. Re-enable and
+    // log the error so the user can try again.
     console.warn('[SeeWhatISee] capture submit failed:', err);
-    updateCaptureState();
+    captureBtn.disabled = false;
   }
 });
 

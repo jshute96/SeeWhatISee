@@ -23,7 +23,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 
 ## Process each snapshot
 
-1. You have a JSON record for this capture. It contains `{timestamp, url}` plus some combination of:
+1. You have a JSON record for this capture. It contains `{timestamp, url}` plus any of:
   - `screenshot` — absolute path to a PNG file.
   - `highlights` — `true` when the screenshot has user-drawn red markup baked
     into it (boxes and/or lines calling attention to specific regions
@@ -31,14 +31,16 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
   - `contents` — absolute path to an HTML file.
   - `prompt` — the user's instruction for this capture (if present)
 
-  Any record will have at least one of `screenshot` / `contents`.
-  **Look at these files only. Don't go fishing for others unless asked to.**
+  A record may have `screenshot`, `contents`, both, or neither — in the
+  neither case, the URL (and optional prompt) is the whole payload.
+  **Look at any referenced files only. Don't go fishing for others unless asked to.**
 
 2. Process the capture:
   - If `screenshot` is present, Read it with the Read tool.
     - **If `highlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't Read it up front (HTML can be large); wait until you know what to look for.
-  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot and/or HTML as the subject of that instruction. Mention the source `url` if relevant.
+  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot, HTML, and/or `url` as the subject of that instruction. If no screenshot or HTML was saved, the `url` is what the prompt is about.
   - If `prompt` is absent:
     - For screenshots, briefly describe what you see and mention the source `url`. When `highlights` is `true`, lead with what's highlighted.
     - For HTML-only captures, report that you have an HTML snapshot from the source `url` and ask the user what they want to know.
+    - For URL-only captures (no screenshot, no HTML), report the `url` and ask the user what they want to know about it.

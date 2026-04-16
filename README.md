@@ -32,7 +32,9 @@ Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submi
 On this page, you can:
 
 - See the page URL and HTML size.
-- Pick whether to save the screenshot, the HTML, or both.
+- Pick whether to save the screenshot and the HTML snapshot.
+  - With neither checked, you can still capture and send the URL,
+    without page contents.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.

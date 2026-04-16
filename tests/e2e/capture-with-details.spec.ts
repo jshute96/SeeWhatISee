@@ -345,6 +345,65 @@ test('details: png with highlights bakes red into the saved PNG', async ({
   await openerPage.close();
 });
 
+test('details: url-only (no screenshot, no html) with prompt', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: false,
+    prompt: 'what runs on this host?',
+  });
+
+  const sw = await getServiceWorker();
+  // No content file was written this capture, so `findCapturedDownload`
+  // for '.png' / '.html' would miss. Pull the log file directly.
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const lines = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n');
+  const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
+  expect(record.screenshot).toBeUndefined();
+  expect(record.contents).toBeUndefined();
+  expect(record.highlights).toBeUndefined();
+  expect(record.prompt).toBe('what runs on this host?');
+  expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+
+  await openerPage.close();
+});
+
+test('details: url-only with no prompt', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const lines = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n');
+  const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
+  expect(record.screenshot).toBeUndefined();
+  expect(record.contents).toBeUndefined();
+  expect(record.highlights).toBeUndefined();
+  expect(record.prompt).toBeUndefined();
+  expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+
+  await openerPage.close();
+});
+
 test('details: png + html with highlights, no prompt', async ({
   extensionContext,
   fixtureServer,
@@ -416,8 +475,7 @@ test('details: undo/clear buttons reflect the edit stack', async ({
   await expect(clear).toBeDisabled();
 
   // Close the details tab cleanly so it doesn't leak into the next
-  // test. Default checkbox state (screenshot only) keeps Capture
-  // enabled.
+  // test.
   await Promise.all([
     capturePage.waitForEvent('close'),
     capturePage.locator('#capture').click(),
@@ -714,8 +772,7 @@ test('default click action set to capture-with-details: handleActionClick opens 
   await capturePage.waitForLoadState('domcontentloaded');
 
   // Close the details tab cleanly so it doesn't leak into the next
-  // test. Default checkbox state (screenshot only) keeps Capture
-  // enabled.
+  // test.
   await Promise.all([
     capturePage.waitForEvent('close'),
     capturePage.locator('#capture').click(),

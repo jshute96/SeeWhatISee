@@ -383,8 +383,11 @@ This section is split by topic:
 - **HTML byte size** — `new Blob([html]).size`, formatted as
   `B` / `KB` / `MB` / `GB` / `TB` so the user can sanity-check
   before saving.
-- **Save checkboxes** — pick screenshot, HTML, or both. The
-  Capture button disables when neither is checked.
+- **Save checkboxes** — pick screenshot, HTML, both, or neither.
+  Capture stays enabled even with neither ticked; a neither-save
+  still writes a log record with just the URL (and any prompt),
+  so the user can hand an agent a URL + prompt without attaching
+  any captured page content.
 - **Prompt textarea** — auto-growing, capped at 200px. `rows="1"`
   initially; on each `input` event we set `style.height = 'auto'`
   then `style.height = scrollHeight + 'px'`. Once `scrollHeight`

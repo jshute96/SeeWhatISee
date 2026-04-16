@@ -119,7 +119,6 @@ async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> 
 const SUPPRESSED_UNHANDLED = [
   'No active tab found to capture',
   'Failed to retrieve page contents',
-  'saveDetailedCapture called with nothing to save',
 ];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);

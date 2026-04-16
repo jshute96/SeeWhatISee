@@ -228,9 +228,10 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
     Legacy screenshot captures emit `{timestamp, screenshot, url}`;
     legacy HTML captures emit `{timestamp, contents, url}`. The
-    detailed-capture path can emit any or all of the optional fields
-    (the screenshot / contents filenames are chosen from the *same*
-    compact timestamp so they share a suffix).
+    detailed-capture path can emit any or all of the optional fields —
+    including neither `screenshot` nor `contents` (URL-only, typically
+    with a `prompt`). The screenshot / contents filenames share the
+    *same* compact timestamp so they have a matching suffix.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage.
     - To clear history, call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console: wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry). The right-click menu entry that used to drive this is temporarily hidden — see TODO.md.
@@ -268,7 +269,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   When a capture has a `prompt`, the skill that consumes it treats
   the prompt as the user's instruction and acts on it directly
-  instead of just describing the image.
+  instead of just describing the image. URL-only captures
+  (no `screenshot`, no `contents`) let the user send a
+  prompt-about-the-URL without attaching any page content.
 
 ## Capture with details flow
 
@@ -294,7 +297,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 - **Captured URL** — read-only single-line monospace input.
 - **HTML byte size** — `formatBytes(new Blob([html]).size)` →
   `B` / `KB` / `MB` / `GB` / `TB`.
-- **Save checkboxes** — pick screenshot, HTML, or both.
+- **Save checkboxes** — pick screenshot, HTML, both, or neither
+  (URL-only record).
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).
@@ -328,7 +332,8 @@ can draw red markup on the regions they want the agent to focus on.
   `InMemoryCapture` and calls `saveDetailedCapture()`. The saved
   sidecar record can include any of `screenshot`, `contents`,
   `prompt`, and `highlights: true`, on top of the always-present
-  `timestamp` and `url`.
+  `timestamp` and `url`. It's valid to save with neither checkbox
+  ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener
   tab and then removes the details tab — the user lands back on
   the page they captured from. Chrome's natural close-time pick is
