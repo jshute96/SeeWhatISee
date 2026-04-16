@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SeeWhatISee Demo</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 960px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #222;
+  }
+  h1 { display: flex; align-items: center; gap: 0.5rem; }
+  h1 img.icon {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+  h2 { font-weight: 400; color: #555; }
+  .buttons { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+  button {
+    padding: 0.5rem 1.25rem;
+    font-size: 1rem;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f6f6f6;
+  }
+  button:hover { background: #ececec; }
+
+  dialog {
+    border: 1px solid #bbb;
+    border-radius: 6px;
+    padding: 1rem 1.5rem;
+    min-width: 240px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.3); }
+  dialog form { display: flex; justify-content: flex-end; margin-top: 1rem; }
+</style>
+</head>
+<body>
+  <h1><img class="icon" src="../src/icons/icon-48.png" alt=""> SeeWhatISee Demo</h1>
+  <h2>Suggest edits to a web page or web app <i>from your browser</i>.</h2>
+
+  <div class="buttons">
+    <button type="button" data-n="1">Button 1</button>
+    <button type="button" data-n="2">Button 2</button>
+    <button type="button" data-n="3">Button 3</button>
+  </div>
+
+  <dialog id="click-dialog">
+    <p id="click-message"></p>
+    <form method="dialog"><button type="submit">OK</button></form>
+  </dialog>
+
+  <script>
+    const dialog = document.getElementById('click-dialog');
+    const message = document.getElementById('click-message');
+    for (const btn of document.querySelectorAll('.buttons button')) {
+      btn.addEventListener('click', () => {
+        message.textContent = `You clicked button ${btn.dataset.n}`;
+        dialog.showModal();
+      });
+    }
+  </script>
+</body>
+</html>
