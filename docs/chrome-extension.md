@@ -399,7 +399,6 @@ The screenshot preview is layered with an SVG overlay that lets
 the user draw red markup on the regions they want the agent to
 focus on.
 
-- **Left-click** — drops a red filled circle ("dot"), 10px diameter.
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser
   context menu is suppressed on the overlay.
@@ -409,8 +408,9 @@ focus on.
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
 - **Click-vs-drag threshold** — movement under 4 CSS pixels
-  between mousedown and mouseup counts as a click and produces a
-  dot, not a degenerate rectangle.
+  between mousedown and mouseup counts as a stray click and is
+  discarded, so neither button can produce a degenerate
+  zero-size rectangle or zero-length line.
 
 ### Highlight bake-in on save
 
@@ -418,8 +418,8 @@ If the user has drawn any highlights *and* is saving the screenshot:
 
 - The page renders the preview image plus the overlay onto a
   `<canvas>` at the screenshot's *natural* resolution.
-- Stroke widths and dot radii scale by the display→natural ratio
-  so the markup looks the same in the saved PNG as during editing.
+- Stroke widths scale by the display→natural ratio so the markup
+  looks the same in the saved PNG as during editing.
 - The resulting `canvas.toDataURL('image/png')` is sent back to
   the background as a `screenshotOverride` field on the
   `saveDetails` runtime message, alongside a `highlights: true`

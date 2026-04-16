@@ -217,7 +217,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `timestamp` and `url`, plus optional fields:
     - `screenshot` — bare PNG filename, set when a screenshot was saved.
     - `highlights` — `true` when the saved PNG has user-drawn red
-      markup (boxes, lines, dots) baked into it. Only present when
+      markup (boxes, lines) baked into it. Only present when
       `screenshot` is also present, and only ever set to `true`
       (absent otherwise) so the field's presence is itself the
       signal. The see-what-i-see skills check this and steer their
@@ -306,7 +306,6 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 The screenshot preview is wrapped in an SVG overlay where the user
 can draw red markup on the regions they want the agent to focus on.
 
-- **Left-click** — drops a red filled circle ("dot"), 10px diameter.
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser context
   menu is suppressed on the overlay.
@@ -319,8 +318,8 @@ can draw red markup on the regions they want the agent to focus on.
 - On Capture click, if there are highlights *and* the screenshot is
   being saved, the page bakes the SVG overlay onto a `<canvas>` at
   the screenshot's natural resolution and produces a fresh PNG data
-  URL. Stroke widths and dot radii scale by the display→natural
-  ratio so they look the same in the saved file as during editing.
+  URL. Stroke widths scale by the display→natural ratio so they look
+  the same in the saved file as during editing.
 - The page sends a `saveDetails` runtime message back to the
   background with the selected save options, the prompt, a
   `highlights: boolean` flag, and the `screenshotOverride` data URL

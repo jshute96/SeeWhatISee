@@ -26,7 +26,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 1. You have a JSON record for this capture. It contains `{timestamp, url}` plus some combination of:
   - `screenshot` — absolute path to a PNG file.
   - `highlights` — `true` when the screenshot has user-drawn red markup baked
-    into it (boxes, lines, and/or dots calling attention to specific regions
+    into it (boxes and/or lines calling attention to specific regions
     of the image).
   - `contents` — absolute path to an HTML file.
   - `prompt` — the user's instruction for this capture (if present)

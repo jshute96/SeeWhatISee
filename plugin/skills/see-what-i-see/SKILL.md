@@ -19,7 +19,7 @@ You can't run this autonomously since it requires the user to have just clicked 
 2. The JSON contains `{timestamp, url}` plus some combination of:
    * `screenshot` — absolute path to a PNG file.
    * `highlights` — `true` when the screenshot has user-drawn red markup baked
-     into it (boxes, lines, and/or dots calling attention to specific regions
+     into it (boxes and/or lines calling attention to specific regions
      of the image).
    * `contents` — absolute path to an HTML file.
    * `prompt` — the user's instruction for this capture.

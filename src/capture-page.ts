@@ -10,7 +10,7 @@
 //      the HTML byte size.
 //   3. User picks which artifacts to save (checkboxes), types an
 //      optional prompt, optionally draws highlights over the preview
-//      (rectangles, dots, lines — all in a single undo stack), and
+//      (rectangles and lines — all in a single undo stack), and
 //      clicks Capture. We send the options back to background, which
 //      runs saveDetailedCapture and closes the tab once the files are
 //      on disk.
@@ -104,22 +104,22 @@ function formatBytes(n: number): string {
 
 // ─── Highlight overlay ────────────────────────────────────────────
 //
-// Left-click-drag draws red rectangles, plain left clicks drop a
-// filled red dot, and right-click-drag draws red lines. Edits live
-// in a stack so Undo pops the most recent and Clear empties it.
-// Coordinates are stored as percentages of the image so they survive
-// resizes (window resize, prompt growth, image swap).
+// Left-click-drag draws red rectangles and right-click-drag draws
+// red lines. Edits live in a stack so Undo pops the most recent and
+// Clear empties it. Coordinates are stored as percentages of the
+// image so they survive resizes (window resize, prompt growth,
+// image swap).
 
 type Edit =
   | { type: 'rect'; x: number; y: number; w: number; h: number }
-  | { type: 'circle'; cx: number; cy: number }
   | { type: 'line'; x1: number; y1: number; x2: number; y2: number };
 
 interface Point { x: number; y: number; }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-// Movement under this many CSS pixels counts as a click, not a drag,
-// and produces a dot instead of a rectangle.
+// Movement under this many CSS pixels counts as a stray click, not
+// a drag — discarded so a single click never produces a degenerate
+// zero-size rectangle or a zero-length line.
 const CLICK_THRESHOLD_PX = 4;
 
 const edits: Edit[] = [];
@@ -151,15 +151,6 @@ function makeRect(x: number, y: number, w: number, h: number): SVGRectElement {
   return el;
 }
 
-function makeDot(cx: number, cy: number): SVGCircleElement {
-  const el = document.createElementNS(SVG_NS, 'circle');
-  el.setAttribute('cx', String(cx));
-  el.setAttribute('cy', String(cy));
-  el.setAttribute('r', '5');
-  el.setAttribute('fill', 'red');
-  return el;
-}
-
 function makeLine(x1: number, y1: number, x2: number, y2: number): SVGLineElement {
   const el = document.createElementNS(SVG_NS, 'line');
   el.setAttribute('x1', String(x1));
@@ -185,15 +176,13 @@ function render(): void {
         (e.w / 100) * w,
         (e.h / 100) * h,
       ));
-    } else if (e.type === 'line') {
+    } else {
       overlay.appendChild(makeLine(
         (e.x1 / 100) * w,
         (e.y1 / 100) * h,
         (e.x2 / 100) * w,
         (e.y2 / 100) * h,
       ));
-    } else {
-      overlay.appendChild(makeDot((e.cx / 100) * w, (e.cy / 100) * h));
     }
   }
   if (dragStart && dragCurrent) {
@@ -246,10 +235,11 @@ window.addEventListener('mouseup', (e) => {
   const dx = end.x - dragStart.x;
   const dy = end.y - dragStart.y;
   const moved = Math.hypot(dx, dy) >= CLICK_THRESHOLD_PX;
-  if (dragButton === 2) {
-    // Right-click without movement does nothing — only drags produce
-    // lines.
-    if (moved) {
+  // Both buttons require real movement to produce an edit. A bare
+  // click (no drag) is discarded so we don't push a degenerate
+  // zero-size rectangle / zero-length line.
+  if (moved) {
+    if (dragButton === 2) {
       edits.push({
         type: 'line',
         x1: (dragStart.x / r.width) * 100,
@@ -257,23 +247,17 @@ window.addEventListener('mouseup', (e) => {
         x2: (end.x / r.width) * 100,
         y2: (end.y / r.height) * 100,
       });
+    } else {
+      const x = Math.min(dragStart.x, end.x);
+      const y = Math.min(dragStart.y, end.y);
+      edits.push({
+        type: 'rect',
+        x: (x / r.width) * 100,
+        y: (y / r.height) * 100,
+        w: (Math.abs(dx) / r.width) * 100,
+        h: (Math.abs(dy) / r.height) * 100,
+      });
     }
-  } else if (!moved) {
-    edits.push({
-      type: 'circle',
-      cx: (dragStart.x / r.width) * 100,
-      cy: (dragStart.y / r.height) * 100,
-    });
-  } else {
-    const x = Math.min(dragStart.x, end.x);
-    const y = Math.min(dragStart.y, end.y);
-    edits.push({
-      type: 'rect',
-      x: (x / r.width) * 100,
-      y: (y / r.height) * 100,
-      w: (Math.abs(dx) / r.width) * 100,
-      h: (Math.abs(dy) / r.height) * 100,
-    });
   }
   dragStart = null;
   dragCurrent = null;
@@ -334,11 +318,11 @@ async function loadData(): Promise<void> {
 // when the user saves a screenshot that has highlights — we want the
 // saved file to show the markup, not just the underlying screenshot.
 //
-// Stroke widths and dot radii in the SVG overlay are CSS pixels at
-// display size; we scale them up by the display→natural ratio so
-// they look the same in the saved PNG as they did during editing
-// (otherwise a 3px stroke on a 4×-downscaled preview would render
-// as a hairline in the saved file).
+// Stroke widths in the SVG overlay are CSS pixels at display size;
+// we scale them up by the display→natural ratio so they look the
+// same in the saved PNG as they did during editing (otherwise a 3px
+// stroke on a 4×-downscaled preview would render as a hairline in
+// the saved file).
 function renderHighlightedPng(): string {
   const w = previewImg.naturalWidth;
   const h = previewImg.naturalHeight;
@@ -359,7 +343,6 @@ function renderHighlightedPng(): string {
   const scale = (w / displayW + h / displayH) / 2;
 
   ctx.strokeStyle = 'red';
-  ctx.fillStyle = 'red';
   ctx.lineWidth = 3 * scale;
   ctx.lineCap = 'round';
 
@@ -371,21 +354,11 @@ function renderHighlightedPng(): string {
         (e.w / 100) * w,
         (e.h / 100) * h,
       );
-    } else if (e.type === 'line') {
+    } else {
       ctx.beginPath();
       ctx.moveTo((e.x1 / 100) * w, (e.y1 / 100) * h);
       ctx.lineTo((e.x2 / 100) * w, (e.y2 / 100) * h);
       ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.arc(
-        (e.cx / 100) * w,
-        (e.cy / 100) * h,
-        5 * scale,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
     }
   }
 

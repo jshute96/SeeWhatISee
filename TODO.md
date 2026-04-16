@@ -5,6 +5,11 @@ Features
 * Avoid making 3 files show up as Chrome downloads each time
 * Add a way to get a longer delay (once). Maybe with a long-click. Maybe user-chosen delay.
 * Re-add the "Clear log history" action somewhere. It's currently hidden.
+* Maybe more drawing and annotation features
+  - Add inline text
+  - Add arrows
+  - Auto-number annotations (box 1,2,3,etc)
+  - Choose different colors
 
 Claude plugin
 * (Check if the permission prompt issues below still exist, tryign on a clean install.)
@@ -25,4 +30,4 @@ Release and Packaging
 * Custom icon
 
 Wishlist
-* I wanted shift-click on the icon for selecting between screenshot and screenshot-with-details. Chrome doesn't give allow getting click modifiers.
+* I wanted shift-click on the icon for selecting between screenshot and screenshot-with-details. Chrome doesn't give any way to get click modifiers.

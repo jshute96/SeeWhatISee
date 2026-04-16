@@ -89,7 +89,7 @@ export interface CaptureRecord {
   prompt?: string;
   /**
    * Set to `true` only when the saved screenshot has user-drawn red
-   * highlights (boxes / lines / dots) baked into it. Omitted when
+   * highlights (boxes / lines) baked into it. Omitted when
    * absent so its presence is itself the signal: a downstream
    * consumer (the see-what-i-see skills) treats `highlights: true`
    * as "the user marked specific regions on this image — focus on

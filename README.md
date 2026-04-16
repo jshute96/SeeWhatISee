@@ -35,7 +35,6 @@ On this page, you can:
 - Pick whether to save the screenshot, the HTML, or both.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
-  - **Click** to add a red dot.
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
   - **Undo** or **Clear** to roll back edits.

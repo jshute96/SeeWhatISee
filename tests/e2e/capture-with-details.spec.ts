@@ -11,7 +11,8 @@
 //   - HTML only, with prompt
 //   - PNG + HTML, with prompt
 //   - PNG only, with highlights + prompt (verifies the canvas
-//     bake-in: a red dot from the click ends up in the saved PNG)
+//     bake-in: a red rectangle from a left-drag ends up in the
+//     saved PNG)
 //   - PNG + HTML, with highlights, no prompt
 //   - Tab positioning + opener focus return on close
 
@@ -136,10 +137,6 @@ interface CaptureOptions {
   saveScreenshot: boolean;
   saveHtml: boolean;
   prompt?: string;
-  /** Click the overlay at this percent of its bounding box to drop
-   * a red dot. Plain click (no movement) → circle, per the
-   * CLICK_THRESHOLD_PX guard in capture-page.ts. */
-  drawDot?: { xPct: number; yPct: number };
 }
 
 async function configureAndCapture(
@@ -161,16 +158,6 @@ async function configureAndCapture(
     await capturePage.locator('#prompt-text').fill(opts.prompt);
   }
 
-  if (opts.drawDot) {
-    const box = await capturePage.locator('#overlay').boundingBox();
-    if (!box) throw new Error('overlay has no bounding box');
-    const x = box.x + box.width * opts.drawDot.xPct;
-    const y = box.y + box.height * opts.drawDot.yPct;
-    // mouse.click is mousedown+mouseup at the same coords → 0px
-    // movement → CLICK_THRESHOLD_PX guard fires → dot, not rect.
-    await capturePage.mouse.click(x, y);
-  }
-
   // The Capture button submits via runtime message; the background
   // saves and then closes our tab. Wait for the close to know the
   // round-trip is done.
@@ -178,6 +165,30 @@ async function configureAndCapture(
     capturePage.waitForEvent('close'),
     capturePage.locator('#capture').click(),
   ]);
+}
+
+// Drag a rectangle on the highlight overlay between the given
+// percentage coordinates of its bounding box. Tests use this to
+// produce highlights without coupling to an internal drawing helper.
+async function dragRect(
+  capturePage: Page,
+  fromPct: { xPct: number; yPct: number },
+  toPct: { xPct: number; yPct: number },
+): Promise<void> {
+  const box = await capturePage.locator('#overlay').boundingBox();
+  if (!box) throw new Error('overlay has no bounding box');
+  const x1 = box.x + box.width * fromPct.xPct;
+  const y1 = box.y + box.height * fromPct.yPct;
+  const x2 = box.x + box.width * toPct.xPct;
+  const y2 = box.y + box.height * toPct.yPct;
+  await capturePage.mouse.move(x1, y1);
+  await capturePage.mouse.down();
+  // Two-step move so Playwright synthesises a real intermediate
+  // mousemove and the overlay sees the drag distance cross the
+  // CLICK_THRESHOLD_PX guard in capture-page.ts.
+  await capturePage.mouse.move((x1 + x2) / 2, (y1 + y2) / 2);
+  await capturePage.mouse.move(x2, y2);
+  await capturePage.mouse.up();
 }
 
 // ─── Tests ────────────────────────────────────────────────────────
@@ -285,37 +296,42 @@ test('details: png with highlights bakes red into the saved PNG', async ({
     fixtureServer,
     getServiceWorker,
   );
-  // Click 30%/30% of the overlay → red dot. The bake-in scales the
-  // 5px CSS-pixel radius up to natural pixels via the
-  // display→natural ratio.
+  // Drag a red rectangle from (20%, 20%) to (40%, 40%). The bake-in
+  // scales the 3px CSS-pixel stroke up to natural pixels via the
+  // display→natural ratio, so the rectangle's left edge at x=20%
+  // shows up as red in the saved PNG.
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
   await configureAndCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: false,
-    prompt: 'look at the dot',
-    drawDot: { xPct: 0.3, yPct: 0.3 },
+    prompt: 'look at the box',
   });
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
   expect(record.highlights).toBe(true);
-  expect(record.prompt).toBe('look at the dot');
+  expect(record.prompt).toBe('look at the box');
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
 
-  // Sample the saved PNG at the same percent coordinates: should
-  // be solid red. Far from the dot should still be the fixture's
+  // Sample the saved PNG along the rectangle's left edge (x=20%):
+  // should be red. Far from the box should still be the fixture's
   // purple background.
   const pngPath = await findCapturedDownload(sw, '.png');
   const png = PNG.sync.read(fs.readFileSync(pngPath));
 
-  const dotX = Math.floor(png.width * 0.3);
-  const dotY = Math.floor(png.height * 0.3);
-  const dotIdx = (dotY * png.width + dotX) * 4;
+  const edgeX = Math.round(png.width * 0.2);
+  const edgeY = Math.round(png.height * 0.3);
+  const edgeIdx = (edgeY * png.width + edgeX) * 4;
   const [r, g, b] = [
-    png.data[dotIdx],
-    png.data[dotIdx + 1],
-    png.data[dotIdx + 2],
+    png.data[edgeIdx],
+    png.data[edgeIdx + 1],
+    png.data[edgeIdx + 2],
   ];
-  // Red dot: high R, low G/B. Tolerate antialiasing.
+  // Red stroke: high R, low G/B. Tolerate antialiasing.
   expect(r).toBeGreaterThan(200);
   expect(g).toBeLessThan(60);
   expect(b).toBeLessThan(60);
@@ -339,10 +355,14 @@ test('details: png + html with highlights, no prompt', async ({
     fixtureServer,
     getServiceWorker,
   );
+  await dragRect(
+    capturePage,
+    { xPct: 0.4, yPct: 0.4 },
+    { xPct: 0.6, yPct: 0.6 },
+  );
   await configureAndCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: true,
-    drawDot: { xPct: 0.5, yPct: 0.5 },
   });
 
   const sw = await getServiceWorker();
@@ -368,19 +388,13 @@ test('details: undo/clear buttons reflect the edit stack', async ({
 
   const undo = capturePage.locator('#undo');
   const clear = capturePage.locator('#clear');
-  const overlay = capturePage.locator('#overlay');
-  const box = await overlay.boundingBox();
-  if (!box) throw new Error('overlay has no bounding box');
-
-  const dotAt = (xPct: number, yPct: number) =>
-    capturePage.mouse.click(box.x + box.width * xPct, box.y + box.height * yPct);
 
   // Empty stack → both buttons disabled.
   await expect(undo).toBeDisabled();
   await expect(clear).toBeDisabled();
 
   // One edit → both enabled.
-  await dotAt(0.25, 0.25);
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
   await expect(undo).toBeEnabled();
   await expect(clear).toBeEnabled();
 
@@ -390,8 +404,8 @@ test('details: undo/clear buttons reflect the edit stack', async ({
   await expect(clear).toBeDisabled();
 
   // Two edits, one undo → still enabled (one left).
-  await dotAt(0.3, 0.3);
-  await dotAt(0.5, 0.5);
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.5, yPct: 0.5 });
   await undo.click();
   await expect(undo).toBeEnabled();
   await expect(clear).toBeEnabled();
@@ -423,13 +437,14 @@ test('details: draw then undo → no highlights flag, no red in saved PNG', asyn
     getServiceWorker,
   );
 
-  const box = await capturePage.locator('#overlay').boundingBox();
-  if (!box) throw new Error('overlay has no bounding box');
-
-  // Drop a dot, then undo it. The edit stack is now empty so the
-  // capture-page bake-in path doesn't fire and the saved record
+  // Draw a rectangle, then undo it. The edit stack is now empty so
+  // the capture-page bake-in path doesn't fire and the saved record
   // gets no `highlights` field.
-  await capturePage.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.3);
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
   await capturePage.locator('#undo').click();
 
   await configureAndCapture(capturePage, {
@@ -442,13 +457,13 @@ test('details: draw then undo → no highlights flag, no red in saved PNG', asyn
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
   expect(record.highlights).toBeUndefined();
 
-  // Sample the PNG where the dot would have been: should be the
-  // fixture's purple (#800080), not red.
+  // Sample the PNG along where the rectangle's left edge would have
+  // been: should be the fixture's purple (#800080), not red.
   const pngPath = await findCapturedDownload(sw, '.png');
   const png = PNG.sync.read(fs.readFileSync(pngPath));
-  const dotX = Math.floor(png.width * 0.3);
-  const dotY = Math.floor(png.height * 0.3);
-  const i = (dotY * png.width + dotX) * 4;
+  const edgeX = Math.round(png.width * 0.2);
+  const edgeY = Math.round(png.height * 0.3);
+  const i = (edgeY * png.width + edgeX) * 4;
   // #800080 ≈ (128, 0, 128). G should be ~0, B ~128. A red pixel
   // would be (255, 0, 0) — the B test alone is enough to
   // discriminate.
