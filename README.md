@@ -1,4 +1,6 @@
-# ![icon](src/icons/icon-48.png) SeeWhatISee Chrome Extension
+<p><img src="src/icons/icon-128.png" alt="icon"></p>
+
+# SeeWhatISee Chrome Extension
 
 This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
 

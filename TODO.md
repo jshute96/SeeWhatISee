@@ -27,7 +27,6 @@ Gemini plugin
 Release and Packaging
 * Publish Chrome extension
 * Update docs
-* Custom icon
 
 Wishlist
 * I wanted shift-click on the icon for selecting between screenshot and screenshot-with-details. Chrome doesn't give any way to get click modifiers.
