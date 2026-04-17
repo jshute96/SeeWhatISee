@@ -329,6 +329,24 @@ promising — the main issue was the `onActivated` restore logic.
   - The "Set default click action" submenu avoids radio items for
     this reason — it uses normal items with a `✓ ` title prefix
     on the selected entry, updated by `setDefaultClickActionId`.
+- **Click / double-click hints on run entries.** Top-level entries
+  and the "Capture with delay" submenu entries append a
+  `  -  (Click)` or `  -  (Double-click)` hint to whichever item
+  matches the current toolbar-click routing.
+  - No real italics — menu titles are plain text. Italics are faked
+    with Unicode mathematical sans-serif italic letters, so the hint
+    reads `(𝘊𝘭𝘪𝘤𝘬)`.
+  - No right-alignment — `chrome.contextMenus` has no accelerator /
+    secondary-label slot, and space-padding only approximates a
+    column on one machine (menu rendering uses the platform UI font,
+    so widths drift across OSes). An inline dash separator reads
+    as intentional on every platform.
+  - The "Set default click action" submenu is unchanged — its ✓
+    already covers "this is the click action", and stacking another
+    `(Click)` on the same row is noise.
+  - Hints are refreshed by `setDefaultClickActionId` alongside the ✓
+    prefix updates, so the menu stays in sync with the stored
+    preference.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.

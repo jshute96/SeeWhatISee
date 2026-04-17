@@ -293,6 +293,38 @@ function defaultMenuTitle(action: CaptureAction, selected: boolean): string {
   return prefix + action.title;
 }
 
+// Hints marking which top-level / "Capture with delay" entries will
+// run on toolbar click vs. double-click.
+//   - Faked italics via Unicode mathematical sans-serif italic
+//     letters — `chrome.contextMenus` titles are plain text, no
+//     markup support.
+//   - No column alignment — the API has no accelerator / secondary-
+//     label slot, and menu rendering uses the platform UI font
+//     (Segoe UI / GTK / NSMenu), so space-padding only approximates
+//     a column on one machine. An inline dash reads as intentional
+//     on every platform.
+const HINT_SEPARATOR = '  -  ';
+const CLICK_HINT = `${HINT_SEPARATOR}(𝘊𝘭𝘪𝘤𝘬)`;
+const DOUBLE_CLICK_HINT = `${HINT_SEPARATOR}(𝘋𝘰𝘶𝘣𝘭𝘦-𝘤𝘭𝘪𝘤𝘬)`;
+
+// The double-click target is derived from the current click default:
+// if details is the default, double-click takes a screenshot; otherwise
+// double-click opens capture-with-details. Mirrors the branch in
+// handleActionClick so menu hints always match runtime behavior.
+function doubleClickActionId(clickId: string): string {
+  return clickId === DEFAULT_CLICK_ACTION_ID ? 'capture-now' : DEFAULT_CLICK_ACTION_ID;
+}
+
+function actionMenuTitle(
+  action: CaptureAction,
+  clickId: string,
+  doubleClickId: string,
+): string {
+  if (action.id === clickId) return action.title + CLICK_HINT;
+  if (action.id === doubleClickId) return action.title + DOUBLE_CLICK_HINT;
+  return action.title;
+}
+
 /**
  * Persist a new default click action and update the toolbar
  * tooltip to match. Also update every entry in the "Set default
@@ -309,6 +341,7 @@ async function setDefaultClickActionId(id: string): Promise<void> {
     throw new Error(`Unknown capture action id: ${id}`);
   }
   await chrome.storage.local.set({ [DEFAULT_CLICK_ACTION_KEY]: id });
+  const dblId = doubleClickActionId(id);
   const defaultables = CAPTURE_ACTIONS.filter((a) => isDefaultableDelay(a.delaySec));
   await Promise.all(
     defaultables.map(async (a) => {
@@ -320,6 +353,22 @@ async function setDefaultClickActionId(id: string): Promise<void> {
       } catch {
         // Menu not installed yet — first install will pick up the
         // stored preference via installContextMenu.
+      }
+    }),
+  );
+  // Refresh the (Click) / (Double-click) hints on every run entry —
+  // every CAPTURE_ACTIONS entry is registered under `a.id` in exactly
+  // one place (top-level when delaySec === 0, Capture-with-delay
+  // submenu otherwise), so a single update call per id covers both.
+  await Promise.all(
+    CAPTURE_ACTIONS.map(async (a) => {
+      try {
+        await chrome.contextMenus.update(a.id, {
+          title: actionMenuTitle(a, id, dblId),
+        });
+      } catch {
+        // Menu not installed yet — first install picks up the hints
+        // via installContextMenu.
       }
     }),
   );
@@ -683,13 +732,16 @@ async function installContextMenu(): Promise<void> {
   // Chrome's per-item state along with the entries themselves, so
   // we can't rely on persisted state.
   const defaultId = await getDefaultClickActionId();
+  const dblId = doubleClickActionId(defaultId);
 
   // ── Top-level entries (delay 0 only) ────────────────────────
   // The three undelayed capture actions, one per base action.
+  // Titles carry a right-side (Click) / (Double-click) hint when
+  // they match the current defaults — see actionMenuTitle.
   for (const action of captureActionsWithDelay(0)) {
     chrome.contextMenus.create({
       id: action.id,
-      title: action.title,
+      title: actionMenuTitle(action, defaultId, dblId),
       contexts: ['action'],
     });
   }
@@ -719,7 +771,7 @@ async function installContextMenu(): Promise<void> {
       chrome.contextMenus.create({
         id: action.id,
         parentId: DELAYED_PARENT_ID,
-        title: action.title,
+        title: actionMenuTitle(action, defaultId, dblId),
         contexts: ['action'],
       });
     }
