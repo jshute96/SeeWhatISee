@@ -9,6 +9,8 @@ Features
   - Add arrows
   - Auto-number annotations (box 1,2,3,etc)
   - Choose different colors
+* Could we push snapshots to non-CLI consumers, that would pick them up by an API or MCP
+  server rather than a command-line tool and local file access?
 
 Claude plugin
 * (Check if the permission prompt issues below still exist, tryign on a clean install.)
@@ -22,6 +24,7 @@ Gemini plugin
 * Watching doesn't work because asynchronous background commands aren't supported.
 * BUG: command doesn't work if multiple gemini's run in workspaces with the same name, because one of their tmp dirs has -1, and we don't know that. See copy-last-snapshot.sh.
 * Annoying: gemini always prompts for permission to run copy-last-snapshot.sh, at least once per session.
+* We can't do asynchronous watch, but we could probably have a synchronous watch command.
 
 Release and Packaging
 * Publish Chrome extension
