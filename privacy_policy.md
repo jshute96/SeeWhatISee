@@ -59,6 +59,11 @@ the capture-and-save workflow described above.
 - **`scripting`** — used solely to read the HTML of the current page,
   only when you ask to save an HTML snapshot. No other code is injected
   or run.
+- **`clipboardWrite`** — used for actions that copy filenames to the clipboard.
+- **`offscreen`** — lets the background service worker host a single
+  hidden page whose only job is to perform the clipboard write
+  described above. The extension can't write to the clipboard directly
+  without using that page.
 - **Host permission `<all_urls>`** — required so the screenshot and
   HTML-snapshot commands work on any site you are viewing.
 
