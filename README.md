@@ -24,6 +24,8 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     when clicking the icon.
     - If you choose another default single-click action, double-click will open *Capture with details*.
   - **More ▸**
+    - **Capture URL** — Record just the current tab's URL, without a screenshot.
+    - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory

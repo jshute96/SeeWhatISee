@@ -137,18 +137,21 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // Capture actions surfaced to the user.
 //
 // Each action is a (base, delay) pair: the base says *what* to
-// capture (plain screenshot, HTML contents, or the details flow)
-// and the delay says *when* to capture (immediate, 2s, or 5s). We
-// define the three bases once and expand them across the delays at
-// module load so the top-level menu, the "Capture with delay" submenu,
-// and the "Set default click action" submenu all stay in sync from
-// a single source.
+// capture (plain screenshot, HTML contents, the details flow, or
+// one of the fixed-checkbox details-flow shortcuts) and the delay
+// says *when* to capture (immediate, 2s, or 5s). We define the
+// bases once and expand them across the delays at module load so
+// every menu surface stays in sync from a single source.
 //
-// The resulting flat `CAPTURE_ACTIONS` array drives three things:
-//   - the top-level menu entries (delay 0 only)
-//   - the "Capture with delay" submenu children (delay > 0)
-//   - the "Set default click action" submenu radios (all delays in
-//     `CAPTURE_DELAYS_SEC`)
+// Each base also carries a `group: 'primary' | 'more'` that decides
+// which section of the action menu surfaces its undelayed variant
+// — see the `ActionGroup` comment below.
+//
+// The resulting flat `CAPTURE_ACTIONS` array drives four things:
+//   - the top-level menu entries (primary, delay 0)
+//   - the "Capture with delay" submenu children (primary, delay > 0)
+//   - the "More" submenu's capture shortcuts at the top (more, delay 0)
+//   - the "Set default click action" submenu (every base × every delay)
 // and is the lookup table `handleActionClick` uses to run the
 // currently-selected default.
 //
@@ -158,6 +161,18 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // during the brief window between a fresh install and the first
 // tooltip refresh from `refreshActionTooltip()`.
 
+/**
+ * Which section of the action menu surfaces an undelayed base action:
+ *   - `'primary'` — top-level menu entry + a slot in the "Capture
+ *     with delay" submenu for each delayed variant.
+ *   - `'more'`    — entry at the top of the More submenu; delayed
+ *     variants are only reachable via "Set default click action".
+ *
+ * Every base action also appears in "Set default click action" regardless
+ * of group (all defaultable delays × all bases).
+ */
+type ActionGroup = 'primary' | 'more';
+
 interface BaseCaptureAction {
   /** Stable base id, e.g. `capture-now`. Delayed variants append
    * `-<N>s`. */
@@ -166,6 +181,8 @@ interface BaseCaptureAction {
   baseTitle: string;
   /** Tooltip for the undelayed variant. */
   baseTooltip: string;
+  /** Menu placement for the undelayed variant (see `ActionGroup`). */
+  group: ActionGroup;
   /** Runs the action with the given delay (ms). `delayMs === 0` is
    * the immediate / no-delay path. */
   run: (delayMs: number) => Promise<unknown>;
@@ -182,6 +199,9 @@ interface CaptureAction {
   tooltip: string;
   /** Which base action this came from (for grouping / rendering). */
   baseId: string;
+  /** Inherited from the base action — controls which menu section
+   * this entry goes in. */
+  group: ActionGroup;
   /** 0 for immediate; >0 for a delayed variant. Used to slot the
    * entry into the right menu section. */
   delaySec: number;
@@ -191,24 +211,73 @@ interface CaptureAction {
   run: () => Promise<unknown>;
 }
 
+/**
+ * "Capture URL" — the details-page "neither file checked" path, run
+ * without opening the page. Still goes through `captureBothToMemory`
+ * so the delay / active-tab-after-delay semantics match every other
+ * capture, but the screenshot + HTML payloads are discarded — only
+ * the timestamp + URL (and any future prompt plumbing) hit the log.
+ */
+async function captureUrlOnly(delayMs = 0): Promise<void> {
+  const data = await captureBothToMemory(delayMs);
+  await recordDetailedCapture({
+    capture: data,
+    includeScreenshot: false,
+    includeHtml: false,
+  });
+}
+
+/**
+ * "Capture screenshot and HTML" — the details-page "both files
+ * checked" path, run without opening the page. Grabs both artifacts,
+ * writes them, and records a sidecar entry referencing both.
+ */
+async function captureBoth(delayMs = 0): Promise<void> {
+  const data = await captureBothToMemory(delayMs);
+  await downloadScreenshot(data);
+  await downloadHtml(data);
+  await recordDetailedCapture({
+    capture: data,
+    includeScreenshot: true,
+    includeHtml: true,
+  });
+}
+
 const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-now',
     baseTitle: 'Take screenshot',
     baseTooltip: 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details',
+    group: 'primary',
     run: (delayMs) => captureVisible(delayMs),
   },
   {
     baseId: 'save-page-contents',
     baseTitle: 'Save html contents',
     baseTooltip: 'SeeWhatISee — Save HTML contents\nDouble-click for capture with details',
+    group: 'primary',
     run: (delayMs) => savePageContents(delayMs),
   },
   {
     baseId: 'capture-with-details',
     baseTitle: 'Capture with details...',
     baseTooltip: 'SeeWhatISee — Capture with details\nDouble-click for screenshot',
+    group: 'primary',
     run: (delayMs) => startCaptureWithDetails(delayMs),
+  },
+  {
+    baseId: 'capture-url',
+    baseTitle: 'Capture URL',
+    baseTooltip: 'SeeWhatISee — Capture URL only\nDouble-click for capture with details',
+    group: 'more',
+    run: (delayMs) => captureUrlOnly(delayMs),
+  },
+  {
+    baseId: 'capture-both',
+    baseTitle: 'Capture screenshot and HTML',
+    baseTooltip: 'SeeWhatISee — Capture screenshot + HTML\nDouble-click for capture with details',
+    group: 'more',
+    run: (delayMs) => captureBoth(delayMs),
   },
 ];
 
@@ -245,13 +314,16 @@ const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) =>
     title: delayedTitle(base.baseTitle, delaySec),
     tooltip: delayedTooltip(base.baseTooltip, delaySec),
     baseId: base.baseId,
+    group: base.group,
     delaySec,
     run: () => base.run(delaySec * 1000),
   })),
 );
 
-function captureActionsWithDelay(delaySec: number): CaptureAction[] {
-  return CAPTURE_ACTIONS.filter((a) => a.delaySec === delaySec);
+function captureActionsWithDelay(delaySec: number, group?: ActionGroup): CaptureAction[] {
+  return CAPTURE_ACTIONS.filter(
+    (a) => a.delaySec === delaySec && (group === undefined || a.group === group),
+  );
 }
 
 function isDefaultableDelay(delaySec: number): boolean {
@@ -481,7 +553,7 @@ chrome.action.onClicked.addListener(handleActionClick);
 //   Take screenshot
 //   Save html contents
 //   Capture with details...
-//   Capture with delay  ▸              (submenu)
+//   Capture with delay  ▸              (submenu, primary-group bases only)
 //       • Take screenshot in 2s
 //       • Save html contents in 2s
 //       • Capture with details in 2s...
@@ -489,19 +561,28 @@ chrome.action.onClicked.addListener(handleActionClick);
 //       • Take screenshot in 5s
 //       • Save html contents in 5s
 //       • Capture with details in 5s...
-//   Set default click action  ▸     (submenu, ✓ on selected)
+//   Set default click action  ▸     (submenu, ✓ on selected; every base × delay)
 //       ✓ Take screenshot
 //         Save html contents
 //         Capture with details...
+//         Capture URL
+//         Capture screenshot and HTML
 //       ─────────
 //         Take screenshot in 2s
 //         Save html contents in 2s
 //         Capture with details in 2s...
+//         Capture URL in 2s
+//         Capture screenshot and HTML in 2s
 //       ─────────
 //         Take screenshot in 5s
 //         Save html contents in 5s
 //         Capture with details in 5s...
+//         Capture URL in 5s
+//         Capture screenshot and HTML in 5s
 //   More  ▸                         (submenu)
+//       • Capture URL
+//       • Capture screenshot and HTML
+//       ─────────
 //       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
 //       • Copy last HTML filename     (greyed unless latest record has HTML)
 //       ─────────
@@ -1112,11 +1193,13 @@ async function installContextMenu(): Promise<void> {
   const defaultId = await getDefaultClickActionId();
   const dblId = doubleClickActionId(defaultId);
 
-  // ── Top-level entries (delay 0 only) ────────────────────────
-  // The three undelayed capture actions, one per base action.
+  // ── Top-level entries (delay 0, primary group only) ────────
+  // The three undelayed primary capture actions, one per base action.
   // Titles carry a right-side (Click) / (Double-click) hint when
-  // they match the current defaults — see actionMenuTitle.
-  for (const action of captureActionsWithDelay(0)) {
+  // they match the current defaults — see actionMenuTitle. More-group
+  // base actions (capture-url, capture-both) live in the More submenu
+  // and don't get a top-level slot.
+  for (const action of captureActionsWithDelay(0, 'primary')) {
     chrome.contextMenus.create({
       id: action.id,
       title: actionMenuTitle(action, defaultId, dblId),
@@ -1145,7 +1228,7 @@ async function installContextMenu(): Promise<void> {
         contexts: ['action'],
       });
     }
-    for (const action of captureActionsWithDelay(delaySec)) {
+    for (const action of captureActionsWithDelay(delaySec, 'primary')) {
       chrome.contextMenus.create({
         id: action.id,
         parentId: DELAYED_PARENT_ID,
@@ -1186,11 +1269,36 @@ async function installContextMenu(): Promise<void> {
   }
 
   // ── "More" submenu ──────────────────────────────────────────
-  // Home for infrequent utilities that would otherwise compete for
-  // a top-level slot against the primary capture entries.
+  // Home for:
+  //   - capture actions that don't earn a top-level slot (the
+  //     "neither / both files" shortcuts for the details flow —
+  //     equivalent to opening capture-with-details and ticking
+  //     neither or both checkboxes, minus the dialog round-trip)
+  //   - infrequent utilities that would otherwise compete for a
+  //     top-level slot against the primary capture entries
   chrome.contextMenus.create({
     id: MORE_PARENT_ID,
     title: 'More',
+    contexts: ['action'],
+  });
+  // More-group capture actions (delay 0 only — delayed variants are
+  // reachable via "Set default click action"). They use the bare
+  // CAPTURE_ACTIONS id like the primary top-level entries, so the
+  // onClicked dispatcher's `findCaptureAction(id)` branch handles them
+  // without a special case, and `setDefaultClickActionId`'s
+  // hint-refresh loop can update their titles too.
+  for (const action of captureActionsWithDelay(0, 'more')) {
+    chrome.contextMenus.create({
+      id: action.id,
+      parentId: MORE_PARENT_ID,
+      title: actionMenuTitle(action, defaultId, dblId),
+      contexts: ['action'],
+    });
+  }
+  chrome.contextMenus.create({
+    id: `${MORE_PARENT_ID}-sep-capture`,
+    parentId: MORE_PARENT_ID,
+    type: 'separator',
     contexts: ['action'],
   });
   // The Copy-last-… entries are created `enabled: false` and flipped
@@ -1355,6 +1463,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   captureVisible,
   savePageContents,
   captureBothToMemory,
+  captureUrlOnly,
+  captureBoth,
   downloadScreenshot,
   downloadHtml,
   recordDetailedCapture,

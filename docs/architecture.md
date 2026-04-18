@@ -33,15 +33,23 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   way to grab content.
 
   - Generated at module load from `BASE_CAPTURE_ACTIONS ×
-    CAPTURE_DELAYS_SEC` — three bases times three delays (0, 2,
+    CAPTURE_DELAYS_SEC` — five bases times three delays (0, 2,
     5 seconds).
   - Each generated entry has an id (`<baseId>` for delay 0,
     `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
-    `baseId` + `delaySec` fields for routing into the right menu
-    section, and a zero-arg `run()` that forwards the delay to
-    the base action's handler.
+    `baseId` / `group` / `delaySec` fields for routing into the
+    right menu section, and a zero-arg `run()` that forwards the
+    delay to the base action's handler.
+  - Each base carries a `group: 'primary' | 'more'` that decides
+    which section of the action menu surfaces the undelayed variant:
+    - `'primary'` — top-level entry + a slot in the "Capture with
+      delay" submenu for each delayed variant.
+    - `'more'` — top of the "More" submenu; delayed variants are
+      only reachable via "Set default click action".
+    - Every base × delay pair appears in "Set default click action"
+      regardless of group.
 
-  The three bases are:
+  The three `primary` bases are:
 
   - **`capture-now` — "Take screenshot".** Calls
     `captureVisible(delayMs)`. Immediate PNG of the visible tab.
@@ -68,6 +76,20 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     delay applies to the pre-open screenshot + HTML snapshot.
     See ["Capture with details flow"](#capture-with-details-flow)
     below for the full design.
+
+  The two `more` bases are shortcuts for the two fixed checkbox
+  combinations in the details flow:
+
+  - **`capture-url` — "Capture URL".** Equivalent to the details
+    page with *neither* file checked: the record gets just
+    `timestamp` + `url` (no `screenshot`, no `contents`). Goes
+    through `captureBothToMemory` + `recordDetailedCapture` so the
+    delay / active-tab-after-delay semantics match; the screenshot
+    + HTML payloads are discarded.
+  - **`capture-both` — "Capture screenshot and HTML".**
+    Equivalent to the details page with *both* files checked.
+    Downloads both artifacts and writes a record that references
+    both.
 
 - **Default click action.** The id of one `CAPTURE_ACTIONS` entry
   is persisted in `chrome.storage.local` under the
@@ -101,18 +123,20 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   registered on `chrome.runtime.onInstalled` with
   `contexts: ['action']`. Top level (6 entries):
 
-  - The three **undelayed** `CAPTURE_ACTIONS` items (Take
-    screenshot, Save html contents, Capture with details...),
+  - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
+    (Take screenshot, Save html contents, Capture with details...),
     each running its action immediately when clicked. "Take
     screenshot" is functionally identical to a plain left-click
     when `capture-now` is the default — listed for discoverability.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
-    of each base action, separator-grouped by delay. In-submenu
-    separators don't count against the top-level cap, so the
-    visual grouping is free.
+    of each primary-group base action, separator-grouped by delay.
+    In-submenu separators don't count against the top-level cap, so
+    the visual grouping is free. More-group actions (capture-url,
+    capture-both) don't appear here — their delayed variants are
+    only reachable via "Set default click action".
   - **Set default click action ▸** — submenu of normal items, one
-    per `CAPTURE_ACTIONS` entry: three undelayed items, a separator,
-    three 2s-delay items, a separator, then three 5s-delay items.
+    per `CAPTURE_ACTIONS` entry: five undelayed items, a separator,
+    five 2s-delay items, a separator, then five 5s-delay items.
     The selected item gets a `✓ ` title prefix; picking one
     persists its id as `defaultClickAction` and refreshes the
     tooltip.
@@ -120,8 +144,15 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       radio mutual-exclusion only covers a contiguous run — the
       separator would cause two items to appear selected.
 
-  - **More ▸** — submenu home for infrequent utilities that would
-    otherwise crowd out primary capture entries at the top level.
+  - **More ▸** — submenu home for the more-group capture actions
+    and for infrequent utilities that would otherwise crowd out
+    primary capture entries at the top level.
+    - **Capture URL** / **Capture screenshot and HTML** — shortcuts
+      for the "neither" and "both" checkbox combinations of the
+      details flow, skipping the dialog round-trip. Same delay /
+      active-tab-after-delay semantics as the other capture actions;
+      delayed variants are reachable only via "Set default click
+      action".
     - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
       most recent capture's screenshot or HTML file's *absolute on-disk
       path* to the clipboard.
@@ -465,19 +496,26 @@ permission gaps).
    is reachable from tests and the devtools console.
 3. Add a new entry to the `BASE_CAPTURE_ACTIONS` array in
    `src/background.ts` with a base id, base title, base tooltip,
-   and a `run(delayMs)` that calls your new function. The flat
-   `CAPTURE_ACTIONS` array is generated from
-   `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load, so
-   the new base automatically gains immediate + 2s + 5s variants
-   across the top-level menu, the "Capture with delay" submenu, and
-   the "Set default click action" submenu. No other plumbing.
+   a `group: 'primary' | 'more'`, and a `run(delayMs)` that calls
+   your new function. The flat `CAPTURE_ACTIONS` array is generated
+   from `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load,
+   so the new base automatically gains immediate + 2s + 5s variants
+   in whichever menu sections its `group` unlocks, plus the full
+   set of "Set default click action" entries. No other plumbing.
+   - **Pick the group deliberately.** `'primary'` promotes the
+     undelayed variant to a top-level slot and surfaces delayed
+     variants in the "Capture with delay" submenu — right for
+     primary capture paths. `'more'` tucks the undelayed variant
+     into the "More" submenu and only exposes delayed variants via
+     "Set default click action" — right for shortcuts / niche
+     modes that shouldn't crowd the top level.
    - **Watch the top-level cap.** Chrome allows at most
      `ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level items per action
      context menu, and separators count. The menu is currently at
-     5 (3 undelayed entries + Capture with delay submenu + Set
-     default submenu), leaving one slot of headroom. If a future
-     change would push it past 6, move the undelayed top-level
-     slots into a submenu of their own (e.g. "Capture now") so
-     the top-level count stays under cap.
+     6 (3 primary undelayed entries + Capture with delay + Set
+     default + More) — **at the cap**. Any new `'primary'` base
+     would push it past 6 and silently drop an entry; add the base
+     as `'more'` instead, or fold the undelayed primary slots into
+     a submenu of their own (e.g. "Capture now") first.
 4. Add a Playwright test that drives the new function via
    `serviceWorker.evaluate`.
