@@ -109,16 +109,18 @@ if $STOP; then
   exit 0
 fi
 
-# ---- Validate directory -----------------------------------------------------
+# ---- Ensure the watch directory exists --------------------------------------
 
-if [[ ! -d "$DIR" ]]; then
-  echo "Error: directory does not exist: $DIR" >&2
-  echo "Has the SeeWhatISee extension taken any screenshots yet?" >&2
-  exit 1
-fi
-if [[ ! -f "$FILE" ]]; then
-  echo "Error: $FILE does not exist" >&2
-  echo "Has the SeeWhatISee extension taken any screenshots yet?" >&2
+# Chrome only creates $DIR on the first download into it, so the user
+# can legitimately run watch.sh before any capture has happened — e.g.
+# `/see-what-i-see-watch` kicked off ahead of the first screenshot, or
+# log.json erased via More → Clear log history. Create the directory
+# ourselves so the pidfile write below has somewhere to land and the
+# poll loop has a target to stat. A missing $FILE (log.json) is fine —
+# mtime() returns empty for a missing file and emit() skips. We'll
+# start emitting as soon as the first capture writes log.json.
+if ! mkdir -p "$DIR" 2>/dev/null; then
+  echo "Error: cannot create watch directory: $DIR" >&2
   exit 1
 fi
 
@@ -129,6 +131,13 @@ write_pidfile
 
 # ---- Core helpers -----------------------------------------------------------
 
+# Print the mtime of $FILE as a Unix timestamp, or the empty string if
+# $FILE does not exist. The extension only creates log.json on the
+# first capture, so watch.sh can legitimately run against a missing
+# file — emit() treats an empty result as "nothing to compare against"
+# and skips, and the poll loop just keeps ticking until the file shows
+# up. The `stat -c %Y || stat -f %m` fallback covers GNU stat (Linux)
+# vs. BSD stat (macOS).
 mtime() {
   [[ -f "$FILE" ]] || { echo ""; return; }
   stat -c %Y "$FILE" 2>/dev/null || stat -f %m "$FILE"

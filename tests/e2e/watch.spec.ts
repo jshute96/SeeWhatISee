@@ -167,10 +167,109 @@ test.describe('watch.sh', () => {
     expect(r.stdout).toContain('--stop');
   });
 
-  test('errors when directory does not exist', () => {
-    const r = runWatch(['--directory', '/nonexistent/path']);
+  test('creates the watch directory if it does not exist', async () => {
+    // watch.sh is meant to be runnable before the first capture
+    // (e.g. `/see-what-i-see-watch` fired ahead of the first screenshot),
+    // so a missing directory should be auto-created rather than an error.
+    const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-parent-'));
+    const freshDir = path.join(parentDir, 'SeeWhatISee');
+    expect(fs.existsSync(freshDir)).toBe(false);
+
+    const watch = startWatch(['--directory', freshDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(fs.existsSync(freshDir)).toBe(true);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+    fs.rmSync(parentDir, { recursive: true, force: true });
+  });
+
+  test('errors when watch directory cannot be created', () => {
+    // /dev/null is a character device, so mkdir -p cannot make it into
+    // a directory or create a child under it.
+    const r = runWatch(['--directory', '/dev/null/path']);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr).toContain('does not exist');
+    expect(r.stderr).toContain('cannot create watch directory');
+  });
+
+  test('once mode: works when log.json does not exist yet', async () => {
+    // Simulate the "watch started before any capture" flow: wipe the
+    // seed log.json created by beforeEach so the watcher starts with
+    // only a directory, no file.
+    fs.rmSync(path.join(tmpDir, 'log.json'));
+    expect(fs.existsSync(path.join(tmpDir, 'log.json'))).toBe(false);
+
+    const watch = startWatch(['--directory', tmpDir]);
+    // Give it a moment to settle into the poll loop with no file.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    // The first capture writes log.json for the first time; watcher
+    // should pick it up and exit 0 in once-mode.
+    const { screenshot } = simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+    expect(watch.output()).toContain(`${tmpDir}/${screenshot}`);
+  });
+
+  test('loop mode: works when log.json does not exist yet', async () => {
+    fs.rmSync(path.join(tmpDir, 'log.json'));
+
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 800));
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    // Two captures in sequence — loop should emit both.
+    const { screenshot: s1 } = simulateCapture(tmpDir, 1);
+    await waitForPattern(watch.output, `${tmpDir}/${s1}`, 1, 5_000);
+
+    await new Promise((r) => setTimeout(r, 1200));
+    const { screenshot: s2 } = simulateCapture(tmpDir, 2);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+
+    watch.kill();
+  });
+
+  test('once mode: keeps watching when log.json is removed mid-run; next capture wins', async () => {
+    // Users can delete ~/Downloads/SeeWhatISee/log.json by hand (or rm
+    // the whole directory) while the watcher is running. The rm is not
+    // a "new capture" — emit() should skip, the watcher should stay
+    // up, and the next real capture should be what exits once-mode.
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    fs.rmSync(path.join(tmpDir, 'log.json'));
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    const { screenshot } = simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+    expect(watch.output()).toContain(`${tmpDir}/${screenshot}`);
+  });
+
+  test('loop mode: keeps watching when log.json is removed mid-run', async () => {
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    fs.rmSync(path.join(tmpDir, 'log.json'));
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    // First capture after rm: file is recreated.
+    const { screenshot: s1 } = simulateCapture(tmpDir, 1);
+    await waitForPattern(watch.output, `${tmpDir}/${s1}`, 1, 5_000);
+
+    // Second capture: loop still running.
+    await new Promise((r) => setTimeout(r, 1200));
+    const { screenshot: s2 } = simulateCapture(tmpDir, 2);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+
+    watch.kill();
   });
 
   test('once mode: emits on the next log.json append and exits', async () => {
