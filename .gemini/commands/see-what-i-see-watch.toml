@@ -1,0 +1,43 @@
+description = """
+Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, describe what you see (or follow the user's prompt) and then watch for the next, until stopped by the user.
+"""
+prompt = """
+**If anything fails, do not try to debug or fix anything. Just report the failure.**
+
+Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, process it as described below, then watch for the next one. Keep looping until the user tells you to stop, or until a failure.
+
+This is a foreground loop: each iteration blocks on a shell command that doesn't return until the next capture lands.
+
+## Getting snapshots in a loop
+
+1. **Start the loop.** Run `$HOME/.gemini/scripts/watch-and-copy.sh` with no timeout. This blocks until there's a capture to process, then prints a JSON record to stdout.
+
+2. **On each record,** process it as described in the next section, then immediately launch the next iteration: run `$HOME/.gemini/scripts/watch-and-copy.sh --after <timestamp>` (again with no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures that arrived while you were processing.
+
+3. **Repeat forever**, but stop on failures. Don't try to recover from failures — just report them and exit.
+
+## Process each snapshot
+
+1. The JSON record contains `{timestamp, url}` plus any of:
+  - `screenshot` — absolute path to a PNG file.
+  - `highlights` — `true` when the screenshot has user-drawn red markup baked into it (boxes and/or lines calling attention to specific regions of the image).
+  - `contents` — absolute path to an HTML file (whole-page snapshot).
+  - `selection` — absolute path to an HTML file containing just the user's page selection at capture time (text and HTML).
+  - `prompt` — the user's instruction for this capture.
+
+  A record may have any subset of `screenshot` / `contents` / `selection`, or none — in the none case, the URL (and optional prompt) is the whole payload.
+
+  **Look at referenced files only. Don't go fishing for others unless asked to.**
+
+2. Process the capture:
+  - If `screenshot` is present, Read it.
+    - **If `highlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
+  - If `contents` is present, don't Read it up front (HTML can be large); wait until you know what to look for.
+  - If `selection` is present, don't Read it until you know what to look for.
+  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot, HTML, selection, and/or `url` as the subject of that instruction. If no files were saved, the `url` is what the prompt is about.
+  - If `prompt` is absent:
+    - For screenshots, briefly describe what you see and mention the source `url`. When `highlights` is `true`, lead with what's highlighted.
+    - For HTML-only captures, report that you have an HTML snapshot from the source `url` and ask the user what they want to know.
+    - For selection-only captures, quote or summarize the selected fragment and mention the source `url`.
+    - For URL-only captures (no files), report the `url` and ask the user what they want to know about it.
+"""

@@ -1,0 +1,1 @@
+../.gemini/scripts/watch-and-copy.sh

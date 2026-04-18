@@ -20,11 +20,10 @@ Claude plugin
   - Maybe a separate repository for just the "released" version of the plugin.
 
 Gemini plugin
-* It has copies of the code from Claude skills. Can I share this somehow?
-* Watching doesn't work because asynchronous background commands aren't supported.
+* Background watching doesn't work because asynchronous background commands aren't supported,
+  so we just have a foreground version of the watch command for now.
 * BUG: command doesn't work if multiple gemini's run in workspaces with the same name, because one of their tmp dirs has -1, and we don't know that. See copy-last-snapshot.sh.
 * Annoying: gemini always prompts for permission to run copy-last-snapshot.sh, at least once per session.
-* We can't do asynchronous watch, but we could probably have a synchronous watch command.
 
 Release and Packaging
 * Publish Chrome extension

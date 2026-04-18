@@ -73,10 +73,12 @@ on each snapshot. For example,
 
 ### Gemini CLI commands
 
-`/see-what-i-see` `[prompt]`
-is the only supported command.
-
-Gemini doesn't support asynchronous background so the *watch* commands don't work yet.
+- `/see-what-i-see` `[prompt]` — read the latest capture.
+- `/see-what-i-see-watch` `[prompt]` — watch for new captures and
+  describe each one. Runs in the foreground (Gemini has no async
+  background worker with a completion callback), so the conversation
+  stays paused on a blocking shell call between captures. Stop it by
+  pressing Escape.
 
 ## Installation
 
@@ -117,7 +119,10 @@ gemini 'Run `scripts/gemini-install.sh`'
 Alternative: Copy these files into the same directories in your `.gemini` directory:
 
 * [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml)
+* [`.gemini/commands/see-what-i-see-watch.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see-watch.toml)
+* [`.gemini/scripts/_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/_common.sh)
 * [`.gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/copy-last-snapshot.sh)
+* [`.gemini/scripts/watch-and-copy.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/watch-and-copy.sh)
 
 ## Output files
 

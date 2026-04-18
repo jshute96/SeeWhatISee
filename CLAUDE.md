@@ -49,3 +49,4 @@ files, including formatting, so diffs only show intentional differences.
 - `plugin/skills/see-what-i-see/SKILL.md`
 - `plugin/skills/see-what-i-see-watch/SKILL.md`
 - `.gemini/commands/see-what-i-see.toml`
+- `.gemini/commands/see-what-i-see-watch.toml`

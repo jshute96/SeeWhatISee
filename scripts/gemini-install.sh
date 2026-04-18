@@ -4,7 +4,7 @@
 
 set -e
 
-FILES=".gemini/commands/see-what-i-see.toml .gemini/scripts/copy-last-snapshot.sh"
+FILES=".gemini/commands/see-what-i-see.toml .gemini/commands/see-what-i-see-watch.toml .gemini/scripts/_common.sh .gemini/scripts/copy-last-snapshot.sh .gemini/scripts/watch-and-copy.sh"
 for f in $FILES; do
   if [ ! -f "$f" ]; then
     echo "Required file $f not found. Are you in the wrong directory?"
@@ -33,4 +33,4 @@ for f in $FILES; do
   cp -af "$f" "$HOME"/"$f"
 done
 
-echo "Copied /see-what-i-see command into $HOME/.gemini"
+echo "Copied /see-what-i-see and /see-what-i-see-watch commands into $HOME/.gemini"

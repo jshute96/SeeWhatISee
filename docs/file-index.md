@@ -57,7 +57,10 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `.gemini/commands/see-what-i-see.toml` | Gemini CLI command — describes the latest capture (uses `copy-last-snapshot.sh`) |
-| `.gemini/scripts/copy-last-snapshot.sh` | Copies latest snapshot files into `.gemini/tmp/` and prints JSON with rewritten paths |
+| `.gemini/commands/see-what-i-see-watch.toml` | Gemini CLI command — foreground watch loop that describes each new capture (uses `watch-and-copy.sh`) |
+| `.gemini/scripts/_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
+| `.gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `_common.sh`'s `emit_record` |
+| `.gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
 
 ## Extension Source (`src/`)
 
@@ -81,6 +84,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
 | `scripts/get-latest.sh` | Symlink to `plugin/scripts/get-latest.sh` |
+| `scripts/watch-and-copy.sh` | Symlink to `.gemini/scripts/watch-and-copy.sh` |
 | `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` |
 
 ## Tests (`tests/`)
