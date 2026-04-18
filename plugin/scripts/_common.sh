@@ -46,5 +46,6 @@ resolve_dir() {
 # Only rewrites values that don't already start with /.
 absolutize_paths() {
   sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$DIR/\\1\"|" \
-      -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$DIR/\\1\"|"
+      -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$DIR/\\1\"|" \
+      -e "s|\"selection\": *\"\\([^/][^\"]*\\)\"|\"selection\": \"$DIR/\\1\"|"
 }

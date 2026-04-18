@@ -82,6 +82,14 @@ export interface CaptureRecord {
    */
   contents?: string;
   /**
+   * Bare filename of the captured selection HTML
+   * (`selection-<timestamp>.html`, no directory). Set by either
+   * `captureSelection()` (the More → Capture selection shortcut)
+   * or the details flow when the user kept the Save selection
+   * checkbox checked. Absent on every other capture mode.
+   */
+  selection?: string;
+  /**
    * User-entered prompt text from the "Capture with details…" flow,
    * trimmed. Omitted entirely when empty so the field's presence
    * implies there is something to act on.
@@ -213,11 +221,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
 
   // Save the HTML first. The metadata files are downstream and
   // shouldn't be written if the content itself failed to save.
-  const downloadId = await chrome.downloads.download({
-    url: `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
-    filename: `${DOWNLOAD_SUBDIR}/${filename}`,
-    saveAs: false,
-  });
+  const downloadId = await downloadArtifact(filename, htmlDataUrl(html));
 
   const sidecarDownloadIds = await serializeWrite(async () => {
     const log = await appendToLog(record);
@@ -226,6 +230,91 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   });
 
   return { downloadId, sidecarDownloadIds, filename, ...record };
+}
+
+/**
+ * Scrape the HTML of the current selection on the given tab. Returns
+ * `null` when nothing is selected (no ranges, or only collapsed
+ * ranges whose cloned fragment is empty).
+ *
+ * Walks every range (Firefox supports multi-range; Chromium normally
+ * returns a single range but the API surface is the same) and
+ * concatenates their cloned contents into one throwaway `<div>` so
+ * `innerHTML` gives us the combined markup.
+ *
+ * We guard on the *fragment* being empty rather than
+ * `sel.toString().length` so image-only selections (`<img>` with no
+ * accompanying text) still count as real captures — `toString`
+ * returns just the text content and would otherwise drop them.
+ */
+async function scrapeSelection(tabId: number): Promise<string | null> {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const container = document.createElement('div');
+      for (let i = 0; i < sel.rangeCount; i++) {
+        container.appendChild(sel.getRangeAt(i).cloneContents());
+      }
+      const html = container.innerHTML;
+      return html.length === 0 ? null : html;
+    },
+  });
+  return (results[0]?.result as string | null | undefined) ?? null;
+}
+
+/**
+ * Capture the HTML of the user's current text selection on the
+ * active tab, save it as `selection-<timestamp>.html` alongside
+ * other captures, and record its filename in `log.json` under
+ * `selection`.
+ *
+ * Throws `No text selected` when there is no selected text on the
+ * page. Surfaces through the normal icon/tooltip error channel so
+ * the user sees *why* the capture was rejected.
+ */
+export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
+  if (delayMs > 0) {
+    await countdownSleep(delayMs);
+  }
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!active) throw new Error('No active tab found to capture');
+
+  const html = await scrapeSelection(active.id!);
+  if (!html) throw new Error('No text selected');
+
+  const now = new Date();
+  const filename = `selection-${compactTimestamp(now)}.html`;
+  const record: CaptureRecord = {
+    timestamp: now.toISOString(),
+    selection: filename,
+    url: active.url ?? '',
+  };
+
+  // Reuse the details-flow helper so the trailing-newline logic
+  // lives in one place. We build a minimal InMemoryCapture to pass
+  // through — only `selection` and `selectionFilename` are read.
+  const asCapture: InMemoryCapture = {
+    screenshotDataUrl: '',
+    html: '',
+    url: record.url,
+    timestamp: record.timestamp,
+    screenshotFilename: '',
+    contentsFilename: '',
+    selection: html,
+    selectionFilename: filename,
+  };
+  // Save the selection file first. The sidecar is downstream and
+  // shouldn't be written if the content itself failed to save.
+  await downloadSelection(asCapture);
+
+  await serializeWrite(async () => {
+    const log = await appendToLog(record);
+    await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
+  });
+
+  return record;
 }
 
 export interface InMemoryCapture {
@@ -252,6 +341,20 @@ export interface InMemoryCapture {
    * saves it. Same reason as `screenshotFilename`.
    */
   contentsFilename: string;
+  /**
+   * HTML of the page selection at capture time, when the user had
+   * anything selected. Undefined when no selection existed — the
+   * details page uses that to grey out / uncheck the "Save
+   * selection" checkbox and disable its Copy button.
+   */
+  selection?: string;
+  /**
+   * Filename the selection file will be written under if the user
+   * saves it. Only meaningful when `selection` is also set; the two
+   * fields are populated together. Shares the same compact
+   * timestamp suffix as `screenshotFilename` / `contentsFilename`.
+   */
+  selectionFilename?: string;
 }
 
 /**
@@ -284,19 +387,41 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     format: 'png',
   });
 
+  // Grab the HTML and the selection in a single scripting round-trip.
+  // Two separate `executeScript` calls would double the IPC cost and
+  // widen the window during which the tab could be torn down between
+  // the two reads. Running both in one `func` also means the two
+  // snapshots observe the same DOM state. Selection logic mirrors
+  // `scrapeSelection` (executeScript `func`s must be self-contained —
+  // they're stringified into the page context and can't call SW-side
+  // helpers).
   const results = await chrome.scripting.executeScript({
     target: { tabId: active.id! },
-    func: () => document.documentElement.outerHTML,
+    func: () => {
+      const html = document.documentElement.outerHTML;
+      const sel = window.getSelection();
+      let selection: string | null = null;
+      if (sel && sel.rangeCount > 0) {
+        const container = document.createElement('div');
+        for (let i = 0; i < sel.rangeCount; i++) {
+          container.appendChild(sel.getRangeAt(i).cloneContents());
+        }
+        const inner = container.innerHTML;
+        if (inner.length > 0) selection = inner;
+      }
+      return { html, selection };
+    },
   });
-  const html = results[0]?.result as string;
-  if (!html) throw new Error('Failed to retrieve page contents');
+  const scraped = results[0]?.result as { html: string; selection: string | null } | undefined;
+  if (!scraped || !scraped.html) throw new Error('Failed to retrieve page contents');
+  const { html, selection } = scraped;
 
   // Pin the capture moment + filenames here so the details page can
   // show / copy the exact filename the file will land at, even if
   // the user waits minutes before clicking Save.
   const now = new Date();
   const ts = compactTimestamp(now);
-  return {
+  const capture: InMemoryCapture = {
     screenshotDataUrl,
     html,
     url: active.url ?? '',
@@ -304,6 +429,11 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotFilename: `screenshot-${ts}.png`,
     contentsFilename: `contents-${ts}.html`,
   };
+  if (selection !== null) {
+    capture.selection = selection;
+    capture.selectionFilename = `selection-${ts}.html`;
+  }
+  return capture;
 }
 
 export interface SaveDetailedOptions {
@@ -312,6 +442,12 @@ export interface SaveDetailedOptions {
   includeScreenshot: boolean;
   /** Save the captured HTML as part of this capture. */
   includeHtml: boolean;
+  /**
+   * Save the captured page selection as `selection-<timestamp>.html`.
+   * Ignored when `capture.selection` is unset (no selection existed
+   * at capture time).
+   */
+  includeSelection: boolean;
   /**
    * Optional user-entered prompt. Trimmed by the caller; an empty
    * string is treated the same as omitting the field. Stored on the
@@ -329,44 +465,75 @@ export interface SaveDetailedOptions {
 }
 
 /**
- * Start a screenshot download for the details flow. Returns the
- * download id immediately (Chrome resolves on download *start*, not
- * completion) — pair with `waitForDownloadComplete` to block on the
- * file actually landing.
+ * Start a download into the SeeWhatISee capture directory and
+ * return the `chrome.downloads` id. Single funnel for every
+ * artifact a capture writes (PNG, HTML, selection, log.json) —
+ * shared behavior (subdir prefix, no Save-As prompt, `'overwrite'`
+ * on conflict) lives here.
  *
- * `screenshotOverride` is an optional replacement data URL with the
- * user's red highlights baked into the PNG bytes; when omitted we
- * write the original screenshot. `conflictAction: 'overwrite'`
- * means a re-download under the same pinned filename (e.g. after the
- * user undoes a highlight and asks to re-copy) rewrites the
- * already-on-disk file rather than producing
- * `screenshot-… (1).png`.
+ * Resolves as soon as Chrome has *started* the download — callers
+ * that need the file on disk pair this with
+ * `waitForDownloadComplete`.
+ */
+async function downloadArtifact(filename: string, url: string): Promise<number> {
+  return chrome.downloads.download({
+    url,
+    filename: `${DOWNLOAD_SUBDIR}/${filename}`,
+    saveAs: false,
+    // We rely on `compactTimestamp` giving unique filenames across
+    // captures (see `compactTimestamp` below), so `'overwrite'` is
+    // safe everywhere: log.json deliberately overwrites every time,
+    // and the details flow may rewrite the same pinned filename as
+    // the user edits highlights / re-copies.
+    conflictAction: 'overwrite',
+  });
+}
+
+/** Build a `data:` URL for an HTML body, percent-encoded. */
+function htmlDataUrl(body: string): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(body)}`;
+}
+
+/**
+ * Start a screenshot download. `screenshotOverride` is an optional
+ * replacement data URL with the user's red highlights baked into
+ * the PNG bytes; when omitted we write the original screenshot.
  */
 export async function downloadScreenshot(
   capture: InMemoryCapture,
   screenshotOverride?: string,
 ): Promise<number> {
-  return chrome.downloads.download({
-    url: screenshotOverride ?? capture.screenshotDataUrl,
-    filename: `${DOWNLOAD_SUBDIR}/${capture.screenshotFilename}`,
-    saveAs: false,
-    conflictAction: 'overwrite',
-  });
+  return downloadArtifact(
+    capture.screenshotFilename,
+    screenshotOverride ?? capture.screenshotDataUrl,
+  );
 }
 
 /**
- * Start an HTML download for the details flow. Same return / wait
- * contract as `downloadScreenshot`. The HTML body never changes
- * within a session (no editing UI), so callers can cache the
- * result indefinitely.
+ * Start an HTML download. The HTML body never changes within a
+ * session (no editing UI), so callers can cache the result
+ * indefinitely.
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
-  return chrome.downloads.download({
-    url: `data:text/html;charset=utf-8,${encodeURIComponent(capture.html)}`,
-    filename: `${DOWNLOAD_SUBDIR}/${capture.contentsFilename}`,
-    saveAs: false,
-    conflictAction: 'overwrite',
-  });
+  return downloadArtifact(capture.contentsFilename, htmlDataUrl(capture.html));
+}
+
+/**
+ * Start a selection-HTML download. Throws when the capture doesn't
+ * carry a selection — callers must ensure `capture.selection` and
+ * `capture.selectionFilename` are populated first.
+ *
+ * Appends a trailing newline when the selection doesn't already end
+ * in one. The selection is a DOM fragment — often a single run of
+ * text with no line break — and shells / editors read terminator-
+ * stripped files more comfortably.
+ */
+export async function downloadSelection(capture: InMemoryCapture): Promise<number> {
+  if (!capture.selection || !capture.selectionFilename) {
+    throw new Error('No selection captured');
+  }
+  const body = capture.selection.endsWith('\n') ? capture.selection : `${capture.selection}\n`;
+  return downloadArtifact(capture.selectionFilename, htmlDataUrl(body));
 }
 
 /**
@@ -423,6 +590,9 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   if (opts.includeHtml) {
     record.contents = opts.capture.contentsFilename;
   }
+  if (opts.includeSelection && opts.capture.selectionFilename) {
+    record.selection = opts.capture.selectionFilename;
+  }
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
   }
@@ -459,11 +629,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   // see partial files or interleaving in log.json, the fix is to wait
   // on chrome.downloads.onChanged for state === 'complete' before
   // returning. Overkill for v1.
-  const downloadId = await chrome.downloads.download({
-    url: dataUrl,
-    filename: `${DOWNLOAD_SUBDIR}/${filename}`,
-    saveAs: false,
-  });
+  const downloadId = await downloadArtifact(filename, dataUrl);
 
   // Update the running log in storage and rewrite the JSON sidecar files.
   // Serialized via writeChain so two rapid captures can't race on the
@@ -521,14 +687,10 @@ async function appendToLog(record: CaptureRecord): Promise<CaptureRecord[]> {
  * download id, which tests use to resolve the on-disk path.
  */
 async function writeJsonFile(name: string, text: string): Promise<number> {
-  return await chrome.downloads.download({
-    url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
-    filename: `${DOWNLOAD_SUBDIR}/${name}`,
-    saveAs: false,
-    // Required so log.json gets replaced rather than ending up
-    // as `log (1).json`, `log (2).json`, ...
-    conflictAction: 'overwrite',
-  });
+  return downloadArtifact(
+    name,
+    `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
+  );
 }
 
 /**
@@ -553,6 +715,7 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
   if (r.highlights !== undefined) ordered.highlights = r.highlights;
   if (r.contents !== undefined) ordered.contents = r.contents;
+  if (r.selection !== undefined) ordered.selection = r.selection;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;
   ordered.url = r.url;
   return JSON.stringify(ordered, null, indent);
@@ -581,11 +744,20 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * Format a Date as `YYYYMMDD-HHMMSS-mmm` in the local timezone.
  *
- * Used as the unique suffix in capture filenames (both
- * `screenshot-*.png` and `contents-*.html`) so they sort
- * lexicographically by capture time and stay short / shell-safe. The
- * trailing `-mmm` is milliseconds; including them makes filenames
- * effectively unique without any extra dedup state.
+ * Used as the unique suffix in capture filenames
+ * (`screenshot-*.png`, `contents-*.html`, `selection-*.html`) so
+ * they sort lexicographically by capture time and stay short /
+ * shell-safe.
+ *
+ * **Uniqueness assumption.** The rest of the extension assumes
+ * different captures produce different `compactTimestamp` values
+ * and treats that as the filename-uniqueness guarantee — so writes
+ * can use `conflictAction: 'overwrite'` uniformly without worrying
+ * about clobbering an unrelated capture. Two captures inside the
+ * same millisecond would break this. It hasn't come up (user-
+ * driven clicks can't happen that fast, and the details flow
+ * pins a single timestamp per session), so we don't guard against
+ * it.
  *
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
  * produces `20260408-203012-345`.

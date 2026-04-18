@@ -25,6 +25,13 @@ interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
+  /**
+   * True when the SW captured a non-empty selection on the active
+   * tab. The actual selection HTML stays in the SW's session
+   * storage — the page only needs this flag to enable / default
+   * the Save selection checkbox.
+   */
+  hasSelection?: boolean;
 }
 
 /**
@@ -41,6 +48,7 @@ let editVersion = 0;
 
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
+const selectionBox = document.getElementById('cap-selection') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
 const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElement;
 const previewImg = document.getElementById('preview') as HTMLImageElement;
@@ -48,6 +56,7 @@ const capturedUrlInput = document.getElementById('captured-url') as HTMLInputEle
 const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
+const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -90,6 +99,13 @@ document.addEventListener('keydown', (e) => {
   } else if (key === 'h') {
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
+  } else if (key === 'n') {
+    // Alt+N toggles Save selection. No-op when the checkbox is
+    // disabled (no selection was captured) so the hotkey matches
+    // what's on screen.
+    if (selectionBox.disabled) return;
+    e.preventDefault();
+    selectionBox.checked = !selectionBox.checked;
   }
 });
 
@@ -312,15 +328,43 @@ previewImg.addEventListener('load', fitImage);
 // ─── Initial data load ────────────────────────────────────────────
 
 async function loadData(): Promise<void> {
-  const response: DetailsData | undefined = await chrome.runtime.sendMessage({
-    action: 'getDetailsData',
-  });
-  if (!response) return;
-  previewImg.src = response.screenshotDataUrl;
-  capturedUrlInput.value = response.url;
-  // True UTF-8 byte count of the captured HTML, not the JS string
-  // length (which counts UTF-16 code units).
-  htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+  try {
+    const response: DetailsData | undefined = await chrome.runtime.sendMessage({
+      action: 'getDetailsData',
+    });
+    if (!response) return;
+    previewImg.src = response.screenshotDataUrl;
+    capturedUrlInput.value = response.url;
+    // True UTF-8 byte count of the captured HTML, not the JS string
+    // length (which counts UTF-16 code units).
+    htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+    // Enable + default-check the Save selection controls iff the SW
+    // saw a non-empty selection at capture time. A user who bothered
+    // to select text probably wants it in the record.
+    if (response.hasSelection) {
+      selectionBox.checked = true;
+      selectionBox.disabled = false;
+      copySelectionBtn.disabled = false;
+    }
+    // Wait for the preview image to decode before revealing, so the
+    // page comes in with the screenshot already visible (not
+    // popping in a frame later). `complete` is false for a freshly-
+    // assigned src; data: URLs decode fast but the event is still
+    // async. Treat `error` the same as `load` so a broken image
+    // doesn't strand the page invisible.
+    if (!previewImg.complete) {
+      await new Promise<void>((resolve) => {
+        const done = (): void => resolve();
+        previewImg.addEventListener('load', done, { once: true });
+        previewImg.addEventListener('error', done, { once: true });
+      });
+    }
+  } finally {
+    // Reveal the body unconditionally — including on an empty
+    // response or a thrown message call — so the user never stares
+    // at a blank page with no recourse.
+    document.body.style.visibility = 'visible';
+  }
 }
 
 // ─── Copy-filename buttons ────────────────────────────────────────
@@ -344,6 +388,9 @@ copyScreenshotBtn.addEventListener('click', () => {
 copyHtmlBtn.addEventListener('click', () => {
   void copyArtifactPath('html');
 });
+copySelectionBtn.addEventListener('click', () => {
+  void copyArtifactPath('selection');
+});
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially
@@ -352,7 +399,7 @@ copyHtmlBtn.addEventListener('click', () => {
 // Reset to -1 so the very first Copy with edits forces a bake.
 let lastSentScreenshotEditVersion = -1;
 
-async function copyArtifactPath(kind: 'screenshot' | 'html'): Promise<void> {
+async function copyArtifactPath(kind: 'screenshot' | 'html' | 'selection'): Promise<void> {
   // Skip the bake + override when the SW will cache-hit. The cache
   // is keyed by `editVersion`, so if we already shipped this version
   // (and therefore the SW already has the matching file on disk),
@@ -456,6 +503,7 @@ captureBtn.addEventListener('click', () => {
       action: 'saveDetails',
       screenshot: screenshotBox.checked,
       html: htmlBox.checked,
+      selection: selectionBox.checked,
       prompt: promptInput.value.trim(),
       highlights: bakeIn,
       editVersion,

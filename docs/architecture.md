@@ -33,8 +33,10 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   way to grab content.
 
   - Generated at module load from `BASE_CAPTURE_ACTIONS ×
-    CAPTURE_DELAYS_SEC` — five bases times three delays (0, 2,
-    5 seconds).
+    CAPTURE_DELAYS_SEC` (0, 2, 5 seconds). A base with
+    `supportsDelayed: false` (e.g. `capture-url`,
+    `capture-selection`) opts out: only the 0s variant is generated,
+    no 2s / 5s entries appear anywhere for it.
   - Each generated entry has an id (`<baseId>` for delay 0,
     `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
     `baseId` / `group` / `delaySec` fields for routing into the
@@ -109,8 +111,11 @@ design live in [`chrome-extension.md`](chrome-extension.md).
        click, then runs the default action.
   - Fresh installs default to `capture-with-details` — the details
     page with double-click screenshot shortcut.
-  - All delay variants (0s, 2s, 5s) are defaultable — the "Set
-    default click action" submenu mirrors the full delay set.
+  - Every generated variant is defaultable — the "Set default
+    click action" submenu has a row per delay and includes each
+    base that has a variant at that delay. Bases with
+    `supportsDelayed: false` (e.g. `capture-url`,
+    `capture-selection`) only show up in the 0s row.
   - The toolbar icon's hover tooltip is set from the selected
     action's `tooltip` field via `chrome.action.setTitle`, so the
     icon always tells the user what a click is about to do.
@@ -129,11 +134,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     screenshot" is functionally identical to a plain left-click
     when `capture-now` is the default — listed for discoverability.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
-    of each primary-group base action, separator-grouped by delay.
-    In-submenu separators don't count against the top-level cap, so
-    the visual grouping is free. More-group actions (capture-url,
-    capture-both) don't appear here — their delayed variants are
-    only reachable via "Set default click action".
+    of every base with `showInDelayedSubmenu` (primary-group by
+    default, plus any more-group base that opts in — e.g.
+    `capture-both`). Separator-grouped by delay. In-submenu
+    separators don't count against the top-level cap, so the visual
+    grouping is free. More-group actions that don't opt in
+    (capture-url, capture-selection — both `supportsDelayed: false`
+    anyway) are only reachable via "Set default click action" if at
+    all.
   - **Set default click action ▸** — submenu of normal items, one
     per `CAPTURE_ACTIONS` entry: five undelayed items, a separator,
     five 2s-delay items, a separator, then five 5s-delay items.
@@ -149,10 +157,31 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     primary capture entries at the top level.
     - **Capture URL** / **Capture screenshot and HTML** — shortcuts
       for the "neither" and "both" checkbox combinations of the
-      details flow, skipping the dialog round-trip. Same delay /
-      active-tab-after-delay semantics as the other capture actions;
-      delayed variants are reachable only via "Set default click
-      action".
+      details flow, skipping the dialog round-trip.
+      - *Capture URL* is a `BASE_CAPTURE_ACTION` with
+        `supportsDelayed: false` (no delayed variants): the action
+        records the URL at click time, so a delay would only let
+        the user navigate somewhere else first — a confusing
+        interaction that's easy to reproduce intentionally just by
+        opening the other page.
+      - *Capture screenshot and HTML* gets delayed variants and
+        sets `showInDelayedSubmenu: true` so they surface in the
+        main "Capture with delay" submenu next to the primary
+        delayed entries; matches the other capture actions'
+        active-tab-after-delay semantics.
+    - **Capture selection** — `captureSelection()` serializes the
+      active tab's current selection (`window.getSelection()`) to
+      HTML, writes it as `selection-<timestamp>.html`, and records
+      its filename under `selection` in `log.json`. Image-only
+      selections are captured as `<img>` markup — we guard on the
+      cloned fragment being empty rather than on selection *text*,
+      so images (or other media without text) still count.
+      - Throws `No text selected` when the selection is empty, which
+        surfaces through the icon/tooltip error channel.
+      - `BASE_CAPTURE_ACTION` with `supportsDelayed: false` —
+        bindable as the default click action at 0s but deliberately
+        has no 2s/5s variants (a delay doesn't help: the selection
+        already exists when the user triggers the action).
     - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
       most recent capture's screenshot or HTML file's *absolute on-disk
       path* to the clipboard.
@@ -302,6 +331,10 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       signal. The see-what-i-see skills check this and steer their
       attention to the marked regions.
     - `contents` — bare HTML filename, set when HTML contents were saved.
+    - `selection` — bare HTML filename
+      (`selection-<timestamp>.html`), set only by the experimental
+      More → Capture selection entry. Saved as a separate file
+      alongside other captures.
     - `prompt` — user-entered text from "Capture with details…", omitted
       when empty.
 
@@ -376,8 +409,15 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 - **Captured URL** — read-only single-line monospace input.
 - **HTML byte size** — `formatBytes(new Blob([html]).size)` →
   `B` / `KB` / `MB` / `GB` / `TB`.
-- **Save checkboxes** — pick screenshot, HTML, both, or neither
-  (URL-only record).
+- **Save checkboxes** — pick any of screenshot, HTML, selection, or
+  none (URL-only record).
+  - The Save selection checkbox is greyed out (and its Copy button
+    inactive) when the SW reports no selection existed at capture
+    time. When a selection *was* captured, the checkbox defaults to
+    checked — a user who selected text before opening the details
+    page almost certainly wants that selection in the record.
+  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML,
+    `Alt+N` toggles selection (no-op when greyed out).
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).
@@ -405,10 +445,10 @@ can draw red markup on the regions they want the agent to focus on.
     clipboard access — no offscreen helper involved here, unlike
     the SW's Copy-last-… menu entries).
 - Each click materializes the file on disk via the SW's
-  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` helpers,
-  then puts the file's **real on-disk path** on the clipboard. The
-  user always gets a valid path — there's no "the file doesn't
-  exist yet" caveat.
+  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
+  `ensureSelectionDownloaded` helpers, then puts the file's **real
+  on-disk path** on the clipboard. The user always gets a valid
+  path — there's no "the file doesn't exist yet" caveat.
 - Per-tab download cache lives on `DetailsSession.downloads`. Repeat
   Copy clicks short-circuit on a cache hit; the eventual Capture
   click also goes through the same helpers, so files already
@@ -419,9 +459,13 @@ can draw red markup on the regions they want the agent to focus on.
     baked-in PNG (sent as `screenshotOverride` in the message).
   - HTML cache is unconditional: there's no editing UI for the
     body, so once written it stays valid for the session.
+  - Selection cache follows the same pattern as HTML — the
+    selection is frozen at capture time (no editing UI), so once
+    written the path is valid for the life of the details tab.
 - Filenames are pinned at capture time in `captureBothToMemory`
-  (`screenshotFilename` / `contentsFilename` on `InMemoryCapture`)
-  and reused by every download in the session.
+  (`screenshotFilename` / `contentsFilename` / optional
+  `selectionFilename` on `InMemoryCapture`) and reused by every
+  download in the session.
   - Side-effect: the saved record's `timestamp` and the embedded
     local-time filename suffix both describe when the screenshot
     was *taken*, not when the user clicked Save.
@@ -456,15 +500,17 @@ can draw red markup on the regions they want the agent to focus on.
   `highlights: boolean` flag, the current `editVersion`, and the
   `screenshotOverride` data URL when present.
 - The background runs each requested artifact through the same
-  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` helpers
-  that powered any earlier Copy clicks — so a file pre-downloaded
-  by Copy at the same `editVersion` is *not* re-written, and the
+  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
+  `ensureSelectionDownloaded` helpers that powered any earlier
+  Copy clicks — so a file pre-downloaded by Copy (at the same
+  `editVersion` for screenshots) is *not* re-written, and the
   on-disk file from the Copy step is what the log entry references.
   Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
-  `prompt`, and `highlights: true`, on top of the always-present
-  `timestamp` and `url`. It's valid to save with neither checkbox
-  ticked — the record then carries just the URL (and any prompt).
+  `selection`, `prompt`, and `highlights: true`, on top of the
+  always-present `timestamp` and `url`. It's valid to save with no
+  checkboxes ticked — the record then carries just the URL (and
+  any prompt).
 - After the save resolves, the background re-activates the opener
   tab and then removes the details tab — the user lands back on
   the page they captured from. Chrome's natural close-time pick is
@@ -500,8 +546,11 @@ permission gaps).
    your new function. The flat `CAPTURE_ACTIONS` array is generated
    from `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load,
    so the new base automatically gains immediate + 2s + 5s variants
-   in whichever menu sections its `group` unlocks, plus the full
-   set of "Set default click action" entries. No other plumbing.
+   in whichever menu sections its `group` unlocks, plus the
+   corresponding "Set default click action" entries. Set
+   `supportsDelayed: false` when delayed variants don't make sense
+   for the mode (only the 0s variant is then generated). No other
+   plumbing.
    - **Pick the group deliberately.** `'primary'` promotes the
      undelayed variant to a top-level slot and surfaces delayed
      variants in the "Capture with delay" submenu — right for

@@ -1,9 +1,11 @@
 import {
   captureBothToMemory,
+  captureSelection,
   captureVisible,
   clearCaptureLog,
   downloadHtml,
   downloadScreenshot,
+  downloadSelection,
   DOWNLOAD_SUBDIR,
   LOG_STORAGE_KEY,
   recordDetailedCapture,
@@ -125,6 +127,7 @@ async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> 
 const SUPPRESSED_UNHANDLED = [
   'No active tab found to capture',
   'Failed to retrieve page contents',
+  'No text selected',
 ];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);
@@ -142,6 +145,14 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // says *when* to capture (immediate, 2s, or 5s). We define the
 // bases once and expand them across the delays at module load so
 // every menu surface stays in sync from a single source.
+//
+// A base can opt out of delayed variants via
+// `supportsDelayed: false`; it then produces only the 0s variant.
+// Used for modes where a delay doesn't pay for itself — e.g.
+// `capture-selection` (the user already made the selection before
+// clicking) or `capture-url` (the click's intent is "record *this*
+// URL"; a delayed version would just record a *different* URL if
+// the user navigated).
 //
 // Each base also carries a `group: 'primary' | 'more'` that decides
 // which section of the action menu surfaces its undelayed variant
@@ -183,6 +194,16 @@ interface BaseCaptureAction {
   baseTooltip: string;
   /** Menu placement for the undelayed variant (see `ActionGroup`). */
   group: ActionGroup;
+  /** When `false`, only the 0s variant is generated — no 2s / 5s
+   * entries show up anywhere. Defaults to `true`. */
+  supportsDelayed?: boolean;
+  /** Whether delayed variants appear in the "Capture with delay"
+   * submenu. Defaults to `group === 'primary'` — i.e. primary bases
+   * surface their delayed variants there, more-group bases don't.
+   * Setting `true` on a more-group base promotes its delayed
+   * variants up into Capture-with-delay while leaving the undelayed
+   * variant in the More submenu. */
+  showInDelayedSubmenu?: boolean;
   /** Runs the action with the given delay (ms). `delayMs === 0` is
    * the immediate / no-delay path. */
   run: (delayMs: number) => Promise<unknown>;
@@ -202,6 +223,10 @@ interface CaptureAction {
   /** Inherited from the base action — controls which menu section
    * this entry goes in. */
   group: ActionGroup;
+  /** Inherited from the base action's `showInDelayedSubmenu`.
+   * Non-zero-delay entries with this `true` appear in the
+   * "Capture with delay" submenu regardless of their `group`. */
+  showInDelayedSubmenu: boolean;
   /** 0 for immediate; >0 for a delayed variant. Used to slot the
    * entry into the right menu section. */
   delaySec: number;
@@ -224,6 +249,7 @@ async function captureUrlOnly(delayMs = 0): Promise<void> {
     capture: data,
     includeScreenshot: false,
     includeHtml: false,
+    includeSelection: false,
   });
 }
 
@@ -240,9 +266,12 @@ async function captureBoth(delayMs = 0): Promise<void> {
     capture: data,
     includeScreenshot: true,
     includeHtml: true,
+    includeSelection: false,
   });
 }
 
+// Array order is user-visible: within each delay row / group, menu
+// entries appear in the order their bases are declared here.
 const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-now',
@@ -270,6 +299,12 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTitle: 'Capture URL',
     baseTooltip: 'SeeWhatISee — Capture URL only\nDouble-click for capture with details',
     group: 'more',
+    // A URL capture is a trivially cheap log write, so the only
+    // thing a delay could change is the URL itself (user navigates
+    // mid-countdown). That's a surprising interaction — the click's
+    // intent is "record *this* URL" — and it's easy to reproduce
+    // intentionally by just opening the other page first.
+    supportsDelayed: false,
     run: (delayMs) => captureUrlOnly(delayMs),
   },
   {
@@ -277,7 +312,24 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTitle: 'Capture screenshot and HTML',
     baseTooltip: 'SeeWhatISee — Capture screenshot + HTML\nDouble-click for capture with details',
     group: 'more',
+    // Promote delayed variants up into the Capture-with-delay
+    // submenu (next to plain screenshot / HTML / details). The
+    // undelayed variant stays in More — this is still a slightly
+    // niche combo at 0s — but a delayed screenshot-AND-HTML is
+    // useful enough to surface alongside the primary delayed entries.
+    showInDelayedSubmenu: true,
     run: (delayMs) => captureBoth(delayMs),
+  },
+  {
+    baseId: 'capture-selection',
+    baseTitle: 'Capture selection',
+    baseTooltip: 'SeeWhatISee — Capture selected text\nDouble-click for capture with details',
+    group: 'more',
+    // The selection already exists when the user triggers the
+    // action; waiting doesn't help. Still bindable as the default
+    // click action at 0s via "Set default click action".
+    supportsDelayed: false,
+    run: (delayMs) => captureSelection(delayMs),
   },
 ];
 
@@ -308,17 +360,20 @@ function delayedTooltip(baseTooltip: string, delaySec: number): string {
   return rest.length > 0 ? `${delayed}\n${rest.join('\n')}` : delayed;
 }
 
-const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) =>
-  CAPTURE_DELAYS_SEC.map((delaySec) => ({
+const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) => {
+  const delays = base.supportsDelayed === false ? [0] : CAPTURE_DELAYS_SEC;
+  const showInDelayedSubmenu = base.showInDelayedSubmenu ?? base.group === 'primary';
+  return delays.map((delaySec) => ({
     id: delayedId(base.baseId, delaySec),
     title: delayedTitle(base.baseTitle, delaySec),
     tooltip: delayedTooltip(base.baseTooltip, delaySec),
     baseId: base.baseId,
     group: base.group,
+    showInDelayedSubmenu,
     delaySec,
     run: () => base.run(delaySec * 1000),
-  })),
-);
+  }));
+});
 
 function captureActionsWithDelay(delaySec: number, group?: ActionGroup): CaptureAction[] {
   return CAPTURE_ACTIONS.filter(
@@ -553,35 +608,37 @@ chrome.action.onClicked.addListener(handleActionClick);
 //   Take screenshot
 //   Save html contents
 //   Capture with details...
-//   Capture with delay  ▸              (submenu, primary-group bases only)
+//   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Take screenshot in 2s
 //       • Save html contents in 2s
 //       • Capture with details in 2s...
+//       • Capture screenshot and HTML in 2s
 //       ─────────
 //       • Take screenshot in 5s
 //       • Save html contents in 5s
 //       • Capture with details in 5s...
-//   Set default click action  ▸     (submenu, ✓ on selected; every base × delay)
+//       • Capture screenshot and HTML in 5s
+//   Set default click action  ▸     (submenu, ✓ on selected; every base × its delays)
 //       ✓ Take screenshot
 //         Save html contents
 //         Capture with details...
-//         Capture URL
+//         Capture URL                 (no delayed variants)
 //         Capture screenshot and HTML
+//         Capture selection           (no delayed variants)
 //       ─────────
 //         Take screenshot in 2s
 //         Save html contents in 2s
 //         Capture with details in 2s...
-//         Capture URL in 2s
 //         Capture screenshot and HTML in 2s
 //       ─────────
 //         Take screenshot in 5s
 //         Save html contents in 5s
 //         Capture with details in 5s...
-//         Capture URL in 5s
 //         Capture screenshot and HTML in 5s
 //   More  ▸                         (submenu)
 //       • Capture URL
 //       • Capture screenshot and HTML
+//       • Capture selection     (saves HTML of the page selection)
 //       ─────────
 //       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
 //       • Copy last HTML filename     (greyed unless latest record has HTML)
@@ -856,6 +913,10 @@ interface DetailsSession {
   downloads?: {
     screenshot?: { downloadId: number; editVersion: number; path: string };
     html?: { downloadId: number; path: string };
+    // Selection is content-stable for the session (no editing UI),
+    // so the cache is unconditional once populated — same shape and
+    // policy as `html`.
+    selection?: { downloadId: number; path: string };
   };
 }
 
@@ -911,7 +972,7 @@ interface GetDetailsMessage {
 interface EnsureDownloadedMessage {
   action: 'ensureDownloaded';
   /** Which artifact the page wants on disk and a path for. */
-  kind: 'screenshot' | 'html';
+  kind: 'screenshot' | 'html' | 'selection';
   /**
    * Page's monotonically-incrementing edit counter at the moment of
    * this request. Only meaningful for `kind === 'screenshot'`; the
@@ -932,6 +993,7 @@ interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
   html: boolean;
+  selection: boolean;
   prompt: string;
   /**
    * True when the user drew at least one highlight on the preview.
@@ -989,55 +1051,106 @@ async function saveDetailsSession(tabId: number, session: DetailsSession): Promi
 }
 
 /**
+ * Shared skeleton for the ensure*Downloaded helpers. All three (and
+ * any future ones) follow the same shape:
+ *
+ *   1. Load session.
+ *   2. Precondition check (optional) — throw if the capture
+ *      doesn't carry what the artifact needs.
+ *   3. Cache hit? Return the cached path immediately. The "is this
+ *      cache entry still valid?" decision is parameterized via
+ *      `getCachedPath` so the screenshot path can compare
+ *      `editVersion` and invalidate, while html/selection just
+ *      accept any existing entry.
+ *   4. Start the download + wait for it to complete.
+ *   5. Re-read the session and either (a) commit the new entry or
+ *      (b) defer to a newer entry another concurrent call wrote
+ *      while our download was in flight. `shouldCommit` lets the
+ *      screenshot branch override this when our version is still
+ *      as fresh as the committed one.
+ *   6. Return the on-disk path.
+ *
+ * Concurrency caveat: the read-modify-write on `session.downloads`
+ * is *not* atomic across artifacts. Two concurrent calls for
+ * *different* artifacts (e.g. screenshot + html completing close
+ * together) each re-read session independently, and the later
+ * writer can clobber the earlier one's just-committed entry. In
+ * practice the user latency between clicking Copy and clicking
+ * Capture (or drawing highlights) is orders of magnitude larger
+ * than download completion, so this window doesn't occur — but if
+ * the helper is ever used from a path that issues truly concurrent
+ * multi-artifact downloads, add a mutex here.
+ */
+async function ensureArtifactDownloaded<T extends { downloadId: number; path: string }>(
+  tabId: number,
+  options: {
+    /** Returns the path of a still-valid cached entry, or
+     * `undefined` to force a fresh download. */
+    getCachedPath: (session: DetailsSession) => string | undefined;
+    /** Throws if the session state can't support this artifact. */
+    precondition?: (session: DetailsSession) => void;
+    /** Start the actual download. */
+    startDownload: (capture: InMemoryCapture) => Promise<number>;
+    /** Build the cache entry object for the downloaded file. */
+    makeCacheEntry: (downloadId: number, path: string) => T;
+    /** Decide whether our just-completed download should win over a
+     * cache entry another concurrent call may have committed while
+     * we were waiting. For html/selection this is `!fresh`; for
+     * screenshot it's `!fresh || our editVersion >= fresh.editVersion`. */
+    shouldCommit: (fresh: T | undefined) => boolean;
+    /** Key under which to store the entry on session.downloads. */
+    downloadsKey: 'screenshot' | 'html' | 'selection';
+  },
+): Promise<string> {
+  const session = await requireDetailsSession(tabId);
+  if (options.precondition) options.precondition(session);
+
+  const cachedPath = options.getCachedPath(session);
+  if (cachedPath !== undefined) return cachedPath;
+
+  const downloadId = await options.startDownload(session.capture);
+  const path = await waitForDownloadComplete(downloadId);
+
+  const fresh = await requireDetailsSession(tabId);
+  const freshCached = fresh.downloads?.[options.downloadsKey] as T | undefined;
+  if (options.shouldCommit(freshCached)) {
+    fresh.downloads = {
+      ...(fresh.downloads ?? {}),
+      [options.downloadsKey]: options.makeCacheEntry(downloadId, path),
+    };
+    await saveDetailsSession(tabId, fresh);
+  }
+  return path;
+}
+
+/**
  * Materialize the screenshot file on disk if needed and return its
- * absolute on-disk path.
- *
- * Cache hit: same `editVersion` as the last download for this tab —
- * the page hasn't drawn / undone a highlight since, the on-disk file
- * still matches what the user is looking at, return the cached path.
- * The page-supplied `screenshotOverride` (if any) is dropped — by
- * contract, the page is required to send a PNG that matches the
- * `editVersion` it claims, so the bytes are guaranteed equivalent
- * to whatever's already on disk.
- *
- * Cache miss: download (with the user's current highlight-baked PNG
- * if `screenshotOverride` was sent), wait for the file to land,
- * stash the new `{ downloadId, editVersion, path }` so subsequent
- * requests with the same edit version short-circuit.
+ * absolute on-disk path. Cache key is `editVersion`: a change means
+ * the user drew / undid / cleared a highlight, so the on-disk PNG
+ * is stale and we re-download with the page's freshly baked-in
+ * override. Same-version reads hit the cache.
  *
  * Concurrency: a fast user clicking Copy → drawing → clicking Copy
  * again can interleave two in-flight downloads on the same tab. The
- * post-download write back to session storage re-reads the cache and
- * only commits if no newer `editVersion` got there first, so a slow
- * v1 download finishing after a fast v2 doesn't clobber v2's entry.
- * The wait-for-complete latency is the only window where this matters.
+ * `shouldCommit` predicate keeps a slow v1 download from clobbering
+ * a v2 entry that's already landed; the wait-for-complete latency
+ * is the only window where this matters.
  */
 async function ensureScreenshotDownloaded(
   tabId: number,
   editVersion: number,
   screenshotOverride: string | undefined,
 ): Promise<string> {
-  const session = await requireDetailsSession(tabId);
-  const cached = session.downloads?.screenshot;
-  if (cached && cached.editVersion === editVersion) return cached.path;
-
-  const downloadId = await downloadScreenshot(session.capture, screenshotOverride);
-  const path = await waitForDownloadComplete(downloadId);
-
-  // Re-read the session after the await: another concurrent
-  // `ensureScreenshotDownloaded` may have already cached a *newer*
-  // editVersion while we were waiting for the download to finish.
-  // Only write back if our editVersion is at least as fresh.
-  const fresh = await requireDetailsSession(tabId);
-  const freshCached = fresh.downloads?.screenshot;
-  if (!freshCached || editVersion >= freshCached.editVersion) {
-    fresh.downloads = {
-      ...(fresh.downloads ?? {}),
-      screenshot: { downloadId, editVersion, path },
-    };
-    await saveDetailsSession(tabId, fresh);
-  }
-  return path;
+  return ensureArtifactDownloaded(tabId, {
+    getCachedPath: (s) => {
+      const c = s.downloads?.screenshot;
+      return c && c.editVersion === editVersion ? c.path : undefined;
+    },
+    startDownload: (capture) => downloadScreenshot(capture, screenshotOverride),
+    makeCacheEntry: (downloadId, path) => ({ downloadId, editVersion, path }),
+    shouldCommit: (fresh) => !fresh || editVersion >= fresh.editVersion,
+    downloadsKey: 'screenshot',
+  });
 }
 
 /**
@@ -1046,23 +1159,37 @@ async function ensureScreenshotDownloaded(
  * (no editing UI), so the cache is unconditional once populated.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
-  const session = await requireDetailsSession(tabId);
-  if (session.downloads?.html) return session.downloads.html.path;
+  return ensureArtifactDownloaded(tabId, {
+    getCachedPath: (s) => s.downloads?.html?.path,
+    startDownload: downloadHtml,
+    makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
+    shouldCommit: (fresh) => !fresh,
+    downloadsKey: 'html',
+  });
+}
 
-  const downloadId = await downloadHtml(session.capture);
-  const path = await waitForDownloadComplete(downloadId);
-  // Same race protection as the screenshot path: another concurrent
-  // call may have cached an HTML download while we were waiting.
-  // If so, prefer the existing entry (HTML is content-stable for the
-  // session, so either path points at an equivalent file).
-  const fresh = await requireDetailsSession(tabId);
-  if (fresh.downloads?.html) return fresh.downloads.html.path;
-  fresh.downloads = {
-    ...(fresh.downloads ?? {}),
-    html: { downloadId, path },
-  };
-  await saveDetailsSession(tabId, fresh);
-  return path;
+/**
+ * Materialize the selection file on disk if needed and return its
+ * absolute on-disk path. Same unconditional-cache policy as the
+ * HTML helper — the selection never changes within a session (no
+ * editing UI on it). Throws when the capture carries no selection;
+ * callers should gate on `session.capture.selection` first (the
+ * page's checkbox + copy button are disabled in that case, so under
+ * normal use this is unreachable).
+ */
+async function ensureSelectionDownloaded(tabId: number): Promise<string> {
+  return ensureArtifactDownloaded(tabId, {
+    precondition: (s) => {
+      if (!s.capture.selection || !s.capture.selectionFilename) {
+        throw new Error('No selection was captured');
+      }
+    },
+    getCachedPath: (s) => s.downloads?.selection?.path,
+    startDownload: downloadSelection,
+    makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
+    shouldCommit: (fresh) => !fresh,
+    downloadsKey: 'selection',
+  });
 }
 
 chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
@@ -1076,10 +1203,22 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       // non-throwing `loadDetailsSession`, unlike the
       // `requireDetailsSession` call in `saveDetails`.
       const session = await loadDetailsSession(tabId);
-      // The page only needs the capture itself; paths come from
-      // the on-demand `ensureDownloaded` round-trip when a Copy
-      // button is clicked.
-      sendResponse(session?.capture);
+      if (!session) {
+        sendResponse(undefined);
+        return;
+      }
+      // Only forward the fields the page actually needs: the
+      // preview image, the captured URL, the HTML for byte
+      // counting, and a hasSelection flag so it can enable +
+      // default the Save selection checkbox. Selection HTML stays
+      // on the SW side. Paths come from the on-demand
+      // `ensureDownloaded` round-trip when a Copy button is clicked.
+      sendResponse({
+        screenshotDataUrl: session.capture.screenshotDataUrl,
+        html: session.capture.html,
+        url: session.capture.url,
+        hasSelection: !!session.capture.selection,
+      });
     })();
     return true;
   }
@@ -1087,14 +1226,18 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
   if (msg.action === 'ensureDownloaded') {
     void (async () => {
       try {
-        const path =
-          msg.kind === 'screenshot'
-            ? await ensureScreenshotDownloaded(
-                tabId,
-                msg.editVersion ?? 0,
-                msg.screenshotOverride,
-              )
-            : await ensureHtmlDownloaded(tabId);
+        let path: string;
+        if (msg.kind === 'screenshot') {
+          path = await ensureScreenshotDownloaded(
+            tabId,
+            msg.editVersion ?? 0,
+            msg.screenshotOverride,
+          );
+        } else if (msg.kind === 'html') {
+          path = await ensureHtmlDownloaded(tabId);
+        } else {
+          path = await ensureSelectionDownloaded(tabId);
+        }
         sendResponse({ path });
       } catch (err) {
         sendResponse({ error: err instanceof Error ? err.message : String(err) });
@@ -1122,10 +1265,14 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         if (msg.html) {
           await ensureHtmlDownloaded(tabId);
         }
+        if (msg.selection) {
+          await ensureSelectionDownloaded(tabId);
+        }
         await recordDetailedCapture({
           capture: session.capture,
           includeScreenshot: msg.screenshot,
           includeHtml: msg.html,
+          includeSelection: msg.selection,
           prompt: msg.prompt,
           hasHighlights: msg.highlights,
         });
@@ -1228,7 +1375,10 @@ async function installContextMenu(): Promise<void> {
         contexts: ['action'],
       });
     }
-    for (const action of captureActionsWithDelay(delaySec, 'primary')) {
+    const entries = CAPTURE_ACTIONS.filter(
+      (a) => a.delaySec === delaySec && a.showInDelayedSubmenu,
+    );
+    for (const action of entries) {
       chrome.contextMenus.create({
         id: action.id,
         parentId: DELAYED_PARENT_ID,
@@ -1465,11 +1615,14 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   captureBothToMemory,
   captureUrlOnly,
   captureBoth,
+  captureSelection,
   downloadScreenshot,
   downloadHtml,
+  downloadSelection,
   recordDetailedCapture,
   ensureScreenshotDownloaded,
   ensureHtmlDownloaded,
+  ensureSelectionDownloaded,
   startCaptureWithDetails,
   clearCaptureLog,
   openSnapshotsDirectory,

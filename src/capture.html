@@ -8,6 +8,14 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 24px;
     color: #222;
+    /*
+     * Hidden at first paint. capture-page.ts flips visibility back
+     * to `visible` inside loadData once all fields (URL, HTML size,
+     * preview image, Save selection state) have been populated.
+     * Avoids the user watching values fill in one at a time during
+     * the SW round-trip.
+     */
+    visibility: hidden;
   }
   header {
     display: flex;
@@ -51,7 +59,7 @@
   .checkboxes {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
   }
   .checkbox-row {
     display: flex;
@@ -82,6 +90,15 @@
     background: #eee;
     border-color: #bbb;
     color: #222;
+  }
+  /*
+   * Disabled Copy button (e.g. Save selection with no selection
+   * captured): hide outright rather than greying. A greyed icon
+   * still reacts to hover via the shared rule above, which reads
+   * as a dead control.
+   */
+  .copy-btn:disabled {
+    display: none;
   }
   .copy-btn svg {
     width: 14px;
@@ -226,6 +243,22 @@
         <button type="button" class="copy-btn" id="copy-html-name"
                 title="Copy HTML filename"
                 aria-label="Copy HTML filename">
+          <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
+      </div>
+      <!--
+        Default state is disabled + unchecked. capture-page.ts's
+        loadData() flips these on when the SW reports a captured
+        selection via its `getDetailsData` response. The body as a
+        whole stays `visibility: hidden` until loadData resolves,
+        so the user never sees this row in its disabled-default
+        state during the SW round-trip.
+      -->
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="cap-selection" disabled> Save selectio<u>n</u></label>
+        <button type="button" class="copy-btn" id="copy-selection-name"
+                title="Copy selection filename"
+                aria-label="Copy selection filename" disabled>
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
       </div>

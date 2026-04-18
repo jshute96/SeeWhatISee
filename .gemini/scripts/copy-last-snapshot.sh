@@ -41,12 +41,15 @@ LATEST_LINE=$(tail -1 "$LOG_JSON")
 # Copy referenced files into TARGET_DIR
 CONTENTS=$(echo "$LATEST_LINE" | grep -oP '"contents":\s*"\K[^"]+' || true)
 SCREENSHOT=$(echo "$LATEST_LINE" | grep -oP '"screenshot":\s*"\K[^"]+' || true)
+SELECTION=$(echo "$LATEST_LINE" | grep -oP '"selection":\s*"\K[^"]+' || true)
 [ -n "$CONTENTS" ] && [ -f "$SRC_DIR/$CONTENTS" ] && cp "$SRC_DIR/$CONTENTS" "$TARGET_DIR/"
 [ -n "$SCREENSHOT" ] && [ -f "$SRC_DIR/$SCREENSHOT" ] && cp "$SRC_DIR/$SCREENSHOT" "$TARGET_DIR/"
+[ -n "$SELECTION" ] && [ -f "$SRC_DIR/$SELECTION" ] && cp "$SRC_DIR/$SELECTION" "$TARGET_DIR/"
 
 # Output JSON with bare filenames replaced by absolute paths into TARGET_DIR.
 # Same approach as absolutize_paths in plugin/scripts/_common.sh, but
 # rewriting to TARGET_DIR (the copy destination) rather than SRC_DIR (the source).
 echo "$LATEST_LINE" | \
   sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$TARGET_DIR/\\1\"|" \
-      -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$TARGET_DIR/\\1\"|"
+      -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$TARGET_DIR/\\1\"|" \
+      -e "s|\"selection\": *\"\\([^/][^\"]*\\)\"|\"selection\": \"$TARGET_DIR/\\1\"|"

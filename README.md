@@ -26,6 +26,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
+    - **Capture selection** — Saves the HTML of the currently selected text.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
@@ -43,10 +44,9 @@ Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submi
 On this page, you can:
 
 - See the page URL and HTML size.
-- Pick whether to save the screenshot and the HTML snapshot.
-  - With neither checked, you can still capture and send the URL,
-    without page contents.
-- Copy their filenames to the clipboard with the copy icon.
+- Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
+  - With none of these checked, you can still capture the URL.
+- Copy saved filenames to the clipboard with the copy icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
@@ -131,6 +131,7 @@ Each capture writes two files into that directory:
   - `url`
   - `screenshot` — PNG filename, when a screenshot was saved.
   - `contents` — HTML filename, when HTML was saved.
+  - `selection` — HTML filename, when the selection was saved.
   - `prompt` — user prompt from the "Capture with details…" flow.
   - `highlights: true` — when the saved PNG includes user-drawn highlights.
 

@@ -15,7 +15,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 2. **On completion.** When the background task completes, check its exit code:
   - **Non-zero exit (killed / error):** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
   - **Exit 0 (success — a capture arrived):**
-    1. Read the task's captured stdout to get the JSON record(s). The JSON has absolute paths already filled in for `screenshot` and `contents`.
+    1. Read the task's captured stdout to get the JSON record(s). The JSON has absolute paths already filled in for `screenshot`, `contents`, and `selection`.
     2. Process each record as described below.
     3. Immediately launch the next iteration: run `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh --after <timestamp>` again with `run_in_background: true` (no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures added before we restarted; if any captures are reported on the next run, process each the same way.
 
@@ -28,19 +28,24 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
   - `highlights` — `true` when the screenshot has user-drawn red markup baked
     into it (boxes and/or lines calling attention to specific regions
     of the image).
-  - `contents` — absolute path to an HTML file.
+  - `contents` — absolute path to an HTML file (whole-page snapshot).
+  - `selection` — absolute path to an HTML file containing just the
+    user's page selection at capture time (text and HTML).
   - `prompt` — the user's instruction for this capture (if present)
 
-  A record may have `screenshot`, `contents`, both, or neither — in the
-  neither case, the URL (and optional prompt) is the whole payload.
+  A record may have any subset of `screenshot` / `contents` / `selection`,
+  or none — in the none case, the URL (and optional prompt) is the whole
+  payload.
   **Look at any referenced files only. Don't go fishing for others unless asked to.**
 
 2. Process the capture:
   - If `screenshot` is present, Read it with the Read tool.
     - **If `highlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't Read it up front (HTML can be large); wait until you know what to look for.
-  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot, HTML, and/or `url` as the subject of that instruction. If no screenshot or HTML was saved, the `url` is what the prompt is about.
+  - If `selection` is present, don't Read it until you know what to look for.
+  - **If `prompt` is present, treat it as the user's instruction for this capture and act on it directly.** Use the screenshot, HTML, selection, and/or `url` as the subject of that instruction. If no files were saved, the `url` is what the prompt is about.
   - If `prompt` is absent:
     - For screenshots, briefly describe what you see and mention the source `url`. When `highlights` is `true`, lead with what's highlighted.
     - For HTML-only captures, report that you have an HTML snapshot from the source `url` and ask the user what they want to know.
-    - For URL-only captures (no screenshot, no HTML), report the `url` and ask the user what they want to know about it.
+    - For selection-only captures, quote or summarize the selected fragment and mention the source `url`.
+    - For URL-only captures (no files), report the `url` and ask the user what they want to know about it.
