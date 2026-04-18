@@ -39,3 +39,13 @@ user before elaborating further. Default to action over planning.
 - When the user asks for a change, apply it consistently to ALL similar patterns.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
+
+## Keep the skill/command files in sync
+
+These skill and command files describe the same `log.json` outputs and the
+same steps to take for each. Keep the instructions consistent across these
+files, including formatting, so diffs only show intentional differences.
+
+- `plugin/skills/see-what-i-see/SKILL.md`
+- `plugin/skills/see-what-i-see-watch/SKILL.md`
+- `.gemini/commands/see-what-i-see.toml`

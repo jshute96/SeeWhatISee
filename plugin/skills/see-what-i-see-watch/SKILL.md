@@ -23,23 +23,19 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 
 ## Process each snapshot
 
-1. You have a JSON record for this capture. It contains `{timestamp, url}` plus any of:
+1. The JSON record contains `{timestamp, url}` plus any of:
   - `screenshot` — absolute path to a PNG file.
-  - `highlights` — `true` when the screenshot has user-drawn red markup baked
-    into it (boxes and/or lines calling attention to specific regions
-    of the image).
+  - `highlights` — `true` when the screenshot has user-drawn red markup baked into it (boxes and/or lines calling attention to specific regions of the image).
   - `contents` — absolute path to an HTML file (whole-page snapshot).
-  - `selection` — absolute path to an HTML file containing just the
-    user's page selection at capture time (text and HTML).
-  - `prompt` — the user's instruction for this capture (if present)
+  - `selection` — absolute path to an HTML file containing just the user's page selection at capture time (text and HTML).
+  - `prompt` — the user's instruction for this capture.
 
-  A record may have any subset of `screenshot` / `contents` / `selection`,
-  or none — in the none case, the URL (and optional prompt) is the whole
-  payload.
-  **Look at any referenced files only. Don't go fishing for others unless asked to.**
+  A record may have any subset of `screenshot` / `contents` / `selection`, or none — in the none case, the URL (and optional prompt) is the whole payload.
+
+  **Look at referenced files only. Don't go fishing for others unless asked to.**
 
 2. Process the capture:
-  - If `screenshot` is present, Read it with the Read tool.
+  - If `screenshot` is present, Read it.
     - **If `highlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't Read it up front (HTML can be large); wait until you know what to look for.
   - If `selection` is present, don't Read it until you know what to look for.
