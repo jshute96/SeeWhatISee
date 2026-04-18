@@ -17,18 +17,19 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
-  - **Capture with details…** opens a review page (see below).
+  - **Capture with details…** Opens a review page (see below).
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Choose which action to apply
     when clicking the icon.
     - If you choose another default single-click action, double-click will open *Capture with details*.
   - **More ▸**
-    - **Snapshots directory** — opens the on-disk capture directory
-      (`~/Downloads/SeeWhatISee/`) in a new tab so you can browse the
-      saved files.
-    - **Clear log history** — erases the `log.json` history of previous snapshots.
-      The screenshot files are still saved in your Downloads folder.
+    - **Copy last screenshot filename** — Copies filename to clipboard.
+    - **Copy last HTML filename** — Copies filename to clipboard.
+    - **Snapshots directory** — Opens the on-disk capture directory
+      (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
+    - **Clear log history** — Erases the `log.json` history of previous snapshots.
+      Screenshot files are still saved in your Downloads folder.
 
 #### Capturing with details
 

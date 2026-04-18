@@ -4,7 +4,7 @@
   "version": "0.1.1",
   "description": "Share a screenshot with your coding agent in a single click! (For Claude, Gemini, etc.)",
   "homepage_url": "https://github.com/jshute96/SeeWhatISee",
-  "permissions": ["activeTab", "contextMenus", "downloads", "scripting", "storage"],
+  "permissions": ["activeTab", "clipboardWrite", "contextMenus", "downloads", "offscreen", "scripting", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

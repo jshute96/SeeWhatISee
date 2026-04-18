@@ -41,6 +41,11 @@ await cp(resolve(root, 'src/manifest.json'), resolve(dist, 'manifest.json'));
 //     picked up by tsc along with the rest of src/.
 await cp(resolve(root, 'src/capture.html'), resolve(dist, 'capture.html'));
 
+// 3c. Copy the offscreen-document HTML into dist/. The accompanying
+//     TypeScript (src/offscreen.ts) is picked up by tsc; the HTML
+//     just hosts a <script> tag pointing at the compiled offscreen.js.
+await cp(resolve(root, 'src/offscreen.html'), resolve(dist, 'offscreen.html'));
+
 // 4. Run tsc. Watch mode keeps tsc running until the user Ctrl-C's; we
 //    await its exit so signals route through the build script and a spawn
 //    failure surfaces as a non-zero exit instead of being silently

@@ -52,7 +52,7 @@ async function countdownSleep(delayMs: number): Promise<void> {
   });
 }
 
-const LOG_STORAGE_KEY = 'captureLog';
+export const LOG_STORAGE_KEY = 'captureLog';
 // Cap the in-storage log so we don't grow unbounded and so rewriting
 // log.json on every capture stays cheap (otherwise it's quadratic in the
 // number of captures: each write copies the whole log). Oldest entries

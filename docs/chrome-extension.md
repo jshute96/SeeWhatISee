@@ -377,8 +377,9 @@ promising — the main issue was the `onActivated` restore logic.
   - Our action menu currently has 6 top-level entries — three
     undelayed capture actions, the "Capture with delay" submenu
     parent, the "Set default click action" submenu parent, and the
-    "More" submenu parent (which hosts "Snapshots directory" and
-    "Clear log history"). This
+    "More" submenu parent (which hosts "Copy last screenshot filename",
+    "Copy last HTML filename", "Snapshots directory", and "Clear log
+    history"). This
     is **at the cap** — any further top-level addition will drop an
     existing entry. Nest new utilities under "More".
 

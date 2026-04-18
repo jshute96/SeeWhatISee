@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>SeeWhatISee — Offscreen</title>
+  </head>
+  <body>
+    <!--
+      Offscreen document used solely as a clipboard target.
+
+      MV3 service workers can't call `navigator.clipboard.writeText()`
+      (no DOM, and `navigator.clipboard` isn't exposed on the SW global),
+      so the background service worker spins up this hidden page on
+      demand, posts the text to copy as a runtime message, and the
+      handler in offscreen.js writes it via a temporary <textarea> +
+      `document.execCommand('copy')`.
+  
+      Loaded as a classic script (no `type="module"`). Module scripts
+      defer like `<script defer>`, so the runtime listener wouldn't be
+      registered until *after* the page's load event. The SW resolves
+      `chrome.offscreen.createDocument` around the load event and
+      immediately tries to send a message, which a deferred listener
+      misses (no listener → `sendMessage` resolves with undefined).
+      Classic scripts run synchronously during parsing, so the
+      listener is in place by the time `createDocument` resolves.
+      The compiled `offscreen.js` has no top-level imports/exports,
+      so it works as a classic script unchanged.
+    -->
+    <script src="offscreen.js"></script>
+  </body>
+</html>

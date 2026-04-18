@@ -3,8 +3,10 @@ import {
   captureVisible,
   clearCaptureLog,
   DOWNLOAD_SUBDIR,
+  LOG_STORAGE_KEY,
   saveDetailedCapture,
   savePageContents,
+  type CaptureRecord,
   type InMemoryCapture,
 } from './capture.js';
 
@@ -497,6 +499,9 @@ chrome.action.onClicked.addListener(handleActionClick);
 //         Save html contents in 5s
 //         Capture with details in 5s...
 //   More  ▸                         (submenu)
+//       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
+//       • Copy last HTML filename     (greyed unless latest record has HTML)
+//       ─────────
 //       • Snapshots directory
 //       ─────────
 //       • Clear log history
@@ -534,35 +539,129 @@ chrome.action.onClicked.addListener(handleActionClick);
 const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the "Snapshots directory" entry under the More submenu.
 const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
+// Ids for the "Copy last …" entries at the top of the More submenu.
+// Their enabled state mirrors whether the most recent capture record
+// carries the matching field (`screenshot` / `contents`); see
+// `refreshCopyMenuState`.
+const COPY_LAST_SCREENSHOT_MENU_ID = 'copy-last-screenshot';
+const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
 
 /**
- * Open the on-disk capture directory (`<downloads>/SeeWhatISee/`) in a
- * new tab as a `file://` URL so the user can browse the saved
- * screenshots / HTML / `log.json`.
- *
- * The user's downloads root is OS- and config-dependent and there's no
- * Chrome API that returns it directly, so we derive it from one of our
- * own captures: `chrome.downloads.search` reports the absolute on-disk
- * path of any prior `log.json` write, which we strip to its parent.
- *
- * If no capture has happened yet, the directory doesn't exist and we
- * have no path to point at — throw a clear error that surfaces through
- * the icon/tooltip error channel so the user knows to capture once first.
+ * Read the most recent capture record from chrome.storage.local. Used
+ * to drive both the Copy-last-… menu enable state and the actual copy
+ * action when one is clicked.
  */
-async function openSnapshotsDirectory(): Promise<void> {
-  // Resolve the directory by searching for our `log.json` record.
-  // Every capture overwrites `<downloads>/SeeWhatISee/log.json` (see
-  // `writeJsonFile` in capture.ts), so the most recent matching record
-  // points at the live directory — even on a fresh extension load
-  // where the in-memory state is empty. Pinning the search to `log.json`
-  // (rather than any file in a `SeeWhatISee/` folder) avoids false
-  // matches against unrelated user files in same-named directories
-  // (e.g. `/tmp/SeeWhatISee/...`).
-  //
-  // `chrome.downloads.search`'s `DownloadQuery` doesn't accept
-  // `byExtensionId` as a filter — it's a result-only field — so the
-  // check happens client-side as a second guard against a
-  // manually-saved `log.json` happening to share the path shape.
+async function getLatestCaptureRecord(): Promise<CaptureRecord | undefined> {
+  const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
+  const log = (data[LOG_STORAGE_KEY] as CaptureRecord[] | undefined) ?? [];
+  return log[log.length - 1];
+}
+
+/**
+ * Toggle `enabled` on the two Copy-last-… menu entries to match the
+ * most recent capture record. Called on install/startup, and from a
+ * `chrome.storage.onChanged` listener so every capture (and the Clear
+ * log history action) refreshes the state without explicit plumbing
+ * between capture.ts and background.ts.
+ *
+ * `chrome.contextMenus.update` rejects if the menu isn't installed yet
+ * — harmless during the first install pass before the items have been
+ * created — so we swallow the error.
+ */
+async function refreshCopyMenuState(): Promise<void> {
+  const r = await getLatestCaptureRecord();
+  // Same suppression pattern as `setDefaultClickActionId`: updating a
+  // not-yet-created menu id throws `No item with id "…"`; harmless
+  // during first install before the items exist.
+  try {
+    await chrome.contextMenus.update(COPY_LAST_SCREENSHOT_MENU_ID, {
+      enabled: !!r?.screenshot,
+    });
+  } catch {
+    /* menu not installed yet */
+  }
+  try {
+    await chrome.contextMenus.update(COPY_LAST_HTML_MENU_ID, {
+      enabled: !!r?.contents,
+    });
+  } catch {
+    /* menu not installed yet */
+  }
+}
+
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+
+/**
+ * Copy `text` to the system clipboard via an offscreen document.
+ *
+ * MV3 service workers have no DOM and don't expose `navigator.clipboard`,
+ * so we host a hidden offscreen page (`offscreen.html` + `offscreen.ts`)
+ * whose only job is to do the copy via `document.execCommand('copy')`
+ * on a temporary <textarea>.
+ *
+ * The document is created on demand and **kept alive** for the SW
+ * lifetime. We deliberately don't close it after each copy:
+ *   - Closing creates a race against a second concurrent copy — the
+ *     teardown from call A would tear out the document call B is
+ *     still mid-message on, and B sees `undefined` (no listener).
+ *   - The page is hidden and holds only a single message listener,
+ *     so the resource cost is negligible.
+ *   - When the SW idles out, Chrome tears down the document with it,
+ *     so we don't leak past an SW lifetime either.
+ *
+ * `createDocument` rejects if the document already exists; we
+ * try-catch and reuse rather than calling `hasDocument()` first to
+ * keep the *creation* step race-free against a second concurrent
+ * copy that arrives while creation is in flight.
+ */
+async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_DOCUMENT_PATH,
+      reasons: [chrome.offscreen.Reason.CLIPBOARD],
+      justification: 'Copy capture filename to the clipboard.',
+    });
+  } catch (err) {
+    // "Only a single offscreen document may be created" — fine, reuse.
+    if (!(err instanceof Error) || !err.message.includes('Only a single offscreen document')) {
+      throw err;
+    }
+  }
+  const response = (await chrome.runtime.sendMessage({
+    target: 'offscreen-copy',
+    text,
+  })) as { ok?: boolean; error?: string } | undefined;
+  // Distinguish "no listener responded" from "listener responded but
+  // execCommand returned false" — the two failure modes have very
+  // different fixes (loader timing vs. browser policy / focus).
+  if (response === undefined) {
+    throw new Error('Offscreen document did not respond (listener not registered yet?)');
+  }
+  if (!response.ok) {
+    throw new Error(`Clipboard copy rejected${response.error ? `: ${response.error}` : ''}`);
+  }
+}
+
+/**
+ * Resolve the absolute on-disk directory where this extension writes
+ * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
+ * is OS- and config-dependent and not exposed by any Chrome API, so we
+ * derive it by searching `chrome.downloads.search` for our `log.json`
+ * record (every capture overwrites it, so the most recent match points
+ * at the live directory — even on a fresh SW load where in-memory
+ * state is empty).
+ *
+ * - Pinning the search to `log.json` rather than any file under a
+ *   `SeeWhatISee/` folder avoids false matches in same-named
+ *   directories the user happens to use (e.g. `/tmp/SeeWhatISee/`).
+ * - `byExtensionId` is checked client-side (the `DownloadQuery` type
+ *   doesn't accept it as a filter — it's a result-only field) as a
+ *   second guard against an unrelated `log.json` in such a folder.
+ *
+ * Throws when no capture has happened yet so the caller can surface
+ * a "capture once first" message via the icon/tooltip error channel.
+ */
+async function getCaptureDirectory(): Promise<string> {
   const candidates = await chrome.downloads.search({
     filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
     orderBy: ['-startTime'],
@@ -577,12 +676,55 @@ async function openSnapshotsDirectory(): Promise<void> {
   // Strip the basename. `chrome.downloads.search().filename` is
   // documented to be the absolute path to a file (never ends in a
   // separator), so this always trims one segment.
-  const dir = fullPath.replace(/[/\\][^/\\]+$/, '');
-  // Build a properly-encoded file:// URL. Normalize Windows
-  // backslashes to forward slashes, prepend a leading `/` for Windows
-  // paths like `C:/Users/…` so the URL parser sees an absolute path,
-  // and let `new URL` percent-encode anything weird (spaces in user
-  // names, `#`, `?`, non-ASCII characters).
+  return fullPath.replace(/[/\\][^/\\]+$/, '');
+}
+
+/**
+ * Join `dir` and `name` using whichever separator `dir` already uses.
+ * `chrome.downloads.search` returns OS-native paths — backslashes on
+ * Windows, forward slashes elsewhere — so reusing the existing
+ * separator keeps the result paste-ready in the user's OS shell /
+ * file manager.
+ */
+function joinCapturePath(dir: string, name: string): string {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return `${dir}${sep}${name}`;
+}
+
+// The `if (!r) ...` / `if (!r.screenshot) ...` branches below are
+// defensive — under normal use the menu items are greyed out (so the
+// click can't fire), but the user can still hit a small race window
+// if they Clear log history (or it gets cleared) between the
+// `refreshCopyMenuState` storage callback firing and Chrome rendering
+// the new enabled state. Splitting the two messages keeps the
+// "Last error: …" tooltip line legible in either case.
+async function copyLastScreenshotFilename(): Promise<void> {
+  const r = await getLatestCaptureRecord();
+  if (!r) throw new Error('No captures in the log to copy from');
+  if (!r.screenshot) throw new Error('Latest capture has no screenshot to copy');
+  const dir = await getCaptureDirectory();
+  await copyToClipboard(joinCapturePath(dir, r.screenshot));
+}
+
+async function copyLastHtmlFilename(): Promise<void> {
+  const r = await getLatestCaptureRecord();
+  if (!r) throw new Error('No captures in the log to copy from');
+  if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
+  const dir = await getCaptureDirectory();
+  await copyToClipboard(joinCapturePath(dir, r.contents));
+}
+
+/**
+ * Open the on-disk capture directory in a new tab as a `file://` URL
+ * so the user can browse the saved screenshots / HTML / `log.json`.
+ */
+async function openSnapshotsDirectory(): Promise<void> {
+  const dir = await getCaptureDirectory();
+  // Build a properly-encoded file:// URL. Normalize Windows backslashes
+  // to forward slashes, prepend a leading `/` for Windows paths like
+  // `C:/Users/…` so the URL parser sees an absolute path, and let
+  // `new URL` percent-encode anything weird (spaces in user names,
+  // `#`, `?`, non-ASCII characters).
   const normalized = dir.replace(/\\/g, '/');
   const fileUrl = new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
   await chrome.tabs.create({ url: fileUrl });
@@ -871,6 +1013,30 @@ async function installContextMenu(): Promise<void> {
     title: 'More',
     contexts: ['action'],
   });
+  // The Copy-last-… entries are created `enabled: false` and flipped
+  // on by `refreshCopyMenuState()` once we've checked the latest
+  // record. That avoids a brief flash of "enabled but does nothing"
+  // on the first install / after a Clear log history.
+  chrome.contextMenus.create({
+    id: COPY_LAST_SCREENSHOT_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Copy last screenshot filename',
+    enabled: false,
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
+    id: COPY_LAST_HTML_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Copy last HTML filename',
+    enabled: false,
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
+    id: `${MORE_PARENT_ID}-sep-copy`,
+    parentId: MORE_PARENT_ID,
+    type: 'separator',
+    contexts: ['action'],
+  });
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,
@@ -889,6 +1055,10 @@ async function installContextMenu(): Promise<void> {
     title: 'Clear log history',
     contexts: ['action'],
   });
+
+  // After all entries exist, sync the Copy-last-… enable state to
+  // whatever the most recent capture record looks like.
+  await refreshCopyMenuState();
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -914,6 +1084,17 @@ chrome.runtime.onInstalled.addListener(() => {
 // sync (e.g. a storage write that raced the previous shutdown).
 chrome.runtime.onStartup.addListener(() => {
   void refreshActionTooltip();
+  void refreshCopyMenuState();
+});
+
+// React to capture-log changes so the Copy-last-… menu entries
+// flip enabled state without explicit plumbing from capture.ts.
+// Covers every code path that mutates the log: each capture's
+// `appendToLog`, and `clearCaptureLog` (which removes the key).
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[LOG_STORAGE_KEY]) {
+    void refreshCopyMenuState();
+  }
 });
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
@@ -962,6 +1143,19 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     return;
   }
 
+  // Copy the latest screenshot / HTML filename to the clipboard. The
+  // menu entries are greyed when the latest record doesn't carry the
+  // matching field, so under normal operation these calls always have
+  // something to copy.
+  if (id === COPY_LAST_SCREENSHOT_MENU_ID) {
+    await runWithErrorReporting(() => copyLastScreenshotFilename());
+    return;
+  }
+  if (id === COPY_LAST_HTML_MENU_ID) {
+    await runWithErrorReporting(() => copyLastHtmlFilename());
+    return;
+  }
+
   // Fallthrough: a click on a menu item we don't recognize.
   // Shouldn't happen in the current menu, but if a future
   // contextMenus.create call adds an id without a matching branch
@@ -985,6 +1179,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   startCaptureWithDetails,
   clearCaptureLog,
   openSnapshotsDirectory,
+  copyLastScreenshotFilename,
+  copyLastHtmlFilename,
   reportCaptureError,
   clearCaptureError,
   runWithErrorReporting,

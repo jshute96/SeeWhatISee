@@ -120,6 +120,29 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   - **More ▸** — submenu home for infrequent utilities that would
     otherwise crowd out primary capture entries at the top level.
+    - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
+      most recent capture's screenshot or HTML file's *absolute on-disk
+      path* to the clipboard.
+      - Path is built by `joinCapturePath(getCaptureDirectory(), filename)`
+        — same directory-resolution helper that powers
+        **Snapshots directory**. The separator (`/` vs `\`) reuses
+        whatever `getCaptureDirectory` returned so the result is
+        OS-native and paste-ready in a shell or file manager.
+      - Each entry is greyed out (`enabled: false`) when the most recent
+        record in `chrome.storage.local` doesn't carry the matching
+        field. A storage `onChanged` listener on `LOG_STORAGE_KEY` keeps
+        the enable state in sync after every capture and after Clear log
+        history (no plumbing from `capture.ts` to `background.ts`).
+      - Clipboard write goes through an offscreen document
+        (`offscreen.html` + `offscreen.ts`) because MV3 service workers
+        can't access `navigator.clipboard`. The document is created on
+        demand, posted a one-shot message, and torn down afterward.
+        The offscreen page loads its script as a *classic* (non-module)
+        script so the message listener registers synchronously during
+        HTML parsing — `type="module"` would defer registration past
+        the load event and the SW's immediate `sendMessage` would
+        arrive with no listener registered. `clipboardWrite` and
+        `offscreen` permissions are declared in the manifest.
     - **Snapshots directory** — opens the on-disk capture directory in a new tab.
       - URL is `file://<downloads>/SeeWhatISee/`.
       - The downloads root is OS- / config-dependent and not exposed
