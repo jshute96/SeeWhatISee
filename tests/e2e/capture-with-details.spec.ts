@@ -820,3 +820,168 @@ test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
   expect(titles.c).toBe('SeeWhatISee — Save HTML contents\nDouble-click for capture with details');
   expect(titles.d).toBe('SeeWhatISee — Capture with details\nDouble-click for screenshot');
 });
+
+// ─── Copy-filename buttons on the capture page ────────────────────
+//
+// The two icon buttons on capture.html copy the absolute on-disk
+// path of the screenshot / HTML file *that will be written* once the
+// user clicks Capture. The path is resolved in the SW's
+// `getDetailsData` handler via `getCaptureDirectory()` +
+// `joinCapturePath`. When the directory can't be resolved (no prior
+// capture), the page disables the buttons.
+//
+// In this Playwright fixture, real downloads land under UUID basenames
+// in a temp directory rather than at the requested
+// `SeeWhatISee/<filename>` path, so `getCaptureDirectory`'s regex
+// (`SeeWhatISee/log.json$`) never matches anything in
+// `chrome.downloads.search` — meaning the page would always disable
+// the buttons. To exercise the production path, this test stubs
+// `chrome.downloads.search` to return a synthetic record matching the
+// regex, with `byExtensionId` set to our own runtime id (which the
+// client-side filter checks). The stub is restored in `finally`.
+
+test('details: copy buttons put paths on the clipboard, files appear after Capture', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Stub chrome.downloads.search so getCaptureDirectory resolves a
+  // synthetic absolute directory. Installed *before* openDetailsFlow
+  // because the page sends `getDetailsData` on load, which triggers
+  // `getCaptureDirectory` once.
+  const FAKE_DIR = '/tmp/sw-test-fake/SeeWhatISee';
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate((fakeDir) => {
+    interface SpyState { __seeSearchOrig?: typeof chrome.downloads.search }
+    const g = self as unknown as SpyState;
+    g.__seeSearchOrig ??= chrome.downloads.search.bind(chrome.downloads);
+    (chrome.downloads as { search: typeof chrome.downloads.search }).search = (async (q: chrome.downloads.DownloadQuery) => {
+      const isOurQuery =
+        typeof q.filenameRegex === 'string' &&
+        q.filenameRegex.includes('SeeWhatISee') &&
+        q.filenameRegex.includes('log');
+      if (isOurQuery) {
+        return [
+          {
+            id: 999999,
+            filename: `${fakeDir}/log.json`,
+            byExtensionId: chrome.runtime.id,
+          } as unknown as chrome.downloads.DownloadItem,
+        ];
+      }
+      return g.__seeSearchOrig!(q);
+    }) as typeof chrome.downloads.search;
+  }, FAKE_DIR);
+
+  // Always restore — leaving the stub in place would corrupt sibling
+  // tests that touch `chrome.downloads.search`.
+  const restoreSearch = async () => {
+    const sw = await getServiceWorker();
+    await sw.evaluate(() => {
+      interface SpyState { __seeSearchOrig?: typeof chrome.downloads.search }
+      const g = self as unknown as SpyState;
+      if (g.__seeSearchOrig) {
+        (chrome.downloads as { search: typeof chrome.downloads.search }).search =
+          g.__seeSearchOrig;
+        delete g.__seeSearchOrig;
+      }
+    });
+  };
+
+  let openerPage: Page;
+  let capturePage: Page;
+  try {
+    ({ openerPage, capturePage } = await openDetailsFlow(
+      extensionContext,
+      fixtureServer,
+      getServiceWorker,
+    ));
+  } catch (err) {
+    await restoreSearch();
+    throw err;
+  }
+  try {
+
+    // Spy on `navigator.clipboard.writeText` so we can read what each
+    // Copy click would put on the clipboard without needing to grant
+    // clipboard-read permission to the test context (which would
+    // additionally require user activation to actually read back).
+    await capturePage.evaluate(() => {
+      interface SpyState { __seeClip?: string[] }
+      const g = self as unknown as SpyState;
+      g.__seeClip = [];
+      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+      navigator.clipboard.writeText = async (text: string) => {
+        g.__seeClip!.push(text);
+        return orig(text);
+      };
+    });
+
+    // Both buttons should be enabled — the search stub gave the page
+    // a directory-bearing path, not a bare filename.
+    await expect(capturePage.locator('#copy-screenshot-name')).toBeEnabled();
+    await expect(capturePage.locator('#copy-html-name')).toBeEnabled();
+
+    await capturePage.locator('#copy-screenshot-name').click();
+    await capturePage.locator('#copy-html-name').click();
+
+    const writes = await capturePage.evaluate(
+      () => (self as unknown as { __seeClip: string[] }).__seeClip,
+    );
+    expect(writes).toHaveLength(2);
+    // Each write should be a full absolute path inside our fake dir,
+    // ending in the expected basename pattern.
+    expect(writes[0]).toMatch(
+      new RegExp(`^${FAKE_DIR}/screenshot-\\d{8}-\\d{6}-\\d{3}\\.png$`),
+    );
+    expect(writes[1]).toMatch(
+      new RegExp(`^${FAKE_DIR}/contents-\\d{8}-\\d{6}-\\d{3}\\.html$`),
+    );
+
+    const screenshotBasename = writes[0].split('/').pop()!;
+    const htmlBasename = writes[1].split('/').pop()!;
+
+    // Both Copy clicks resolve against the *same* pinned timestamp
+    // (set in `captureBothToMemory` and reused by `saveDetailedCapture`),
+    // so the two artifacts share a basename suffix — the production
+    // guarantee that one detailed-capture writes a matched pair.
+    const screenshotSuffix = screenshotBasename.replace(/^screenshot-/, '').replace(/\.png$/, '');
+    const htmlSuffix = htmlBasename.replace(/^contents-/, '').replace(/\.html$/, '');
+    expect(screenshotSuffix).toBe(htmlSuffix);
+
+    // Files don't exist yet — the page hasn't sent `saveDetails`. The
+    // download spy installed by `openDetailsFlow` records every
+    // download since this test's spy reset, so neither basename
+    // should appear in it before Save.
+    const sw = await getServiceWorker();
+    const downloadsBefore = await sw.evaluate(() => {
+      interface SpyState { __seeDl?: { id: number; name: string }[] }
+      return (self as unknown as SpyState).__seeDl ?? [];
+    });
+    expect(downloadsBefore.find((d) => d.name.endsWith(screenshotBasename))).toBeUndefined();
+    expect(downloadsBefore.find((d) => d.name.endsWith(htmlBasename))).toBeUndefined();
+
+    await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: true });
+
+    // After Save, both files exist on disk under the exact basenames
+    // the Copy buttons advertised. `findCapturedDownload` resolves
+    // the basename through the download spy to whatever path Chrome
+    // actually wrote to (a UUID under a temp dir, in the fixture) —
+    // not the absolute path the clipboard advertised, since
+    // Playwright doesn't preserve requested filenames. The basename
+    // round-trip is what matters: in production both resolve to the
+    // same `~/Downloads/SeeWhatISee/<filename>` path.
+    const sw2 = await getServiceWorker();
+    const screenshotPath = await findCapturedDownload(sw2, screenshotBasename);
+    expect(fs.existsSync(screenshotPath)).toBe(true);
+    expect(fs.statSync(screenshotPath).size).toBeGreaterThan(0);
+
+    const htmlPath = await findCapturedDownload(sw2, htmlBasename);
+    expect(fs.existsSync(htmlPath)).toBe(true);
+    expect(fs.statSync(htmlPath).size).toBeGreaterThan(0);
+
+    await openerPage.close();
+  } finally {
+    await restoreSearch();
+  }
+});

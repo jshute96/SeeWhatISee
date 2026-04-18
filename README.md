@@ -44,6 +44,7 @@ On this page, you can:
 - Pick whether to save the screenshot and the HTML snapshot.
   - With neither checked, you can still capture and send the URL,
     without page contents.
+- Copy their filenames to the clipboard with the copy icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.

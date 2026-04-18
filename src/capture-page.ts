@@ -22,6 +22,14 @@ interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
+  // Absolute on-disk paths the screenshot / HTML files will land at
+  // when the user clicks Save. Resolved by background using its
+  // `getCaptureDirectory` helper plus the filenames pinned at capture
+  // time in `captureBothToMemory`. On a first-ever capture (no
+  // existing `log.json` to derive the directory from) these fall
+  // back to the bare filenames so Copy still produces something.
+  screenshotPath: string;
+  contentsPath: string;
 }
 
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
@@ -31,6 +39,8 @@ const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElemen
 const previewImg = document.getElementById('preview') as HTMLImageElement;
 const capturedUrlInput = document.getElementById('captured-url') as HTMLInputElement;
 const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
+const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
+const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -301,6 +311,32 @@ async function loadData(): Promise<void> {
   // True UTF-8 byte count of the captured HTML, not the JS string
   // length (which counts UTF-16 code units).
   htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+  // Wire up the Copy-filename buttons. Extension pages have direct
+  // access to `navigator.clipboard.writeText` under a user gesture,
+  // so we don't need to round-trip through the offscreen document
+  // that the SW uses for its own Copy-last-… menu entries.
+  setupCopyButton(copyScreenshotBtn, response.screenshotPath);
+  setupCopyButton(copyHtmlBtn, response.contentsPath);
+}
+
+/**
+ * Wire `btn` to copy `path` on click. When `path` is a bare filename
+ * (no separator) — the fallback case for the user's first-ever
+ * capture, where `getCaptureDirectory` couldn't resolve a download
+ * directory — the bare filename isn't paste-ready, so we disable the
+ * button and explain via the tooltip. Mirrors the SW's
+ * Copy-last-… menu entries, which are also `enabled: false` when
+ * there's nothing useful to copy.
+ */
+function setupCopyButton(btn: HTMLButtonElement, path: string): void {
+  if (!path.includes('/') && !path.includes('\\')) {
+    btn.disabled = true;
+    btn.title = 'Copy filename (Save a capture first to enable)';
+    return;
+  }
+  btn.addEventListener('click', () => {
+    void navigator.clipboard.writeText(path);
+  });
 }
 
 // Render the preview image with all current highlight edits baked

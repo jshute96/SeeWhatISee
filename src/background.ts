@@ -839,9 +839,37 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       const key = detailsStorageKey(tabId);
       const stored = await chrome.storage.session.get(key);
       const session = stored[key] as DetailsSession | undefined;
-      // The page only needs the capture itself, not the opener id
-      // bookkeeping — keep the wire shape unchanged.
-      sendResponse(session?.capture);
+      if (!session) {
+        sendResponse(undefined);
+        return;
+      }
+      // Resolve the absolute on-disk paths the files will land at,
+      // so the capture page's Copy buttons can put a paste-ready
+      // path on the clipboard. `getCaptureDirectory` throws on a
+      // first-ever capture (no log.json yet to derive the dir from);
+      // in that case we fall back to the bare filenames so Copy
+      // still does *something* useful.
+      let dir = '';
+      try {
+        dir = await getCaptureDirectory();
+      } catch {
+        // No prior capture → no derivable directory. Bare filename
+        // fallback below.
+      }
+      const capture = session.capture;
+      const screenshotPath = dir
+        ? joinCapturePath(dir, capture.screenshotFilename)
+        : capture.screenshotFilename;
+      const contentsPath = dir
+        ? joinCapturePath(dir, capture.contentsFilename)
+        : capture.contentsFilename;
+      sendResponse({
+        screenshotDataUrl: capture.screenshotDataUrl,
+        html: capture.html,
+        url: capture.url,
+        screenshotPath,
+        contentsPath,
+      });
     })();
     return true; // keep the message channel open for the async response
   }

@@ -356,6 +356,29 @@ can draw red markup on the regions they want the agent to focus on.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
 
+### Copy-filename buttons
+
+- A small icon button sits next to each Save checkbox.
+  - Tooltip: `Copy filename (File not written yet)`.
+  - Click writes the file's path to the clipboard via
+    `navigator.clipboard.writeText` (extension pages have direct
+    clipboard access — no offscreen helper involved here, unlike
+    the SW's Copy-last-… menu entries).
+- The path is the **absolute on-disk path** the file will land at,
+  derived in the SW's `getDetailsData` handler via
+  `getCaptureDirectory()` + `joinCapturePath(dir, filename)`.
+  - On the user's first-ever capture (no prior `log.json` to derive
+    the directory from), the page can't build a paste-ready path —
+    the Copy buttons are disabled and the tooltip flips to
+    "Save a capture first to enable", same pattern as the SW's
+    Copy-last-… menu entries.
+- Filenames are pinned at capture time in `captureBothToMemory`
+  (`screenshotFilename` / `contentsFilename` on `InMemoryCapture`)
+  and reused by `saveDetailedCapture`.
+  - Side-effect: the saved record's `timestamp` and the embedded
+    local-time filename suffix both describe when the screenshot
+    was *taken*, not when the user clicked Save.
+
 ### Save and close
 
 - On Capture click, if there are highlights *and* the screenshot is

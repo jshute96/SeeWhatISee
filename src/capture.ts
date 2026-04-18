@@ -232,6 +232,26 @@ export interface InMemoryCapture {
   screenshotDataUrl: string;
   html: string;
   url: string;
+  /**
+   * ISO 8601 UTC timestamp of the moment the capture was taken
+   * (right after `chrome.tabs.captureVisibleTab` returned). Pinning
+   * this here — rather than re-stamping at save time — means the
+   * record's `timestamp` and the filename's embedded local time both
+   * describe the *capture moment*, not whenever the user got around
+   * to clicking Save in the details flow.
+   */
+  timestamp: string;
+  /**
+   * Filename the screenshot will be written under if the user saves
+   * it. Computed from `timestamp` so the capture-with-details page
+   * can show / copy the exact name before the file lands on disk.
+   */
+  screenshotFilename: string;
+  /**
+   * Filename the HTML snapshot will be written under if the user
+   * saves it. Same reason as `screenshotFilename`.
+   */
+  contentsFilename: string;
 }
 
 /**
@@ -269,7 +289,19 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   const html = results[0]?.result as string;
   if (!html) throw new Error('Failed to retrieve page contents');
 
-  return { screenshotDataUrl, html, url: active.url ?? '' };
+  // Pin the capture moment + filenames here so the details page can
+  // show / copy the exact filename the file will land at, even if
+  // the user waits minutes before clicking Save.
+  const now = new Date();
+  const ts = compactTimestamp(now);
+  return {
+    screenshotDataUrl,
+    html,
+    url: active.url ?? '',
+    timestamp: now.toISOString(),
+    screenshotFilename: `screenshot-${ts}.png`,
+    contentsFilename: `contents-${ts}.html`,
+  };
 }
 
 export interface SaveDetailedOptions {
@@ -307,10 +339,12 @@ export interface SaveDetailedOptions {
  * act on just the URL (and prompt) without ever reading a file.
  */
 export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
-  const now = new Date();
-  const ts = compactTimestamp(now);
+  // Timestamp + filenames were pinned at capture time (see
+  // captureBothToMemory) so they describe when the screenshot was
+  // *taken*, not when the user clicked Save — and so the filenames
+  // shown / copied on the details page exactly match what hits disk.
   const record: CaptureRecord = {
-    timestamp: now.toISOString(),
+    timestamp: opts.capture.timestamp,
     url: opts.capture.url,
   };
 
@@ -323,7 +357,7 @@ export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<Ca
   // tiny data-URL payloads.
   const writes: Promise<unknown>[] = [];
   if (opts.includeScreenshot) {
-    const filename = `screenshot-${ts}.png`;
+    const filename = opts.capture.screenshotFilename;
     record.screenshot = filename;
     if (opts.hasHighlights) record.highlights = true;
     writes.push(
@@ -335,7 +369,7 @@ export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<Ca
     );
   }
   if (opts.includeHtml) {
-    const filename = `contents-${ts}.html`;
+    const filename = opts.capture.contentsFilename;
     record.contents = filename;
     writes.push(
       chrome.downloads.download({
