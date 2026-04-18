@@ -2,6 +2,7 @@ import {
   captureBothToMemory,
   captureVisible,
   clearCaptureLog,
+  DOWNLOAD_SUBDIR,
   saveDetailedCapture,
   savePageContents,
   type InMemoryCapture,
@@ -496,6 +497,8 @@ chrome.action.onClicked.addListener(handleActionClick);
 //         Save html contents in 5s
 //         Capture with details in 5s...
 //   More  ▸                         (submenu)
+//       • Snapshots directory
+//       ─────────
 //       • Clear log history
 //
 // Chrome caps each extension at
@@ -529,6 +532,61 @@ chrome.action.onClicked.addListener(handleActionClick);
 
 // Id used by the "Clear log history" entry under the More submenu.
 const CLEAR_LOG_MENU_ID = 'clear-log';
+// Id used by the "Snapshots directory" entry under the More submenu.
+const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
+
+/**
+ * Open the on-disk capture directory (`<downloads>/SeeWhatISee/`) in a
+ * new tab as a `file://` URL so the user can browse the saved
+ * screenshots / HTML / `log.json`.
+ *
+ * The user's downloads root is OS- and config-dependent and there's no
+ * Chrome API that returns it directly, so we derive it from one of our
+ * own captures: `chrome.downloads.search` reports the absolute on-disk
+ * path of any prior `log.json` write, which we strip to its parent.
+ *
+ * If no capture has happened yet, the directory doesn't exist and we
+ * have no path to point at — throw a clear error that surfaces through
+ * the icon/tooltip error channel so the user knows to capture once first.
+ */
+async function openSnapshotsDirectory(): Promise<void> {
+  // Resolve the directory by searching for our `log.json` record.
+  // Every capture overwrites `<downloads>/SeeWhatISee/log.json` (see
+  // `writeJsonFile` in capture.ts), so the most recent matching record
+  // points at the live directory — even on a fresh extension load
+  // where the in-memory state is empty. Pinning the search to `log.json`
+  // (rather than any file in a `SeeWhatISee/` folder) avoids false
+  // matches against unrelated user files in same-named directories
+  // (e.g. `/tmp/SeeWhatISee/...`).
+  //
+  // `chrome.downloads.search`'s `DownloadQuery` doesn't accept
+  // `byExtensionId` as a filter — it's a result-only field — so the
+  // check happens client-side as a second guard against a
+  // manually-saved `log.json` happening to share the path shape.
+  const candidates = await chrome.downloads.search({
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
+    orderBy: ['-startTime'],
+  });
+  const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id);
+  const fullPath = ours?.filename;
+  if (!fullPath) {
+    throw new Error(
+      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
+    );
+  }
+  // Strip the basename. `chrome.downloads.search().filename` is
+  // documented to be the absolute path to a file (never ends in a
+  // separator), so this always trims one segment.
+  const dir = fullPath.replace(/[/\\][^/\\]+$/, '');
+  // Build a properly-encoded file:// URL. Normalize Windows
+  // backslashes to forward slashes, prepend a leading `/` for Windows
+  // paths like `C:/Users/…` so the URL parser sees an absolute path,
+  // and let `new URL` percent-encode anything weird (spaces in user
+  // names, `#`, `?`, non-ASCII characters).
+  const normalized = dir.replace(/\\/g, '/');
+  const fileUrl = new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
+  await chrome.tabs.create({ url: fileUrl });
+}
 
 // "Capture with details…" flow. We grab both the screenshot and
 // the HTML up-front (so the user can decide which to save without
@@ -814,6 +872,18 @@ async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
   chrome.contextMenus.create({
+    id: SNAPSHOTS_DIR_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Snapshots directory',
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
+    id: `${MORE_PARENT_ID}-sep-snapshots`,
+    parentId: MORE_PARENT_ID,
+    type: 'separator',
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
     id: CLEAR_LOG_MENU_ID,
     parentId: MORE_PARENT_ID,
     title: 'Clear log history',
@@ -883,6 +953,15 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     return;
   }
 
+  // Open the on-disk capture directory in a new tab. Same
+  // error-reporting rationale as the Clear log path: the
+  // "no captures yet" failure surfaces via the icon swap +
+  // tooltip line so the user actually sees it.
+  if (id === SNAPSHOTS_DIR_MENU_ID) {
+    await runWithErrorReporting(() => openSnapshotsDirectory());
+    return;
+  }
+
   // Fallthrough: a click on a menu item we don't recognize.
   // Shouldn't happen in the current menu, but if a future
   // contextMenus.create call adds an id without a matching branch
@@ -905,6 +984,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   saveDetailedCapture,
   startCaptureWithDetails,
   clearCaptureLog,
+  openSnapshotsDirectory,
   reportCaptureError,
   clearCaptureError,
   runWithErrorReporting,

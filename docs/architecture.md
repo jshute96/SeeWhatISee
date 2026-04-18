@@ -120,6 +120,18 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   - **More ▸** — submenu home for infrequent utilities that would
     otherwise crowd out primary capture entries at the top level.
+    - **Snapshots directory** — opens the on-disk capture directory in a new tab.
+      - URL is `file://<downloads>/SeeWhatISee/`.
+      - The downloads root is OS- / config-dependent and not exposed
+        by any Chrome API, so the path is derived at runtime by
+        searching `chrome.downloads.search` for our `log.json` record
+        (every capture overwrites it, so the most recent match points
+        at the live directory).
+      - `byExtensionId` is checked client-side to reject any
+        unrelated `log.json` from another tool that happens to share
+        the path shape.
+      - If no capture has happened yet, throws a clear error that
+        surfaces via the icon/tooltip channel.
     - **Clear log history** — `clearCaptureLog()` erases the
       in-storage capture log *and* overwrites `log.json` on disk
       with an empty file so `/see-what-i-see` et al. see the cleared

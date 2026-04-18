@@ -16,7 +16,7 @@
 // snapshot of it written on every capture. If a user manually deletes
 // log.json, the next capture will recreate it from storage.
 
-const DOWNLOAD_SUBDIR = 'SeeWhatISee';
+export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
 /**
  * Sleep for `delayMs` milliseconds, showing a countdown on the toolbar

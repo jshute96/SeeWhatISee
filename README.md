@@ -24,6 +24,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     when clicking the icon.
     - If you choose another default single-click action, double-click will open *Capture with details*.
   - **More ▸**
+    - **Snapshots directory** — opens the on-disk capture directory
+      (`~/Downloads/SeeWhatISee/`) in a new tab so you can browse the
+      saved files.
     - **Clear log history** — erases the `log.json` history of previous snapshots.
       The screenshot files are still saved in your Downloads folder.
 
