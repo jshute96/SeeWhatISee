@@ -23,6 +23,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **Set default click action ▸** — Choose which action to apply
     when clicking the icon.
     - If you choose another default single-click action, double-click will open *Capture with details*.
+  - **More ▸**
+    - **Clear log history** — erases the `log.json` history of previous snapshots.
+      The screenshot files are still saved in your Downloads folder.
 
 #### Capturing with details
 

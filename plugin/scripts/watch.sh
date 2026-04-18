@@ -143,6 +143,11 @@ emit() {
   cur=$(mtime)
   [[ -n "$cur" && "$cur" != "$last_mtime" ]] || return 1
   last_mtime="$cur"
+  # An empty log.json means the user just cleared history. last_mtime
+  # was bumped above, so we won't re-check until the next real mtime
+  # change — just skip the emit here. There's no new capture, and a
+  # blank line would confuse callers.
+  [[ -s "$FILE" ]] || return 1
   tail -1 "$FILE" | absolutize_paths
   printf '\n'
 }

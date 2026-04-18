@@ -290,6 +290,51 @@ test.describe('watch.sh', () => {
     expect(out2).toContain(`${tmpDir}/${fn2}`);
   });
 
+  test('once mode: clearing the log (empty log.json) does not emit or exit; next capture does', async () => {
+    // "Clear log history" overwrites log.json with a zero-byte file.
+    // The mtime bump must NOT produce a blank emission or exit the
+    // once-mode watcher — the cleared state isn't a new capture.
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // Truncate to empty — simulates the "Clear log history" click.
+    fs.writeFileSync(path.join(tmpDir, 'log.json'), '');
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Watcher is still running, no output emitted.
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    // A fresh capture after the clear should be the emission that wins.
+    const { screenshot } = simulateCapture(tmpDir, 1);
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+    expect(watch.output()).toContain(`${tmpDir}/${screenshot}`);
+  });
+
+  test('loop mode: clearing the log does not emit; subsequent captures do', async () => {
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    fs.writeFileSync(path.join(tmpDir, 'log.json'), '');
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Still running, no output from the clear.
+    expect(watch.proc.exitCode).toBeNull();
+    expect(watch.output()).toBe('');
+
+    // Capture after clear — should be emitted.
+    const { screenshot: s1 } = simulateCapture(tmpDir, 1);
+    await waitForPattern(watch.output, `${tmpDir}/${s1}`, 1, 5_000);
+
+    // Second capture — loop continues.
+    await new Promise((r) => setTimeout(r, 1200));
+    const { screenshot: s2 } = simulateCapture(tmpDir, 2);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+
+    watch.kill();
+  });
+
   test('--after with nonexistent timestamp warns and watches', async () => {
     const watch = startWatch([
       '--after', '2099-01-01T00:00:00.000Z', '--directory', tmpDir,

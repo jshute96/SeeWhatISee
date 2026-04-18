@@ -4,7 +4,6 @@ Features
 * Flash the screen when it snapshots
 * Avoid making 2 files show up as Chrome downloads each time
 * Add a way to get a longer delay (once). Maybe with a long-click. Maybe user-chosen delay.
-* Re-add the "Clear log history" action somewhere. It's currently hidden.
 * Maybe more drawing and annotation features
   - Add inline text
   - Add arrows

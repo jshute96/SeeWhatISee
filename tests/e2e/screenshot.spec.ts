@@ -1,5 +1,6 @@
+import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
-import { verifyCapture, type CaptureResult } from '../fixtures/files';
+import { verifyCapture, waitForDownloadPath, type CaptureResult } from '../fixtures/files';
 
 // Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
 // no subdir prefix (the sidecar JSON resolves it against its own
@@ -223,19 +224,27 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
   expect(log2).toHaveLength(2);
 
-  // Clear the in-storage log. Verified directly against chrome.storage.local
-  // — the on-disk log.json intentionally lags until the next capture.
+  // Clear the in-storage log and verify both halves of the effect:
+  //   1. `chrome.storage.local.captureLog` is gone.
+  //   2. The on-disk `log.json` is overwritten with a 0-byte file so
+  //      downstream consumers (get-latest.sh, watch.sh, the skills)
+  //      immediately see the cleared state instead of the stale
+  //      previous snapshot. clearCaptureLog returns the download id
+  //      for exactly this assertion.
   const sw3 = await getServiceWorker();
-  await sw3.evaluate(async () => {
+  const clearLogDownloadId = await sw3.evaluate(async () => {
     const api = (self as unknown as {
-      SeeWhatISee: { clearCaptureLog: () => Promise<void> };
+      SeeWhatISee: { clearCaptureLog: () => Promise<number> };
     }).SeeWhatISee;
-    await api.clearCaptureLog();
+    return api.clearCaptureLog();
   });
   const afterClear = await sw3.evaluate(
     async () => (await chrome.storage.local.get('captureLog')).captureLog,
   );
   expect(afterClear).toBeUndefined();
+
+  const clearedLogPath = await waitForDownloadPath(sw3, clearLogDownloadId);
+  expect(fs.statSync(clearedLogPath).size).toBe(0);
 
   // Capture #3 (green): the next capture after the clear should produce
   // a log.json containing exactly one record — the new one — not three.

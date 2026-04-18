@@ -161,4 +161,17 @@ test.describe('copy-last-snapshot.sh', () => {
     expect(r.stderr).toContain('not found');
     fs.rmSync(fakeHome, { recursive: true, force: true });
   });
+
+  test('errors when log.json is empty (cleared history)', () => {
+    // "Clear log history" overwrites log.json with a zero-byte file.
+    // Match the missing-file behavior so callers don't try to parse
+    // empty output.
+    const { fakeHome, srcDir } = makeFakeHome();
+    fs.writeFileSync(path.join(srcDir, 'log.json'), '');
+    const r = run({ HOME: fakeHome, TARGET_DIR: targetDir });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('empty');
+    expect(r.stdout).toBe('');
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
 });

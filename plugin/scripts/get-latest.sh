@@ -21,5 +21,10 @@ if [[ ! -f "$LOG" ]]; then
   echo "Error: $LOG not found. No captures yet?" >&2
   exit 1
 fi
+# Check for empty log.
+if [[ ! -s "$LOG" ]]; then
+  echo "Error: $LOG is empty. No captures yet." >&2
+  exit 1
+fi
 
 tail -1 "$LOG" | absolutize_paths

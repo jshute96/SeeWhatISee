@@ -130,6 +130,17 @@ test.describe('get-latest.sh', () => {
     fs.rmSync(emptyDir, { recursive: true, force: true });
   });
 
+  test('errors when log.json is empty (cleared history)', () => {
+    // "Clear log history" overwrites log.json with a zero-byte file.
+    // get-latest should treat that the same as "no captures yet"
+    // rather than silently emitting empty output.
+    fs.writeFileSync(path.join(tmpDir, 'log.json'), '');
+    const r = run(['--directory', tmpDir]);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('empty');
+    expect(r.stdout).toBe('');
+  });
+
   test('resolves directory from .SeeWhatISee config', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',

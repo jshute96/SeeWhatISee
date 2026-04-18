@@ -29,6 +29,11 @@ if [ ! -f "$LOG_JSON" ]; then
     echo "Error: $LOG_JSON not found. No screenshots yet?" >&2
     exit 1
 fi
+# Check for empty log.
+if [ ! -s "$LOG_JSON" ]; then
+    echo "Error: $LOG_JSON is empty. No screenshots yet." >&2
+    exit 1
+fi
 
 # Extract the latest record (last line of the NDJSON log).
 LATEST_LINE=$(tail -1 "$LOG_JSON")

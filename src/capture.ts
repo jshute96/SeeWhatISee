@@ -402,19 +402,25 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
 }
 
 /**
- * Erase the in-storage capture log. The on-disk `log.json` is left
- * alone — it will be overwritten with the (now single-record) log
- * the next time a capture is saved. Exposed on `self.SeeWhatISee`
- * for the devtools console; the right-click menu entry that used
- * to drive this is currently hidden (see TODO.md).
+ * Erase the in-storage capture log *and* overwrite the on-disk
+ * `log.json` with an empty file so downstream consumers (the
+ * see-what-i-see skills, `watch.sh`, etc.) immediately see an
+ * empty log instead of the stale previous snapshot. Reachable from
+ * the More → Clear log history menu entry and exposed on
+ * `self.SeeWhatISee` for the devtools console.
  *
  * Goes through `serializeWrite` so it can't race with a capture
  * that's in the middle of its read-modify-write of the same
- * storage key.
+ * storage key or its own rewrite of `log.json`.
+ *
+ * Returns the `chrome.downloads` id of the empty `log.json` write so
+ * tests can resolve it to an on-disk path and assert the file is
+ * actually zero bytes. Production callers ignore the return.
  */
-export async function clearCaptureLog(): Promise<void> {
-  await serializeWrite(async () => {
+export async function clearCaptureLog(): Promise<number> {
+  return await serializeWrite(async () => {
     await chrome.storage.local.remove(LOG_STORAGE_KEY);
+    return await writeJsonFile('log.json', '');
   });
 }
 

@@ -97,7 +97,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
-  `contexts: ['action']`. Top level (5 entries):
+  `contexts: ['action']`. Top level (6 entries):
 
   - The three **undelayed** `CAPTURE_ACTIONS` items (Take
     screenshot, Save html contents, Capture with details...),
@@ -118,20 +118,24 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       radio mutual-exclusion only covers a contiguous run — the
       separator would cause two items to appear selected.
 
-  **(hidden) Clear log history** — `clearCaptureLog()` erases the
-  in-storage capture log; the on-disk `log.json` catches up on the
-  next capture. The menu entry is temporarily hidden (see TODO.md),
-  but the function is still on `SeeWhatISee.clearCaptureLog()`.
+  - **More ▸** — submenu home for infrequent utilities that would
+    otherwise crowd out primary capture entries at the top level.
+    - **Clear log history** — `clearCaptureLog()` erases the
+      in-storage capture log *and* overwrites `log.json` on disk
+      with an empty file so `/see-what-i-see` et al. see the cleared
+      state immediately. Still exposed on
+      `SeeWhatISee.clearCaptureLog()` for the devtools console.
 
   **Top-level item cap.**
 
   - Chrome enforces `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT
     = 6`. Top-level separators count against it.
-  - The menu currently has 5 top-level entries (3 undelayed + 2
-    submenu parents), leaving one slot of headroom.
-  - Past 6, **do not add another top-level entry** — nest new
-    items under an existing submenu parent (or introduce a new
-    one).
+  - The menu currently has 6 top-level entries (3 undelayed + 3
+    submenu parents: Capture with delay, Set default click action,
+    and More) — **at the cap**.
+  - **Do not add another top-level entry** — nest new items under
+    an existing submenu parent (More is the natural home for new
+    infrequent utilities).
   - Overflow fails silently via `chrome.runtime.lastError`, so a
     careless addition drops a previously-working entry without any
     build- or runtime-time error. See
@@ -234,7 +238,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     *same* compact timestamp so they have a matching suffix.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage.
-    - To clear history, call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console: wipes the `captureLog` key from `chrome.storage.local`; `log.json` catches up on the next capture (containing exactly the new entry). The right-click menu entry that used to drive this is temporarily hidden — see TODO.md.
+    - To clear history, use the **More → Clear log history** context-menu entry on the toolbar icon (or call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console). Both wipe the `captureLog` key from `chrome.storage.local` *and* overwrite the on-disk `log.json` with an empty file so downstream consumers see the cleared state immediately. `get-latest.sh` treats an empty `log.json` the same as "no captures yet"; `watch.sh` swallows the clear's mtime bump without emitting a blank line.
     - The log is capped at 100 entries (FIFO eviction of the oldest); without a cap, rewriting the whole file on every capture would be quadratic in capture count.
 - **Handoff.** A coding agent (Claude Code, etc.) reads the latest file
   from `~/Downloads/SeeWhatISee/`. Four Claude Code plugin skills are

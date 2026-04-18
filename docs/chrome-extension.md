@@ -374,10 +374,12 @@ promising — the main issue was the `onActivated` restore logic.
     entry, which silently dropped "Clear log history" off the
     menu until the regression was spotted later. Keep the top
     level at 6 or below, or move entries into a submenu.
-  - Our action menu currently has 5 top-level entries — three
+  - Our action menu currently has 6 top-level entries — three
     undelayed capture actions, the "Capture with delay" submenu
-    parent, and the "Set default click action" submenu parent.
-    ("Clear log history" is temporarily hidden; see TODO.md.)
+    parent, the "Set default click action" submenu parent, and the
+    "More" submenu parent (which hosts "Clear log history"). This
+    is **at the cap** — any further top-level addition will drop an
+    existing entry. Nest new utilities under "More".
 
 ## "Capture with details…" — extension page + runtime messaging
 

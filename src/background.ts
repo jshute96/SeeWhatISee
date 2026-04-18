@@ -256,6 +256,7 @@ const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
 const DEFAULT_CLICK_ACTION_ID = 'capture-with-details';
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 const DELAYED_PARENT_ID = 'delayed-capture-parent';
+const MORE_PARENT_ID = 'more-parent';
 // Child radio items under "Set default click action" use this prefix on
 // their ids so the onClicked handler can tell "pick this default"
 // clicks apart from the top-level / Delayed-capture "run this now"
@@ -494,18 +495,18 @@ chrome.action.onClicked.addListener(handleActionClick);
 //         Take screenshot in 5s
 //         Save html contents in 5s
 //         Capture with details in 5s...
+//   More  ▸                         (submenu)
+//       • Clear log history
 //
 // Chrome caps each extension at
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
 // items in the action context menu. Overflow fails silently via
 // `chrome.runtime.lastError`, so a careless addition silently drops
-// a previously-working entry. The menu above has 5 top-level
-// entries (3 undelayed + 2 submenu parents). "Clear log history"
-// is temporarily hidden from the menu — the underlying
-// `clearCaptureLog()` is still on `self.SeeWhatISee` for the
-// devtools console. **Do not add another top-level entry past 6**
-// — nest new items under an existing submenu or introduce a new
-// one.
+// a previously-working entry. The menu above has 6 top-level
+// entries (3 undelayed + 3 submenu parents) — **at the cap**. Do
+// not add another top-level entry — nest new items under an
+// existing submenu (the `More` submenu is a natural home for
+// infrequent utilities).
 //
 // In-submenu separators are free (they don't count against the
 // top-level cap) so we use them to group the submenu contents by
@@ -526,10 +527,7 @@ chrome.action.onClicked.addListener(handleActionClick);
 // menu for discoverability so users don't have to know the toolbar
 // click also captures.
 
-// Id used by the (currently hidden) "Clear log history" entry.
-// Kept alongside the onClicked branch below so re-adding the
-// menu item is a one-line change in installContextMenu — don't
-// delete as dead code.
+// Id used by the "Clear log history" entry under the More submenu.
 const CLEAR_LOG_MENU_ID = 'clear-log';
 
 // "Capture with details…" flow. We grab both the screenshot and
@@ -807,10 +805,20 @@ async function installContextMenu(): Promise<void> {
     }
   }
 
-  // "Clear log history" is temporarily hidden — we left the
-  // handler branch in `onClicked` and kept `clearCaptureLog()`
-  // exposed on `self.SeeWhatISee`, so restoring the entry later is
-  // just un-skipping this create call.
+  // ── "More" submenu ──────────────────────────────────────────
+  // Home for infrequent utilities that would otherwise compete for
+  // a top-level slot against the primary capture entries.
+  chrome.contextMenus.create({
+    id: MORE_PARENT_ID,
+    title: 'More',
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
+    id: CLEAR_LOG_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Clear log history',
+    contexts: ['action'],
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {

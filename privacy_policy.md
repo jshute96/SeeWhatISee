@@ -1,6 +1,6 @@
 # SeeWhatISee Privacy Policy
 
-_Last updated: 2026-04-10_
+_Last updated: 2026-04-18_
 
 ## Summary
 
@@ -36,7 +36,13 @@ in `Downloads` after new screenshots.
 The log is limited to the **100 most recent captures**; older entries are
 dropped.
 
-The log in Chrome local storage gets cleared when the extension is removed.
+You can erase the log at any time via the extension's right-click menu
+**More → Clear log history**, which empties both the Chrome-local-storage
+log and the on-disk `log.json`. (Screenshot files already written to your
+ `Downloads` folder are left in place.)
+
+The log in Chrome local storage also gets cleared when the extension is
+removed.
 
 ## Extension permissions
 
