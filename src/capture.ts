@@ -258,8 +258,10 @@ export interface InMemoryCapture {
  * Capture the visible tab's screenshot *and* full HTML without
  * writing anything to disk. Used by the "Capture with details…"
  * flow: the extension page previews the screenshot while the user
- * decides which artifacts to keep, then calls saveDetailedCapture
- * with the selected subset.
+ * decides which artifacts to keep. The page can also pre-download
+ * individual artifacts via the SW's `ensure…Downloaded` helpers
+ * (Copy-filename buttons); `recordDetailedCapture` then writes the
+ * sidecar referencing whichever artifacts were materialized.
  *
  * The active-tab query happens once and both the screenshot and the
  * HTML scrape target that tab, so the two artifacts are guaranteed
@@ -327,18 +329,85 @@ export interface SaveDetailedOptions {
 }
 
 /**
- * Save a "Capture with details…" result: writes the screenshot
- * and/or HTML files requested by `opts`, plus a log.json record
- * that references whichever artifacts were saved and includes the
- * prompt (when non-empty). Reuses the
- * same `compactTimestamp` for both artifacts so they share a
- * basename suffix and the record timestamps match exactly.
+ * Start a screenshot download for the details flow. Returns the
+ * download id immediately (Chrome resolves on download *start*, not
+ * completion) — pair with `waitForDownloadComplete` to block on the
+ * file actually landing.
  *
- * Saves with neither file are allowed — the record still carries
+ * `screenshotOverride` is an optional replacement data URL with the
+ * user's red highlights baked into the PNG bytes; when omitted we
+ * write the original screenshot. `conflictAction: 'overwrite'`
+ * means a re-download under the same pinned filename (e.g. after the
+ * user undoes a highlight and asks to re-copy) rewrites the
+ * already-on-disk file rather than producing
+ * `screenshot-… (1).png`.
+ */
+export async function downloadScreenshot(
+  capture: InMemoryCapture,
+  screenshotOverride?: string,
+): Promise<number> {
+  return chrome.downloads.download({
+    url: screenshotOverride ?? capture.screenshotDataUrl,
+    filename: `${DOWNLOAD_SUBDIR}/${capture.screenshotFilename}`,
+    saveAs: false,
+    conflictAction: 'overwrite',
+  });
+}
+
+/**
+ * Start an HTML download for the details flow. Same return / wait
+ * contract as `downloadScreenshot`. The HTML body never changes
+ * within a session (no editing UI), so callers can cache the
+ * result indefinitely.
+ */
+export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
+  return chrome.downloads.download({
+    url: `data:text/html;charset=utf-8,${encodeURIComponent(capture.html)}`,
+    filename: `${DOWNLOAD_SUBDIR}/${capture.contentsFilename}`,
+    saveAs: false,
+    conflictAction: 'overwrite',
+  });
+}
+
+/**
+ * Poll `chrome.downloads.search` until the given download reaches
+ * `state === 'complete'`, then return its absolute on-disk path.
+ * Used by background.ts when the Copy buttons need a paste-ready
+ * path and can't return until the file is actually written.
+ *
+ * Polls at 50 ms; default timeout is 5 s, plenty for the data-URL
+ * downloads the details flow uses (PNGs and HTML, both essentially
+ * synchronous on completion). Throws on `interrupted` or timeout
+ * so the caller can surface a real error.
+ */
+export async function waitForDownloadComplete(
+  downloadId: number,
+  timeoutMs = 5000,
+): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const [item] = await chrome.downloads.search({ id: downloadId });
+    if (item?.state === 'complete' && item.filename) return item.filename;
+    if (item?.state === 'interrupted') {
+      throw new Error(`Download ${downloadId} interrupted: ${item.error ?? 'unknown'}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`Download ${downloadId} did not complete within ${timeoutMs}ms`);
+}
+
+/**
+ * Append a log entry for a "Capture with details…" result.
+ * Assumes the screenshot / HTML files (when included) have already
+ * been downloaded by the caller via `downloadScreenshot` /
+ * `downloadHtml` — this only writes the sidecar, no file IO for
+ * the artifacts themselves.
+ *
+ * Saves with neither file are allowed: the record still carries
  * `timestamp`, `url`, and any `prompt`, so a downstream agent can
  * act on just the URL (and prompt) without ever reading a file.
  */
-export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
+export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
   // Timestamp + filenames were pinned at capture time (see
   // captureBothToMemory) so they describe when the screenshot was
   // *taken*, not when the user clicked Save — and so the filenames
@@ -347,40 +416,13 @@ export async function saveDetailedCapture(opts: SaveDetailedOptions): Promise<Ca
     timestamp: opts.capture.timestamp,
     url: opts.capture.url,
   };
-
-  // Write the requested artifact files in parallel. Errors here
-  // propagate out before we touch the sidecars, same as the legacy
-  // paths: we never want a sidecar to reference a file that didn't
-  // land on disk. Same download-start-vs-on-disk caveat as
-  // saveCapture: chrome.downloads.download resolves on download
-  // start, not completion; overkill to wait on onChanged for our
-  // tiny data-URL payloads.
-  const writes: Promise<unknown>[] = [];
   if (opts.includeScreenshot) {
-    const filename = opts.capture.screenshotFilename;
-    record.screenshot = filename;
+    record.screenshot = opts.capture.screenshotFilename;
     if (opts.hasHighlights) record.highlights = true;
-    writes.push(
-      chrome.downloads.download({
-        url: opts.capture.screenshotDataUrl,
-        filename: `${DOWNLOAD_SUBDIR}/${filename}`,
-        saveAs: false,
-      }),
-    );
   }
   if (opts.includeHtml) {
-    const filename = opts.capture.contentsFilename;
-    record.contents = filename;
-    writes.push(
-      chrome.downloads.download({
-        url: `data:text/html;charset=utf-8,${encodeURIComponent(opts.capture.html)}`,
-        filename: `${DOWNLOAD_SUBDIR}/${filename}`,
-        saveAs: false,
-      }),
-    );
+    record.contents = opts.capture.contentsFilename;
   }
-  await Promise.all(writes);
-
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
   }

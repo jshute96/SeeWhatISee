@@ -83,10 +83,6 @@
     border-color: #bbb;
     color: #222;
   }
-  .copy-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
   .copy-btn svg {
     width: 14px;
     height: 14px;
@@ -220,7 +216,7 @@
       <div class="checkbox-row">
         <label><input type="checkbox" id="cap-screenshot" checked> Save <u>s</u>creenshot</label>
         <button type="button" class="copy-btn" id="copy-screenshot-name"
-                title="Copy filename (File not written yet)"
+                title="Copy PNG filename"
                 aria-label="Copy screenshot filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
@@ -228,7 +224,7 @@
       <div class="checkbox-row">
         <label><input type="checkbox" id="cap-html"> Save <u>H</u>TML</label>
         <button type="button" class="copy-btn" id="copy-html-name"
-                title="Copy filename (File not written yet)"
+                title="Copy HTML filename"
                 aria-label="Copy HTML filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>

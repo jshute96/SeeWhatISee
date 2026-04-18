@@ -449,9 +449,12 @@ If the user has drawn any highlights *and* is saving the screenshot:
   the background as a `screenshotOverride` field on the
   `saveDetails` runtime message, alongside a `highlights: true`
   flag.
-- The background swaps `screenshotOverride` into the stashed
-  `InMemoryCapture` (a shallow clone, so the still-stored object
-  isn't mutated) and calls `saveDetailedCapture()` with
+- The background passes `screenshotOverride` through to
+  `ensureScreenshotDownloaded` (the same helper the Copy-filename
+  buttons use). On a cache miss it becomes the body of the PNG
+  download; on a cache hit (the page already pre-downloaded at
+  this `editVersion`) it's dropped because the on-disk file already
+  matches. `recordDetailedCapture` then writes the sidecar with
   `hasHighlights: true`.
 - The resulting sidecar record gets `highlights: true` so the
   see-what-i-see skills know to focus on the marked regions.

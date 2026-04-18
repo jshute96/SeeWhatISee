@@ -46,17 +46,26 @@ test.beforeEach(async () => {
 // Resolve the recorded download whose requested filename ends with
 // `suffix` (e.g. `'log.json'`, `'.png'`). Returns the on-disk
 // path via the existing `waitForDownloadPath` poll.
+// Resolve the most recently recorded download whose requested
+// filename ends with `suffix` (e.g. `'log.json'`, `'.png'`) to its
+// on-disk path, via `waitForDownloadPath`.
+//
+// Returning the *latest* match (rather than the first) handles the
+// case where the same logical artifact has been re-downloaded —
+// e.g. a Copy-button pre-download at editVersion=0 followed by a
+// Capture-time re-download at editVersion=1 after the user drew a
+// highlight. Tests that only ever produce a single matching
+// download (the common case) get the same result either way.
 async function findCapturedDownload(sw: Worker, suffix: string): Promise<string> {
   const id = await sw.evaluate((sfx) => {
     interface SpyState { __seeDl?: { id: number; name: string }[] }
     const list = (self as unknown as SpyState).__seeDl ?? [];
-    const match = list.find((d) => d.name.endsWith(sfx));
-    if (!match) {
-      throw new Error(
-        `no captured download ending in ${sfx}; have: ${list.map((d) => d.name).join(', ')}`,
-      );
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].name.endsWith(sfx)) return list[i].id;
     }
-    return match.id;
+    throw new Error(
+      `no captured download ending in ${sfx}; have: ${list.map((d) => d.name).join(', ')}`,
+    );
   }, suffix);
   return await waitForDownloadPath(sw, id);
 }
@@ -823,165 +832,279 @@ test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
 
 // ─── Copy-filename buttons on the capture page ────────────────────
 //
-// The two icon buttons on capture.html copy the absolute on-disk
-// path of the screenshot / HTML file *that will be written* once the
-// user clicks Capture. The path is resolved in the SW's
-// `getDetailsData` handler via `getCaptureDirectory()` +
-// `joinCapturePath`. When the directory can't be resolved (no prior
-// capture), the page disables the buttons.
-//
-// In this Playwright fixture, real downloads land under UUID basenames
-// in a temp directory rather than at the requested
-// `SeeWhatISee/<filename>` path, so `getCaptureDirectory`'s regex
-// (`SeeWhatISee/log.json$`) never matches anything in
-// `chrome.downloads.search` — meaning the page would always disable
-// the buttons. To exercise the production path, this test stubs
-// `chrome.downloads.search` to return a synthetic record matching the
-// regex, with `byExtensionId` set to our own runtime id (which the
-// client-side filter checks). The stub is restored in `finally`.
+// Each click materializes the file on disk via the SW (writing under
+// the same pinned filename Capture would use) and puts the file's
+// real on-disk path on the clipboard. Subsequent clicks short-circuit
+// against the SW's per-tab download cache; a highlight change bumps
+// the page's `editVersion` and forces a re-download with the new
+// baked-in PNG. The eventual Capture click goes through the same
+// `ensure…Downloaded` helpers, so files already pre-downloaded by
+// Copy aren't re-written.
 
-test('details: copy buttons put paths on the clipboard, files appear after Capture', async ({
+// Spy on `navigator.clipboard.writeText` from the capture page. The
+// spy installs a per-page array of all text writes so the test can
+// inspect them without needing clipboard-read permission (which
+// additionally requires user activation to actually read back).
+async function installClipboardSpy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface SpyState { __seeClip?: string[] }
+    const g = self as unknown as SpyState;
+    g.__seeClip = [];
+    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = async (text: string) => {
+      g.__seeClip!.push(text);
+      return orig(text);
+    };
+  });
+}
+
+async function readClipboardSpy(page: Page): Promise<string[]> {
+  return await page.evaluate(
+    () => (self as unknown as { __seeClip?: string[] }).__seeClip ?? [],
+  );
+}
+
+// Wait until the clipboard spy has recorded `n` writes. Copy click
+// handlers are async (SW round-trip + wait-for-download-complete),
+// so a Playwright `.click()` resolves before the write lands.
+async function waitForClipboardWrites(page: Page, n: number): Promise<void> {
+  await page.waitForFunction(
+    (count) =>
+      ((self as unknown as { __seeClip?: string[] }).__seeClip?.length ?? 0) >= count,
+    n,
+    { timeout: 5000 },
+  );
+}
+
+// Count the screenshot / HTML downloads recorded in the SW spy
+// (installed by `openDetailsFlow`). Used to assert the per-tab cache
+// short-circuits — i.e. after the first Copy on each kind, neither a
+// repeat Copy nor the eventual Capture should add another entry.
+async function countDownloadsBySuffix(sw: Worker, suffix: string): Promise<number> {
+  return await sw.evaluate((sfx) => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    const list = (self as unknown as SpyState).__seeDl ?? [];
+    return list.filter((d) => d.name.endsWith(sfx)).length;
+  }, suffix);
+}
+
+test('details: copy buttons download files and put real paths on the clipboard', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // Stub chrome.downloads.search so getCaptureDirectory resolves a
-  // synthetic absolute directory. Installed *before* openDetailsFlow
-  // because the page sends `getDetailsData` on load, which triggers
-  // `getCaptureDirectory` once.
-  const FAKE_DIR = '/tmp/sw-test-fake/SeeWhatISee';
-  const sw0 = await getServiceWorker();
-  await sw0.evaluate((fakeDir) => {
-    interface SpyState { __seeSearchOrig?: typeof chrome.downloads.search }
-    const g = self as unknown as SpyState;
-    g.__seeSearchOrig ??= chrome.downloads.search.bind(chrome.downloads);
-    (chrome.downloads as { search: typeof chrome.downloads.search }).search = (async (q: chrome.downloads.DownloadQuery) => {
-      const isOurQuery =
-        typeof q.filenameRegex === 'string' &&
-        q.filenameRegex.includes('SeeWhatISee') &&
-        q.filenameRegex.includes('log');
-      if (isOurQuery) {
-        return [
-          {
-            id: 999999,
-            filename: `${fakeDir}/log.json`,
-            byExtensionId: chrome.runtime.id,
-          } as unknown as chrome.downloads.DownloadItem,
-        ];
-      }
-      return g.__seeSearchOrig!(q);
-    }) as typeof chrome.downloads.search;
-  }, FAKE_DIR);
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardSpy(capturePage);
 
-  // Always restore — leaving the stub in place would corrupt sibling
-  // tests that touch `chrome.downloads.search`.
-  const restoreSearch = async () => {
-    const sw = await getServiceWorker();
-    await sw.evaluate(() => {
-      interface SpyState { __seeSearchOrig?: typeof chrome.downloads.search }
-      const g = self as unknown as SpyState;
-      if (g.__seeSearchOrig) {
-        (chrome.downloads as { search: typeof chrome.downloads.search }).search =
-          g.__seeSearchOrig;
-        delete g.__seeSearchOrig;
-      }
-    });
-  };
+  await capturePage.locator('#copy-screenshot-name').click();
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 2);
+  const writes = await readClipboardSpy(capturePage);
 
-  let openerPage: Page;
-  let capturePage: Page;
-  try {
-    ({ openerPage, capturePage } = await openDetailsFlow(
-      extensionContext,
-      fixtureServer,
-      getServiceWorker,
-    ));
-  } catch (err) {
-    await restoreSearch();
-    throw err;
-  }
-  try {
+  // Each write is an absolute on-disk path to a real, non-empty
+  // file. In the Playwright fixture the SeeWhatISee/<filename> is
+  // rewritten to a UUID basename under a temp dir, so we don't pin
+  // the basename shape — but the file is on disk and non-empty.
+  expect(writes).toHaveLength(2);
+  expect(writes[0]).toMatch(/^[/\\]/);
+  expect(writes[1]).toMatch(/^[/\\]/);
+  expect(writes[0]).not.toBe(writes[1]);
+  expect(fs.existsSync(writes[0])).toBe(true);
+  expect(fs.statSync(writes[0]).size).toBeGreaterThan(0);
+  expect(fs.existsSync(writes[1])).toBe(true);
+  expect(fs.statSync(writes[1]).size).toBeGreaterThan(0);
 
-    // Spy on `navigator.clipboard.writeText` so we can read what each
-    // Copy click would put on the clipboard without needing to grant
-    // clipboard-read permission to the test context (which would
-    // additionally require user activation to actually read back).
-    await capturePage.evaluate(() => {
-      interface SpyState { __seeClip?: string[] }
-      const g = self as unknown as SpyState;
-      g.__seeClip = [];
-      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
-      navigator.clipboard.writeText = async (text: string) => {
-        g.__seeClip!.push(text);
-        return orig(text);
-      };
-    });
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: true });
 
-    // Both buttons should be enabled — the search stub gave the page
-    // a directory-bearing path, not a bare filename.
-    await expect(capturePage.locator('#copy-screenshot-name')).toBeEnabled();
-    await expect(capturePage.locator('#copy-html-name')).toBeEnabled();
+  // After Capture the log record references the two pinned filenames.
+  // The clipboard advertised the same files (in production, anyway —
+  // the Playwright fixture rewrites filenames, so we can only check
+  // the regex shape here).
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(fs.existsSync(writes[0])).toBe(true);
+  expect(fs.existsSync(writes[1])).toBe(true);
 
-    await capturePage.locator('#copy-screenshot-name').click();
-    await capturePage.locator('#copy-html-name').click();
+  await openerPage.close();
+});
 
-    const writes = await capturePage.evaluate(
-      () => (self as unknown as { __seeClip: string[] }).__seeClip,
-    );
-    expect(writes).toHaveLength(2);
-    // Each write should be a full absolute path inside our fake dir,
-    // ending in the expected basename pattern.
-    expect(writes[0]).toMatch(
-      new RegExp(`^${FAKE_DIR}/screenshot-\\d{8}-\\d{6}-\\d{3}\\.png$`),
-    );
-    expect(writes[1]).toMatch(
-      new RegExp(`^${FAKE_DIR}/contents-\\d{8}-\\d{6}-\\d{3}\\.html$`),
-    );
+test('details: copy then copy again without editing reuses the cached download', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardSpy(capturePage);
 
-    const screenshotBasename = writes[0].split('/').pop()!;
-    const htmlBasename = writes[1].split('/').pop()!;
+  // First Copy → SW downloads → one .png + zero .html so far.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  const sw = await getServiceWorker();
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
 
-    // Both Copy clicks resolve against the *same* pinned timestamp
-    // (set in `captureBothToMemory` and reused by `saveDetailedCapture`),
-    // so the two artifacts share a basename suffix — the production
-    // guarantee that one detailed-capture writes a matched pair.
-    const screenshotSuffix = screenshotBasename.replace(/^screenshot-/, '').replace(/\.png$/, '');
-    const htmlSuffix = htmlBasename.replace(/^contents-/, '').replace(/\.html$/, '');
-    expect(screenshotSuffix).toBe(htmlSuffix);
+  // Same for HTML.
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 2);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
 
-    // Files don't exist yet — the page hasn't sent `saveDetails`. The
-    // download spy installed by `openDetailsFlow` records every
-    // download since this test's spy reset, so neither basename
-    // should appear in it before Save.
-    const sw = await getServiceWorker();
-    const downloadsBefore = await sw.evaluate(() => {
-      interface SpyState { __seeDl?: { id: number; name: string }[] }
-      return (self as unknown as SpyState).__seeDl ?? [];
-    });
-    expect(downloadsBefore.find((d) => d.name.endsWith(screenshotBasename))).toBeUndefined();
-    expect(downloadsBefore.find((d) => d.name.endsWith(htmlBasename))).toBeUndefined();
+  // Click each Copy a second time without editing in between. The
+  // SW cache (keyed by editVersion for screenshot, unconditional for
+  // HTML) should short-circuit, so neither call adds a download.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 4);
+  const writes = await readClipboardSpy(capturePage);
+  expect(writes).toHaveLength(4);
+  expect(writes[2]).toBe(writes[0]); // same path returned from cache
+  expect(writes[3]).toBe(writes[1]);
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
 
-    await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: true });
+  // Capture with both checkboxes also hits the cache — no third
+  // download for either kind.
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: true });
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
 
-    // After Save, both files exist on disk under the exact basenames
-    // the Copy buttons advertised. `findCapturedDownload` resolves
-    // the basename through the download spy to whatever path Chrome
-    // actually wrote to (a UUID under a temp dir, in the fixture) —
-    // not the absolute path the clipboard advertised, since
-    // Playwright doesn't preserve requested filenames. The basename
-    // round-trip is what matters: in production both resolve to the
-    // same `~/Downloads/SeeWhatISee/<filename>` path.
-    const sw2 = await getServiceWorker();
-    const screenshotPath = await findCapturedDownload(sw2, screenshotBasename);
-    expect(fs.existsSync(screenshotPath)).toBe(true);
-    expect(fs.statSync(screenshotPath).size).toBeGreaterThan(0);
+  await openerPage.close();
+});
 
-    const htmlPath = await findCapturedDownload(sw2, htmlBasename);
-    expect(fs.existsSync(htmlPath)).toBe(true);
-    expect(fs.statSync(htmlPath).size).toBeGreaterThan(0);
+test('details: drawing a highlight invalidates the screenshot cache so the next copy re-downloads', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardSpy(capturePage);
 
-    await openerPage.close();
-  } finally {
-    await restoreSearch();
-  }
+  // Initial Copy at editVersion=0 → one .png download.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  const sw = await getServiceWorker();
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+
+  // Draw a rectangle: bumps editVersion, invalidates the cache.
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
+
+  // Second Copy → SW sees the bumped editVersion, re-downloads with
+  // the highlight-baked PNG. That's a second .png download.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 2);
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(2);
+
+  // Third Copy with no further edits → cache hit again, no new download.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 3);
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(2);
+
+  // Capture at the same editVersion → cache hit, no download.
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: false });
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(2);
+
+  // Saved record carries highlights:true because we drew before save.
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.highlights).toBe(true);
+
+  await openerPage.close();
+});
+
+test('details: capture without ever clicking copy still downloads exactly once per kind', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: true });
+
+  const sw = await getServiceWorker();
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  await openerPage.close();
+});
+
+test('details: copy → edit → capture re-downloads the screenshot with the highlight baked in', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardSpy(capturePage);
+
+  // First Copy at editVersion=0 — un-annotated PNG hits disk.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  const sw = await getServiceWorker();
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+
+  // Draw a highlight — editVersion bumps, the v0 cache entry is now
+  // stale relative to what the user is looking at.
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
+
+  // Capture without an intervening Copy. The SW's
+  // `ensureScreenshotDownloaded` sees `editVersion` (now 1) doesn't
+  // match the cached `editVersion` (0), so it re-downloads with the
+  // page's highlight-baked PNG. That's a second .png download —
+  // the *final* image with the highlight, not the v0 file the Copy
+  // wrote.
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: false });
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(2);
+
+  // Saved record reflects the post-edit save: `highlights: true`,
+  // and the saved PNG contains the red rectangle. We verify the
+  // bake-in by sampling the PNG along the rectangle's left edge,
+  // same as the dedicated highlight-bake-in test does.
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.highlights).toBe(true);
+
+  // findCapturedDownload returns the *latest* matching download, so
+  // here it gives us the v1 (post-edit) re-download triggered by
+  // Capture — the file with the red rectangle baked in — not the
+  // v0 file the earlier Copy click wrote.
+  const pngPath = await findCapturedDownload(sw, '.png');
+  const png = PNG.sync.read(fs.readFileSync(pngPath));
+  const edgeX = Math.round(png.width * 0.2);
+  const edgeY = Math.round(png.height * 0.3);
+  const edgeIdx = (edgeY * png.width + edgeX) * 4;
+  const [r, g, b] = [png.data[edgeIdx], png.data[edgeIdx + 1], png.data[edgeIdx + 2]];
+  // Red dominates: roughly r ≈ 255, g/b ≈ 0. Loose tolerance to
+  // accommodate antialiasing along the stroke.
+  expect(r).toBeGreaterThan(180);
+  expect(g).toBeLessThan(80);
+  expect(b).toBeLessThan(80);
+
+  await openerPage.close();
 });

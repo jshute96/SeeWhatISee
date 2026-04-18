@@ -2,10 +2,13 @@ import {
   captureBothToMemory,
   captureVisible,
   clearCaptureLog,
+  downloadHtml,
+  downloadScreenshot,
   DOWNLOAD_SUBDIR,
   LOG_STORAGE_KEY,
-  saveDetailedCapture,
+  recordDetailedCapture,
   savePageContents,
+  waitForDownloadComplete,
   type CaptureRecord,
   type InMemoryCapture,
 } from './capture.js';
@@ -757,6 +760,22 @@ interface DetailsSession {
   // it when the details tab closes. Optional: the active-tab
   // lookup can in principle return no id (chrome:// pages, races).
   openerTabId?: number;
+  // Per-artifact download tracking.
+  //
+  // The page's Copy-filename buttons materialize the file on demand
+  // so the clipboard always carries a real on-disk path. Subsequent
+  // clicks (and the eventual Capture click) reuse the cached path
+  // unless something has invalidated it:
+  //   - `screenshot.editVersion` is the page's monotonically
+  //     incrementing edit counter at download time. A change in
+  //     edit count means the user drew / undid / cleared a
+  //     highlight, so the next request re-downloads with the new
+  //     baked-in PNG.
+  //   - HTML never invalidates within a session (no editing UI).
+  downloads?: {
+    screenshot?: { downloadId: number; editVersion: number; path: string };
+    html?: { downloadId: number; path: string };
+  };
 }
 
 function detailsStorageKey(tabId: number): string {
@@ -808,6 +827,26 @@ async function startCaptureWithDetails(delayMs = 0): Promise<void> {
 interface GetDetailsMessage {
   action: 'getDetailsData';
 }
+interface EnsureDownloadedMessage {
+  action: 'ensureDownloaded';
+  /** Which artifact the page wants on disk and a path for. */
+  kind: 'screenshot' | 'html';
+  /**
+   * Page's monotonically-incrementing edit counter at the moment of
+   * this request. Only meaningful for `kind === 'screenshot'`; the
+   * SW's per-tab cache compares it against the version of the last
+   * download and re-downloads on mismatch. HTML messages send 0 (or
+   * omit) — the SW never invalidates the HTML cache.
+   */
+  editVersion?: number;
+  /**
+   * Highlight-baked PNG data URL, sent only when `kind ===
+   * 'screenshot'` and `edits.length > 0` on the page. Used as the
+   * download body when a re-download fires. Ignored when the cache
+   * matches and we return the existing path.
+   */
+  screenshotOverride?: string;
+}
 interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
@@ -819,6 +858,8 @@ interface SaveDetailsMessage {
    * `screenshot` is also true — see capture.ts).
    */
   highlights: boolean;
+  /** Edit counter — same meaning as on `EnsureDownloadedMessage`. */
+  editVersion?: number;
   /**
    * Optional replacement screenshot data URL with the user's
    * highlights baked into the PNG bytes. The capture page sends this
@@ -828,7 +869,120 @@ interface SaveDetailsMessage {
    */
   screenshotOverride?: string;
 }
-type DetailsMessage = GetDetailsMessage | SaveDetailsMessage;
+type DetailsMessage = GetDetailsMessage | EnsureDownloadedMessage | SaveDetailsMessage;
+
+/**
+ * Read the per-tab DetailsSession out of session storage. Returns
+ * `undefined` when the entry is missing (e.g. the user closed the
+ * details tab between message dispatch and handler, or the SW was
+ * torn down and lost the in-memory link). Most callers wrap this
+ * with `requireDetailsSession` to throw; `getDetailsData` calls it
+ * directly so it can no-op silently and let the page render a
+ * blank state instead of surfacing an error.
+ */
+async function loadDetailsSession(tabId: number): Promise<DetailsSession | undefined> {
+  const key = detailsStorageKey(tabId);
+  const stored = await chrome.storage.session.get(key);
+  return stored[key] as DetailsSession | undefined;
+}
+
+/**
+ * Throwing wrapper around `loadDetailsSession`. Use this from
+ * handlers that can't sensibly proceed without a session (the
+ * `ensureDownloaded` and `saveDetails` paths).
+ */
+async function requireDetailsSession(tabId: number): Promise<DetailsSession> {
+  const session = await loadDetailsSession(tabId);
+  if (!session) throw new Error('Capture data missing for details tab');
+  return session;
+}
+
+/**
+ * Persist a (possibly mutated) DetailsSession back to session
+ * storage under the same per-tab key. Used after we update the
+ * `downloads` cache so future Copy / Capture clicks can reuse the
+ * already-downloaded files.
+ */
+async function saveDetailsSession(tabId: number, session: DetailsSession): Promise<void> {
+  await chrome.storage.session.set({ [detailsStorageKey(tabId)]: session });
+}
+
+/**
+ * Materialize the screenshot file on disk if needed and return its
+ * absolute on-disk path.
+ *
+ * Cache hit: same `editVersion` as the last download for this tab —
+ * the page hasn't drawn / undone a highlight since, the on-disk file
+ * still matches what the user is looking at, return the cached path.
+ * The page-supplied `screenshotOverride` (if any) is dropped — by
+ * contract, the page is required to send a PNG that matches the
+ * `editVersion` it claims, so the bytes are guaranteed equivalent
+ * to whatever's already on disk.
+ *
+ * Cache miss: download (with the user's current highlight-baked PNG
+ * if `screenshotOverride` was sent), wait for the file to land,
+ * stash the new `{ downloadId, editVersion, path }` so subsequent
+ * requests with the same edit version short-circuit.
+ *
+ * Concurrency: a fast user clicking Copy → drawing → clicking Copy
+ * again can interleave two in-flight downloads on the same tab. The
+ * post-download write back to session storage re-reads the cache and
+ * only commits if no newer `editVersion` got there first, so a slow
+ * v1 download finishing after a fast v2 doesn't clobber v2's entry.
+ * The wait-for-complete latency is the only window where this matters.
+ */
+async function ensureScreenshotDownloaded(
+  tabId: number,
+  editVersion: number,
+  screenshotOverride: string | undefined,
+): Promise<string> {
+  const session = await requireDetailsSession(tabId);
+  const cached = session.downloads?.screenshot;
+  if (cached && cached.editVersion === editVersion) return cached.path;
+
+  const downloadId = await downloadScreenshot(session.capture, screenshotOverride);
+  const path = await waitForDownloadComplete(downloadId);
+
+  // Re-read the session after the await: another concurrent
+  // `ensureScreenshotDownloaded` may have already cached a *newer*
+  // editVersion while we were waiting for the download to finish.
+  // Only write back if our editVersion is at least as fresh.
+  const fresh = await requireDetailsSession(tabId);
+  const freshCached = fresh.downloads?.screenshot;
+  if (!freshCached || editVersion >= freshCached.editVersion) {
+    fresh.downloads = {
+      ...(fresh.downloads ?? {}),
+      screenshot: { downloadId, editVersion, path },
+    };
+    await saveDetailsSession(tabId, fresh);
+  }
+  return path;
+}
+
+/**
+ * Materialize the HTML file on disk if needed and return its
+ * absolute on-disk path. HTML never invalidates within a session
+ * (no editing UI), so the cache is unconditional once populated.
+ */
+async function ensureHtmlDownloaded(tabId: number): Promise<string> {
+  const session = await requireDetailsSession(tabId);
+  if (session.downloads?.html) return session.downloads.html.path;
+
+  const downloadId = await downloadHtml(session.capture);
+  const path = await waitForDownloadComplete(downloadId);
+  // Same race protection as the screenshot path: another concurrent
+  // call may have cached an HTML download while we were waiting.
+  // If so, prefer the existing entry (HTML is content-stable for the
+  // session, so either path points at an equivalent file).
+  const fresh = await requireDetailsSession(tabId);
+  if (fresh.downloads?.html) return fresh.downloads.html.path;
+  fresh.downloads = {
+    ...(fresh.downloads ?? {}),
+    html: { downloadId, path },
+  };
+  await saveDetailsSession(tabId, fresh);
+  return path;
+}
 
 chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
   const tabId = sender.tab?.id;
@@ -836,61 +990,59 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
 
   if (msg.action === 'getDetailsData') {
     void (async () => {
-      const key = detailsStorageKey(tabId);
-      const stored = await chrome.storage.session.get(key);
-      const session = stored[key] as DetailsSession | undefined;
-      if (!session) {
-        sendResponse(undefined);
-        return;
-      }
-      // Resolve the absolute on-disk paths the files will land at,
-      // so the capture page's Copy buttons can put a paste-ready
-      // path on the clipboard. `getCaptureDirectory` throws on a
-      // first-ever capture (no log.json yet to derive the dir from);
-      // in that case we fall back to the bare filenames so Copy
-      // still does *something* useful.
-      let dir = '';
-      try {
-        dir = await getCaptureDirectory();
-      } catch {
-        // No prior capture → no derivable directory. Bare filename
-        // fallback below.
-      }
-      const capture = session.capture;
-      const screenshotPath = dir
-        ? joinCapturePath(dir, capture.screenshotFilename)
-        : capture.screenshotFilename;
-      const contentsPath = dir
-        ? joinCapturePath(dir, capture.contentsFilename)
-        : capture.contentsFilename;
-      sendResponse({
-        screenshotDataUrl: capture.screenshotDataUrl,
-        html: capture.html,
-        url: capture.url,
-        screenshotPath,
-        contentsPath,
-      });
+      // Page on first load shouldn't error if the SW lost its
+      // session — let it render a blank state instead. Hence the
+      // non-throwing `loadDetailsSession`, unlike the
+      // `requireDetailsSession` call in `saveDetails`.
+      const session = await loadDetailsSession(tabId);
+      // The page only needs the capture itself; paths come from
+      // the on-demand `ensureDownloaded` round-trip when a Copy
+      // button is clicked.
+      sendResponse(session?.capture);
     })();
-    return true; // keep the message channel open for the async response
+    return true;
+  }
+
+  if (msg.action === 'ensureDownloaded') {
+    void (async () => {
+      try {
+        const path =
+          msg.kind === 'screenshot'
+            ? await ensureScreenshotDownloaded(
+                tabId,
+                msg.editVersion ?? 0,
+                msg.screenshotOverride,
+              )
+            : await ensureHtmlDownloaded(tabId);
+        sendResponse({ path });
+      } catch (err) {
+        sendResponse({ error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return true;
   }
 
   if (msg.action === 'saveDetails') {
     void runWithErrorReporting(async () => {
       const key = detailsStorageKey(tabId);
-      const stored = await chrome.storage.session.get(key);
-      const session = stored[key] as DetailsSession | undefined;
-      if (!session) throw new Error('Capture data missing for details tab');
-      const capture = session.capture;
-      // Swap in the highlight-baked PNG when the page sent one. We
-      // shallow-clone so we don't mutate the session-storage object
-      // (still owned by Chrome until we remove it in the finally block
-      // below) and so a re-read elsewhere wouldn't see the override.
-      const captureForSave: InMemoryCapture = msg.screenshotOverride
-        ? { ...capture, screenshotDataUrl: msg.screenshotOverride }
-        : capture;
+      const session = await requireDetailsSession(tabId);
       try {
-        await saveDetailedCapture({
-          capture: captureForSave,
+        // Each artifact runs through the same `ensure…Downloaded`
+        // helper as the Copy buttons. Files the user already
+        // pre-downloaded via Copy (with the same `editVersion` for
+        // screenshots) hit the cache and are not re-written.
+        if (msg.screenshot) {
+          await ensureScreenshotDownloaded(
+            tabId,
+            msg.editVersion ?? 0,
+            msg.screenshotOverride,
+          );
+        }
+        if (msg.html) {
+          await ensureHtmlDownloaded(tabId);
+        }
+        await recordDetailedCapture({
+          capture: session.capture,
           includeScreenshot: msg.screenshot,
           includeHtml: msg.html,
           prompt: msg.prompt,
@@ -898,7 +1050,7 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         });
       } finally {
         // Always clean up the stored capture and close the tab, even
-        // if saveDetailedCapture throws: the stashed data is no longer
+        // if recordDetailedCapture throws: the stashed data is no longer
         // useful and the user can click the menu item again to retry.
         //
         // Trade-off: on failure the details tab disappears out from
@@ -1203,7 +1355,11 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   captureVisible,
   savePageContents,
   captureBothToMemory,
-  saveDetailedCapture,
+  downloadScreenshot,
+  downloadHtml,
+  recordDetailedCapture,
+  ensureScreenshotDownloaded,
+  ensureHtmlDownloaded,
   startCaptureWithDetails,
   clearCaptureLog,
   openSnapshotsDirectory,

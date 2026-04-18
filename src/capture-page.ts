@@ -12,8 +12,11 @@
 //      optional prompt, optionally draws highlights over the preview
 //      (rectangles and lines — all in a single undo stack), and
 //      clicks Capture. We send the options back to background, which
-//      runs saveDetailedCapture and closes the tab once the files are
-//      on disk.
+//      delegates per-artifact to its `ensure…Downloaded` helpers
+//      (which short-circuit on cached pre-downloads from the Copy
+//      buttons) and then writes the sidecar via
+//      `recordDetailedCapture`. The tab closes once the round-trip
+//      completes.
 //
 // Must live in a separate .js file (not inline in capture.html)
 // because the default extension-page CSP forbids inline scripts.
@@ -22,15 +25,19 @@ interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
-  // Absolute on-disk paths the screenshot / HTML files will land at
-  // when the user clicks Save. Resolved by background using its
-  // `getCaptureDirectory` helper plus the filenames pinned at capture
-  // time in `captureBothToMemory`. On a first-ever capture (no
-  // existing `log.json` to derive the directory from) these fall
-  // back to the bare filenames so Copy still produces something.
-  screenshotPath: string;
-  contentsPath: string;
 }
+
+/**
+ * Monotonic edit counter. Bumped every time the highlight stack
+ * changes (drawn rect/line, undo, clear). Sent to the SW with
+ * every Copy and Capture request so it can decide whether the
+ * cached on-disk PNG still represents the user's current state or
+ * needs to be re-downloaded with the new highlights baked in.
+ *
+ * HTML never edits, so it doesn't need an equivalent counter — the
+ * SW caches the HTML download unconditionally for the session.
+ */
+let editVersion = 0;
 
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
@@ -258,6 +265,7 @@ window.addEventListener('mouseup', (e) => {
         h: (Math.abs(dy) / r.height) * 100,
       });
     }
+    editVersion++;
   }
   dragStart = null;
   dragCurrent = null;
@@ -267,11 +275,13 @@ window.addEventListener('mouseup', (e) => {
 
 undoBtn.addEventListener('click', () => {
   edits.pop();
+  editVersion++;
   render();
 });
 
 clearBtn.addEventListener('click', () => {
   edits.length = 0;
+  editVersion++;
   render();
 });
 
@@ -311,32 +321,62 @@ async function loadData(): Promise<void> {
   // True UTF-8 byte count of the captured HTML, not the JS string
   // length (which counts UTF-16 code units).
   htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
-  // Wire up the Copy-filename buttons. Extension pages have direct
-  // access to `navigator.clipboard.writeText` under a user gesture,
-  // so we don't need to round-trip through the offscreen document
-  // that the SW uses for its own Copy-last-… menu entries.
-  setupCopyButton(copyScreenshotBtn, response.screenshotPath);
-  setupCopyButton(copyHtmlBtn, response.contentsPath);
 }
 
-/**
- * Wire `btn` to copy `path` on click. When `path` is a bare filename
- * (no separator) — the fallback case for the user's first-ever
- * capture, where `getCaptureDirectory` couldn't resolve a download
- * directory — the bare filename isn't paste-ready, so we disable the
- * button and explain via the tooltip. Mirrors the SW's
- * Copy-last-… menu entries, which are also `enabled: false` when
- * there's nothing useful to copy.
- */
-function setupCopyButton(btn: HTMLButtonElement, path: string): void {
-  if (!path.includes('/') && !path.includes('\\')) {
-    btn.disabled = true;
-    btn.title = 'Copy filename (Save a capture first to enable)';
+// ─── Copy-filename buttons ────────────────────────────────────────
+//
+// Each click materializes the file on disk via the SW (writing under
+// the same pinned filename the eventual Save would use), then writes
+// the file's absolute on-disk path to the clipboard. The SW caches
+// the download per-tab so subsequent clicks (and the eventual
+// Capture click) reuse the existing file. For the screenshot, the
+// cache is keyed by `editVersion` so a highlight change forces a
+// re-download with the new baked-in PNG; for HTML, the cache is
+// unconditional (no editing UI changes the body).
+//
+// Extension pages have direct access to `navigator.clipboard.writeText`
+// under a user gesture — no offscreen helper needed (unlike the SW's
+// Copy-last-… menu entries).
+
+copyScreenshotBtn.addEventListener('click', () => {
+  void copyArtifactPath('screenshot');
+});
+copyHtmlBtn.addEventListener('click', () => {
+  void copyArtifactPath('html');
+});
+
+// Last `editVersion` we sent the SW with a screenshot override. If
+// the user hasn't drawn / undone since, we skip the (potentially
+// multi-MB) PNG bake + message-channel copy on the next click — the
+// SW will hit its cache anyway and ignore any override we'd send.
+// Reset to -1 so the very first Copy with edits forces a bake.
+let lastSentScreenshotEditVersion = -1;
+
+async function copyArtifactPath(kind: 'screenshot' | 'html'): Promise<void> {
+  // Skip the bake + override when the SW will cache-hit. The cache
+  // is keyed by `editVersion`, so if we already shipped this version
+  // (and therefore the SW already has the matching file on disk),
+  // there's no point baking a fresh PNG just for the SW to drop.
+  const needsBake =
+    kind === 'screenshot' &&
+    edits.length > 0 &&
+    editVersion !== lastSentScreenshotEditVersion;
+  const screenshotOverride = needsBake ? renderHighlightedPng() : undefined;
+  const response = (await chrome.runtime.sendMessage({
+    action: 'ensureDownloaded',
+    kind,
+    editVersion,
+    screenshotOverride,
+  })) as { path?: string; error?: string } | undefined;
+  if (!response || response.error || !response.path) {
+    console.warn(
+      '[SeeWhatISee] copy filename failed:',
+      response?.error ?? 'no response from background',
+    );
     return;
   }
-  btn.addEventListener('click', () => {
-    void navigator.clipboard.writeText(path);
-  });
+  if (kind === 'screenshot') lastSentScreenshotEditVersion = editVersion;
+  await navigator.clipboard.writeText(response.path);
 }
 
 // Render the preview image with all current highlight edits baked
@@ -398,8 +438,9 @@ captureBtn.addEventListener('click', () => {
   // `undefined` as soon as the message is dispatched — *not* when
   // the save completes. We fire-and-forget instead of awaiting so
   // it's obvious that nothing here is waiting on the save; the
-  // background closes this tab itself when saveDetailedCapture
-  // resolves (or fails and the finally block fires).
+  // background closes this tab itself when `saveDetails` finishes
+  // (its `recordDetailedCapture` call resolves, or fails and the
+  // finally block fires).
   captureBtn.disabled = true;
 
   try {
@@ -417,6 +458,7 @@ captureBtn.addEventListener('click', () => {
       html: htmlBox.checked,
       prompt: promptInput.value.trim(),
       highlights: bakeIn,
+      editVersion,
       screenshotOverride,
     });
   } catch (err) {

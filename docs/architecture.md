@@ -21,7 +21,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
                                 |  - captureVisible()         |
                                 |  - savePageContents()       |
                                 |  - captureBothToMemory()    |
-                                |  - saveDetailedCapture()    |
+                                |  - downloadScreenshot()     |
+                                |  - downloadHtml()           |
+                                |  - recordDetailedCapture()  |
                                 |  - clearCaptureLog()        |
                                 +---------------------------+
 ```
@@ -228,9 +230,16 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - `captureBothToMemory(delayMs?)` does *both* of the above
     without saving, returning the data for the details flow to
     stash and preview. Same delay semantics.
-  - `saveDetailedCapture` takes pre-captured data plus flags for
-    which artifacts to keep and an optional prompt, and writes the
-    selected files + a single combined sidecar record.
+  - `downloadScreenshot` / `downloadHtml` start a download from the
+    pre-captured data; `waitForDownloadComplete` polls until the
+    file is on disk and returns its absolute path. The SW caches
+    these per-tab so a Copy-button pre-download and the eventual
+    Capture share one file each.
+  - `recordDetailedCapture` writes the sidecar log entry referencing
+    whichever artifacts the caller decided to keep. Splitting the
+    download from the record lets the SW materialize files on
+    demand (Copy clicks) without committing them to the log until
+    the user actually clicks Capture.
 
   Future variations (full-page stitching, element crop, etc.)
   live here as additional exported functions.
@@ -359,25 +368,50 @@ can draw red markup on the regions they want the agent to focus on.
 ### Copy-filename buttons
 
 - A small icon button sits next to each Save checkbox.
-  - Tooltip: `Copy filename (File not written yet)`.
+  - Tooltip: `Copy filename`.
   - Click writes the file's path to the clipboard via
     `navigator.clipboard.writeText` (extension pages have direct
     clipboard access — no offscreen helper involved here, unlike
     the SW's Copy-last-… menu entries).
-- The path is the **absolute on-disk path** the file will land at,
-  derived in the SW's `getDetailsData` handler via
-  `getCaptureDirectory()` + `joinCapturePath(dir, filename)`.
-  - On the user's first-ever capture (no prior `log.json` to derive
-    the directory from), the page can't build a paste-ready path —
-    the Copy buttons are disabled and the tooltip flips to
-    "Save a capture first to enable", same pattern as the SW's
-    Copy-last-… menu entries.
+- Each click materializes the file on disk via the SW's
+  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` helpers,
+  then puts the file's **real on-disk path** on the clipboard. The
+  user always gets a valid path — there's no "the file doesn't
+  exist yet" caveat.
+- Per-tab download cache lives on `DetailsSession.downloads`. Repeat
+  Copy clicks short-circuit on a cache hit; the eventual Capture
+  click also goes through the same helpers, so files already
+  pre-downloaded by Copy aren't re-written.
+  - Screenshot cache is keyed by an `editVersion` — a monotonic
+    counter the page bumps on every highlight draw / undo / clear.
+    On mismatch the SW re-downloads with the page's freshly
+    baked-in PNG (sent as `screenshotOverride` in the message).
+  - HTML cache is unconditional: there's no editing UI for the
+    body, so once written it stays valid for the session.
 - Filenames are pinned at capture time in `captureBothToMemory`
   (`screenshotFilename` / `contentsFilename` on `InMemoryCapture`)
-  and reused by `saveDetailedCapture`.
+  and reused by every download in the session.
   - Side-effect: the saved record's `timestamp` and the embedded
     local-time filename suffix both describe when the screenshot
     was *taken*, not when the user clicked Save.
+  - All re-downloads use `conflictAction: 'overwrite'`, so a
+    re-download under the same pinned filename rewrites the
+    on-disk file rather than producing `screenshot-… (1).png`.
+- Orphan-file trade-offs. Copy and Capture have decoupled
+  semantics: Copy materializes a file; Capture writes the log
+  entry. As a result, two scenarios leave on-disk files with no
+  log entry:
+  - User clicks Copy and then closes the details tab without
+    clicking Capture.
+  - User clicks Copy on (say) the screenshot, then unchecks the
+    Save screenshot checkbox before clicking Capture. The log
+    record gets no `screenshot` field, but the file from the Copy
+    step is still on disk.
+  - In both cases this is intentional: the user explicitly opted
+    into a file via the Copy click. We don't proactively delete
+    via `chrome.downloads.removeFile` because the user can move /
+    rename the file between Copy and Capture, and we don't want
+    to chase it.
 
 ### Save and close
 
@@ -388,10 +422,14 @@ can draw red markup on the regions they want the agent to focus on.
   the same in the saved file as during editing.
 - The page sends a `saveDetails` runtime message back to the
   background with the selected save options, the prompt, a
-  `highlights: boolean` flag, and the `screenshotOverride` data URL
-  when present.
-- The background swaps the override into the stashed
-  `InMemoryCapture` and calls `saveDetailedCapture()`. The saved
+  `highlights: boolean` flag, the current `editVersion`, and the
+  `screenshotOverride` data URL when present.
+- The background runs each requested artifact through the same
+  `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` helpers
+  that powered any earlier Copy clicks — so a file pre-downloaded
+  by Copy at the same `editVersion` is *not* re-written, and the
+  on-disk file from the Copy step is what the log entry references.
+  Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
   `prompt`, and `highlights: true`, on top of the always-present
   `timestamp` and `url`. It's valid to save with neither checkbox
