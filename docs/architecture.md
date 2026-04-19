@@ -427,14 +427,30 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 ### Image annotation
 
 The screenshot preview is wrapped in an SVG overlay where the user
-can draw red markup on the regions they want the agent to focus on.
+can draw red markup on the regions they want the agent to focus on,
+and optionally convert drawn boxes into opaque redactions or the
+active crop region.
 
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser context
   menu is suppressed on the overlay.
-- **Undo / Clear** — single edit stack; buttons disabled when empty.
+- **Redact button** — converts the most recent unconverted red
+  rectangle in the stack into an opaque black box. Hides whatever
+  was underneath in the saved PNG. Disabled when no unconverted red
+  rectangle exists. Each click converts one box, so repeated clicks
+  walk backward through the stack.
+- **Crop button** — converts the top-of-stack red rectangle into
+  the active crop region; everything outside dims in the preview
+  and the saved PNG is reduced to just that region. Disabled
+  unless the top of the stack is an unconverted red rectangle, so
+  a crop always applies to the box the user just drew.
+- **Undo / Clear** — single edit-history stack; disabled when
+  empty. Undo reverses both draws and conversions — popping a
+  conversion turns the box back into a red rectangle.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
+- Every button carries a `title` tooltip explaining what it does,
+  shown on hover even while disabled.
 
 ### Copy-filename buttons
 
@@ -490,11 +506,19 @@ can draw red markup on the regions they want the agent to focus on.
 
 ### Save and close
 
-- On Capture click, if there are highlights *and* the screenshot is
+- On Capture click, if there are any edits *and* the screenshot is
   being saved, the page bakes the SVG overlay onto a `<canvas>` at
   the screenshot's natural resolution and produces a fresh PNG data
-  URL. Stroke widths scale by the display→natural ratio so they look
-  the same in the saved file as during editing.
+  URL.
+  - Red rectangles and lines stroke at 3px, scaled by the
+    display→natural ratio so they look the same in the saved
+    file as during editing.
+  - Redactions paint as solid black fills.
+  - If an active crop exists, the canvas is sized to the crop
+    region (not the full image) and every edit's coordinates are
+    translated into the cropped frame before being drawn — so the
+    saved PNG is the cropped region with the remaining markup and
+    redactions on top.
 - The page sends a `saveDetails` runtime message back to the
   background with the selected save options, the prompt, a
   `highlights: boolean` flag, the current `editVersion`, and the

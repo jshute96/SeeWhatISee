@@ -425,13 +425,27 @@ This section is split by topic:
 
 The screenshot preview is layered with an SVG overlay that lets
 the user draw red markup on the regions they want the agent to
-focus on.
+focus on, convert drawn rectangles into opaque redactions, and
+convert a drawn rectangle into the active crop region.
 
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser
   context menu is suppressed on the overlay.
-- **Undo / Clear** — single edit stack; both buttons disable when
-  empty.
+- **Redact button** — converts the most recent unconverted red
+  rectangle into an opaque black box in the preview and the
+  saved PNG. Enabled whenever any unconverted red rectangle
+  exists; each click consumes one, walking back through the
+  stack on repeated clicks.
+- **Crop button** — converts the top-of-stack red rectangle into
+  the active crop region. Everything outside the region dims in
+  the preview; on save the canvas is cropped to just that region.
+  Disabled unless the top of the stack is currently an
+  un-converted red rectangle, so a crop always applies to the box
+  the user just drew (rather than silently reaching further back).
+- **Undo / Clear** — single edit-history stack covering draws
+  *and* conversions. Undo reverses the most recent action, which
+  means popping a conversion restores the red rectangle it came
+  from. Both buttons disable when the stack is empty.
 - **Resize-stable coordinates** — edits are stored as percentages
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
@@ -439,19 +453,38 @@ focus on.
   between mousedown and mouseup counts as a stray click and is
   discarded, so neither button can produce a degenerate
   zero-size rectangle or zero-length line.
+- **Tooltips** — every button has a `title` attribute explaining
+  what it does. Hovering a disabled button still shows the
+  tooltip, so the user can tell *why* a button is grayed out
+  (e.g. "Disabled until you draw a red box").
+- **Crop rendering** — the preview paints four dim rectangles
+  around the active crop (top, bottom, left, right) plus a thin
+  dashed white border on the crop edges. Prior crops are hidden
+  by the most recent one.
 
 ### Highlight bake-in on save
 
-If the user has drawn any highlights *and* is saving the screenshot:
+If the user has any edits *and* is saving the screenshot:
 
 - The page renders the preview image plus the overlay onto a
-  `<canvas>` at the screenshot's *natural* resolution.
-- Stroke widths scale by the display→natural ratio so the markup
-  looks the same in the saved PNG as during editing.
+  `<canvas>`. With no active crop the canvas is the screenshot's
+  *natural* resolution; with an active crop the canvas is sized
+  to just that crop region (so the saved PNG ships a smaller
+  image) and every edit's coordinates are translated into the
+  cropped frame.
+- Red rectangles and lines stroke at 3px scaled by the
+  display→natural ratio so they look the same in the saved PNG
+  as during editing.
+- Redactions paint as solid black fills that cover whatever was
+  underneath — they are the only edit kind that obliterates the
+  original pixels in the bake, which is the whole point.
+- A clip rectangle matching the canvas size keeps any edit that
+  extends past the crop from bleeding onto the saved bytes.
 - The resulting `canvas.toDataURL('image/png')` is sent back to
   the background as a `screenshotOverride` field on the
   `saveDetails` runtime message, alongside a `highlights: true`
-  flag.
+  flag. The flag covers rects/lines, redactions, and crops — any
+  of them counts as "the user edited the capture."
 - The background passes `screenshotOverride` through to
   `ensureScreenshotDownloaded` (the same helper the Copy-filename
   buttons use). On a cache miss it becomes the body of the PNG
