@@ -106,6 +106,19 @@ Add the marketplace and install the plugin:
 /plugin install see-what-i-see@see-what-i-see-marketplace
 ```
 
+Note: To avoid permissions prompts in `/see-what-i-see-watch`, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` with your home directory (which is printed in the permission prompt.)
+
+```
+  "permissions": {
+    "allow": [
+      "Bash(HOMEDIR/.claude/plugins/cache/see-what-i-see-marketplace/**)",
+      "Read(~/Downloads/SeeWhatISee/**)"
+    ]
+  }
+```
+
+`/see-what-i-see-help` also includes this.
+
 ### Gemini CLI commands
 
 Run `scripts/gemini-install.sh` from inside `gemini`, so it can install into Gemini's sandbox home directory.

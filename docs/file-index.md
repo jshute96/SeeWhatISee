@@ -26,7 +26,6 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `plugin/settings.json` | Plugin-level permission defaults for the skills |
 | `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
 | `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
 | `plugin/scripts/watch.sh` | CLI watcher for `log.json` (`--loop`, `--after`, `--stop`, `--directory`) |

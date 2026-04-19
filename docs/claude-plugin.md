@@ -29,7 +29,6 @@ SeeWhatISee/
 ├── plugin/
 │   ├── .claude-plugin/
 │   │   └── plugin.json           # plugin manifest (name, version, ...)
-│   ├── settings.json             # plugin-level default settings
 │   ├── scripts/
 │   │   ├── _common.sh            # shared helpers (dir resolution, path absolutization)
 │   │   ├── get-latest.sh         # print latest capture JSON with absolute paths
@@ -108,15 +107,6 @@ plugin directory is keyed on version, so same version = same cache.
 The other two are optional and can be dropped or left to rot. We keep
 `metadata.description` for the marketplace-level blurb but omit the
 `description` from `plugin.json` to avoid drift between copies.
-
-## `plugin/settings.json`
-
-Plugin-level default settings, applied when the plugin is enabled.
-Per the plugins-reference docs, **only `agent` settings are officially
-supported here** — so the `permissions` block we currently ship is at
-best unofficial and may be ignored. In practice the skill-level
-`allowed-tools` frontmatter is what actually gates tool use; see
-below.
 
 ## SKILL.md frontmatter
 
@@ -323,9 +313,22 @@ check — run it before committing any manifest changes.
 - **Relative-path sources only work over git.** If we ever distribute
   the marketplace as a direct URL to `marketplace.json`, we'd need to
   switch the plugin entry to a `github`/`url` source.
-- **Chrome extension's downloads directory is not covered by plugin
-  permissions by default.** Reading from `~/Downloads/SeeWhatISee/`
-  currently triggers a per-session permission prompt on first use;
-  see `TODO.md`. Shipping a `Read(...)` pattern in `plugin/settings.json`
-  is our best guess but plugin-level `settings.json` only officially
-  supports `agent` settings, so this may not be doing anything.
+- **Skill-frontmatter `allowed-tools` doesn't cover the `watch` skill's
+  Read calls reliably.**
+  - The `Read(~/Downloads/SeeWhatISee/**)` pattern in each skill's
+    frontmatter silences prompts for `see` and `stop`, but the `watch`
+    skill still prompts on re-runs after the background `watch.sh` task
+    completes.
+  - Working hypothesis: the skill's scoped permissions aren't in effect
+    when the model resumes on a new turn after a background task.
+  - Workaround (shipped in `README.md` and `see-what-i-see-help`): have
+    users add a `Read(~/Downloads/SeeWhatISee/**)` entry to their
+    user-level `$HOME/.claude/settings.json`, which applies across
+    turns regardless of skill scope.
+  - Tracking: https://github.com/jshute96/SeeWhatISee/issues/2.
+- **Plugin-level `plugin/settings.json` permissions didn't gate
+  anything.** The plugins reference says only `agent` settings are
+  officially supported there; we tried a `permissions` block and it was
+  ignored, so the file was removed (commit `0aaee35`). Permission
+  gating now relies entirely on skill-level `allowed-tools` frontmatter
+  plus the user-level workaround above.

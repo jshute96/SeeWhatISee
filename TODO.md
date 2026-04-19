@@ -16,9 +16,11 @@ Features
   We could probably share more and be more consistent across them.
 
 Claude plugin
-* (Check if the permission prompt issues below still exist, trying on a clean install.)
-* Re-run of `watch.sh --after ...` still causes a permission prompt, why?
-* Reading the screenshots from `~/Downloads/SeeWhatISee` causes a permission prompt once per session
+* Permissions
+  - Setting `allowed_tools` inside the skills is supposed to work but it doesn't reliably.
+  - It does for `see` and `stop` skills but not for `watch` on the re-runs, maybe because of interaction with the background task. Are the permissions gone when work resumes?
+  - Current workaround described in `README.md` and the `help` skill is to add permissions in `settings.json`.
+  - This is https://github.com/jshute96/SeeWhatISee/issues/2.
 * Full github tree gets downloaded in `.claude/plugins/marketplaces/see-what-i-see-marketplace/`, can I avoid this?
   - Maybe a separate repository for just the "released" version of the plugin.
 
