@@ -56,6 +56,8 @@ On this page, you can:
   - **Crop** shrinks the saved PNG to the most recent red box;
     everything outside is dimmed in the preview. Only available
     when the top of the stack is an un-converted red box.
+  - **Drag the image edges or corners** to crop directly, or to
+    resize an existing crop. Each drag is undoable on its own.
   - **Undo** or **Clear** to roll back edits. Undo also reverses
     Redact and Crop conversions.
 

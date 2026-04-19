@@ -444,6 +444,12 @@ active crop region.
   and the saved PNG is reduced to just that region. Disabled
   unless the top of the stack is an unconverted red rectangle, so
   a crop always applies to the box the user just drew.
+- **Drag-to-crop** — the four edges and four corners of the image
+  (or the active crop, when one exists) are draggable handles.
+  Hovering one flips the cursor to the matching resize cursor; a
+  drag inward commits a new 'crop' edit on the stack. Each drag is
+  its own undoable step, so resizes nest naturally — Undo peels
+  back one resize at a time rather than collapsing them.
 - **Undo / Clear** — single edit-history stack; disabled when
   empty. Undo reverses both draws and conversions — popping a
   conversion turns the box back into a red rectangle.

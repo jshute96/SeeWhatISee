@@ -187,6 +187,53 @@ let dragStart: Point | null = null;
 let dragCurrent: Point | null = null;
 let dragButton: number | null = null;
 
+// ─── Crop-drag state ──────────────────────────────────────────────
+//
+// Each of the four edges and four corners of the image (or the
+// active crop, when one exists) is a draggable handle. The user can
+// drag inward to create a crop from scratch or to resize an existing
+// one. Every completed drag commits a new 'crop' edit on the stack,
+// so it participates in Undo / Clear the same way a button-converted
+// crop does — and so resizes nest naturally without mutating prior
+// stack entries.
+//
+// Handles are sampled by hit-testing a `HANDLE_PX` band around the
+// four edges of the effective crop rectangle (the active crop's
+// bounds, or the full image bounds when no crop exists). Corner
+// regions take precedence over edges (the four-way cursor beats the
+// one-axis cursor).
+type CropHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+// Width of the edge-hit band in CSS pixels. Large enough to be
+// grabbable by mouse but small enough not to eat into the interior
+// region where rect/line drawing happens. Tuned by feel.
+const HANDLE_PX = 10;
+
+// Minimum crop width/height as a fraction of the image, so a drag
+// can't collapse the crop to 0×0 (which would make it impossible to
+// grab the handles on the next drag). 3% picks up ~20 px on a
+// 600 px preview — enough room to click on without being a wasted
+// constraint.
+const MIN_CROP_PCT = 3;
+
+interface CropDragState {
+  handle: CropHandle;
+  // Starting geometry in percentages — the crop we're editing.
+  // Either the current activeCrop()'s bounds or the full image
+  // (0, 0, 100, 100) when creating a fresh crop.
+  startX: number; startY: number; startW: number; startH: number;
+  // Where the pointer was when the drag began, in display pixels.
+  // We track deltas rather than absolute positions so a drag that
+  // starts slightly off-edge (within HANDLE_PX) still produces the
+  // expected motion.
+  originX: number; originY: number;
+  // Live proposed bounds, updated every mousemove and rendered as
+  // the preview crop. Commit-on-mouseup copies these into a new
+  // 'crop' edit if the drag moved enough to count.
+  curX: number; curY: number; curW: number; curH: number;
+}
+let cropDrag: CropDragState | null = null;
+
 function imgRect(): DOMRect {
   return previewImg.getBoundingClientRect();
 }
@@ -212,6 +259,96 @@ function activeCrop(): RectEdit | undefined {
     if (e.kind === 'crop') return e;
   }
   return undefined;
+}
+
+// The effective crop region, in percentages. When no crop exists,
+// the region is the full image — which is also what the crop-handle
+// hit test uses, so "drag the image edge to start cropping" falls
+// out naturally.
+function effectiveCropPct(): { x: number; y: number; w: number; h: number } {
+  const c = activeCrop();
+  if (c) return { x: c.x, y: c.y, w: c.w, h: c.h };
+  return { x: 0, y: 0, w: 100, h: 100 };
+}
+
+function cursorForHandle(h: CropHandle): string {
+  switch (h) {
+    case 'n': case 's': return 'ns-resize';
+    case 'e': case 'w': return 'ew-resize';
+    case 'ne': case 'sw': return 'nesw-resize';
+    case 'nw': case 'se': return 'nwse-resize';
+  }
+}
+
+// Hit-test the pointer against the effective crop's edges. Returns
+// which handle (if any) the pointer is inside the HANDLE_PX band of.
+// Corners take precedence over plain edges: a pointer that's near
+// both the top and the left counts as the 'nw' corner handle.
+function detectCropHandle(p: Point): CropHandle | null {
+  const r = imgRect();
+  const c = effectiveCropPct();
+  const cx = (c.x / 100) * r.width;
+  const cy = (c.y / 100) * r.height;
+  const cw = (c.w / 100) * r.width;
+  const ch = (c.h / 100) * r.height;
+
+  const nearLeft = Math.abs(p.x - cx) <= HANDLE_PX;
+  const nearRight = Math.abs(p.x - (cx + cw)) <= HANDLE_PX;
+  const nearTop = Math.abs(p.y - cy) <= HANDLE_PX;
+  const nearBottom = Math.abs(p.y - (cy + ch)) <= HANDLE_PX;
+
+  // Edge bands only match when the pointer is also inside the
+  // perpendicular extent of the crop (plus a small outside band so
+  // the handle is grabbable when the crop is flush with the image
+  // edge). Without this clamp, a pointer halfway down the image in
+  // empty space beside the crop would count as "near the left edge"
+  // and flip the cursor to resize, which is confusing.
+  const withinY = p.y >= cy - HANDLE_PX && p.y <= cy + ch + HANDLE_PX;
+  const withinX = p.x >= cx - HANDLE_PX && p.x <= cx + cw + HANDLE_PX;
+
+  if (nearTop && nearLeft) return 'nw';
+  if (nearTop && nearRight) return 'ne';
+  if (nearBottom && nearLeft) return 'sw';
+  if (nearBottom && nearRight) return 'se';
+  if (nearTop && withinX) return 'n';
+  if (nearBottom && withinX) return 's';
+  if (nearLeft && withinY) return 'w';
+  if (nearRight && withinY) return 'e';
+  return null;
+}
+
+// Given an initial crop rectangle and a pointer delta (in display
+// pixels) on a specific handle, compute the proposed new crop
+// rectangle in percentages. Caller already translated the pointer
+// delta; this function only enforces:
+//   - Correct axis for each handle (n/s move only the top/bottom
+//     edge; e/w move only the left/right; corners move two edges).
+//   - The crop stays inside the image (0 ≤ x, x+w ≤ 100, likewise y).
+//   - The crop never collapses below MIN_CROP_PCT on either axis.
+// Negative-sized drags (dragging past the opposite edge) clamp to
+// MIN_CROP_PCT rather than flipping — flipping feels surprising on
+// a crop tool and isn't needed for the resize workflow.
+function applyCropDrag(
+  start: { startX: number; startY: number; startW: number; startH: number },
+  handle: CropHandle,
+  dxPct: number, dyPct: number,
+): { x: number; y: number; w: number; h: number } {
+  let left = start.startX;
+  let top = start.startY;
+  let right = start.startX + start.startW;
+  let bottom = start.startY + start.startH;
+
+  if (handle === 'n' || handle === 'ne' || handle === 'nw') top += dyPct;
+  if (handle === 's' || handle === 'se' || handle === 'sw') bottom += dyPct;
+  if (handle === 'w' || handle === 'nw' || handle === 'sw') left += dxPct;
+  if (handle === 'e' || handle === 'ne' || handle === 'se') right += dxPct;
+
+  left = Math.max(0, Math.min(100 - MIN_CROP_PCT, left));
+  right = Math.max(left + MIN_CROP_PCT, Math.min(100, right));
+  top = Math.max(0, Math.min(100 - MIN_CROP_PCT, top));
+  bottom = Math.max(top + MIN_CROP_PCT, Math.min(100, bottom));
+
+  return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
 function makeStrokedRect(
@@ -290,16 +427,29 @@ function render(): void {
     // (only the most recent crop is visible).
   }
 
-  const crop = activeCrop();
-  if (crop) {
+  // Render the crop as the drag preview if a crop-drag is in
+  // progress, else the committed active crop, else nothing. Both
+  // drag-preview and committed-crop share the same visual (dim
+  // surround + dashed border + grip marks), so the user sees the
+  // final state live while dragging.
+  let cropPreview:
+    | { x: number; y: number; w: number; h: number }
+    | undefined;
+  if (cropDrag) {
+    cropPreview = { x: cropDrag.curX, y: cropDrag.curY, w: cropDrag.curW, h: cropDrag.curH };
+  } else {
+    const crop = activeCrop();
+    if (crop) cropPreview = { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
+  }
+  if (cropPreview) {
     // Four dim rectangles around the crop region: top, bottom, left,
     // right. Using four rects (rather than a single evenodd-filled
     // path) keeps the SVG readable and avoids any platform-specific
     // rendering quirks around path fill rules.
-    const cx = (crop.x / 100) * w;
-    const cy = (crop.y / 100) * h;
-    const cw = (crop.w / 100) * w;
-    const ch = (crop.h / 100) * h;
+    const cx = (cropPreview.x / 100) * w;
+    const cy = (cropPreview.y / 100) * h;
+    const cw = (cropPreview.w / 100) * w;
+    const ch = (cropPreview.h / 100) * h;
     const dim = 'rgba(0,0,0,0.55)';
     if (cy > 0) overlay.appendChild(makeFilledRect(0, 0, w, cy, dim));
     if (cy + ch < h) overlay.appendChild(makeFilledRect(0, cy + ch, w, h - (cy + ch), dim));
@@ -310,6 +460,20 @@ function render(): void {
     const border = makeStrokedRect(cx, cy, cw, ch, '#fff', 1);
     border.setAttribute('stroke-dasharray', '4 3');
     overlay.appendChild(border);
+    // Small square grips at the four corners so the handles are
+    // discoverable without requiring the user to first hover into
+    // the invisible hit band. A 6×6 white grip with a 1px dark
+    // outline reads on both light and dark backgrounds.
+    const gripSize = 6;
+    const corners: Array<[number, number]> = [
+      [cx, cy], [cx + cw, cy], [cx, cy + ch], [cx + cw, cy + ch],
+    ];
+    for (const [gx, gy] of corners) {
+      const g = makeFilledRect(gx - gripSize / 2, gy - gripSize / 2, gripSize, gripSize, '#fff');
+      g.setAttribute('stroke', '#333');
+      g.setAttribute('stroke-width', '1');
+      overlay.appendChild(g);
+    }
   }
 
   if (dragStart && dragCurrent) {
@@ -344,8 +508,27 @@ function render(): void {
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
   if (me.button !== 0 && me.button !== 2) return;
+  const p = localCoords(me);
+  // Left-button press on a crop handle starts a crop-drag instead
+  // of the usual rect/line draw. Right-button always draws a line —
+  // lines aren't a natural fit for "drag the crop edge."
+  if (me.button === 0) {
+    const handle = detectCropHandle(p);
+    if (handle) {
+      me.preventDefault();
+      const c = effectiveCropPct();
+      cropDrag = {
+        handle,
+        startX: c.x, startY: c.y, startW: c.w, startH: c.h,
+        originX: p.x, originY: p.y,
+        curX: c.x, curY: c.y, curW: c.w, curH: c.h,
+      };
+      render();
+      return;
+    }
+  }
   me.preventDefault();
-  dragStart = localCoords(me);
+  dragStart = p;
   dragCurrent = dragStart;
   dragButton = me.button;
   render();
@@ -355,13 +538,66 @@ overlay.addEventListener('mousedown', (e) => {
 // for drawing lines.
 overlay.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// Idle-hover cursor feedback: match `detectCropHandle` so the user
+// gets a resize cursor before committing to the drag. When a drag
+// is already in flight (rect or crop) the mousemove handler below
+// owns the cursor, so skip the hover branch.
+overlay.addEventListener('mousemove', (e) => {
+  if (dragStart || cropDrag) return;
+  const handle = detectCropHandle(localCoords(e));
+  overlay.style.cursor = handle ? cursorForHandle(handle) : 'crosshair';
+});
+
 window.addEventListener('mousemove', (e) => {
+  if (cropDrag) {
+    const r = imgRect();
+    const p = localCoords(e);
+    const dxPct = ((p.x - cropDrag.originX) / r.width) * 100;
+    const dyPct = ((p.y - cropDrag.originY) / r.height) * 100;
+    const next = applyCropDrag(cropDrag, cropDrag.handle, dxPct, dyPct);
+    cropDrag.curX = next.x;
+    cropDrag.curY = next.y;
+    cropDrag.curW = next.w;
+    cropDrag.curH = next.h;
+    overlay.style.cursor = cursorForHandle(cropDrag.handle);
+    render();
+    return;
+  }
   if (dragStart === null) return;
   dragCurrent = localCoords(e);
   render();
 });
 
 window.addEventListener('mouseup', (e) => {
+  if (cropDrag) {
+    // Left-button only for crop drag — ignore any stray right-up.
+    if (e.button !== 0) return;
+    const end = localCoords(e);
+    const movedEnough =
+      Math.hypot(end.x - cropDrag.originX, end.y - cropDrag.originY) >=
+      CLICK_THRESHOLD_PX;
+    // Only commit if the drag actually moved — a bare click on a
+    // handle shouldn't add a zero-change crop edit to the stack
+    // (would pollute Undo history with no-ops).
+    if (movedEnough) {
+      const id = nextEditId++;
+      edits.push({
+        id,
+        kind: 'crop',
+        x: cropDrag.curX,
+        y: cropDrag.curY,
+        w: cropDrag.curW,
+        h: cropDrag.curH,
+      });
+      editHistory.push({ op: 'add', id });
+      editVersion++;
+    }
+    cropDrag = null;
+    overlay.style.cursor = 'crosshair';
+    render();
+    return;
+  }
+
   if (dragStart === null) return;
   // dragStart and dragButton are always set/cleared together by the
   // mousedown/mouseup pair, so reaching this line implies dragButton

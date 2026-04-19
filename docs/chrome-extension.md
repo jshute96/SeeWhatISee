@@ -442,6 +442,31 @@ convert a drawn rectangle into the active crop region.
   Disabled unless the top of the stack is currently an
   un-converted red rectangle, so a crop always applies to the box
   the user just drew (rather than silently reaching further back).
+- **Drag-to-crop / resize-crop.** The four edges and four corners
+  of the effective crop rectangle are draggable handles. With no
+  active crop, the effective rectangle is the whole image — so
+  dragging an image edge inward creates a crop from scratch. With
+  an active crop, the handles sit on the crop's own edges.
+  - Hit-testing is a `HANDLE_PX` band (10 CSS px) around each
+    edge. Corners take precedence over plain edges; the `cursor`
+    CSS flips to `ns-resize` / `ew-resize` / `nwse-resize` /
+    `nesw-resize` on hover so the affordance is discoverable
+    without reading the tooltip.
+  - Small white grip squares at the four corners make the handles
+    visible even before the user hovers — otherwise the hit
+    regions are invisible.
+  - Each completed drag commits a **new** `'crop'` edit on the
+    stack, not an in-place mutation of the previous one. Undo
+    peels back one resize at a time; earlier crops stay in the
+    stack (hidden behind the newer one for rendering) and
+    re-emerge as Undo walks backward.
+  - The proposed bounds are clamped to the image (0 ≤ x, x+w ≤
+    100, likewise y) and to a `MIN_CROP_PCT` floor (3%) on each
+    axis. Dragging past the opposite edge clamps rather than
+    flipping — a flipped crop is surprising on a resize tool and
+    never useful in our workflow.
+  - A sub-`CLICK_THRESHOLD_PX` drag is discarded, so a stray
+    click on a handle doesn't add a no-op entry to the stack.
 - **Undo / Clear** — single edit-history stack covering draws
   *and* conversions. Undo reverses the most recent action, which
   means popping a conversion restores the red rectangle it came
