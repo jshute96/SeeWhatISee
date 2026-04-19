@@ -11,6 +11,9 @@ Features
   - Choose different colors
 * Could we push snapshots to non-CLI consumers, that would pick them up by an API or MCP
   server rather than a command-line tool and local file access?
+* Cleanup: We have a lot of overlap between multiple skills & commands, and the scripts
+  underneath them.  Some blocks are intentionally the same across several of them.
+  We could probably share more and be more consistent across them.
 
 Claude plugin
 * (Check if the permission prompt issues below still exist, tryign on a clean install.)

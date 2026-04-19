@@ -112,3 +112,4 @@ One-line descriptions of every source file, grouped by directory.
 | `architecture.md` | High-level architecture of the extension and capture flow |
 | `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, details flow, Playwright patterns) |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
+| `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
