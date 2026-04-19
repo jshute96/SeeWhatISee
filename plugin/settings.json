@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)",
-      "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/get-latest.sh:*)",
-      "Read(~/Downloads/SeeWhatISee/**)"
-    ]
-  }
-}

@@ -1,7 +1,7 @@
 ---
 name: see-what-i-see
 description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and describe what you see.
-allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/get-latest.sh:*),Read"
+allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/get-latest.sh:*),Read(~/Downloads/SeeWhatISee/**)"
 ---
 
 Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and make it available as context so the user can ask questions about what they see.

@@ -16,7 +16,7 @@ Features
   We could probably share more and be more consistent across them.
 
 Claude plugin
-* (Check if the permission prompt issues below still exist, tryign on a clean install.)
+* (Check if the permission prompt issues below still exist, trying on a clean install.)
 * Re-run of `watch.sh --after ...` still causes a permission prompt, why?
 * Reading the screenshots from `~/Downloads/SeeWhatISee` causes a permission prompt once per session
 * Full github tree gets downloaded in `.claude/plugins/marketplaces/see-what-i-see-marketplace/`, can I avoid this?
