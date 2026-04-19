@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SeeWhatISee",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "Share a screenshot with your coding agent in a single click! (For Claude, Gemini, etc.)",
   "homepage_url": "https://github.com/jshute96/SeeWhatISee",
   "permissions": ["activeTab", "clipboardWrite", "contextMenus", "downloads", "offscreen", "scripting", "storage"],
