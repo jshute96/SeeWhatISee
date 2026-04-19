@@ -436,6 +436,25 @@ can draw red markup on the regions they want the agent to focus on.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
 
+### Edit HTML dialog
+
+- A pencil icon sits next to the Copy HTML button in the HTML row.
+  - Click opens a modal `<dialog>` with a textarea prefilled with the
+    current captured HTML and Save / Cancel buttons.
+  - Save pushes the new body to the SW via an `updateHtml` runtime
+    message; Cancel closes without touching anything.
+- SW-side `updateHtml` handler:
+  - Overwrites `session.capture.html` on `DetailsSession`.
+  - Drops any cached `session.downloads.html` entry so the next
+    `ensureHtmlDownloaded` re-materializes the file under the same
+    pinned `contentsFilename` (via `conflictAction: 'overwrite'`).
+  - The eventual Save — whether Capture clicks or a later Copy HTML —
+    therefore writes the edited content.
+- The page also updates its local HTML-size readout from the new
+  body so the user sees the byte count reflect the edit immediately.
+- Only the HTML body is editable; the selection and screenshot have
+  no edit UI.
+
 ### Copy-filename buttons
 
 - A small icon button sits next to each Save checkbox.
@@ -457,8 +476,9 @@ can draw red markup on the regions they want the agent to focus on.
     counter the page bumps on every highlight draw / undo / clear.
     On mismatch the SW re-downloads with the page's freshly
     baked-in PNG (sent as `screenshotOverride` in the message).
-  - HTML cache is unconditional: there's no editing UI for the
-    body, so once written it stays valid for the session.
+  - HTML cache is unconditional until the user edits the body via
+    the Edit HTML dialog — `updateHtml` clears the cache so the
+    next Copy / Capture writes the edited content.
   - Selection cache follows the same pattern as HTML — the
     selection is frozen at capture time (no editing UI), so once
     written the path is valid for the life of the details tab.

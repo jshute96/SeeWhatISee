@@ -1108,3 +1108,107 @@ test('details: copy → edit → capture re-downloads the screenshot with the hi
 
   await openerPage.close();
 });
+
+test('details: edit-html dialog replaces the saved HTML body', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // The pencil button opens the modal. Pre-check: the dialog starts
+  // closed, and the textarea becomes populated with the *original*
+  // captured HTML when the dialog is opened — that HTML still carries
+  // the fixture's purple marker.
+  expect(await capturePage.locator('#edit-html-dialog').evaluate(
+    (d) => (d as HTMLDialogElement).open,
+  )).toBe(false);
+  await capturePage.locator('#edit-html').click();
+  expect(await capturePage.locator('#edit-html-dialog').evaluate(
+    (d) => (d as HTMLDialogElement).open,
+  )).toBe(true);
+  const prefill = await capturePage.locator('#edit-html-textarea').inputValue();
+  expect(prefill).toContain('background: #800080');
+
+  // Replace with a marker unique to this test run so we can verify
+  // the saved file matches what the user typed, not the original
+  // scrape.
+  const EDITED = '<!doctype html><html><body>edited by test 42</body></html>';
+  await capturePage.locator('#edit-html-textarea').fill(EDITED);
+  await capturePage.locator('#edit-html-save').click();
+
+  // Dialog closes and the HTML-size readout updates to reflect the
+  // new (much shorter) body — it no longer matches the original
+  // kilobyte-sized reading.
+  await capturePage.locator('#edit-html-dialog').evaluate(
+    (d) => new Promise<void>((resolve) => {
+      const el = d as HTMLDialogElement;
+      if (!el.open) resolve();
+      else {
+        const check = (): void => {
+          if (!el.open) { el.removeEventListener('close', check); resolve(); }
+        };
+        el.addEventListener('close', check);
+      }
+    }),
+  );
+  const sizeText = await capturePage.locator('#html-size').innerText();
+  expect(sizeText).toMatch(/^\d+ B$/);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: true,
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.contents).toMatch(CONTENTS_PATTERN);
+
+  const contentsPath = await findCapturedDownload(sw, '.html');
+  const html = fs.readFileSync(contentsPath, 'utf8');
+  // Edited body is what lands on disk; the original fixture marker
+  // is gone.
+  expect(html).toContain('edited by test 42');
+  expect(html).not.toContain('background: #800080');
+
+  await openerPage.close();
+});
+
+test('details: edit-html cancel leaves the captured HTML untouched', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Open the dialog, type garbage, then hit Cancel. The captured
+  // body on the SW side must be unchanged — the ensuing HTML save
+  // should write the original fixture HTML, not our edits.
+  await capturePage.locator('#edit-html').click();
+  await capturePage.locator('#edit-html-textarea').fill('DISCARDED NONSENSE');
+  await capturePage.locator('#edit-html-cancel').click();
+  expect(await capturePage.locator('#edit-html-dialog').evaluate(
+    (d) => (d as HTMLDialogElement).open,
+  )).toBe(false);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: true,
+  });
+
+  const sw = await getServiceWorker();
+  const contentsPath = await findCapturedDownload(sw, '.html');
+  const html = fs.readFileSync(contentsPath, 'utf8');
+  expect(html).toContain('background: #800080');
+  expect(html).not.toContain('DISCARDED NONSENSE');
+
+  await openerPage.close();
+});

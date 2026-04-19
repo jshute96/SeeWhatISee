@@ -47,6 +47,9 @@ On this page, you can:
 - Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
   - With none of these checked, you can still capture the URL.
 - Copy saved filenames to the clipboard with the copy icon.
+- Edit the captured HTML before saving with the pencil icon next to
+  the HTML row — opens a dialog with the HTML in an editable textarea
+  and Save / Cancel buttons.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.

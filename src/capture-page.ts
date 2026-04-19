@@ -57,6 +57,17 @@ const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
+const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
+const editHtmlDialog = document.getElementById('edit-html-dialog') as HTMLDialogElement;
+const editHtmlTextarea = document.getElementById('edit-html-textarea') as HTMLTextAreaElement;
+const editHtmlSaveBtn = document.getElementById('edit-html-save') as HTMLButtonElement;
+const editHtmlCancelBtn = document.getElementById('edit-html-cancel') as HTMLButtonElement;
+// Local mirror of the captured HTML body. Seeded by loadData() from
+// the SW's session and updated whenever the user saves an edit.
+// Kept on the page side so the edit dialog can prefill its textarea
+// without an extra round-trip, and so the HTML-size display stays
+// in sync with the SW's authoritative copy.
+let capturedHtml = '';
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -91,6 +102,10 @@ promptInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Suspend the page-wide hotkeys while the HTML edit dialog is up —
+  // Alt+H in the dialog should type `h`, not silently flip the Save
+  // HTML checkbox behind the modal.
+  if (editHtmlDialog.open) return;
   if (!e.altKey) return;
   const key = e.key.toLowerCase();
   if (key === 's') {
@@ -335,9 +350,10 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
+    capturedHtml = response.html;
     // True UTF-8 byte count of the captured HTML, not the JS string
     // length (which counts UTF-16 code units).
-    htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+    htmlSizeEl.textContent = formatBytes(new Blob([capturedHtml]).size);
     // Enable + default-check the Save selection controls iff the SW
     // saw a non-empty selection at capture time. A user who bothered
     // to select text probably wants it in the record.
@@ -391,6 +407,65 @@ copyHtmlBtn.addEventListener('click', () => {
 copySelectionBtn.addEventListener('click', () => {
   void copyArtifactPath('selection');
 });
+
+// ─── HTML edit dialog ─────────────────────────────────────────────
+//
+// The pencil button next to Copy HTML opens a modal dialog with a
+// textarea prefilled with the current captured HTML. On Save we push
+// the new body to the SW (which invalidates the HTML download cache
+// so the next Copy / Capture writes the edited content) and update
+// the HTML-size readout. Cancel closes without touching anything.
+
+editHtmlBtn.addEventListener('click', () => {
+  editHtmlTextarea.value = capturedHtml;
+  editHtmlDialog.showModal();
+  // Defer focus so showModal's own autofocus doesn't overwrite us.
+  requestAnimationFrame(() => {
+    editHtmlTextarea.focus();
+    // Place the caret at the start — the body is usually large and
+    // the user is most likely to want to search / scroll from the
+    // top rather than land at the end.
+    editHtmlTextarea.setSelectionRange(0, 0);
+    editHtmlTextarea.scrollTop = 0;
+  });
+});
+
+editHtmlCancelBtn.addEventListener('click', () => {
+  editHtmlDialog.close();
+});
+
+editHtmlSaveBtn.addEventListener('click', () => {
+  void saveHtmlEdit();
+});
+
+async function saveHtmlEdit(): Promise<void> {
+  const newHtml = editHtmlTextarea.value;
+  // No-op when unchanged: avoid an SW round-trip (and the cache
+  // invalidation side-effect that would re-download on next Copy).
+  if (newHtml === capturedHtml) {
+    editHtmlDialog.close();
+    return;
+  }
+  editHtmlSaveBtn.disabled = true;
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      action: 'updateHtml',
+      html: newHtml,
+    })) as { ok?: boolean; error?: string } | undefined;
+    if (!response?.ok) {
+      console.warn(
+        '[SeeWhatISee] updateHtml failed:',
+        response?.error ?? 'no response from background',
+      );
+      return;
+    }
+    capturedHtml = newHtml;
+    htmlSizeEl.textContent = formatBytes(new Blob([capturedHtml]).size);
+    editHtmlDialog.close();
+  } finally {
+    editHtmlSaveBtn.disabled = false;
+  }
+}
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially

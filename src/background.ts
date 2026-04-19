@@ -989,6 +989,14 @@ interface EnsureDownloadedMessage {
    */
   screenshotOverride?: string;
 }
+interface UpdateHtmlMessage {
+  action: 'updateHtml';
+  /**
+   * Full replacement body for the captured HTML. Sent by the details
+   * page when the user saves an edit in the HTML edit dialog.
+   */
+  html: string;
+}
 interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
@@ -1012,7 +1020,11 @@ interface SaveDetailsMessage {
    */
   screenshotOverride?: string;
 }
-type DetailsMessage = GetDetailsMessage | EnsureDownloadedMessage | SaveDetailsMessage;
+type DetailsMessage =
+  | GetDetailsMessage
+  | EnsureDownloadedMessage
+  | UpdateHtmlMessage
+  | SaveDetailsMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -1239,6 +1251,28 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
           path = await ensureSelectionDownloaded(tabId);
         }
         sendResponse({ path });
+      } catch (err) {
+        sendResponse({ error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'updateHtml') {
+    void (async () => {
+      try {
+        const session = await requireDetailsSession(tabId);
+        session.capture.html = msg.html;
+        // Drop any cached HTML download: the on-disk file (if a Copy
+        // click already materialized one) is now stale. The next
+        // Copy / Capture run will re-materialize under the same
+        // pinned filename via `conflictAction: 'overwrite'`.
+        if (session.downloads?.html) {
+          const { html: _html, ...rest } = session.downloads;
+          session.downloads = rest;
+        }
+        await saveDetailsSession(tabId, session);
+        sendResponse({ ok: true });
       } catch (err) {
         sendResponse({ error: err instanceof Error ? err.message : String(err) });
       }
