@@ -436,6 +436,63 @@ can draw red markup on the regions they want the agent to focus on.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
 
+### Edit dialogs (template-driven)
+
+- Pencil icons sit next to each editable artifact's Copy button in
+  the capture page — currently HTML and selection; more kinds can be
+  added without new dialog markup.
+- A single `<template id="edit-dialog-template">` in `capture.html`
+  supplies the modal structure. `capture-page.ts::createEditDialog`
+  clones it per kind and stamps `edit-${kind}-${role}` ids onto the
+  inner elements so e2e tests can target a specific kind without
+  knowing the full catalog.
+- `EDIT_KINDS` in `capture-page.ts` is the catalog — one entry per
+  editable kind with its pencil button, title, and optional
+  `onSaved` hook (e.g. HTML's size-readout refresh). Adding a kind
+  is one entry + one markup button.
+- Per-kind behavior:
+  - Open: seeds the textarea from the page's `captured[kind]`
+    mirror, clears any prior error, focuses the textarea at the top.
+  - Save: no-op when the body is unchanged; otherwise posts
+    `{ action: 'updateArtifact', kind, value }` to the SW and runs
+    the per-kind `onSaved` hook on success. Errors surface inline
+    in a `role="alert"` region.
+  - Cancel / Escape: closes without touching anything.
+- SW-side `updateArtifact` handler:
+  - Dispatches on `msg.kind` via the `EDITABLE_ARTIFACTS` spec
+    table — each entry declares how to commit the new body to
+    `DetailsSession.capture` and which `session.downloads` entry to
+    drop. New kinds add one entry.
+  - Writes the body, sets the sticky `session.{html,selection}Edited`
+    flag, and drops the matching `session.downloads.{html,selection}`
+    entry so the next `ensureHtmlDownloaded` /
+    `ensureSelectionDownloaded` re-materializes the file under the
+    same pinned filename (via `conflictAction: 'overwrite'`).
+  - The eventual Save — whether Capture clicks or a later Copy —
+    therefore writes the edited content.
+- Only the HTML body and selection are editable; the screenshot has
+  no text-edit UI (the highlight overlay covers its annotation use
+  case).
+
+### `isEdited` sidecar flag
+
+- Emitted inside `contents` / `selection` artifact objects in
+  `log.json` whenever the user saved an edit through the
+  corresponding dialog and then kept the artifact on the details
+  page — i.e. the artifact carries `{ "filename": "…", "isEdited":
+  true }` instead of the bare-filename object.
+- Sticky per session: once the user has saved an *actual change*
+  through the dialog (an unchanged-textarea Save is a no-op and
+  doesn't flip the flag), later saves on the same details tab carry
+  `isEdited: true` regardless of whether they edit again — the
+  on-disk body *is* the edit.
+- Omitted on unedited records, matching the `highlights` /
+  `contents` / `selection` policy where presence is itself the
+  signal.
+- Intended to let downstream consumers (e.g. the see-what-i-see
+  skills) distinguish "this is the raw page scrape" from "the user
+  reshaped this before handing it off."
+
 ### Copy-filename buttons
 
 - A small icon button sits next to each Save checkbox.
@@ -457,11 +514,13 @@ can draw red markup on the regions they want the agent to focus on.
     counter the page bumps on every highlight draw / undo / clear.
     On mismatch the SW re-downloads with the page's freshly
     baked-in PNG (sent as `screenshotOverride` in the message).
-  - HTML cache is unconditional: there's no editing UI for the
-    body, so once written it stays valid for the session.
-  - Selection cache follows the same pattern as HTML — the
-    selection is frozen at capture time (no editing UI), so once
-    written the path is valid for the life of the details tab.
+  - HTML cache is unconditional until the user edits the body via
+    the Edit HTML dialog — `updateArtifact { kind: 'html' }` clears
+    the cache so the next Copy / Capture writes the edited content.
+  - Selection cache follows the same pattern as HTML: unconditional
+    until the user edits the body via the Edit selection dialog,
+    which fires `updateArtifact { kind: 'selection' }` to clear the
+    cache.
 - Filenames are pinned at capture time in `captureBothToMemory`
   (`screenshotFilename` / `contentsFilename` / optional
   `selectionFilename` on `InMemoryCapture`) and reused by every

@@ -26,12 +26,13 @@ interface DetailsData {
   html: string;
   url: string;
   /**
-   * True when the SW captured a non-empty selection on the active
-   * tab. The actual selection HTML stays in the SW's session
-   * storage — the page only needs this flag to enable / default
-   * the Save selection checkbox.
+   * Captured selection HTML. Present (non-empty) iff the SW saw a
+   * selection on the active tab at capture time; undefined or empty
+   * otherwise. Used both as the enable gate for the Save selection
+   * controls (replaces the old `hasSelection` boolean) and as the
+   * seed value for the Edit selection dialog's textarea.
    */
-  hasSelection?: boolean;
+  selection?: string;
 }
 
 /**
@@ -57,6 +58,18 @@ const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
+const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
+const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
+// Local mirrors of the SW's captured bodies, keyed by artifact
+// kind. Seeded by loadData() and updated whenever the user saves
+// an edit. Kept on the page side so the dialogs can prefill their
+// textareas without an extra round-trip and so any per-kind
+// readouts (e.g. HTML-size) stay in sync with the SW's
+// authoritative copy. New editable kinds append one entry here.
+const captured: Record<EditableArtifactKind, string> = {
+  html: '',
+  selection: '',
+};
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -91,6 +104,10 @@ promptInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Suspend the page-wide hotkeys while any edit dialog is up —
+  // e.g. Alt+H in the HTML dialog should type `h`, not silently
+  // flip the Save HTML checkbox behind the modal.
+  if (anyEditDialogOpen()) return;
   if (!e.altKey) return;
   const key = e.key.toLowerCase();
   if (key === 's') {
@@ -335,16 +352,21 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
+    captured.html = response.html;
     // True UTF-8 byte count of the captured HTML, not the JS string
     // length (which counts UTF-16 code units).
-    htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+    htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
     // Enable + default-check the Save selection controls iff the SW
     // saw a non-empty selection at capture time. A user who bothered
-    // to select text probably wants it in the record.
-    if (response.hasSelection) {
+    // to select text probably wants it in the record. The edit
+    // button gates on the same condition so the user can't open an
+    // empty-body dialog when there was no selection to begin with.
+    if (response.selection) {
+      captured.selection = response.selection;
       selectionBox.checked = true;
       selectionBox.disabled = false;
       copySelectionBtn.disabled = false;
+      editSelectionBtn.disabled = false;
     }
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -375,8 +397,10 @@ async function loadData(): Promise<void> {
 // the download per-tab so subsequent clicks (and the eventual
 // Capture click) reuse the existing file. For the screenshot, the
 // cache is keyed by `editVersion` so a highlight change forces a
-// re-download with the new baked-in PNG; for HTML, the cache is
-// unconditional (no editing UI changes the body).
+// re-download with the new baked-in PNG; for HTML / selection, the
+// cache is unconditional until the user saves an edit in the
+// corresponding Edit dialog, which sends `updateArtifact` and
+// drops the cache entry.
 //
 // Extension pages have direct access to `navigator.clipboard.writeText`
 // under a user gesture — no offscreen helper needed (unlike the SW's
@@ -391,6 +415,184 @@ copyHtmlBtn.addEventListener('click', () => {
 copySelectionBtn.addEventListener('click', () => {
   void copyArtifactPath('selection');
 });
+
+// ─── Edit dialogs (catalog-driven) ────────────────────────────────
+//
+// Each editable artifact kind gets one dialog cloned from
+// `#edit-dialog-template` in capture.html. A Save pushes the new
+// body to the SW via `updateArtifact`, which invalidates the
+// corresponding download cache so the next Copy / Capture writes
+// the edited content. Adding a future kind is one entry in
+// `EDIT_KINDS` below plus a pencil button in the markup.
+
+// Kept in sync with the canonical declaration in `src/capture.ts`
+// and the `EDITABLE_ARTIFACTS` dispatch table in `src/background.ts`.
+// Can't `import type` the shared union because the extension page
+// loads `capture-page.js` via a non-module `<script>` tag; any
+// import turns the file into a module and tsc emits `export {}`,
+// which is a parse error under script semantics. New editable
+// kinds must be added to all three sites.
+type EditableArtifactKind = 'html' | 'selection';
+
+interface EditKindSpec {
+  kind: EditableArtifactKind;
+  /** Modal heading + textarea aria-label. Short, user-visible. */
+  title: string;
+  /** The pencil button inside the details-page row for this kind. */
+  openBtn: HTMLButtonElement;
+  /** Optional post-save hook — e.g. refresh the HTML-size readout. */
+  onSaved?: (value: string) => void;
+}
+
+const EDIT_KINDS: EditKindSpec[] = [
+  {
+    kind: 'html',
+    title: 'Edit page contents HTML',
+    openBtn: editHtmlBtn,
+    onSaved: (v) => {
+      htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
+    },
+  },
+  {
+    kind: 'selection',
+    title: 'Edit selection HTML',
+    openBtn: editSelectionBtn,
+  },
+];
+
+// Populated by `bindEditDialog` once the DOM is cloned from the
+// template; insertion order matches `EDIT_KINDS` so
+// `anyEditDialogOpen()` and future iteration see the same order.
+const editDialogs: HTMLDialogElement[] = [];
+
+interface EditDialogParts {
+  dialog: HTMLDialogElement;
+  textarea: HTMLTextAreaElement;
+  saveBtn: HTMLButtonElement;
+  cancelBtn: HTMLButtonElement;
+  errorEl: HTMLParagraphElement;
+}
+
+/**
+ * Clone the edit-dialog template, fill in per-kind ids / text /
+ * aria wiring, and append the new <dialog> to document.body.
+ * Returns refs to the interactive parts so the caller can wire
+ * them up.
+ *
+ * Per-instance ids follow the `edit-${kind}-${role}` convention
+ * (e.g. `edit-html-dialog`, `edit-selection-textarea`) so e2e
+ * tests can target a specific kind without knowing the full
+ * catalog.
+ */
+function createEditDialog(kind: EditableArtifactKind, title: string): EditDialogParts {
+  const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
+  const frag = tpl.content.cloneNode(true) as DocumentFragment;
+  const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
+  const titleEl = dialog.querySelector('.edit-dialog-title') as HTMLHeadingElement;
+  const textarea = dialog.querySelector('.edit-dialog-textarea') as HTMLTextAreaElement;
+  const errorEl = dialog.querySelector('.edit-dialog-error') as HTMLParagraphElement;
+  const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
+  const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
+
+  dialog.id = `edit-${kind}-dialog`;
+  titleEl.id = `edit-${kind}-title`;
+  titleEl.textContent = title;
+  dialog.setAttribute('aria-labelledby', titleEl.id);
+  textarea.id = `edit-${kind}-textarea`;
+  textarea.setAttribute('aria-label', title);
+  errorEl.id = `edit-${kind}-error`;
+  saveBtn.id = `edit-${kind}-save`;
+  cancelBtn.id = `edit-${kind}-cancel`;
+
+  document.body.appendChild(dialog);
+  return { dialog, textarea, saveBtn, cancelBtn, errorEl };
+}
+
+function bindEditDialog(spec: EditKindSpec): void {
+  const parts = createEditDialog(spec.kind, spec.title);
+  editDialogs.push(parts.dialog);
+
+  spec.openBtn.addEventListener('click', () => {
+    parts.textarea.value = captured[spec.kind];
+    clearError();
+    parts.dialog.showModal();
+    // Defer focus so showModal's own autofocus doesn't overwrite us.
+    requestAnimationFrame(() => {
+      parts.textarea.focus();
+      // Place the caret at the start — bodies are often long and
+      // the user is most likely to want to search / scroll from the
+      // top rather than land at the end.
+      parts.textarea.setSelectionRange(0, 0);
+      parts.textarea.scrollTop = 0;
+    });
+  });
+
+  parts.cancelBtn.addEventListener('click', () => {
+    parts.dialog.close();
+  });
+
+  parts.saveBtn.addEventListener('click', () => {
+    void save();
+  });
+
+  async function save(): Promise<void> {
+    const newValue = parts.textarea.value;
+    // No-op when unchanged: avoid an SW round-trip (and the cache
+    // invalidation side-effect that would re-download on next Copy).
+    if (newValue === captured[spec.kind]) {
+      parts.dialog.close();
+      return;
+    }
+    clearError();
+    // Disable both Save and Cancel while the SW round-trip is in
+    // flight. The SW has no abort path — if Cancel closed the
+    // dialog mid-await, the edit would still commit server-side and
+    // the "Cancel didn't cancel" drift would show up on the next
+    // dialog open (local mirror stale vs. SW state). Also suppress
+    // Escape via a transient `cancel` listener so the native
+    // dialog-close path can't backdoor around the disabled buttons.
+    parts.saveBtn.disabled = true;
+    parts.cancelBtn.disabled = true;
+    const suppressEscape = (e: Event): void => e.preventDefault();
+    parts.dialog.addEventListener('cancel', suppressEscape);
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        action: 'updateArtifact',
+        kind: spec.kind,
+        value: newValue,
+      })) as { ok?: boolean; error?: string } | undefined;
+      if (!response?.ok) {
+        const detail = response?.error ?? 'no response from background';
+        console.warn(`[SeeWhatISee] updateArtifact(${spec.kind}) failed:`, detail);
+        showError(`Couldn't save edit: ${detail}`);
+        return;
+      }
+      captured[spec.kind] = newValue;
+      spec.onSaved?.(newValue);
+      parts.dialog.close();
+    } finally {
+      parts.dialog.removeEventListener('cancel', suppressEscape);
+      parts.saveBtn.disabled = false;
+      parts.cancelBtn.disabled = false;
+    }
+  }
+
+  function showError(message: string): void {
+    parts.errorEl.textContent = message;
+    parts.errorEl.hidden = false;
+  }
+
+  function clearError(): void {
+    parts.errorEl.textContent = '';
+    parts.errorEl.hidden = true;
+  }
+}
+
+for (const spec of EDIT_KINDS) bindEditDialog(spec);
+
+function anyEditDialogOpen(): boolean {
+  return editDialogs.some((d) => d.open);
+}
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially

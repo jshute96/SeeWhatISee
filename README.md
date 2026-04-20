@@ -47,6 +47,7 @@ On this page, you can:
 - Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
   - With none of these checked, you can still capture the URL.
 - Copy saved filenames to the clipboard with the copy icon.
+- View or edit the captured HTML or selection before saving with the pencil icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
@@ -139,25 +140,51 @@ Alternative: Copy these files into the same directories in your `.gemini` direct
 
 ## Output files
 
-Each capture writes two files into that directory:
+Everything the extension writes lands under
+`~/Downloads/SeeWhatISee/`. A capture produces one or more capture
+files plus an updated `log.json` sidecar.
 
-- `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
-  captured content itself, one per capture.
-- `log.json` — newline-delimited JSON (one record per line),
-  grep-friendly history of recent captures. Each record contains:
-  - `timestamp`
-  - `url`
-  - `screenshot` — PNG filename, when a screenshot was saved.
-  - `contents` — HTML filename, when HTML was saved.
-  - `selection` — HTML filename, when the selection was saved.
-  - `prompt` — user prompt from the "Capture with details…" flow.
-  - `highlights: true` — when the saved PNG includes user-drawn highlights.
+### Capture files
 
-The log is capped at the 100 most recent entries (FIFO eviction). The
-authoritative log lives in extension storage and `log.json` is a
-snapshot rewritten on every capture. If deleted, it will be restored
-from Chrome storage. Scripts use `tail -1 log.json` to get the
-latest record.
+Each capture writes one or more of these, by filename prefix:
+
+- `screenshot-<timestamp>.png` — the captured PNG.
+- `contents-<timestamp>.html` — the captured full-page HTML.
+- `selection-<timestamp>.html` — the captured text selection, as HTML.
+
+A single Capture may include any subset of these (or
+none — a URL-only record is valid). Filenames are pinned at capture
+time so multiple saves within one run overwrite in place.
+
+### `log.json`
+
+Newline-delimited JSON (one record per line), grep-friendly history
+of recent captures.
+
+- Capped at the **100 most recent** entries (FIFO eviction).
+- The authoritative log lives in Chrome extension storage; `log.json`
+  is a snapshot rewritten on every capture. If deleted, it's restored
+  from extension storage on the next capture.
+- Scripts use `tail -1 log.json` to get the latest record.
+
+### `log.json` record schema
+
+Every record has `timestamp` and `url`. The remaining fields are
+optional — presence is the signal:
+
+- `timestamp` — ISO 8601 UTC timestamp of the capture.
+- `url` — URL of the captured tab, or `""` if unavailable.
+- `screenshot` — bare filename of a PNG under the capture dir.
+- `highlights: true` — present iff `screenshot` has user-drawn red
+  highlights (boxes / lines) baked into the PNG.
+- `contents` — HTML artifact object: `{ "filename": "contents-…html",
+  "isEdited": true? }`. `isEdited: true` means the user replaced the
+  scraped HTML via the Edit HTML dialog before saving.
+- `selection` — selection-HTML artifact object: same shape as
+  `contents`. `isEdited: true` means the user edited the captured
+  fragment via the Edit selection dialog before saving.
+- `prompt` — user-entered prompt from the "Capture with details…"
+  flow, giving instructions for agents on what to do with this capture.
 
 ## Development setup
 
