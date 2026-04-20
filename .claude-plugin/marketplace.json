@@ -11,7 +11,7 @@
     {
       "name": "see-what-i-see",
       "description": "Get screenshots from the SeeWhatISee Chrome extension",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": {
         "name": "Jeff Shute",
         "email": "jshute@gmail.com"
