@@ -217,8 +217,10 @@ npm run watch        # rebuild on TS changes
 ## Testing
 
 ```bash
-npm test             # run Playwright e2e tests
-npm run test:headed  # same, with a visible browser
+npm test             # validate skill templates, then run Playwright e2e tests
+npm run test:skills  # validate skill templates only (fast, no build)
+npm run test:e2e     # run Playwright e2e tests only
+npm run test:headed  # same as test:e2e, with a visible browser
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by
@@ -245,11 +247,9 @@ claude --plugin-dir ~/dev/SeeWhatISee/plugin
 ## Watching for screenshots from CLI
 
 ```bash
-scripts/watch.sh                # wait for the next capture, print it, exit
-scripts/watch.sh --loop         # keep printing captures until ^C
-scripts/watch.sh --after FILE   # emit any captures newer than FILE, then watch
-scripts/watch.sh --stop         # stop a running watcher
-scripts/watch.sh --help         # full usage
+scripts/get-latest.sh     # print the latest capture record
+scripts/watch.sh          # wait for the next capture, print it, exit
+scripts/watch.sh --loop   # keep printing captures until ^C
 ```
 
 ## Layout

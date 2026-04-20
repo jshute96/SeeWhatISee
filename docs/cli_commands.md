@@ -173,10 +173,24 @@ Four files drive the prompts:
 - `.gemini/commands/see-what-i-see.toml`
 - `.gemini/commands/see-what-i-see-watch.toml`
 
-Each has a **JSON-schema block** and a **"Process the capture:"
-block** that are byte-identical across all four files (verified
-via md5). Only the platform-specific wrapper around those blocks
-differs (Claude's `run_in_background` vs Gemini's blocking shell
-call; Claude's auto-kill-via-pidfile vs Gemini's single-shot +
-`--after` re-run). See `CLAUDE.md` → "Keep the skill/command
-files in sync" for the maintenance rule.
+All skill and command prompts are **generated from templates** in
+`src/skills_templates/`:
+
+Two shared blocks — the **JSON-record block** and the **"Process the
+capture:" block** — live as their own files (`json-record.template.md`,
+`process.template.md`) and get inlined into each top-level template via
+`[[filename]]` placeholders. That keeps those blocks identical
+across all generated files.
+
+Platform-specific differences stay in the top-level templates:
+
+- Claude `watch.md` uses `run_in_background: true` + auto-kill-via-pidfile;
+  Gemini `watch.md` is a blocking single-shot loop + `--after` re-run.
+- Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses
+  `copy-last-snapshot.sh` via `!{...}`.
+
+The generator `src/skills_templates/generate-skills.py` runs in validate
+mode by default (exit 1 on drift), is wired into `npm test` via
+`npm run test:skills`, and has `--diff` / `--update` flags. See
+`CLAUDE.md` → "Keep the skill/command files in sync" for the full
+workflow.
