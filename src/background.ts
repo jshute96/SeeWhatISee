@@ -1195,14 +1195,20 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
  * Materialize the selection file on disk if needed and return its
  * absolute on-disk path. Same unconditional-cache policy as the
  * HTML helper — the selection never changes within a session (no
- * editing UI on it). Throws when the capture carries no selection;
- * callers should gate on `session.capture.selection` first (the
- * page's checkbox + copy button are disabled in that case, so under
- * normal use this is unreachable).
+ * editing UI on it).
+ *
+ * Throws when the capture carries a `selectionError` (scrape failed
+ * at capture time) or when no selection was present. Under normal
+ * use the page's Save selection checkbox and Copy button are disabled
+ * in both cases, so this branch is unreachable; it's a belt-and-
+ * suspenders guard so a stale page message can't write an empty file.
  */
 async function ensureSelectionDownloaded(tabId: number): Promise<string> {
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
+      if (s.capture.selectionError) {
+        throw new Error(`Selection not captured: ${s.capture.selectionError}`);
+      }
       if (!s.capture.selection || !s.capture.selectionFilename) {
         throw new Error('No selection was captured');
       }
