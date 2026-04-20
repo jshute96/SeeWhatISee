@@ -100,7 +100,7 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBeUndefined();
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(record.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
@@ -131,10 +131,10 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
   await runWithSpy(sw, 'captureBoth');
 
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBeUndefined();
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/green.html`);
 
   // Both artifact files should be on disk and non-empty, and the HTML
@@ -148,7 +148,7 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
 
   // Both files share the same compact-timestamp suffix since they
   // came from one captureBothToMemory call.
-  const screenshotStem = record.screenshot!.replace(/^screenshot-|\.png$/g, '');
+  const screenshotStem = record.screenshot!.filename.replace(/^screenshot-|\.png$/g, '');
   const contentsStem = record.contents!.filename.replace(/^contents-|\.html$/g, '');
   expect(screenshotStem).toBe(contentsStem);
 

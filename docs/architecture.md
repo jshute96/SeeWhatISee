@@ -566,10 +566,11 @@ can draw red markup on the regions they want the agent to focus on.
   on-disk file from the Copy step is what the log entry references.
   Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
-  `selection`, `prompt`, and `highlights: true`, on top of the
-  always-present `timestamp` and `url`. It's valid to save with no
-  checkboxes ticked — the record then carries just the URL (and
-  any prompt).
+  `selection`, and `prompt`, on top of the always-present
+  `timestamp` and `url`. Each artifact object can carry a per-kind
+  flag: `screenshot.hasHighlights`, `contents.isEdited`,
+  `selection.isEdited`. It's valid to save with no checkboxes
+  ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener
   tab and then removes the details tab — the user lands back on
   the page they captured from. Chrome's natural close-time pick is

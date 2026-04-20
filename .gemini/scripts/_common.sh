@@ -41,19 +41,20 @@ mtime_log() {
 emit_record() {
   local line="$1"
   local contents screenshot selection
-  # `screenshot` is a flat string; `contents` / `selection` are
-  # `{ "filename": "...", "isEdited": true? }` objects — the grep
-  # reaches into the nested `filename` key for those, and the sed
-  # below rewrites that same key to an absolute path.
+  # `screenshot`, `contents`, and `selection` are all
+  # `{ "filename": "...", <flag>: true? }` artifact objects — the
+  # grep reaches into the nested `filename` key to pick out the
+  # bare basename, and the sed below rewrites that same key to an
+  # absolute path under $TARGET_DIR.
   contents=$(echo "$line" | grep -oP '"contents":\s*\{"filename":\s*"\K[^"]+' || true)
-  screenshot=$(echo "$line" | grep -oP '"screenshot":\s*"\K[^"]+' || true)
+  screenshot=$(echo "$line" | grep -oP '"screenshot":\s*\{"filename":\s*"\K[^"]+' || true)
   selection=$(echo "$line" | grep -oP '"selection":\s*\{"filename":\s*"\K[^"]+' || true)
   [ -n "$contents" ] && [ -f "$SRC_DIR/$contents" ] && cp "$SRC_DIR/$contents" "$TARGET_DIR/"
   [ -n "$screenshot" ] && [ -f "$SRC_DIR/$screenshot" ] && cp "$SRC_DIR/$screenshot" "$TARGET_DIR/"
   [ -n "$selection" ] && [ -f "$SRC_DIR/$selection" ] && cp "$SRC_DIR/$selection" "$TARGET_DIR/"
 
   echo "$line" | \
-    sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$TARGET_DIR/\\1\"|" \
+    sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$TARGET_DIR/\\1\"|" \
         -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$TARGET_DIR/\\1\"|" \
         -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$TARGET_DIR/\\1\"|"
 }

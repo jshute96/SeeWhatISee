@@ -169,22 +169,25 @@ of recent captures.
 
 ### `log.json` record schema
 
-Every record has `timestamp` and `url`. The remaining fields are
-optional — presence is the signal:
+Every record has `timestamp` and `url`. The remaining fields are optional, and only
+present when that action was included.
 
 - `timestamp` — ISO 8601 UTC timestamp of the capture.
-- `url` — URL of the captured tab, or `""` if unavailable.
-- `screenshot` — bare filename of a PNG under the capture dir.
-- `highlights: true` — present iff `screenshot` has user-drawn red
-  highlights (boxes / lines) baked into the PNG.
-- `contents` — HTML artifact object: `{ "filename": "contents-…html",
-  "isEdited": true? }`. `isEdited: true` means the user replaced the
-  scraped HTML via the Edit HTML dialog before saving.
-- `selection` — selection-HTML artifact object: same shape as
-  `contents`. `isEdited: true` means the user edited the captured
-  fragment via the Edit selection dialog before saving.
+- `screenshot` — present when a PNG screenshot was saved.
+    - `filename` — filename of the PNG.
+    - `hasHighlights` — `true` if the user added highlights.
+- `contents` — present when the full-page HTML was saved.
+    - `filename` — filename of the HTML snapshot.
+    - `isEdited` — `true` if the user edited the HTML content before saving.
+- `selection` — present when the text selection was saved.
+    - `filename` — filename of the selection HTML file.
+    - `isEdited` — `true` if the user edited the captured HTML before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
   flow, giving instructions for agents on what to do with this capture.
+- `url` — URL of the captured tab, or `""` if unavailable.
+
+`filename` fields have file basenames in `log.json` in the `Downloads` folder.
+The scripts that extract these records to pass to agents expand `filename` to hold absolute paths.
 
 ## Development setup
 

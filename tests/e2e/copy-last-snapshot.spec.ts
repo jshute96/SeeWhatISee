@@ -57,7 +57,7 @@ test.describe('copy-last-snapshot.sh', () => {
     const contentsFile = 'contents-20260409-120000-000.html';
     const record = {
       timestamp: '2026-04-09T12:00:00.000Z',
-      screenshot: screenshotFile,
+      screenshot: { filename: screenshotFile },
       contents: { filename: contentsFile },
       url: 'http://example.com/page0',
     };
@@ -70,7 +70,7 @@ test.describe('copy-last-snapshot.sh', () => {
 
     const parsed = JSON.parse(r.stdout.trim());
     const outDir = `${targetDir}/SeeWhatISee`;
-    expect(parsed.screenshot).toBe(`${outDir}/${screenshotFile}`);
+    expect(parsed.screenshot.filename).toBe(`${outDir}/${screenshotFile}`);
     expect(parsed.contents.filename).toBe(`${outDir}/${contentsFile}`);
 
     expect(fs.existsSync(path.join(outDir, screenshotFile))).toBe(true);
@@ -85,7 +85,7 @@ test.describe('copy-last-snapshot.sh', () => {
     const screenshotFile = 'screenshot-20260409-120000-000.png';
     const record = {
       timestamp: '2026-04-09T12:00:00.000Z',
-      screenshot: screenshotFile,
+      screenshot: { filename: screenshotFile, hasHighlights: true },
       url: 'http://example.com/page0',
     };
     writeLog(srcDir, [record]);
@@ -96,7 +96,8 @@ test.describe('copy-last-snapshot.sh', () => {
 
     const parsed = JSON.parse(r.stdout.trim());
     const outDir = `${targetDir}/SeeWhatISee`;
-    expect(parsed.screenshot).toBe(`${outDir}/${screenshotFile}`);
+    expect(parsed.screenshot.filename).toBe(`${outDir}/${screenshotFile}`);
+    expect(parsed.screenshot.hasHighlights).toBe(true);
     expect(parsed.contents).toBeUndefined();
 
     fs.rmSync(fakeHome, { recursive: true, force: true });
@@ -132,12 +133,12 @@ test.describe('copy-last-snapshot.sh', () => {
     writeLog(srcDir, [
       {
         timestamp: '2026-04-09T12:00:00.000Z',
-        screenshot: 'screenshot-20260409-120000-000.png',
+        screenshot: { filename: 'screenshot-20260409-120000-000.png' },
         url: 'http://example.com/page0',
       },
       {
         timestamp: '2026-04-09T12:00:00.001Z',
-        screenshot: screenshotFile,
+        screenshot: { filename: screenshotFile },
         url: 'http://example.com/page1',
       },
     ]);
@@ -148,7 +149,7 @@ test.describe('copy-last-snapshot.sh', () => {
 
     const parsed = JSON.parse(r.stdout.trim());
     const outDir = `${targetDir}/SeeWhatISee`;
-    expect(parsed.screenshot).toBe(`${outDir}/${screenshotFile}`);
+    expect(parsed.screenshot.filename).toBe(`${outDir}/${screenshotFile}`);
     expect(parsed.timestamp).toBe('2026-04-09T12:00:00.001Z');
 
     fs.rmSync(fakeHome, { recursive: true, force: true });
