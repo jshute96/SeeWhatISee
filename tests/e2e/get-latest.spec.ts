@@ -43,7 +43,7 @@ test.describe('get-latest.sh', () => {
   test('prints JSON with absolute screenshot path', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',
-      screenshot: 'screenshot-20260409-120000-001.png',
+      screenshot: { filename: 'screenshot-20260409-120000-001.png', hasHighlights: true },
       url: 'http://example.com/page1',
     }]);
 
@@ -51,7 +51,9 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
+    expect(parsed.screenshot.filename).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
+    // The nested `hasHighlights` flag passes through the rewrite untouched.
+    expect(parsed.screenshot.hasHighlights).toBe(true);
     expect(parsed.timestamp).toBe('2026-04-09T12:00:00.001Z');
     expect(parsed.url).toBe('http://example.com/page1');
   });
@@ -73,7 +75,7 @@ test.describe('get-latest.sh', () => {
   test('absolutizes both screenshot and contents', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
-      screenshot: 'screenshot-20260409-120000-000.png',
+      screenshot: { filename: 'screenshot-20260409-120000-000.png' },
       contents: { filename: 'contents-20260409-120000-000.html', isEdited: true },
       url: 'http://example.com/page0',
     }]);
@@ -82,7 +84,7 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-000.png`);
+    expect(parsed.screenshot.filename).toBe(`${tmpDir}/screenshot-20260409-120000-000.png`);
     expect(parsed.contents.filename).toBe(`${tmpDir}/contents-20260409-120000-000.html`);
     // The nested `isEdited` flag passes through the rewrite untouched.
     expect(parsed.contents.isEdited).toBe(true);
@@ -91,7 +93,7 @@ test.describe('get-latest.sh', () => {
   test('does not double-absolutize already-absolute paths', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
-      screenshot: '/already/absolute/screenshot.png',
+      screenshot: { filename: '/already/absolute/screenshot.png' },
       url: 'http://example.com/page0',
     }]);
 
@@ -99,19 +101,19 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.screenshot).toBe('/already/absolute/screenshot.png');
+    expect(parsed.screenshot.filename).toBe('/already/absolute/screenshot.png');
   });
 
   test('returns the last record when log has multiple entries', () => {
     writeLog(tmpDir, [
       {
         timestamp: '2026-04-09T12:00:00.000Z',
-        screenshot: 'screenshot-20260409-120000-000.png',
+        screenshot: { filename: 'screenshot-20260409-120000-000.png' },
         url: 'http://example.com/page0',
       },
       {
         timestamp: '2026-04-09T12:00:00.001Z',
-        screenshot: 'screenshot-20260409-120000-001.png',
+        screenshot: { filename: 'screenshot-20260409-120000-001.png' },
         url: 'http://example.com/page1',
       },
     ]);
@@ -120,7 +122,7 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
+    expect(parsed.screenshot.filename).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
     expect(parsed.timestamp).toBe('2026-04-09T12:00:00.001Z');
   });
 
@@ -146,7 +148,7 @@ test.describe('get-latest.sh', () => {
   test('resolves directory from .SeeWhatISee config', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',
-      screenshot: 'screenshot-20260409-120000-001.png',
+      screenshot: { filename: 'screenshot-20260409-120000-001.png' },
       url: 'http://example.com/page1',
     }]);
 
@@ -157,7 +159,7 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
+    expect(parsed.screenshot.filename).toBe(`${tmpDir}/screenshot-20260409-120000-001.png`);
     fs.rmSync(cfgDir, { recursive: true, force: true });
   });
 });

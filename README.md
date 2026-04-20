@@ -170,19 +170,24 @@ of recent captures.
 ### `log.json` record schema
 
 Every record has `timestamp` and `url`. The remaining fields are
-optional — presence is the signal:
+optional — presence is the signal. Boolean sub-fields are emitted
+only when `true`; omission means the default.
 
 - `timestamp` — ISO 8601 UTC timestamp of the capture.
 - `url` — URL of the captured tab, or `""` if unavailable.
-- `screenshot` — bare filename of a PNG under the capture dir.
-- `highlights: true` — present iff `screenshot` has user-drawn red
-  highlights (boxes / lines) baked into the PNG.
-- `contents` — HTML artifact object: `{ "filename": "contents-…html",
-  "isEdited": true? }`. `isEdited: true` means the user replaced the
-  scraped HTML via the Edit HTML dialog before saving.
-- `selection` — selection-HTML artifact object: same shape as
-  `contents`. `isEdited: true` means the user edited the captured
-  fragment via the Edit selection dialog before saving.
+- `screenshot` — screenshot artifact object; present when a PNG was saved.
+    - `filename` — bare basename of the PNG under the capture dir.
+    - `hasHighlights` — `true` iff the user drew red boxes / lines
+      on top of the screenshot before saving.
+- `contents` — HTML artifact object; present when the full-page HTML was saved.
+    - `filename` — bare basename of the HTML snapshot file.
+    - `isEdited` — `true` iff the user replaced the scraped HTML via
+      the Edit HTML dialog before saving.
+- `selection` — selection-HTML artifact object; present when the
+  text selection was saved.
+    - `filename` — bare basename of the selection HTML file.
+    - `isEdited` — `true` iff the user edited the captured selection
+      via the Edit selection dialog before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
   flow, giving instructions for agents on what to do with this capture.
 

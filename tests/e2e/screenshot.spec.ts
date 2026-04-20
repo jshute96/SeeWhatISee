@@ -265,7 +265,7 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   // the post-clear green capture remains.
   const log3 = await verifyCapture(sw4, result3, GREEN, []);
   expect(log3).toHaveLength(1);
-  expect(log3[0].screenshot).toBe(result3.filename);
+  expect(log3[0].screenshot?.filename).toBe(result3.filename);
 
   await page.close();
 });

@@ -845,7 +845,7 @@ async function copyLastScreenshotFilename(): Promise<void> {
   if (!r) throw new Error('No captures in the log to copy from');
   if (!r.screenshot) throw new Error('Latest capture has no screenshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.screenshot));
+  await copyToClipboard(joinCapturePath(dir, r.screenshot.filename));
 }
 
 async function copyLastHtmlFilename(): Promise<void> {
@@ -1023,8 +1023,9 @@ interface SaveDetailsMessage {
   prompt: string;
   /**
    * True when the user drew at least one highlight on the preview.
-   * Causes the saved record to carry `highlights: true` (only when
-   * `screenshot` is also true — see capture.ts).
+   * Causes the saved record's screenshot artifact to carry
+   * `hasHighlights: true` (only when `screenshot` is also true — see
+   * capture.ts).
    */
   highlights: boolean;
   /** Edit counter — same meaning as on `EnsureDownloadedMessage`. */

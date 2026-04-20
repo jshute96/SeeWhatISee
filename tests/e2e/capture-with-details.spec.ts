@@ -226,10 +226,10 @@ test('details: png only, no prompt, no highlights', async ({
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBeUndefined();
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
   // The PNG should exist and be non-empty.
@@ -260,7 +260,7 @@ test('details: html only with prompt', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('find the bug');
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
   // The HTML file should contain the fixture page's marker.
@@ -289,13 +289,13 @@ test('details: png + html with prompt', async ({
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('compare these');
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   // Both files share the same compact-timestamp suffix when written
   // by the detailed-capture path.
-  const screenshotSuffix = record.screenshot!.replace(/^screenshot-/, '').replace(/\.png$/, '');
+  const screenshotSuffix = record.screenshot!.filename.replace(/^screenshot-/, '').replace(/\.png$/, '');
   const contentsSuffix = record.contents!.filename.replace(/^contents-/, '').replace(/\.html$/, '');
   expect(screenshotSuffix).toBe(contentsSuffix);
 
@@ -329,9 +329,9 @@ test('details: png with highlights bakes red into the saved PNG', async ({
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.highlights).toBe(true);
+  expect(record.screenshot?.hasHighlights).toBe(true);
   expect(record.prompt).toBe('look at the box');
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
 
   // Sample the saved PNG along the rectangle's left edge (x=20%):
   // should be red. Far from the box should still be the fixture's
@@ -385,7 +385,7 @@ test('details: url-only (no screenshot, no html) with prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBe('what runs on this host?');
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -413,7 +413,7 @@ test('details: url-only with no prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -442,9 +442,9 @@ test('details: png + html with highlights, no prompt', async ({
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
-  expect(record.highlights).toBe(true);
+  expect(record.screenshot?.hasHighlights).toBe(true);
   expect(record.prompt).toBeUndefined();
 
   await openerPage.close();
@@ -528,8 +528,8 @@ test('details: draw then undo → no highlights flag, no red in saved PNG', asyn
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.highlights).toBeUndefined();
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
 
   // Sample the PNG along where the rectangle's left edge would have
   // been: should be the fixture's purple (#800080), not red.
@@ -744,9 +744,9 @@ test('default click action set to capture-now: handleActionClick takes a direct 
   const stored = await sw2.evaluate(async () => {
     return await chrome.storage.local.get('captureLog');
   });
-  const log = (stored.captureLog ?? []) as { screenshot?: string }[];
+  const log = (stored.captureLog ?? []) as { screenshot?: { filename: string } }[];
   expect(log.length).toBeGreaterThan(0);
-  expect(log[log.length - 1].screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(log[log.length - 1].screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
 
   await openerPage.close();
 });
@@ -958,7 +958,7 @@ test('details: copy buttons download files and put real paths on the clipboard',
   // the regex shape here).
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(fs.existsSync(writes[0])).toBe(true);
   expect(fs.existsSync(writes[1])).toBe(true);
@@ -1053,8 +1053,8 @@ test('details: drawing a highlight invalidates the screenshot cache so the next 
 
   // Saved record carries highlights:true because we drew before save.
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.highlights).toBe(true);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.hasHighlights).toBe(true);
 
   await openerPage.close();
 });
@@ -1114,13 +1114,14 @@ test('details: copy → edit → capture re-downloads the screenshot with the hi
   await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: false });
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(2);
 
-  // Saved record reflects the post-edit save: `highlights: true`,
-  // and the saved PNG contains the red rectangle. We verify the
+  // Saved record reflects the post-edit save: the screenshot
+  // artifact carries `hasHighlights: true`, and the saved PNG
+  // contains the red rectangle. We verify the
   // bake-in by sampling the PNG along the rectangle's left edge,
   // same as the dedicated highlight-bake-in test does.
   const record = await readLatestRecord(sw);
-  expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.highlights).toBe(true);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.hasHighlights).toBe(true);
 
   // findCapturedDownload returns the *latest* matching download, so
   // here it gives us the v1 (post-edit) re-download triggered by
