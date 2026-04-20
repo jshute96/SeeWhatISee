@@ -59,54 +59,101 @@ export const LOG_STORAGE_KEY = 'captureLog';
 // are evicted FIFO when the cap is exceeded.
 const LOG_MAX_ENTRIES = 100;
 
+/**
+ * A saved file the capture flow wants to surface in `log.json`.
+ * Wraps the bare basename (no directory; the downloads root sits
+ * elsewhere) with optional metadata flags. Omitted flags carry the
+ * "default / not-set" meaning — e.g. `isEdited` absent ≡ unedited
+ * — so downstream consumers can ignore fields they don't care
+ * about and presence is itself the signal.
+ *
+ * Used uniformly for artifacts that may be produced either as a
+ * raw scrape or as a user-edited body: currently `contents` and
+ * `selection`. Future editable artifact kinds should adopt the
+ * same shape so the record is symmetrical across kinds.
+ */
+export interface Artifact {
+  /** Bare basename of the file on disk (no directory segment). */
+  filename: string;
+  /**
+   * `true` iff the user replaced the body via the corresponding
+   * Edit dialog before the save that produced this record. Omitted
+   * when the artifact is the raw scrape.
+   */
+  isEdited?: true;
+}
+
+/**
+ * Screenshot record in `log.json`. Same filename-plus-optional-flag
+ * shape as `Artifact`, but the flag means "user drew highlights on
+ * this PNG" rather than "user edited this body" — distinct types
+ * keep the semantics honest and let new kind-specific flags land
+ * without a loose `{ [k: string]: unknown }` fallback.
+ */
+export interface ScreenshotArtifact {
+  /** Bare basename of the PNG on disk (no directory segment). */
+  filename: string;
+  /**
+   * `true` iff the saved PNG bytes carry user-drawn red highlights
+   * (boxes / lines) baked in. Omitted on unannotated screenshots,
+   * so presence is itself the signal — downstream consumers treat
+   * `hasHighlights: true` as "the user marked specific regions on
+   * this image; focus your description on those."
+   */
+  hasHighlights?: true;
+}
+
+/**
+ * Kinds of captured body that the details page's Edit dialogs can
+ * replace. Imported by both the SW (`background.ts`) for its
+ * `updateArtifact` dispatch table and the details page
+ * (`capture-page.ts`) for the `EDIT_KINDS` catalog — both sides
+ * share this single definition so a new kind added in one file
+ * can't silently go unhandled on the other.
+ */
+export type EditableArtifactKind = 'html' | 'selection';
+
 export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
   /**
-   * Bare filename of the captured PNG (no directory). Set on
-   * screenshot captures — the immediate / delayed screenshot paths,
-   * and the "Capture with details…" path when the user keeps the
-   * screenshot.
+   * Captured screenshot artifact. Set on the immediate / delayed
+   * screenshot paths, and on the "Capture with details…" path when
+   * the user keeps the screenshot. Carries the bare PNG filename
+   * plus an optional `hasHighlights: true` flag (see
+   * `ScreenshotArtifact`).
    *
-   * The embedded compact timestamp is in *local* time (chosen so
-   * filenames sort the way the user expects when browsing the
-   * directory) — note this differs from `timestamp` above, which is
-   * UTC. The two refer to the same instant but will display different
-   * dates near local midnight.
+   * The embedded compact timestamp in `filename` is in *local* time
+   * (chosen so filenames sort the way the user expects when browsing
+   * the directory) — note this differs from `timestamp` above, which
+   * is UTC. The two refer to the same instant but will display
+   * different dates near local midnight.
    */
-  screenshot?: string;
+  screenshot?: ScreenshotArtifact;
   /**
-   * Bare filename of the captured HTML file (no directory). Set on
-   * HTML captures — the "Save html contents" menu entry, and the
-   * "Capture with details…" path when the user keeps the HTML.
+   * Captured HTML artifact. Set on HTML captures — the "Save html
+   * contents" menu entry, and the "Capture with details…" path when
+   * the user keeps the HTML. Carries the bare filename (no
+   * directory) plus an optional `isEdited: true` flag that appears
+   * iff the user saved an edit via the Edit HTML dialog before
+   * capture; the flag is omitted on an unedited scrape.
    */
-  contents?: string;
+  contents?: Artifact;
   /**
-   * Bare filename of the captured selection HTML
-   * (`selection-<timestamp>.html`, no directory). Set by either
-   * `captureSelection()` (the More → Capture selection shortcut)
-   * or the details flow when the user kept the Save selection
-   * checkbox checked. Absent on every other capture mode.
+   * Captured selection artifact. Set by either `captureSelection()`
+   * (the More → Capture selection shortcut) or the details flow
+   * when the user kept the Save selection checkbox checked. Same
+   * shape as `contents` — the optional `isEdited` flag tracks
+   * whether the user edited via the Edit selection dialog before
+   * capture.
    */
-  selection?: string;
+  selection?: Artifact;
   /**
    * User-entered prompt text from the "Capture with details…" flow,
    * trimmed. Omitted entirely when empty so the field's presence
    * implies there is something to act on.
    */
   prompt?: string;
-  /**
-   * Set to `true` only when the saved screenshot has user-drawn red
-   * highlights (boxes / lines) baked into it. Omitted when
-   * absent so its presence is itself the signal: a downstream
-   * consumer (the see-what-i-see skills) treats `highlights: true`
-   * as "the user marked specific regions on this image — focus on
-   * those, and any prompt is likely about them."
-   *
-   * Only meaningful on records that also have a `screenshot` field;
-   * the capture page only sends the flag when an image was saved.
-   */
-  highlights?: true;
   /** URL of the captured tab, or empty string if unavailable. */
   url: string;
 }
@@ -215,7 +262,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   const filename = `contents-${compactTimestamp(now)}.html`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    contents: filename,
+    contents: { filename },
     url: active.url ?? '',
   };
 
@@ -288,7 +335,7 @@ export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
   const filename = `selection-${compactTimestamp(now)}.html`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    selection: filename,
+    selection: { filename },
     url: active.url ?? '',
   };
 
@@ -506,12 +553,28 @@ export interface SaveDetailedOptions {
   prompt?: string;
   /**
    * True when `capture.screenshotDataUrl` already has user-drawn red
-   * highlights baked into the PNG bytes. Causes the saved record to
-   * carry `highlights: true`. Ignored unless `includeScreenshot` is
-   * also true — there's no point flagging highlights on a record
-   * that didn't save the image they're on.
+   * highlights baked into the PNG bytes. Causes the saved record's
+   * `screenshot` artifact object to carry `hasHighlights: true`.
+   * Ignored unless `includeScreenshot` is also true — there's no
+   * point flagging highlights on a record that didn't save the
+   * image they're on.
    */
   hasHighlights?: boolean;
+  /**
+   * True when the user replaced the captured HTML via the Edit HTML
+   * dialog before saving. Causes the record's `contents` artifact
+   * object to carry `isEdited: true`. Ignored unless `includeHtml`
+   * is also true — the flag only makes sense on a record that
+   * actually saved the HTML file.
+   */
+  htmlEdited?: boolean;
+  /**
+   * True when the user replaced the captured selection via the Edit
+   * selection dialog before saving. Causes the record's `selection`
+   * artifact object to carry `isEdited: true`. Ignored unless
+   * `includeSelection` is also true.
+   */
+  selectionEdited?: boolean;
 }
 
 /**
@@ -560,9 +623,10 @@ export async function downloadScreenshot(
 }
 
 /**
- * Start an HTML download. The HTML body never changes within a
- * session (no editing UI), so callers can cache the result
- * indefinitely.
+ * Start an HTML download. The body is stable for the session unless
+ * the user saves an edit in the Edit HTML dialog — callers cache the
+ * result and rely on the `updateArtifact` handler to drop the cache
+ * when the body changes (see `ensureHtmlDownloaded`).
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
   return downloadArtifact(capture.contentsFilename, htmlDataUrl(capture.html));
@@ -624,6 +688,37 @@ export async function waitForDownloadComplete(
  * `timestamp`, `url`, and any `prompt`, so a downstream agent can
  * act on just the URL (and prompt) without ever reading a file.
  */
+/**
+ * Build an `Artifact` object for inclusion in a `CaptureRecord`.
+ * Keeps the `isEdited` flag conditional at a single site — the two
+ * call paths (contents and selection) would otherwise duplicate
+ * the same "set iff truthy" conditional.
+ *
+ * Wire-format constraint: the shell consumers of `log.json` in
+ * `plugin/scripts/_common.sh` and `.gemini/scripts/_common.sh`
+ * anchor their sed/grep rewrites on `"filename"` appearing *first*
+ * inside the artifact object. `JSON.stringify` preserves insertion
+ * order, so the object literal here must keep `filename` before
+ * `isEdited`. If another caller ever builds an `Artifact` via a
+ * spread / `Object.assign`, preserve the same ordering (or update
+ * those consumers to stop relying on it).
+ */
+function artifact(filename: string, edited?: boolean): Artifact {
+  return edited ? { filename, isEdited: true } : { filename };
+}
+
+/**
+ * Build a `ScreenshotArtifact` object for inclusion in a
+ * `CaptureRecord`. Same wire-format constraint as `artifact()`:
+ * `filename` must appear before `hasHighlights` so the shell
+ * consumers in `plugin/scripts/_common.sh` and
+ * `.gemini/scripts/_common.sh` can anchor their rewrites on
+ * `"filename"` being the first key inside the object.
+ */
+function screenshotArtifact(filename: string, hasHighlights?: boolean): ScreenshotArtifact {
+  return hasHighlights ? { filename, hasHighlights: true } : { filename };
+}
+
 export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
   // Timestamp + filenames were pinned at capture time (see
   // captureBothToMemory) so they describe when the screenshot was
@@ -634,14 +729,13 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     url: opts.capture.url,
   };
   if (opts.includeScreenshot) {
-    record.screenshot = opts.capture.screenshotFilename;
-    if (opts.hasHighlights) record.highlights = true;
+    record.screenshot = screenshotArtifact(opts.capture.screenshotFilename, opts.hasHighlights);
   }
   if (opts.includeHtml) {
-    record.contents = opts.capture.contentsFilename;
+    record.contents = artifact(opts.capture.contentsFilename, opts.htmlEdited);
   }
   if (opts.includeSelection && opts.capture.selectionFilename) {
-    record.selection = opts.capture.selectionFilename;
+    record.selection = artifact(opts.capture.selectionFilename, opts.selectionEdited);
   }
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
@@ -665,7 +759,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
   const filename = `screenshot-${compactTimestamp(now)}.png`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    screenshot: filename,
+    screenshot: { filename },
     url,
   };
 
@@ -762,8 +856,11 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   // undefined values, but writing them explicitly is noisier. Fixed
   // key order keeps log.json diff-stable.
   const ordered: Record<string, unknown> = { timestamp: r.timestamp };
+  // `screenshot` / `contents` / `selection` are all artifact objects
+  // (`{ filename, <flag>? }`) — emitted as-is so `JSON.stringify`
+  // handles the nested shape and the optional per-kind flag
+  // (`hasHighlights` / `isEdited`) naturally.
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
-  if (r.highlights !== undefined) ordered.highlights = r.highlights;
   if (r.contents !== undefined) ordered.contents = r.contents;
   if (r.selection !== undefined) ordered.selection = r.selection;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;

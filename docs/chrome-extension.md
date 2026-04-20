@@ -451,18 +451,20 @@ If the user has drawn any highlights *and* is saving the screenshot:
 - The resulting `canvas.toDataURL('image/png')` is sent back to
   the background as a `screenshotOverride` field on the
   `saveDetails` runtime message, alongside a `highlights: true`
-  flag.
+  flag that tells `recordDetailedCapture` the PNG carries baked-in
+  markup.
 - The background passes `screenshotOverride` through to
   `ensureScreenshotDownloaded` (the same helper the Copy-filename
   buttons use). On a cache miss it becomes the body of the PNG
   download; on a cache hit (the page already pre-downloaded at
   this `editVersion`) it's dropped because the on-disk file already
   matches. `recordDetailedCapture` then writes the sidecar with
-  `hasHighlights: true`.
-- The resulting sidecar record gets `highlights: true` so the
-  see-what-i-see skills know to focus on the marked regions.
+  the screenshot artifact carrying `hasHighlights: true`.
+- The see-what-i-see skills read `screenshot.hasHighlights === true`
+  as the signal to focus on the marked regions.
 - If there are no edits, or the screenshot isn't being saved, no
-  override is sent and the record never gets the `highlights` field.
+  override is sent and the record's screenshot object stays bare
+  (just `filename`, no `hasHighlights`).
 
 ### Image fit-to-viewport
 

@@ -12,6 +12,7 @@ import {
   savePageContents,
   waitForDownloadComplete,
   type CaptureRecord,
+  type EditableArtifactKind,
   type InMemoryCapture,
 } from './capture.js';
 
@@ -856,7 +857,7 @@ async function copyLastScreenshotFilename(): Promise<void> {
   if (!r) throw new Error('No captures in the log to copy from');
   if (!r.screenshot) throw new Error('Latest capture has no screenshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.screenshot));
+  await copyToClipboard(joinCapturePath(dir, r.screenshot.filename));
 }
 
 async function copyLastHtmlFilename(): Promise<void> {
@@ -864,7 +865,7 @@ async function copyLastHtmlFilename(): Promise<void> {
   if (!r) throw new Error('No captures in the log to copy from');
   if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.contents));
+  await copyToClipboard(joinCapturePath(dir, r.contents.filename));
 }
 
 /**
@@ -921,15 +922,30 @@ interface DetailsSession {
   //     edit count means the user drew / undid / cleared a
   //     highlight, so the next request re-downloads with the new
   //     baked-in PNG.
-  //   - HTML never invalidates within a session (no editing UI).
+  //   - HTML / selection invalidate only when the user saves an edit
+  //     in the corresponding Edit dialog — handled by the generic
+  //     `updateArtifact` message (see `applyArtifactEdit`).
   downloads?: {
     screenshot?: { downloadId: number; editVersion: number; path: string };
     html?: { downloadId: number; path: string };
-    // Selection is content-stable for the session (no editing UI),
-    // so the cache is unconditional once populated — same shape and
-    // policy as `html`.
+    // Selection follows the same cache + invalidation policy as
+    // `html`: unconditional until the user saves an edit via the
+    // Edit selection dialog, which fires `updateArtifact` and drops
+    // this entry so the next Copy / Capture re-materializes the
+    // edited body under the same pinned `selectionFilename`.
     selection?: { downloadId: number; path: string };
   };
+  /**
+   * Sticky per-artifact "was edited" flags. Set by the
+   * `updateArtifact` handler when the user saves in the
+   * corresponding dialog, and forwarded to `recordDetailedCapture`
+   * at save time so the sidecar record's `contents` / `selection`
+   * artifact object carries `isEdited: true`. Never cleared within
+   * a session — once the body is the user's edit, it stays the
+   * user's edit for any later save.
+   */
+  htmlEdited?: boolean;
+  selectionEdited?: boolean;
 }
 
 function detailsStorageKey(tabId: number): string {
@@ -1001,6 +1017,16 @@ interface EnsureDownloadedMessage {
    */
   screenshotOverride?: string;
 }
+interface UpdateArtifactMessage {
+  action: 'updateArtifact';
+  /** Which captured body to replace. */
+  kind: EditableArtifactKind;
+  /**
+   * Full replacement body. Sent by the details page when the user
+   * saves an edit in the corresponding Edit dialog.
+   */
+  value: string;
+}
 interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
@@ -1009,8 +1035,9 @@ interface SaveDetailsMessage {
   prompt: string;
   /**
    * True when the user drew at least one highlight on the preview.
-   * Causes the saved record to carry `highlights: true` (only when
-   * `screenshot` is also true — see capture.ts).
+   * Causes the saved record's screenshot artifact to carry
+   * `hasHighlights: true` (only when `screenshot` is also true — see
+   * capture.ts).
    */
   highlights: boolean;
   /** Edit counter — same meaning as on `EnsureDownloadedMessage`. */
@@ -1024,7 +1051,11 @@ interface SaveDetailsMessage {
    */
   screenshotOverride?: string;
 }
-type DetailsMessage = GetDetailsMessage | EnsureDownloadedMessage | SaveDetailsMessage;
+type DetailsMessage =
+  | GetDetailsMessage
+  | EnsureDownloadedMessage
+  | UpdateArtifactMessage
+  | SaveDetailsMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -1105,11 +1136,17 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
     startDownload: (capture: InMemoryCapture) => Promise<number>;
     /** Build the cache entry object for the downloaded file. */
     makeCacheEntry: (downloadId: number, path: string) => T;
-    /** Decide whether our just-completed download should win over a
-     * cache entry another concurrent call may have committed while
-     * we were waiting. For html/selection this is `!fresh`; for
-     * screenshot it's `!fresh || our editVersion >= fresh.editVersion`. */
-    shouldCommit: (fresh: T | undefined) => boolean;
+    /**
+     * Decide whether our just-completed download should win over a
+     * cache entry another concurrent call (or an edit handler) may
+     * have committed / dropped while we were waiting. Gets both
+     * the re-read session and the current per-kind cache entry:
+     *   - html / selection: `!fresh && freshSession[kind]Edited ===
+     *     wasEditedAtStart` — refuse to commit when an edit landed
+     *     during our download (our on-disk bytes are pre-edit).
+     *   - screenshot: `!fresh || our editVersion >= fresh.editVersion`.
+     */
+    shouldCommit: (fresh: T | undefined, freshSession: DetailsSession) => boolean;
     /** Key under which to store the entry on session.downloads. */
     downloadsKey: 'screenshot' | 'html' | 'selection';
   },
@@ -1125,7 +1162,7 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
 
   const fresh = await requireDetailsSession(tabId);
   const freshCached = fresh.downloads?.[options.downloadsKey] as T | undefined;
-  if (options.shouldCommit(freshCached)) {
+  if (options.shouldCommit(freshCached, fresh)) {
     fresh.downloads = {
       ...(fresh.downloads ?? {}),
       [options.downloadsKey]: options.makeCacheEntry(downloadId, path),
@@ -1166,17 +1203,43 @@ async function ensureScreenshotDownloaded(
 }
 
 /**
+ * Build the `shouldCommit` predicate used by `ensureHtmlDownloaded`
+ * / `ensureSelectionDownloaded`. Closes over the pre-download value
+ * of the artifact's sticky "edited" flag so the predicate can
+ * refuse to commit when an Edit-dialog save landed while our
+ * download was in flight — if it committed blindly, the on-disk
+ * file would hold pre-edit bytes but the eventual sidecar's
+ * `isEdited: true` would claim otherwise.
+ */
+function editableShouldCommit(
+  editedFlag: 'htmlEdited' | 'selectionEdited',
+  wasEditedAtStart: boolean,
+): (fresh: unknown, freshSession: DetailsSession) => boolean {
+  return (fresh, freshSession) => {
+    if (fresh) return false;
+    return (freshSession[editedFlag] === true) === wasEditedAtStart;
+  };
+}
+
+/**
  * Materialize the HTML file on disk if needed and return its
- * absolute on-disk path. HTML never invalidates within a session
- * (no editing UI), so the cache is unconditional once populated.
+ * absolute on-disk path. The cache is unconditional until the user
+ * saves an edit in the Edit HTML dialog — the `updateArtifact`
+ * handler drops the cache entry so the next call re-downloads with
+ * the edited body under the same pinned `contentsFilename`.
  *
  * Throws when the capture carries an `htmlError` (scrape failed at
  * capture time). Under normal use the page's Save HTML checkbox and
- * Copy button are disabled in that case, so this branch is
+ * Copy / Edit buttons are disabled in that case, so this branch is
  * unreachable; it's a belt-and-suspenders guard so a stale page
  * message can't write an empty HTML file.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
+  // Snapshot the sticky edited flag so the commit predicate can
+  // detect an Edit-dialog save landing mid-flight and skip committing
+  // a cache entry whose on-disk file holds pre-edit bytes.
+  const pre = await requireDetailsSession(tabId);
+  const wasEdited = pre.htmlEdited === true;
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
       if (s.capture.htmlError) {
@@ -1186,24 +1249,29 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
     getCachedPath: (s) => s.downloads?.html?.path,
     startDownload: downloadHtml,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: (fresh) => !fresh,
+    shouldCommit: editableShouldCommit('htmlEdited', wasEdited),
     downloadsKey: 'html',
   });
 }
 
 /**
  * Materialize the selection file on disk if needed and return its
- * absolute on-disk path. Same unconditional-cache policy as the
- * HTML helper — the selection never changes within a session (no
- * editing UI on it).
+ * absolute on-disk path. Cache + invalidation policy mirrors
+ * `ensureHtmlDownloaded`: unconditional until the user saves in the
+ * Edit selection dialog, with the same pre-start snapshot of
+ * `selectionEdited` protecting a mid-flight download from
+ * committing a stale cache entry.
  *
  * Throws when the capture carries a `selectionError` (scrape failed
  * at capture time) or when no selection was present. Under normal
- * use the page's Save selection checkbox and Copy button are disabled
- * in both cases, so this branch is unreachable; it's a belt-and-
- * suspenders guard so a stale page message can't write an empty file.
+ * use the page's Save selection checkbox and Copy / Edit buttons are
+ * disabled in both cases, so this branch is unreachable; it's a
+ * belt-and-suspenders guard so a stale page message can't write an
+ * empty file.
  */
 async function ensureSelectionDownloaded(tabId: number): Promise<string> {
+  const pre = await requireDetailsSession(tabId);
+  const wasEdited = pre.selectionEdited === true;
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
       if (s.capture.selectionError) {
@@ -1216,9 +1284,63 @@ async function ensureSelectionDownloaded(tabId: number): Promise<string> {
     getCachedPath: (s) => s.downloads?.selection?.path,
     startDownload: downloadSelection,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: (fresh) => !fresh,
+    shouldCommit: editableShouldCommit('selectionEdited', wasEdited),
     downloadsKey: 'selection',
   });
+}
+
+/**
+ * Per-kind spec driving the generic `updateArtifact` handler. Each
+ * entry says how to commit the edited body to the session and
+ * which `session.downloads` entry to drop so the next Copy /
+ * Capture re-materializes under the same pinned filename.
+ *
+ * New editable artifact kinds add one entry here (and one to the
+ * `EditableArtifactKind` literal union); the handler loop and the
+ * surrounding session bookkeeping stay untouched.
+ */
+const EDITABLE_ARTIFACTS: Record<
+  EditableArtifactKind,
+  {
+    write: (session: DetailsSession, value: string) => void;
+    downloadsKey: EditableArtifactKind;
+  }
+> = {
+  html: {
+    write: (s, v) => {
+      s.capture.html = v;
+      s.htmlEdited = true;
+    },
+    downloadsKey: 'html',
+  },
+  selection: {
+    write: (s, v) => {
+      s.capture.selection = v;
+      s.selectionEdited = true;
+    },
+    downloadsKey: 'selection',
+  },
+};
+
+/**
+ * Apply an Edit-dialog save to the given session: replace the body
+ * + set the sticky edited flag + drop the corresponding download
+ * cache so the next Copy / Capture re-downloads with the edited
+ * content at the pinned filename. Mutates `session` in place;
+ * caller must persist via `saveDetailsSession`.
+ */
+function applyArtifactEdit(
+  session: DetailsSession,
+  kind: EditableArtifactKind,
+  value: string,
+): void {
+  const spec = EDITABLE_ARTIFACTS[kind];
+  spec.write(session, value);
+  if (session.downloads && spec.downloadsKey in session.downloads) {
+    const copy = { ...session.downloads };
+    delete copy[spec.downloadsKey];
+    session.downloads = copy;
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
@@ -1236,11 +1358,13 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         sendResponse(undefined);
         return;
       }
-      // Only forward the fields the page actually needs: the
-      // preview image, the captured URL, the HTML for byte
-      // counting, and a hasSelection flag so it can enable +
-      // default the Save selection checkbox. Selection HTML stays
-      // on the SW side. Paths come from the on-demand
+      // Forward the fields the page actually renders or mirrors:
+      // the preview image, the captured URL, the HTML body (for
+      // byte counting + the Edit HTML dialog), and the selection
+      // body (for the Edit selection dialog + enabling the Save
+      // selection controls — presence of a non-empty string plays
+      // the role the old `hasSelection` flag did). File paths are
+      // not sent here; they come back via the on-demand
       // `ensureDownloaded` round-trip when a Copy button is clicked.
       //
       // `htmlError` / `selectionError` propagate any scrape failure
@@ -1249,8 +1373,8 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
+        selection: session.capture.selection,
         url: session.capture.url,
-        hasSelection: !!session.capture.selection,
         htmlError: session.capture.htmlError,
         selectionError: session.capture.selectionError,
       });
@@ -1274,6 +1398,20 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
           path = await ensureSelectionDownloaded(tabId);
         }
         sendResponse({ path });
+      } catch (err) {
+        sendResponse({ error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'updateArtifact') {
+    void (async () => {
+      try {
+        const session = await requireDetailsSession(tabId);
+        applyArtifactEdit(session, msg.kind, msg.value);
+        await saveDetailsSession(tabId, session);
+        sendResponse({ ok: true });
       } catch (err) {
         sendResponse({ error: err instanceof Error ? err.message : String(err) });
       }
@@ -1310,6 +1448,8 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
           includeSelection: msg.selection,
           prompt: msg.prompt,
           hasHighlights: msg.highlights,
+          htmlEdited: session.htmlEdited,
+          selectionEdited: session.selectionEdited,
         });
       } finally {
         // Always clean up the stored capture and close the tab, even
