@@ -84,6 +84,12 @@ async function openDetailsFlow(
   fixtureServer: { baseUrl: string },
   getServiceWorker: () => Promise<Worker>,
   fixturePath = 'purple.html',
+  // Optional hook run on the opener page *after* it has been
+  // brought to front but *before* the SW triggers
+  // startCaptureWithDetails. Used by the selection-edit tests to
+  // inject a live `window.getSelection()` state that the SW's
+  // scripting call observes as `selection`.
+  beforeCapture?: (page: Page) => Promise<void>,
 ): Promise<{ openerPage: Page; capturePage: Page }> {
   // Clean log so stale entries from an earlier test in the same
   // worker can't satisfy our assertions.
@@ -93,6 +99,7 @@ async function openDetailsFlow(
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/${fixturePath}`);
   await openerPage.bringToFront();
+  if (beforeCapture) await beforeCapture(openerPage);
 
   // Set up the page-event listener *before* triggering the SW call,
   // so we don't miss the new tab if it lands fast.
@@ -888,6 +895,31 @@ async function countDownloadsBySuffix(sw: Worker, suffix: string): Promise<numbe
   }, suffix);
 }
 
+// Return *all* downloads whose requested filename matches a bare
+// basename prefix (e.g. `'contents-'` or `'selection-'`), in the
+// order they were initiated. Each entry includes the chrome
+// downloadId so the caller can resolve the on-disk path and read
+// the bytes back. Used by the edit-dialog tests to verify that a
+// post-edit Copy requests the *same* pinned filename as the
+// pre-edit Copy (i.e. production overwrites in place) while also
+// proving the bytes on disk differ.
+async function findAllCapturedDownloads(
+  sw: Worker,
+  basenamePrefix: string,
+): Promise<{ id: number; name: string }[]> {
+  return await sw.evaluate((prefix) => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    const list = (self as unknown as SpyState).__seeDl ?? [];
+    // `name` is the full `SeeWhatISee/<basename>` path we passed to
+    // `chrome.downloads.download`. Match the bare basename prefix
+    // so callers don't have to care about the directory segment.
+    return list.filter((d) => {
+      const base = d.name.split('/').pop() ?? d.name;
+      return base.startsWith(prefix);
+    });
+  }, basenamePrefix);
+}
+
 test('details: copy buttons download files and put real paths on the clipboard', async ({
   extensionContext,
   fixtureServer,
@@ -1109,7 +1141,7 @@ test('details: copy → edit → capture re-downloads the screenshot with the hi
   await openerPage.close();
 });
 
-test('details: edit-html dialog replaces the saved HTML body', async ({
+test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-op', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1119,11 +1151,19 @@ test('details: edit-html dialog replaces the saved HTML body', async ({
     fixtureServer,
     getServiceWorker,
   );
+  await installClipboardSpy(capturePage);
+  const sw = await getServiceWorker();
 
-  // The pencil button opens the modal. Pre-check: the dialog starts
-  // closed, and the textarea becomes populated with the *original*
-  // captured HTML when the dialog is opened — that HTML still carries
-  // the fixture's purple marker.
+  // Step 1: Copy the HTML once *before* editing. The SW materializes
+  // the raw scrape under the pinned `contents-*.html` filename and
+  // puts its on-disk path on the clipboard. One download recorded.
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  // Step 2: Open the edit dialog and replace the body. The textarea
+  // is seeded with the original capture — the fixture's purple
+  // marker — and we swap it for a unique marker we can grep for.
   expect(await capturePage.locator('#edit-html-dialog').evaluate(
     (d) => (d as HTMLDialogElement).open,
   )).toBe(false);
@@ -1134,46 +1174,187 @@ test('details: edit-html dialog replaces the saved HTML body', async ({
   const prefill = await capturePage.locator('#edit-html-textarea').inputValue();
   expect(prefill).toContain('background: #800080');
 
-  // Replace with a marker unique to this test run so we can verify
-  // the saved file matches what the user typed, not the original
-  // scrape.
   const EDITED = '<!doctype html><html><body>edited by test 42</body></html>';
   await capturePage.locator('#edit-html-textarea').fill(EDITED);
   await capturePage.locator('#edit-html-save').click();
-
-  // Dialog closes and the HTML-size readout updates to reflect the
-  // new (much shorter) body — it no longer matches the original
-  // kilobyte-sized reading.
-  await capturePage.locator('#edit-html-dialog').evaluate(
-    (d) => new Promise<void>((resolve) => {
-      const el = d as HTMLDialogElement;
-      if (!el.open) resolve();
-      else {
-        const check = (): void => {
-          if (!el.open) { el.removeEventListener('close', check); resolve(); }
-        };
-        el.addEventListener('close', check);
-      }
-    }),
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty(
+    'open',
+    false,
   );
+  // The HTML-size readout reflects the new (much shorter) body.
   const sizeText = await capturePage.locator('#html-size').innerText();
   expect(sizeText).toMatch(/^\d+ B$/);
 
+  // Step 3: Copy again *after* editing. The edit invalidated the
+  // cache, so the SW re-downloads — count goes to 2. The two
+  // downloads must request the *same* pinned basename (production
+  // overwrites in place via conflictAction: 'overwrite'), even
+  // though the Playwright harness rewrites each temp path.
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 2);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
+
+  const htmlDownloads = await findAllCapturedDownloads(sw, 'contents-');
+  expect(htmlDownloads).toHaveLength(2);
+  expect(htmlDownloads[0].name).toBe(htmlDownloads[1].name);
+
+  // The second download carries the edited bytes; the first
+  // download's file still holds the original scrape since the
+  // Playwright fixture gives each write its own UUID path.
+  const firstPath = await waitForDownloadPath(sw, htmlDownloads[0].id);
+  const secondPath = await waitForDownloadPath(sw, htmlDownloads[1].id);
+  expect(fs.readFileSync(firstPath, 'utf8')).toContain('background: #800080');
+  const editedBytes = fs.readFileSync(secondPath, 'utf8');
+  expect(editedBytes).toContain('edited by test 42');
+  expect(editedBytes).not.toContain('background: #800080');
+
+  // Step 4: Capture with Save HTML on. The post-edit Copy already
+  // wrote the edited file, so the SW's per-tab cache short-circuits
+  // — no third download. Log records the pinned filename + edited
+  // flag.
   await configureAndCapture(capturePage, {
     saveScreenshot: false,
     saveHtml: true,
   });
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
+
+  const record = await readLatestRecord(sw);
+  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents_edited).toBe(true);
+
+  await openerPage.close();
+});
+
+// Shared beforeCapture hook used by the selection-edit tests.
+// Injects a <span> into the fixture body and selects its contents
+// so the SW's scripting call sees a non-empty `window.getSelection`.
+async function seedSelection(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const span = document.createElement('span');
+    span.id = 'sel-seed';
+    span.textContent = 'hello selection world';
+    document.body.appendChild(span);
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const sel = window.getSelection();
+    sel!.removeAllRanges();
+    sel!.addRange(range);
+  });
+}
+
+test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is no-op', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+  await installClipboardSpy(capturePage);
+  const sw = await getServiceWorker();
+
+  // The Save-selection row was enabled by loadData (the SW saw our
+  // seeded selection), so the pencil button is clickable rather
+  // than stuck in its disabled default state.
+  await expect(capturePage.locator('#edit-selection')).toBeEnabled();
+
+  // Step 1: Copy the selection before editing — SW writes the raw
+  // selection scrape under the pinned `selection-*.html` filename.
+  await capturePage.locator('#copy-selection-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  // Step 2: Open the dialog and replace the selection body. The
+  // textarea is seeded with what the SW scraped, which contains
+  // our fixture's injected text.
+  await capturePage.locator('#edit-selection').click();
+  expect(await capturePage.locator('#edit-selection-dialog').evaluate(
+    (d) => (d as HTMLDialogElement).open,
+  )).toBe(true);
+  const prefill = await capturePage.locator('#edit-selection-textarea').inputValue();
+  expect(prefill).toContain('hello selection world');
+
+  const EDITED = '<p>selection edited by test 99</p>';
+  await capturePage.locator('#edit-selection-textarea').fill(EDITED);
+  await capturePage.locator('#edit-selection-save').click();
+  await expect(capturePage.locator('#edit-selection-dialog')).toHaveJSProperty(
+    'open',
+    false,
+  );
+
+  // Step 3: Copy again → cache invalidated, second download fires,
+  // pinned filename unchanged, new bytes on disk.
+  await capturePage.locator('#copy-selection-name').click();
+  await waitForClipboardWrites(capturePage, 2);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
+
+  const selDownloads = await findAllCapturedDownloads(sw, 'selection-');
+  expect(selDownloads).toHaveLength(2);
+  expect(selDownloads[0].name).toBe(selDownloads[1].name);
+
+  const firstPath = await waitForDownloadPath(sw, selDownloads[0].id);
+  const secondPath = await waitForDownloadPath(sw, selDownloads[1].id);
+  expect(fs.readFileSync(firstPath, 'utf8')).toContain('hello selection world');
+  const editedBytes = fs.readFileSync(secondPath, 'utf8');
+  expect(editedBytes).toContain('selection edited by test 99');
+  expect(editedBytes).not.toContain('hello selection world');
+
+  // Step 4: Capture with Save selection on (default-checked when a
+  // selection was detected). Cache hit → no third download. Log
+  // carries `selection_edited: true`.
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: false,
+  });
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
+
+  const record = await readLatestRecord(sw);
+  expect(record.selection).toBeDefined();
+  expect(record.selection_edited).toBe(true);
+
+  await openerPage.close();
+});
+
+test('details: edit-selection cancel leaves the captured selection untouched', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+
+  await capturePage.locator('#edit-selection').click();
+  await capturePage.locator('#edit-selection-textarea').fill('DISCARDED NONSENSE');
+  await capturePage.locator('#edit-selection-cancel').click();
+  await expect(capturePage.locator('#edit-selection-dialog')).toHaveJSProperty(
+    'open',
+    false,
+  );
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: false,
+  });
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  // No edit actually landed, so the sidecar must not carry the
+  // sticky `selection_edited` flag.
+  expect(record.selection_edited).toBeUndefined();
 
-  const contentsPath = await findCapturedDownload(sw, '.html');
-  const html = fs.readFileSync(contentsPath, 'utf8');
-  // Edited body is what lands on disk; the original fixture marker
-  // is gone.
-  expect(html).toContain('edited by test 42');
-  expect(html).not.toContain('background: #800080');
+  const selPath = await findCapturedDownload(sw, '.html');
+  const body = fs.readFileSync(selPath, 'utf8');
+  expect(body).toContain('hello selection world');
+  expect(body).not.toContain('DISCARDED NONSENSE');
 
   await openerPage.close();
 });

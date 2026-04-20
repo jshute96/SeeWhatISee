@@ -436,24 +436,50 @@ can draw red markup on the regions they want the agent to focus on.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
 
-### Edit HTML dialog
+### Edit HTML / selection dialogs
 
-- A pencil icon sits next to the Copy HTML button in the HTML row.
+- Pencil icons sit next to the Copy HTML and Copy selection buttons.
   - Click opens a modal `<dialog>` with a textarea prefilled with the
-    current captured HTML and Save / Cancel buttons.
-  - Save pushes the new body to the SW via an `updateHtml` runtime
-    message; Cancel closes without touching anything.
-- SW-side `updateHtml` handler:
-  - Overwrites `session.capture.html` on `DetailsSession`.
-  - Drops any cached `session.downloads.html` entry so the next
-    `ensureHtmlDownloaded` re-materializes the file under the same
-    pinned `contentsFilename` (via `conflictAction: 'overwrite'`).
-  - The eventual Save — whether Capture clicks or a later Copy HTML —
+    current captured body and Save / Cancel buttons.
+  - The two dialogs (`#edit-html-dialog` and `#edit-selection-dialog`)
+    share wiring — capture-page.ts routes both through a single
+    `bindEditDialog` helper so the save / cancel / no-op-guard /
+    error-surface behavior stays identical.
+- SW-side `updateHtml` / `updateSelection` handlers:
+  - Overwrite `session.capture.html` / `session.capture.selection` on
+    the `DetailsSession`.
+  - Set the sticky `session.htmlEdited` / `session.selectionEdited`
+    flag — forwarded to `recordDetailedCapture` at save time so the
+    sidecar record carries `contents_edited: true` /
+    `selection_edited: true` on any artifact the user keeps.
+  - Drop the matching `session.downloads.{html,selection}` entry so
+    the next `ensureHtmlDownloaded` / `ensureSelectionDownloaded`
+    re-materializes the file under the same pinned filename (via
+    `conflictAction: 'overwrite'`).
+  - The eventual Save — whether Capture clicks or a later Copy —
     therefore writes the edited content.
-- The page also updates its local HTML-size readout from the new
-  body so the user sees the byte count reflect the edit immediately.
-- Only the HTML body is editable; the selection and screenshot have
-  no edit UI.
+- The page refreshes its local HTML-size readout after an HTML save
+  so the user sees the byte count reflect the edit immediately;
+  selection has no size readout, so its dialog has no post-save UI
+  beyond closing itself.
+- Only the HTML body and selection are editable; the screenshot has
+  no text-edit UI (the highlight overlay covers its annotation use
+  case).
+
+### `contents_edited` / `selection_edited` sidecar flags
+
+- Written to `log.json` whenever the user saved an edit through the
+  Edit HTML / Edit selection dialog and then kept the corresponding
+  artifact on the details page.
+- Sticky per session: once the user has opened the dialog and saved,
+  later saves on the same details tab carry the flag regardless of
+  whether they edit again — the on-disk body *is* the edit.
+- Omitted on unedited records, matching the `highlights` /
+  `contents` / `selection` policy where presence is itself the
+  signal.
+- Intended to let downstream consumers (e.g. the see-what-i-see
+  skills) distinguish "this is the raw page scrape" from "the user
+  reshaped this before handing it off."
 
 ### Copy-filename buttons
 
@@ -479,9 +505,9 @@ can draw red markup on the regions they want the agent to focus on.
   - HTML cache is unconditional until the user edits the body via
     the Edit HTML dialog — `updateHtml` clears the cache so the
     next Copy / Capture writes the edited content.
-  - Selection cache follows the same pattern as HTML — the
-    selection is frozen at capture time (no editing UI), so once
-    written the path is valid for the life of the details tab.
+  - Selection cache follows the same pattern as HTML: unconditional
+    until the user edits the body via the Edit selection dialog,
+    which fires `updateSelection` to clear the cache.
 - Filenames are pinned at capture time in `captureBothToMemory`
   (`screenshotFilename` / `contentsFilename` / optional
   `selectionFilename` on `InMemoryCapture`) and reused by every

@@ -140,6 +140,15 @@
     box-sizing: border-box;
     resize: vertical;
   }
+  .edit-dialog .dialog-error {
+    margin: 8px 0 0 0;
+    padding: 6px 8px;
+    color: #b00020;
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    font-size: 13px;
+  }
   .edit-dialog .dialog-actions {
     display: flex;
     justify-content: flex-end;
@@ -311,8 +320,8 @@
           row stays tidy.
         -->
         <button type="button" class="copy-btn" id="edit-html"
-                title="Edit HTML"
-                aria-label="Edit captured HTML">
+                title="Edit page contents HTML"
+                aria-label="Edit page contents HTML">
           <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
         </button>
       </div>
@@ -330,6 +339,17 @@
                 title="Copy selection filename"
                 aria-label="Copy selection filename" disabled>
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
+        <!--
+          Edit the captured selection before save. Opens a modal
+          dialog with a textarea prefilled with the current selection
+          HTML. Shares structure with the Edit HTML button above —
+          capture-page.ts wires both via a shared helper.
+        -->
+        <button type="button" class="copy-btn" id="edit-selection"
+                title="Edit selection HTML"
+                aria-label="Edit selection HTML" disabled>
+          <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
         </button>
       </div>
     </div>
@@ -365,9 +385,31 @@
     <h2 id="edit-html-title">Edit captured HTML</h2>
     <textarea id="edit-html-textarea" spellcheck="false"
               aria-label="Captured HTML content"></textarea>
+    <!--
+      Hidden until Save fails; capture-page.ts toggles `hidden` and
+      writes the SW error message into textContent. `role="alert"`
+      lets screen readers announce the message when it appears.
+    -->
+    <p id="edit-html-error" class="dialog-error" role="alert" hidden></p>
     <div class="dialog-actions">
       <button type="button" id="edit-html-cancel">Cancel</button>
       <button type="button" id="edit-html-save">Save</button>
+    </div>
+  </dialog>
+
+  <!--
+    Selection edit modal. Same structure as the HTML dialog above —
+    the two are wired by a shared helper in capture-page.ts.
+  -->
+  <dialog id="edit-selection-dialog" class="edit-dialog"
+          aria-labelledby="edit-selection-title">
+    <h2 id="edit-selection-title">Edit captured selection</h2>
+    <textarea id="edit-selection-textarea" spellcheck="false"
+              aria-label="Captured selection content"></textarea>
+    <p id="edit-selection-error" class="dialog-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" id="edit-selection-cancel">Cancel</button>
+      <button type="button" id="edit-selection-save">Save</button>
     </div>
   </dialog>
 

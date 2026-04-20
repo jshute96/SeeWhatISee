@@ -82,6 +82,21 @@ export interface CaptureRecord {
    */
   contents?: string;
   /**
+   * Set to `true` only when the saved HTML body was modified through
+   * the Edit HTML dialog on the "Capture with details…" page — i.e.
+   * the on-disk HTML file is the user's edit, not the raw scrape.
+   * Omitted when false so presence itself is the signal to
+   * downstream consumers.
+   *
+   * Snake_case on both the TS type and the JSON key so the record
+   * shape is a faithful reflection of what `log.json` contains — the
+   * test suite casts `JSON.parse` output to `CaptureRecord` directly
+   * and would silently lose the flag on a camel-to-snake rename.
+   *
+   * Only meaningful on records that also have a `contents` field.
+   */
+  contents_edited?: true;
+  /**
    * Bare filename of the captured selection HTML
    * (`selection-<timestamp>.html`, no directory). Set by either
    * `captureSelection()` (the More → Capture selection shortcut)
@@ -89,6 +104,15 @@ export interface CaptureRecord {
    * checkbox checked. Absent on every other capture mode.
    */
   selection?: string;
+  /**
+   * Set to `true` only when the saved selection was modified through
+   * the Edit selection dialog on the "Capture with details…" page.
+   * Same semantics and naming convention as `contents_edited` —
+   * snake_case matches the JSON key, omitted when false.
+   *
+   * Only meaningful on records that also have a `selection` field.
+   */
+  selection_edited?: true;
   /**
    * User-entered prompt text from the "Capture with details…" flow,
    * trimmed. Omitted entirely when empty so the field's presence
@@ -462,6 +486,21 @@ export interface SaveDetailedOptions {
    * that didn't save the image they're on.
    */
   hasHighlights?: boolean;
+  /**
+   * True when the user replaced the captured HTML via the Edit HTML
+   * dialog before saving. Causes the record to carry
+   * `contents_edited: true`. Ignored unless `includeHtml` is also
+   * true — the flag only makes sense on a record that actually saved
+   * the HTML file.
+   */
+  htmlEdited?: boolean;
+  /**
+   * True when the user replaced the captured selection via the Edit
+   * selection dialog before saving. Causes the record to carry
+   * `selection_edited: true`. Ignored unless `includeSelection` is
+   * also true.
+   */
+  selectionEdited?: boolean;
 }
 
 /**
@@ -510,9 +549,10 @@ export async function downloadScreenshot(
 }
 
 /**
- * Start an HTML download. The HTML body never changes within a
- * session (no editing UI), so callers can cache the result
- * indefinitely.
+ * Start an HTML download. The body is stable for the session unless
+ * the user saves an edit in the Edit HTML dialog — callers cache the
+ * result and rely on the `updateHtml` handler to drop the cache when
+ * the body changes (see `ensureHtmlDownloaded`).
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
   return downloadArtifact(capture.contentsFilename, htmlDataUrl(capture.html));
@@ -589,9 +629,11 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   }
   if (opts.includeHtml) {
     record.contents = opts.capture.contentsFilename;
+    if (opts.htmlEdited) record.contents_edited = true;
   }
   if (opts.includeSelection && opts.capture.selectionFilename) {
     record.selection = opts.capture.selectionFilename;
+    if (opts.selectionEdited) record.selection_edited = true;
   }
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
@@ -715,7 +757,11 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
   if (r.highlights !== undefined) ordered.highlights = r.highlights;
   if (r.contents !== undefined) ordered.contents = r.contents;
+  // Placed right after `contents` / `selection` so the edited-flag
+  // sits next to the filename it qualifies in grepped output.
+  if (r.contents_edited !== undefined) ordered.contents_edited = r.contents_edited;
   if (r.selection !== undefined) ordered.selection = r.selection;
+  if (r.selection_edited !== undefined) ordered.selection_edited = r.selection_edited;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;
   ordered.url = r.url;
   return JSON.stringify(ordered, null, indent);

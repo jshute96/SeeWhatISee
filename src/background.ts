@@ -909,15 +909,29 @@ interface DetailsSession {
   //     edit count means the user drew / undid / cleared a
   //     highlight, so the next request re-downloads with the new
   //     baked-in PNG.
-  //   - HTML never invalidates within a session (no editing UI).
+  //   - HTML invalidates only when the user saves an edit in the
+  //     Edit HTML dialog (handled via the `updateHtml` message).
   downloads?: {
     screenshot?: { downloadId: number; editVersion: number; path: string };
     html?: { downloadId: number; path: string };
-    // Selection is content-stable for the session (no editing UI),
-    // so the cache is unconditional once populated — same shape and
-    // policy as `html`.
+    // Selection follows the same cache + invalidation policy as
+    // `html`: unconditional until the user saves an edit via the
+    // Edit selection dialog, which fires `updateSelection` and drops
+    // this entry so the next Copy / Capture re-materializes the
+    // edited body under the same pinned `selectionFilename`.
     selection?: { downloadId: number; path: string };
   };
+  /**
+   * Sticky per-artifact "was edited" flags. Set by the `updateHtml`
+   * / `updateSelection` handlers when the user saves in the
+   * corresponding dialog, and forwarded to `recordDetailedCapture`
+   * at save time so the sidecar record carries
+   * `contents_edited: true` / `selection_edited: true`. Never
+   * cleared within a session — once the body is the user's edit,
+   * it stays the user's edit for any later save.
+   */
+  htmlEdited?: boolean;
+  selectionEdited?: boolean;
 }
 
 function detailsStorageKey(tabId: number): string {
@@ -997,6 +1011,15 @@ interface UpdateHtmlMessage {
    */
   html: string;
 }
+interface UpdateSelectionMessage {
+  action: 'updateSelection';
+  /**
+   * Full replacement body for the captured selection. Sent by the
+   * details page when the user saves an edit in the Edit selection
+   * dialog.
+   */
+  selection: string;
+}
 interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
@@ -1024,6 +1047,7 @@ type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
   | UpdateHtmlMessage
+  | UpdateSelectionMessage
   | SaveDetailsMessage;
 
 /**
@@ -1167,8 +1191,10 @@ async function ensureScreenshotDownloaded(
 
 /**
  * Materialize the HTML file on disk if needed and return its
- * absolute on-disk path. HTML never invalidates within a session
- * (no editing UI), so the cache is unconditional once populated.
+ * absolute on-disk path. The cache is unconditional until the user
+ * saves an edit in the Edit HTML dialog — the `updateHtml` handler
+ * drops the cache entry so the next call re-downloads with the
+ * edited body under the same pinned `contentsFilename`.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
   return ensureArtifactDownloaded(tabId, {
@@ -1219,17 +1245,19 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         sendResponse(undefined);
         return;
       }
-      // Only forward the fields the page actually needs: the
-      // preview image, the captured URL, the HTML for byte
-      // counting, and a hasSelection flag so it can enable +
-      // default the Save selection checkbox. Selection HTML stays
-      // on the SW side. Paths come from the on-demand
+      // Forward the fields the page actually renders or mirrors:
+      // the preview image, the captured URL, the HTML body (for
+      // byte counting + the Edit HTML dialog), and the selection
+      // body (for the Edit selection dialog + enabling the Save
+      // selection controls — presence of a non-empty string plays
+      // the role the old `hasSelection` flag did). File paths are
+      // not sent here; they come back via the on-demand
       // `ensureDownloaded` round-trip when a Copy button is clicked.
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
+        selection: session.capture.selection,
         url: session.capture.url,
-        hasSelection: !!session.capture.selection,
       });
     })();
     return true;
@@ -1263,12 +1291,36 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       try {
         const session = await requireDetailsSession(tabId);
         session.capture.html = msg.html;
+        session.htmlEdited = true;
         // Drop any cached HTML download: the on-disk file (if a Copy
         // click already materialized one) is now stale. The next
         // Copy / Capture run will re-materialize under the same
         // pinned filename via `conflictAction: 'overwrite'`.
         if (session.downloads?.html) {
           const { html: _html, ...rest } = session.downloads;
+          session.downloads = rest;
+        }
+        await saveDetailsSession(tabId, session);
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'updateSelection') {
+    void (async () => {
+      try {
+        const session = await requireDetailsSession(tabId);
+        session.capture.selection = msg.selection;
+        session.selectionEdited = true;
+        // Same cache-invalidation dance as `updateHtml` — drop any
+        // pre-materialized selection download so the next Copy /
+        // Capture re-materializes under the same pinned
+        // `selectionFilename`.
+        if (session.downloads?.selection) {
+          const { selection: _selection, ...rest } = session.downloads;
           session.downloads = rest;
         }
         await saveDetailsSession(tabId, session);
@@ -1309,6 +1361,8 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
           includeSelection: msg.selection,
           prompt: msg.prompt,
           hasHighlights: msg.highlights,
+          htmlEdited: session.htmlEdited,
+          selectionEdited: session.selectionEdited,
         });
       } finally {
         // Always clean up the stored capture and close the tab, even

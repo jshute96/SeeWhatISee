@@ -26,12 +26,13 @@ interface DetailsData {
   html: string;
   url: string;
   /**
-   * True when the SW captured a non-empty selection on the active
-   * tab. The actual selection HTML stays in the SW's session
-   * storage — the page only needs this flag to enable / default
-   * the Save selection checkbox.
+   * Captured selection HTML. Present (non-empty) iff the SW saw a
+   * selection on the active tab at capture time; undefined or empty
+   * otherwise. Used both as the enable gate for the Save selection
+   * controls (replaces the old `hasSelection` boolean) and as the
+   * seed value for the Edit selection dialog's textarea.
    */
-  hasSelection?: boolean;
+  selection?: string;
 }
 
 /**
@@ -62,12 +63,20 @@ const editHtmlDialog = document.getElementById('edit-html-dialog') as HTMLDialog
 const editHtmlTextarea = document.getElementById('edit-html-textarea') as HTMLTextAreaElement;
 const editHtmlSaveBtn = document.getElementById('edit-html-save') as HTMLButtonElement;
 const editHtmlCancelBtn = document.getElementById('edit-html-cancel') as HTMLButtonElement;
-// Local mirror of the captured HTML body. Seeded by loadData() from
-// the SW's session and updated whenever the user saves an edit.
-// Kept on the page side so the edit dialog can prefill its textarea
-// without an extra round-trip, and so the HTML-size display stays
-// in sync with the SW's authoritative copy.
+const editHtmlErrorEl = document.getElementById('edit-html-error') as HTMLParagraphElement;
+const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
+const editSelectionDialog = document.getElementById('edit-selection-dialog') as HTMLDialogElement;
+const editSelectionTextarea = document.getElementById('edit-selection-textarea') as HTMLTextAreaElement;
+const editSelectionSaveBtn = document.getElementById('edit-selection-save') as HTMLButtonElement;
+const editSelectionCancelBtn = document.getElementById('edit-selection-cancel') as HTMLButtonElement;
+const editSelectionErrorEl = document.getElementById('edit-selection-error') as HTMLParagraphElement;
+// Local mirrors of the SW's captured bodies. Seeded by loadData()
+// and updated whenever the user saves an edit. Kept on the page
+// side so the dialogs can prefill their textareas without an extra
+// round-trip and so the HTML-size readout stays in sync with the
+// SW's authoritative copy.
 let capturedHtml = '';
+let capturedSelection = '';
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -102,10 +111,10 @@ promptInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  // Suspend the page-wide hotkeys while the HTML edit dialog is up —
-  // Alt+H in the dialog should type `h`, not silently flip the Save
-  // HTML checkbox behind the modal.
-  if (editHtmlDialog.open) return;
+  // Suspend the page-wide hotkeys while any edit dialog is up —
+  // e.g. Alt+H in the HTML dialog should type `h`, not silently
+  // flip the Save HTML checkbox behind the modal.
+  if (editHtmlDialog.open || editSelectionDialog.open) return;
   if (!e.altKey) return;
   const key = e.key.toLowerCase();
   if (key === 's') {
@@ -356,11 +365,15 @@ async function loadData(): Promise<void> {
     htmlSizeEl.textContent = formatBytes(new Blob([capturedHtml]).size);
     // Enable + default-check the Save selection controls iff the SW
     // saw a non-empty selection at capture time. A user who bothered
-    // to select text probably wants it in the record.
-    if (response.hasSelection) {
+    // to select text probably wants it in the record. The edit
+    // button gates on the same condition so the user can't open an
+    // empty-body dialog when there was no selection to begin with.
+    if (response.selection) {
+      capturedSelection = response.selection;
       selectionBox.checked = true;
       selectionBox.disabled = false;
       copySelectionBtn.disabled = false;
+      editSelectionBtn.disabled = false;
     }
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -392,7 +405,8 @@ async function loadData(): Promise<void> {
 // Capture click) reuse the existing file. For the screenshot, the
 // cache is keyed by `editVersion` so a highlight change forces a
 // re-download with the new baked-in PNG; for HTML, the cache is
-// unconditional (no editing UI changes the body).
+// unconditional until the user saves an edit in the Edit HTML
+// dialog, which sends `updateHtml` and drops the cache entry.
 //
 // Extension pages have direct access to `navigator.clipboard.writeText`
 // under a user gesture — no offscreen helper needed (unlike the SW's
@@ -408,64 +422,144 @@ copySelectionBtn.addEventListener('click', () => {
   void copyArtifactPath('selection');
 });
 
-// ─── HTML edit dialog ─────────────────────────────────────────────
+// ─── Edit dialogs (HTML + selection) ──────────────────────────────
 //
-// The pencil button next to Copy HTML opens a modal dialog with a
-// textarea prefilled with the current captured HTML. On Save we push
-// the new body to the SW (which invalidates the HTML download cache
-// so the next Copy / Capture writes the edited content) and update
-// the HTML-size readout. Cancel closes without touching anything.
+// Both edit dialogs share the same wiring: the pencil button opens a
+// modal with the current body prefilled, Save pushes the new body to
+// the SW (which invalidates the corresponding download cache so the
+// next Copy / Capture writes the edited content) and runs an
+// optional `onSaved` hook, and Cancel closes without touching
+// anything. A single `bindEditDialog` helper wires both so the two
+// stay in lockstep — the HTML and selection flows must behave
+// identically except for the action / field name and any per-kind
+// post-save UI.
 
-editHtmlBtn.addEventListener('click', () => {
-  editHtmlTextarea.value = capturedHtml;
-  editHtmlDialog.showModal();
-  // Defer focus so showModal's own autofocus doesn't overwrite us.
-  requestAnimationFrame(() => {
-    editHtmlTextarea.focus();
-    // Place the caret at the start — the body is usually large and
-    // the user is most likely to want to search / scroll from the
-    // top rather than land at the end.
-    editHtmlTextarea.setSelectionRange(0, 0);
-    editHtmlTextarea.scrollTop = 0;
+interface EditDialogBindings {
+  openBtn: HTMLButtonElement;
+  dialog: HTMLDialogElement;
+  textarea: HTMLTextAreaElement;
+  saveBtn: HTMLButtonElement;
+  cancelBtn: HTMLButtonElement;
+  errorEl: HTMLParagraphElement;
+}
+
+interface EditDialogOptions {
+  /** Current body as the page understands it — used both as dialog seed and as the no-op guard. */
+  getCurrent: () => string;
+  /** Commit the new body to the page's local mirror after a successful SW save. */
+  setCurrent: (value: string) => void;
+  /** SW message action name; the full message is `{ action, [field]: value }`. */
+  updateAction: 'updateHtml' | 'updateSelection';
+  /** Field name on the update message (`html` or `selection`). */
+  updateField: 'html' | 'selection';
+  /** Optional post-save hook for per-kind UI (e.g. refresh HTML-size readout). */
+  onSaved?: (value: string) => void;
+}
+
+function bindEditDialog(b: EditDialogBindings, opts: EditDialogOptions): void {
+  b.openBtn.addEventListener('click', () => {
+    b.textarea.value = opts.getCurrent();
+    clearError();
+    b.dialog.showModal();
+    // Defer focus so showModal's own autofocus doesn't overwrite us.
+    requestAnimationFrame(() => {
+      b.textarea.focus();
+      // Place the caret at the start — bodies are often long and
+      // the user is most likely to want to search / scroll from the
+      // top rather than land at the end.
+      b.textarea.setSelectionRange(0, 0);
+      b.textarea.scrollTop = 0;
+    });
   });
-});
 
-editHtmlCancelBtn.addEventListener('click', () => {
-  editHtmlDialog.close();
-});
+  b.cancelBtn.addEventListener('click', () => {
+    b.dialog.close();
+  });
 
-editHtmlSaveBtn.addEventListener('click', () => {
-  void saveHtmlEdit();
-});
+  b.saveBtn.addEventListener('click', () => {
+    void save();
+  });
 
-async function saveHtmlEdit(): Promise<void> {
-  const newHtml = editHtmlTextarea.value;
-  // No-op when unchanged: avoid an SW round-trip (and the cache
-  // invalidation side-effect that would re-download on next Copy).
-  if (newHtml === capturedHtml) {
-    editHtmlDialog.close();
-    return;
-  }
-  editHtmlSaveBtn.disabled = true;
-  try {
-    const response = (await chrome.runtime.sendMessage({
-      action: 'updateHtml',
-      html: newHtml,
-    })) as { ok?: boolean; error?: string } | undefined;
-    if (!response?.ok) {
-      console.warn(
-        '[SeeWhatISee] updateHtml failed:',
-        response?.error ?? 'no response from background',
-      );
+  async function save(): Promise<void> {
+    const newValue = b.textarea.value;
+    // No-op when unchanged: avoid an SW round-trip (and the cache
+    // invalidation side-effect that would re-download on next Copy).
+    if (newValue === opts.getCurrent()) {
+      b.dialog.close();
       return;
     }
-    capturedHtml = newHtml;
-    htmlSizeEl.textContent = formatBytes(new Blob([capturedHtml]).size);
-    editHtmlDialog.close();
-  } finally {
-    editHtmlSaveBtn.disabled = false;
+    clearError();
+    b.saveBtn.disabled = true;
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        action: opts.updateAction,
+        [opts.updateField]: newValue,
+      })) as { ok?: boolean; error?: string } | undefined;
+      if (!response?.ok) {
+        const detail = response?.error ?? 'no response from background';
+        console.warn(`[SeeWhatISee] ${opts.updateAction} failed:`, detail);
+        showError(`Couldn't save edit: ${detail}`);
+        return;
+      }
+      opts.setCurrent(newValue);
+      opts.onSaved?.(newValue);
+      b.dialog.close();
+    } finally {
+      b.saveBtn.disabled = false;
+    }
+  }
+
+  function showError(message: string): void {
+    b.errorEl.textContent = message;
+    b.errorEl.hidden = false;
+  }
+
+  function clearError(): void {
+    b.errorEl.textContent = '';
+    b.errorEl.hidden = true;
   }
 }
+
+bindEditDialog(
+  {
+    openBtn: editHtmlBtn,
+    dialog: editHtmlDialog,
+    textarea: editHtmlTextarea,
+    saveBtn: editHtmlSaveBtn,
+    cancelBtn: editHtmlCancelBtn,
+    errorEl: editHtmlErrorEl,
+  },
+  {
+    getCurrent: () => capturedHtml,
+    setCurrent: (v) => {
+      capturedHtml = v;
+    },
+    updateAction: 'updateHtml',
+    updateField: 'html',
+    onSaved: (v) => {
+      htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
+    },
+  },
+);
+
+bindEditDialog(
+  {
+    openBtn: editSelectionBtn,
+    dialog: editSelectionDialog,
+    textarea: editSelectionTextarea,
+    saveBtn: editSelectionSaveBtn,
+    cancelBtn: editSelectionCancelBtn,
+    errorEl: editSelectionErrorEl,
+  },
+  {
+    getCurrent: () => capturedSelection,
+    setCurrent: (v) => {
+      capturedSelection = v;
+    },
+    updateAction: 'updateSelection',
+    updateField: 'selection',
+  },
+);
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially
