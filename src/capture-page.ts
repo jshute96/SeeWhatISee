@@ -32,6 +32,20 @@ interface DetailsData {
    * the Save selection checkbox.
    */
   hasSelection?: boolean;
+  /**
+   * Reason HTML couldn't be captured (e.g. restricted URL). When
+   * set, we grey out the Save HTML row + disable its Copy button
+   * and show a hoverable error icon explaining why. The details
+   * flow still opens so the user can capture just a URL /
+   * screenshot / prompt / highlights.
+   */
+  htmlError?: string;
+  /**
+   * Reason the page selection couldn't be captured. Same handling
+   * as `htmlError` but for the Save selection row. Fires alongside
+   * `htmlError` when the whole `executeScript` scrape failed.
+   */
+  selectionError?: string;
 }
 
 /**
@@ -57,6 +71,10 @@ const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
+const htmlRow = document.getElementById('row-html') as HTMLDivElement;
+const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
+const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
+const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -97,12 +115,16 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
   } else if (key === 'h') {
+    // Alt+H toggles Save HTML. No-op when the checkbox is disabled
+    // (HTML couldn't be captured) so the hotkey matches what's on
+    // screen.
+    if (htmlBox.disabled) return;
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
   } else if (key === 'n') {
     // Alt+N toggles Save selection. No-op when the checkbox is
-    // disabled (no selection was captured) so the hotkey matches
-    // what's on screen.
+    // disabled (no selection was captured, or scrape failed) so the
+    // hotkey matches what's on screen.
     if (selectionBox.disabled) return;
     e.preventDefault();
     selectionBox.checked = !selectionBox.checked;
@@ -335,13 +357,37 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
-    // True UTF-8 byte count of the captured HTML, not the JS string
-    // length (which counts UTF-16 code units).
-    htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
-    // Enable + default-check the Save selection controls iff the SW
-    // saw a non-empty selection at capture time. A user who bothered
-    // to select text probably wants it in the record.
-    if (response.hasSelection) {
+    // Apply per-artifact error states first so the HTML size readout
+    // below reflects the right value (0 B + error message rather than
+    // the empty-string byte count of a failed scrape).
+    if (response.htmlError) {
+      // HTML couldn't be scraped (restricted URL, blocked injection,
+      // etc.). Disable + uncheck Save HTML, hide its Copy button, and
+      // flag the row with a hoverable error icon so the user
+      // understands why it's greyed out — while still letting them
+      // use the rest of the capture flow.
+      htmlBox.checked = false;
+      htmlBox.disabled = true;
+      copyHtmlBtn.disabled = true;
+      htmlRow.classList.add('has-error');
+      htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
+      htmlSizeEl.textContent = `— (${response.htmlError})`;
+    } else {
+      // True UTF-8 byte count of the captured HTML, not the JS string
+      // length (which counts UTF-16 code units).
+      htmlSizeEl.textContent = formatBytes(new Blob([response.html]).size);
+    }
+    if (response.selectionError) {
+      // Same treatment for the selection row. The checkbox is already
+      // disabled + unchecked by default, so we only need to flag the
+      // row with the error icon + tooltip.
+      selectionRow.classList.add('has-error');
+      selectionErrorIcon.title =
+        `Unable to capture selection: ${response.selectionError}`;
+    } else if (response.hasSelection) {
+      // Enable + default-check the Save selection controls iff the SW
+      // saw a non-empty selection at capture time. A user who bothered
+      // to select text probably wants it in the record.
       selectionBox.checked = true;
       selectionBox.disabled = false;
       copySelectionBtn.disabled = false;

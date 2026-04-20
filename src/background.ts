@@ -242,6 +242,9 @@ interface CaptureAction {
  * so the delay / active-tab-after-delay semantics match every other
  * capture, but the screenshot + HTML payloads are discarded — only
  * the timestamp + URL (and any future prompt plumbing) hit the log.
+ *
+ * Deliberately ignores `data.htmlError` — a URL-only record doesn't
+ * need HTML, so a restricted-URL scrape failure shouldn't block it.
  */
 async function captureUrlOnly(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
@@ -257,9 +260,18 @@ async function captureUrlOnly(delayMs = 0): Promise<void> {
  * "Capture screenshot and HTML" — the details-page "both files
  * checked" path, run without opening the page. Grabs both artifacts,
  * writes them, and records a sidecar entry referencing both.
+ *
+ * Unlike the details flow (which gracefully falls back to a
+ * screenshot-only UI), this shortcut *requires* HTML by definition,
+ * so we surface an `htmlError` as a thrown error — the action's
+ * error-reporting channel then swaps the icon / tooltip so the user
+ * sees why nothing landed.
  */
 async function captureBoth(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
+  if (data.htmlError) {
+    throw new Error(data.htmlError);
+  }
   await downloadScreenshot(data);
   await downloadHtml(data);
   await recordDetailedCapture({
@@ -1157,9 +1169,20 @@ async function ensureScreenshotDownloaded(
  * Materialize the HTML file on disk if needed and return its
  * absolute on-disk path. HTML never invalidates within a session
  * (no editing UI), so the cache is unconditional once populated.
+ *
+ * Throws when the capture carries an `htmlError` (scrape failed at
+ * capture time). Under normal use the page's Save HTML checkbox and
+ * Copy button are disabled in that case, so this branch is
+ * unreachable; it's a belt-and-suspenders guard so a stale page
+ * message can't write an empty HTML file.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
   return ensureArtifactDownloaded(tabId, {
+    precondition: (s) => {
+      if (s.capture.htmlError) {
+        throw new Error(`HTML not captured: ${s.capture.htmlError}`);
+      }
+    },
     getCachedPath: (s) => s.downloads?.html?.path,
     startDownload: downloadHtml,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
@@ -1213,11 +1236,17 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       // default the Save selection checkbox. Selection HTML stays
       // on the SW side. Paths come from the on-demand
       // `ensureDownloaded` round-trip when a Copy button is clicked.
+      //
+      // `htmlError` / `selectionError` propagate any scrape failure
+      // from `captureBothToMemory` so the page can grey out the
+      // corresponding rows and show an error icon with the reason.
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
         url: session.capture.url,
         hasSelection: !!session.capture.selection,
+        htmlError: session.capture.htmlError,
+        selectionError: session.capture.selectionError,
       });
     })();
     return true;

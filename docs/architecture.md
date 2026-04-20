@@ -404,6 +404,31 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `chrome.storage.session` keyed by the new tab's id, in a
   `DetailsSession` wrapper.
 
+### Graceful handling of failed HTML / selection scrape
+
+- `captureBothToMemory` catches failures from
+  `chrome.scripting.executeScript` and returns an `InMemoryCapture`
+  with `htmlError` / `selectionError` set instead of throwing.
+- Common trigger: restricted URLs (chrome://, the Web Store) where
+  extensions can't inject scripts. The screenshot itself still
+  succeeds via `chrome.tabs.captureVisibleTab`.
+- Impact on the details flow:
+  - The details page still opens with the screenshot preview.
+  - Save HTML / Save selection are disabled + unchecked, their
+    Copy buttons are hidden, and each row shows a hoverable
+    error icon carrying the SW-reported reason.
+  - Alt+H / Alt+N are no-ops while the corresponding row is
+    disabled so the hotkeys match what's on screen.
+  - `ensureHtmlDownloaded` throws if `htmlError` is set as a
+    belt-and-suspenders guard so a stale page message can't
+    materialize an empty HTML file.
+- Impact on the More-menu shortcuts:
+  - `capture-url` (URL-only) deliberately ignores `htmlError` —
+    it doesn't need HTML anyway.
+  - `capture-both` (screenshot + HTML) re-throws `htmlError` so
+    the toolbar icon / tooltip surfaces the reason via the
+    standard error-reporting channel.
+
 ### What the page shows
 
 - **Captured URL** — read-only single-line monospace input.
@@ -416,8 +441,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     time. When a selection *was* captured, the checkbox defaults to
     checked — a user who selected text before opening the details
     page almost certainly wants that selection in the record.
-  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML,
-    `Alt+N` toggles selection (no-op when greyed out).
+  - Save HTML / Save selection can also be greyed out because the
+    scrape itself failed (see
+    [Graceful handling of failed HTML / selection scrape](#graceful-handling-of-failed-html--selection-scrape)).
+    In that case the row also shows a hoverable red error icon
+    whose tooltip explains the reason.
+  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML
+    (no-op when greyed out), `Alt+N` toggles selection (no-op
+    when greyed out).
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).
