@@ -16,6 +16,8 @@ repository. See `README.md` for setup instructions and available commands.
   - When adding a new feature, you can add new sections in the relevant design doc rather than appending to an existing one.
 - **Commit Preparation**:
   - Ensure `README.md` is updated if setup, commands, or user-visible features change.
+    - `README.md` is most user-facing documentation. Keep it concise and focus on briefly listing what users can do, without a lot of technical details.
+  - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
   - Include all significant changes in the commit message.
 
 ## Development Conventions
@@ -30,8 +32,8 @@ is needed, keep it concise (bullet points, not paragraphs) and confirm with the
 user before elaborating further. Default to action over planning.
 
 ## Git & Commits
+- Do not commit or push changes without getting user instructions to do so.
 - When committing, include ALL relevant changed files — check `git status` before committing to avoid missing files like TODO.md, documentation, or new files.
-- Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
 
 ## Code Changes
 - Use the file index to help find relevant files.
