@@ -611,6 +611,14 @@ function render(): void {
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
   if (me.button !== 0 && me.button !== 2) return;
+  // A drag is already in flight (left-button crop or rect/line).
+  // Ignore the second button press so the state machine can't end
+  // up with both `cropDrag` and `dragStart` non-null at the same
+  // time. The mousemove branches below bail on the "wrong" state,
+  // and the mouseup handler only clears one drag per up event —
+  // so a chorded press would otherwise strand the first drag when
+  // the second button releases first.
+  if (cropDrag !== null || dragStart !== null) return;
   const p = localCoords(me);
   // Left-button press on a crop handle starts a crop-drag instead
   // of the usual rect/line draw. Right-button always draws a line —
@@ -634,6 +642,13 @@ overlay.addEventListener('mousedown', (e) => {
   dragStart = p;
   dragCurrent = dragStart;
   dragButton = me.button;
+  // Reset any idle-hover resize cursor — we're committing to a
+  // rect/line draw from this spot, and the resize cursor would
+  // mislead the user if they started right on a handle. The
+  // window.mousemove handler for the normal drag path doesn't
+  // touch cursor, so without this the resize cursor would stick
+  // for the duration of the draw.
+  overlay.style.cursor = 'crosshair';
   render();
 });
 

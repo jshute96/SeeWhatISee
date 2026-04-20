@@ -460,16 +460,16 @@ convert a drawn rectangle into the active crop region.
     peels back one resize at a time; earlier crops stay in the
     stack (hidden behind the newer one for rendering) and
     re-emerge as Undo walks backward.
-  - The proposed bounds are clamped to the image (0 ≤ x, x+w ≤
-    100, likewise y) and to a `MIN_CROP_PCT` floor (3%) on each
-    axis. Dragging an edge past the opposite (undragged) edge
-    clamps the dragged edge at `MIN_CROP_PCT` away from the
-    opposite one — the opposite edge itself never moves. A
-    flipped crop is surprising on a resize tool and never useful
-    in our workflow; pushing the opposite edge outward to
-    preserve the minimum would also be inconsistent across sides
-    (n/w vs. s/e clamps used to differ) so both behaviors are
-    avoided.
+  - The proposed bounds are clamped on three axes:
+    - Inside the image: 0 ≤ x, x+w ≤ 100 (and the same for y).
+    - `MIN_CROP_PCT` floor (3%) on width and height.
+    - Dragged-edge-only: a drag past the opposite edge clamps
+      the dragged edge at `MIN_CROP_PCT` away from the opposite
+      one. The opposite edge never moves.
+    - Why not flip / push? A flipped crop is surprising on a
+      resize tool and never useful. Pushing the opposite edge
+      out to preserve the minimum used to produce n/w vs. s/e
+      asymmetry, so that's avoided too.
   - A sub-`CLICK_THRESHOLD_PX` drag is discarded, so a stray
     click on a handle doesn't add a no-op entry to the stack.
 - **Undo / Clear** — single edit-history stack covering draws
@@ -492,34 +492,35 @@ convert a drawn rectangle into the active crop region.
   frame" around the active crop via an SVG `<path>` with
   `fill-rule="evenodd"` (outer = full image, inner = crop),
   plus a thin dashed white border on the crop edges.
-  - **Single path, not four strips.** With four adjacent dim
-    strips the pixel row straddling the crop's top/bottom edge
-    ends up partially covered by two dim rects in series
-    instead of one solid fill — alpha-over-alpha composites
-    brighter than a single dim fill (≈14% brighter at 0.55
-    alpha), so the shared horizontal edges showed up as faint
-    guide lines extending the full image width. The vertical
-    edges didn't show the same artifact because the strip's
-    inner edge borders un-dim content, so the transition was a
-    smooth ramp instead of a brighter spike.
-  - **Dashed border is per-side.** Each of the four crop edges
-    is drawn as its own `<line>` and is *omitted* when that
-    edge is flush with the image boundary. A dash right at the
-    image edge is cosmetic noise, and drawing one there while
-    omitting it on the other axis (the case a
-    full-width-but-not-full-height crop produces) read as an
-    asymmetric "guide line" extending past the crop.
+  - **Single path, not four strips.**
+    - Four adjacent dim strips partially-cover the pixel row
+      straddling the crop's top/bottom edge from *two* rects
+      in series instead of one solid fill.
+    - Alpha-over-alpha composites brighter than a single fill
+      (≈14% brighter at 0.55 alpha), so those shared edges
+      showed up as faint guide lines spanning the full image.
+    - Vertical edges didn't show the artifact because the
+      strip's inner edge borders un-dim content — smooth ramp,
+      not a brighter spike.
+  - **Dashed border is per-side.**
+    - Each crop edge is its own `<line>`; a side flush with
+      the image boundary is *omitted*.
+    - A dash right at the image edge is cosmetic noise, and
+      drawing one there while omitting it on the other axis
+      (the case a full-width-but-not-full-height crop
+      produces) read as an asymmetric guide line past the crop.
   - Prior crops are hidden by the most recent one.
-- **Full-image crop collapses to "no crop".** A crop whose
-  bounds are `(0, 0, 100, 100)` is treated as no crop
-  everywhere: `activeCrop()` returns `undefined`, no dim
-  overlay or dashed border is drawn, the bake-in is skipped,
-  and the saved record carries no `isCropped` flag. The edit
-  itself stays in the stack so Undo can still walk back
-  through it. This fires specifically when the user drags the
-  crop back out to cover the entire image (all four sides at
-  the boundary), so the saved PNG matches what they see — an
-  un-marked full-size capture.
+- **Full-image crop collapses to "no crop".**
+  - A crop with bounds `(0, 0, 100, 100)` is treated as no
+    crop everywhere: `activeCrop()` returns `undefined`, no
+    dim overlay or dashed border, bake-in skipped, and no
+    `isCropped` flag on the saved record.
+  - The edit stays in the stack so Undo can still walk back
+    through it.
+  - Fires when the user drags the crop back out to cover the
+    entire image (all four sides at the boundary) — the saved
+    PNG then matches what they see, an un-marked full-size
+    capture.
 
 ### Highlight bake-in on save
 

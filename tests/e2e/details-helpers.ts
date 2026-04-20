@@ -153,6 +153,14 @@ export async function configureAndCapture(
 // Drag a rectangle on the highlight overlay between the given
 // percentage coordinates of its bounding box. Tests use this to
 // produce highlights without coupling to an internal drawing helper.
+//
+// Callers must keep `fromPct` at least `HANDLE_PX` (10 CSS px)
+// away from every image edge. If the mousedown lands inside the
+// HANDLE_PX band, `detectCropHandle` in capture-page.ts fires
+// and starts a *crop-drag* instead of a rect/line draw — a silent
+// miscategorisation that'd look like a drawing test failure but is
+// actually a misuse of the helper. We assert against it rather
+// than guessing the intent.
 export async function dragRect(
   capturePage: Page,
   fromPct: { xPct: number; yPct: number },
@@ -160,10 +168,20 @@ export async function dragRect(
 ): Promise<void> {
   const box = await capturePage.locator('#overlay').boundingBox();
   if (!box) throw new Error('overlay has no bounding box');
+  const HANDLE_PX = 10;
   const x1 = box.x + box.width * fromPct.xPct;
   const y1 = box.y + box.height * fromPct.yPct;
   const x2 = box.x + box.width * toPct.xPct;
   const y2 = box.y + box.height * toPct.yPct;
+  const insetX = Math.min(x1 - box.x, box.x + box.width - x1);
+  const insetY = Math.min(y1 - box.y, box.y + box.height - y1);
+  if (insetX < HANDLE_PX || insetY < HANDLE_PX) {
+    throw new Error(
+      `dragRect from (${fromPct.xPct}, ${fromPct.yPct}) is within ${HANDLE_PX}px of the image edge — ` +
+      `a mousedown there would start a crop-drag instead of a rect draw. Keep the start at least ` +
+      `${HANDLE_PX}px inset, or use the dragEdge helper if a crop-drag is the intent.`,
+    );
+  }
   await capturePage.mouse.move(x1, y1);
   await capturePage.mouse.down();
   // Two-step move so Playwright synthesises a real intermediate

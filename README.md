@@ -60,7 +60,7 @@ On this page, you can:
   - **Redact** turns the most recent red box into an opaque black box that hides whatever was underneath.
   - **Cropping** the saved PNG to include only a selected region.
     - **Crop button** crops to the most recent red box.
-    - **Dragging borders** resizes the crop region.
+    - **Drag borders** of the image or crop region to create or resize the crop.
   - **Undo** or **Clear** to roll back edits.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
