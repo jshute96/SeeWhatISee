@@ -100,7 +100,6 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(record.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 

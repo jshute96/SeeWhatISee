@@ -56,8 +56,14 @@ interface DetailsData {
  * cached on-disk PNG still represents the user's current state or
  * needs to be re-downloaded with the new highlights baked in.
  *
- * HTML never edits, so it doesn't need an equivalent counter — the
- * SW caches the HTML download unconditionally for the session.
+ * HTML and selection are also editable (via the Edit dialogs), but
+ * they don't need a parallel counter: the SW invalidates their
+ * download cache by dropping the entry on `updateArtifact`, and the
+ * page never speculatively materializes them — only Copy / Capture
+ * trigger a download, and that download path always reads the SW's
+ * authoritative body. The screenshot is the only artifact whose
+ * "current state" lives entirely on the page (in the SVG overlay)
+ * and so needs a version handshake to coordinate cache validity.
  */
 let editVersion = 0;
 

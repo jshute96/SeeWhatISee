@@ -1328,12 +1328,25 @@ const EDITABLE_ARTIFACTS: Record<
  * cache so the next Copy / Capture re-downloads with the edited
  * content at the pinned filename. Mutates `session` in place;
  * caller must persist via `saveDetailsSession`.
+ *
+ * Throws when the matching `*Error` is set on the capture (scrape
+ * failed at capture time). Under normal use the page-side Edit
+ * button is disabled in that case, so the message never arrives;
+ * the throw is a defense-in-depth guard so a stray `updateArtifact`
+ * can't write content the SW would then refuse to materialize via
+ * its `ensure*Downloaded` precondition — leaving the sticky edit
+ * flag set on a body the user can never actually save.
  */
 function applyArtifactEdit(
   session: DetailsSession,
   kind: EditableArtifactKind,
   value: string,
 ): void {
+  const errorKey = `${kind}Error` as const;
+  const reason = session.capture[errorKey];
+  if (reason) {
+    throw new Error(`Cannot edit ${kind}: ${reason}`);
+  }
   const spec = EDITABLE_ARTIFACTS[kind];
   spec.write(session, value);
   if (session.downloads && spec.downloadsKey in session.downloads) {

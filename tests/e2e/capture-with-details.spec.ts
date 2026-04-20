@@ -260,7 +260,6 @@ test('details: html only with prompt', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('find the bug');
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
   // The HTML file should contain the fixture page's marker.
@@ -385,7 +384,6 @@ test('details: url-only (no screenshot, no html) with prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBe('what runs on this host?');
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -413,7 +411,6 @@ test('details: url-only with no prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
