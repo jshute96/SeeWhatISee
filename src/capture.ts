@@ -83,6 +83,16 @@ export interface Artifact {
   isEdited?: true;
 }
 
+/**
+ * Kinds of captured body that the details page's Edit dialogs can
+ * replace. Imported by both the SW (`background.ts`) for its
+ * `updateArtifact` dispatch table and the details page
+ * (`capture-page.ts`) for the `EDIT_KINDS` catalog — both sides
+ * share this single definition so a new kind added in one file
+ * can't silently go unhandled on the other.
+ */
+export type EditableArtifactKind = 'html' | 'selection';
+
 export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
@@ -492,17 +502,17 @@ export interface SaveDetailedOptions {
   hasHighlights?: boolean;
   /**
    * True when the user replaced the captured HTML via the Edit HTML
-   * dialog before saving. Causes the record to carry
-   * `contents_edited: true`. Ignored unless `includeHtml` is also
-   * true — the flag only makes sense on a record that actually saved
-   * the HTML file.
+   * dialog before saving. Causes the record's `contents` artifact
+   * object to carry `isEdited: true`. Ignored unless `includeHtml`
+   * is also true — the flag only makes sense on a record that
+   * actually saved the HTML file.
    */
   htmlEdited?: boolean;
   /**
    * True when the user replaced the captured selection via the Edit
-   * selection dialog before saving. Causes the record to carry
-   * `selection_edited: true`. Ignored unless `includeSelection` is
-   * also true.
+   * selection dialog before saving. Causes the record's `selection`
+   * artifact object to carry `isEdited: true`. Ignored unless
+   * `includeSelection` is also true.
    */
   selectionEdited?: boolean;
 }
@@ -555,8 +565,8 @@ export async function downloadScreenshot(
 /**
  * Start an HTML download. The body is stable for the session unless
  * the user saves an edit in the Edit HTML dialog — callers cache the
- * result and rely on the `updateHtml` handler to drop the cache when
- * the body changes (see `ensureHtmlDownloaded`).
+ * result and rely on the `updateArtifact` handler to drop the cache
+ * when the body changes (see `ensureHtmlDownloaded`).
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
   return downloadArtifact(capture.contentsFilename, htmlDataUrl(capture.html));
@@ -623,6 +633,15 @@ export async function waitForDownloadComplete(
  * Keeps the `isEdited` flag conditional at a single site — the two
  * call paths (contents and selection) would otherwise duplicate
  * the same "set iff truthy" conditional.
+ *
+ * Wire-format constraint: the shell consumers of `log.json` in
+ * `plugin/scripts/_common.sh` and `.gemini/scripts/_common.sh`
+ * anchor their sed/grep rewrites on `"filename"` appearing *first*
+ * inside the artifact object. `JSON.stringify` preserves insertion
+ * order, so the object literal here must keep `filename` before
+ * `isEdited`. If another caller ever builds an `Artifact` via a
+ * spread / `Object.assign`, preserve the same ordering (or update
+ * those consumers to stop relying on it).
  */
 function artifact(filename: string, edited?: boolean): Artifact {
   return edited ? { filename, isEdited: true } : { filename };

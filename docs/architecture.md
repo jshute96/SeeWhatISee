@@ -481,9 +481,11 @@ can draw red markup on the regions they want the agent to focus on.
   corresponding dialog and then kept the artifact on the details
   page — i.e. the artifact carries `{ "filename": "…", "isEdited":
   true }` instead of the bare-filename object.
-- Sticky per session: once the user has opened the dialog and saved,
-  later saves on the same details tab carry the flag regardless of
-  whether they edit again — the on-disk body *is* the edit.
+- Sticky per session: once the user has saved an *actual change*
+  through the dialog (an unchanged-textarea Save is a no-op and
+  doesn't flip the flag), later saves on the same details tab carry
+  `isEdited: true` regardless of whether they edit again — the
+  on-disk body *is* the edit.
 - Omitted on unedited records, matching the `highlights` /
   `contents` / `selection` policy where presence is itself the
   signal.
@@ -513,11 +515,12 @@ can draw red markup on the regions they want the agent to focus on.
     On mismatch the SW re-downloads with the page's freshly
     baked-in PNG (sent as `screenshotOverride` in the message).
   - HTML cache is unconditional until the user edits the body via
-    the Edit HTML dialog — `updateHtml` clears the cache so the
-    next Copy / Capture writes the edited content.
+    the Edit HTML dialog — `updateArtifact { kind: 'html' }` clears
+    the cache so the next Copy / Capture writes the edited content.
   - Selection cache follows the same pattern as HTML: unconditional
     until the user edits the body via the Edit selection dialog,
-    which fires `updateSelection` to clear the cache.
+    which fires `updateArtifact { kind: 'selection' }` to clear the
+    cache.
 - Filenames are pinned at capture time in `captureBothToMemory`
   (`screenshotFilename` / `contentsFilename` / optional
   `selectionFilename` on `InMemoryCapture`) and reused by every

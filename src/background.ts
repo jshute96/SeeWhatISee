@@ -12,6 +12,7 @@ import {
   savePageContents,
   waitForDownloadComplete,
   type CaptureRecord,
+  type EditableArtifactKind,
   type InMemoryCapture,
 } from './capture.js';
 
@@ -909,26 +910,27 @@ interface DetailsSession {
   //     edit count means the user drew / undid / cleared a
   //     highlight, so the next request re-downloads with the new
   //     baked-in PNG.
-  //   - HTML invalidates only when the user saves an edit in the
-  //     Edit HTML dialog (handled via the `updateHtml` message).
+  //   - HTML / selection invalidate only when the user saves an edit
+  //     in the corresponding Edit dialog — handled by the generic
+  //     `updateArtifact` message (see `applyArtifactEdit`).
   downloads?: {
     screenshot?: { downloadId: number; editVersion: number; path: string };
     html?: { downloadId: number; path: string };
     // Selection follows the same cache + invalidation policy as
     // `html`: unconditional until the user saves an edit via the
-    // Edit selection dialog, which fires `updateSelection` and drops
+    // Edit selection dialog, which fires `updateArtifact` and drops
     // this entry so the next Copy / Capture re-materializes the
     // edited body under the same pinned `selectionFilename`.
     selection?: { downloadId: number; path: string };
   };
   /**
-   * Sticky per-artifact "was edited" flags. Set by the `updateHtml`
-   * / `updateSelection` handlers when the user saves in the
+   * Sticky per-artifact "was edited" flags. Set by the
+   * `updateArtifact` handler when the user saves in the
    * corresponding dialog, and forwarded to `recordDetailedCapture`
-   * at save time so the sidecar record carries
-   * `contents_edited: true` / `selection_edited: true`. Never
-   * cleared within a session — once the body is the user's edit,
-   * it stays the user's edit for any later save.
+   * at save time so the sidecar record's `contents` / `selection`
+   * artifact object carries `isEdited: true`. Never cleared within
+   * a session — once the body is the user's edit, it stays the
+   * user's edit for any later save.
    */
   htmlEdited?: boolean;
   selectionEdited?: boolean;
@@ -1003,15 +1005,6 @@ interface EnsureDownloadedMessage {
    */
   screenshotOverride?: string;
 }
-/**
- * Kinds of artifact body that the details page's Edit dialogs can
- * replace. Kept as a literal-string union so the union on
- * `DetailsMessage` still narrows cleanly on `msg.kind` — a raw
- * `string` would lose the compile-time guarantee that every case is
- * handled in the dispatch table below.
- */
-type EditableArtifactKind = 'html' | 'selection';
-
 interface UpdateArtifactMessage {
   action: 'updateArtifact';
   /** Which captured body to replace. */
@@ -1130,11 +1123,17 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
     startDownload: (capture: InMemoryCapture) => Promise<number>;
     /** Build the cache entry object for the downloaded file. */
     makeCacheEntry: (downloadId: number, path: string) => T;
-    /** Decide whether our just-completed download should win over a
-     * cache entry another concurrent call may have committed while
-     * we were waiting. For html/selection this is `!fresh`; for
-     * screenshot it's `!fresh || our editVersion >= fresh.editVersion`. */
-    shouldCommit: (fresh: T | undefined) => boolean;
+    /**
+     * Decide whether our just-completed download should win over a
+     * cache entry another concurrent call (or an edit handler) may
+     * have committed / dropped while we were waiting. Gets both
+     * the re-read session and the current per-kind cache entry:
+     *   - html / selection: `!fresh && freshSession[kind]Edited ===
+     *     wasEditedAtStart` — refuse to commit when an edit landed
+     *     during our download (our on-disk bytes are pre-edit).
+     *   - screenshot: `!fresh || our editVersion >= fresh.editVersion`.
+     */
+    shouldCommit: (fresh: T | undefined, freshSession: DetailsSession) => boolean;
     /** Key under which to store the entry on session.downloads. */
     downloadsKey: 'screenshot' | 'html' | 'selection';
   },
@@ -1150,7 +1149,7 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
 
   const fresh = await requireDetailsSession(tabId);
   const freshCached = fresh.downloads?.[options.downloadsKey] as T | undefined;
-  if (options.shouldCommit(freshCached)) {
+  if (options.shouldCommit(freshCached, fresh)) {
     fresh.downloads = {
       ...(fresh.downloads ?? {}),
       [options.downloadsKey]: options.makeCacheEntry(downloadId, path),
@@ -1191,32 +1190,60 @@ async function ensureScreenshotDownloaded(
 }
 
 /**
+ * Build the `shouldCommit` predicate used by `ensureHtmlDownloaded`
+ * / `ensureSelectionDownloaded`. Closes over the pre-download value
+ * of the artifact's sticky "edited" flag so the predicate can
+ * refuse to commit when an Edit-dialog save landed while our
+ * download was in flight — if it committed blindly, the on-disk
+ * file would hold pre-edit bytes but the eventual sidecar's
+ * `isEdited: true` would claim otherwise.
+ */
+function editableShouldCommit(
+  editedFlag: 'htmlEdited' | 'selectionEdited',
+  wasEditedAtStart: boolean,
+): (fresh: unknown, freshSession: DetailsSession) => boolean {
+  return (fresh, freshSession) => {
+    if (fresh) return false;
+    return (freshSession[editedFlag] === true) === wasEditedAtStart;
+  };
+}
+
+/**
  * Materialize the HTML file on disk if needed and return its
  * absolute on-disk path. The cache is unconditional until the user
- * saves an edit in the Edit HTML dialog — the `updateHtml` handler
- * drops the cache entry so the next call re-downloads with the
- * edited body under the same pinned `contentsFilename`.
+ * saves an edit in the Edit HTML dialog — the `updateArtifact`
+ * handler drops the cache entry so the next call re-downloads with
+ * the edited body under the same pinned `contentsFilename`.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
+  // Snapshot the sticky edited flag so the commit predicate can
+  // detect an Edit-dialog save landing mid-flight and skip committing
+  // a cache entry whose on-disk file holds pre-edit bytes.
+  const pre = await requireDetailsSession(tabId);
+  const wasEdited = pre.htmlEdited === true;
   return ensureArtifactDownloaded(tabId, {
     getCachedPath: (s) => s.downloads?.html?.path,
     startDownload: downloadHtml,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: (fresh) => !fresh,
+    shouldCommit: editableShouldCommit('htmlEdited', wasEdited),
     downloadsKey: 'html',
   });
 }
 
 /**
  * Materialize the selection file on disk if needed and return its
- * absolute on-disk path. Same unconditional-cache policy as the
- * HTML helper — the selection never changes within a session (no
- * editing UI on it). Throws when the capture carries no selection;
- * callers should gate on `session.capture.selection` first (the
- * page's checkbox + copy button are disabled in that case, so under
- * normal use this is unreachable).
+ * absolute on-disk path. Cache + invalidation policy mirrors
+ * `ensureHtmlDownloaded`: unconditional until the user saves in the
+ * Edit selection dialog, with the same pre-start snapshot of
+ * `selectionEdited` protecting a mid-flight download from
+ * committing a stale cache entry. Throws when the capture carries
+ * no selection; callers should gate on `session.capture.selection`
+ * first (the page's checkbox + copy button are disabled in that
+ * case, so under normal use this is unreachable).
  */
 async function ensureSelectionDownloaded(tabId: number): Promise<string> {
+  const pre = await requireDetailsSession(tabId);
+  const wasEdited = pre.selectionEdited === true;
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
       if (!s.capture.selection || !s.capture.selectionFilename) {
@@ -1226,7 +1253,7 @@ async function ensureSelectionDownloaded(tabId: number): Promise<string> {
     getCachedPath: (s) => s.downloads?.selection?.path,
     startDownload: downloadSelection,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: (fresh) => !fresh,
+    shouldCommit: editableShouldCommit('selectionEdited', wasEdited),
     downloadsKey: 'selection',
   });
 }
@@ -1245,7 +1272,7 @@ const EDITABLE_ARTIFACTS: Record<
   EditableArtifactKind,
   {
     write: (session: DetailsSession, value: string) => void;
-    downloadsKey: 'html' | 'selection';
+    downloadsKey: EditableArtifactKind;
   }
 > = {
   html: {

@@ -1304,8 +1304,8 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   expect(editedBytes).not.toContain('hello selection world');
 
   // Step 4: Capture with Save selection on (default-checked when a
-  // selection was detected). Cache hit → no third download. Log
-  // carries `selection_edited: true`.
+  // selection was detected). Cache hit → no third download. Log's
+  // `selection` artifact carries `isEdited: true`.
   await configureAndCapture(capturePage, {
     saveScreenshot: false,
     saveHtml: false,
@@ -1390,6 +1390,86 @@ test('details: edit-html cancel leaves the captured HTML untouched', async ({
   const html = fs.readFileSync(contentsPath, 'utf8');
   expect(html).toContain('background: #800080');
   expect(html).not.toContain('DISCARDED NONSENSE');
+
+  await openerPage.close();
+});
+
+test('details: edit-html save-with-no-changes is a no-op (no SW round-trip, no isEdited flag)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardSpy(capturePage);
+  const sw = await getServiceWorker();
+
+  // Pre-download the HTML so we have a baseline cache entry to watch.
+  await capturePage.locator('#copy-html-name').click();
+  await waitForClipboardWrites(capturePage, 1);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  // Open the dialog, touch nothing, click Save. The no-op guard
+  // should skip the SW round-trip — so the cache stays committed
+  // and no second download fires.
+  await capturePage.locator('#edit-html').click();
+  await capturePage.locator('#edit-html-save').click();
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  // Capture: still a cache hit, still no download; the sidecar must
+  // NOT carry `isEdited: true` since no real edit happened.
+  await configureAndCapture(capturePage, { saveScreenshot: false, saveHtml: true });
+  expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+
+  const record = await readLatestRecord(sw);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.isEdited).toBeUndefined();
+
+  await openerPage.close();
+});
+
+test('details: edit → edit → save keeps isEdited: true across multiple dialog opens', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // First edit cycle: replace body with marker A.
+  await capturePage.locator('#edit-html').click();
+  await capturePage.locator('#edit-html-textarea').fill('<html><body>first edit A</body></html>');
+  await capturePage.locator('#edit-html-save').click();
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
+
+  // Reopen: the dialog should seed from the edited body, not the
+  // original scrape. Replace again with marker B.
+  await capturePage.locator('#edit-html').click();
+  const seededFromFirstEdit = await capturePage.locator('#edit-html-textarea').inputValue();
+  expect(seededFromFirstEdit).toContain('first edit A');
+  await capturePage.locator('#edit-html-textarea').fill('<html><body>second edit B</body></html>');
+  await capturePage.locator('#edit-html-save').click();
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
+
+  await configureAndCapture(capturePage, { saveScreenshot: false, saveHtml: true });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  // Sticky across multiple edit cycles — one Save already flipped
+  // the flag, and a later Save can't unset it.
+  expect(record.contents?.isEdited).toBe(true);
+
+  const contentsPath = await findCapturedDownload(sw, '.html');
+  const html = fs.readFileSync(contentsPath, 'utf8');
+  expect(html).toContain('second edit B');
+  expect(html).not.toContain('first edit A');
 
   await openerPage.close();
 });

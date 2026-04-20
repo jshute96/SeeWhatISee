@@ -397,9 +397,10 @@ async function loadData(): Promise<void> {
 // the download per-tab so subsequent clicks (and the eventual
 // Capture click) reuse the existing file. For the screenshot, the
 // cache is keyed by `editVersion` so a highlight change forces a
-// re-download with the new baked-in PNG; for HTML, the cache is
-// unconditional until the user saves an edit in the Edit HTML
-// dialog, which sends `updateHtml` and drops the cache entry.
+// re-download with the new baked-in PNG; for HTML / selection, the
+// cache is unconditional until the user saves an edit in the
+// corresponding Edit dialog, which sends `updateArtifact` and
+// drops the cache entry.
 //
 // Extension pages have direct access to `navigator.clipboard.writeText`
 // under a user gesture — no offscreen helper needed (unlike the SW's
@@ -424,6 +425,13 @@ copySelectionBtn.addEventListener('click', () => {
 // the edited content. Adding a future kind is one entry in
 // `EDIT_KINDS` below plus a pencil button in the markup.
 
+// Kept in sync with the canonical declaration in `src/capture.ts`
+// and the `EDITABLE_ARTIFACTS` dispatch table in `src/background.ts`.
+// Can't `import type` the shared union because the extension page
+// loads `capture-page.js` via a non-module `<script>` tag; any
+// import turns the file into a module and tsc emits `export {}`,
+// which is a parse error under script semantics. New editable
+// kinds must be added to all three sites.
 type EditableArtifactKind = 'html' | 'selection';
 
 interface EditKindSpec {
@@ -452,9 +460,9 @@ const EDIT_KINDS: EditKindSpec[] = [
   },
 ];
 
-// Built in `bindEditDialogs` once the DOM is cloned from the
-// template; populated in insertion order so `anyEditDialogOpen()`
-// and future iteration walk the same catalog EDIT_KINDS sees.
+// Populated by `bindEditDialog` once the DOM is cloned from the
+// template; insertion order matches `EDIT_KINDS` so
+// `anyEditDialogOpen()` and future iteration see the same order.
 const editDialogs: HTMLDialogElement[] = [];
 
 interface EditDialogParts {
@@ -536,7 +544,17 @@ function bindEditDialog(spec: EditKindSpec): void {
       return;
     }
     clearError();
+    // Disable both Save and Cancel while the SW round-trip is in
+    // flight. The SW has no abort path — if Cancel closed the
+    // dialog mid-await, the edit would still commit server-side and
+    // the "Cancel didn't cancel" drift would show up on the next
+    // dialog open (local mirror stale vs. SW state). Also suppress
+    // Escape via a transient `cancel` listener so the native
+    // dialog-close path can't backdoor around the disabled buttons.
     parts.saveBtn.disabled = true;
+    parts.cancelBtn.disabled = true;
+    const suppressEscape = (e: Event): void => e.preventDefault();
+    parts.dialog.addEventListener('cancel', suppressEscape);
     try {
       const response = (await chrome.runtime.sendMessage({
         action: 'updateArtifact',
@@ -553,7 +571,9 @@ function bindEditDialog(spec: EditKindSpec): void {
       spec.onSaved?.(newValue);
       parts.dialog.close();
     } finally {
+      parts.dialog.removeEventListener('cancel', suppressEscape);
       parts.saveBtn.disabled = false;
+      parts.cancelBtn.disabled = false;
     }
   }
 
