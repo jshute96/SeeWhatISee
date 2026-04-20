@@ -67,7 +67,8 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default/More submenus, details-flow, error surface |
-| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `captureSelection`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`/`waitForDownloadComplete`, `recordDetailedCapture`, `clearCaptureLog`) and `log.json` sidecar writing |
+| `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, per-format `captureSelection`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`/`waitForDownloadComplete`, `recordDetailedCapture`, `clearCaptureLog`) and `log.json` sidecar writing |
+| `src/markdown.ts` | Pure HTML → markdown + HTML → text converter used by the selection capture paths |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay) |
 | `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, highlight overlay (rects/lines/Redact/Crop/drag-to-crop), bake-in, fit-to-viewport |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
@@ -104,6 +105,12 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
+
+## Unit Tests (`tests/unit/`)
+
+| File | Description |
+|------|-------------|
+| `tests/unit/markdown.test.mjs` | Pure unit tests for `src/markdown.ts` — run via `node --test` (no browser required) |
 
 ## Design Docs (`docs/`)
 

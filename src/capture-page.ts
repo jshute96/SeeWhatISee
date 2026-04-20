@@ -21,18 +21,42 @@
 // Must live in a separate .js file (not inline in capture.html)
 // because the default extension-page CSP forbids inline scripts.
 
+/**
+ * Three-value `SelectionFormat` literal union, duplicated here
+ * because the details page loads via a classic (non-module)
+ * `<script>` tag and can't `import type` from capture.ts without
+ * turning itself into a module. The SW ships this exact same union
+ * on the wire; keep the three sites (`src/capture.ts`,
+ * `src/background.ts`, here) in sync.
+ */
+type SelectionFormat = 'html' | 'text' | 'markdown';
+
+/**
+ * Wire kind used on `ensureDownloaded` / `updateArtifact` messages
+ * for a given selection format. Matches `SELECTION_EDIT_KIND` on
+ * the SW side — again duplicated because of the non-module loading.
+ */
+const SELECTION_WIRE_KIND: Record<SelectionFormat, EditableArtifactKind> = {
+  html: 'selectionHtml',
+  text: 'selectionText',
+  markdown: 'selectionMarkdown',
+};
+
+const SELECTION_FORMATS: SelectionFormat[] = ['html', 'text', 'markdown'];
+
 interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
   /**
-   * Captured selection HTML. Present (non-empty) iff the SW saw a
-   * selection on the active tab at capture time; undefined or empty
-   * otherwise. Used both as the enable gate for the Save selection
-   * controls (replaces the old `hasSelection` boolean) and as the
-   * seed value for the Edit selection dialog's textarea.
+   * Captured selection bodies, one per storage format. Present iff
+   * the SW saw a selection on the active tab at capture time; each
+   * format's entry may be an empty string on its own (e.g. `text`
+   * is empty when the user selected an image-only region). The
+   * details page uses each format's emptiness to gate its Save
+   * selection row independently.
    */
-  selection?: string;
+  selections?: { html: string; text: string; markdown: string };
   /**
    * Reason HTML couldn't be captured (e.g. restricted URL). When
    * set, we grey out the Save HTML row + disable its Copy and Edit
@@ -43,8 +67,9 @@ interface DetailsData {
   htmlError?: string;
   /**
    * Reason the page selection couldn't be captured. Same handling
-   * as `htmlError` but for the Save selection row. Fires alongside
-   * `htmlError` when the whole `executeScript` scrape failed.
+   * as `htmlError` but applies uniformly to every Save-selection-as-…
+   * row. Fires alongside `htmlError` when the whole `executeScript`
+   * scrape failed.
    */
   selectionError?: string;
 }
@@ -69,7 +94,6 @@ let editVersion = 0;
 
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
-const selectionBox = document.getElementById('cap-selection') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
 const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElement;
 const previewImg = document.getElementById('preview') as HTMLImageElement;
@@ -77,13 +101,40 @@ const capturedUrlInput = document.getElementById('captured-url') as HTMLInputEle
 const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
-const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
 const htmlRow = document.getElementById('row-html') as HTMLDivElement;
-const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
-const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
-const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
+
+// Per-selection-format controls. Three parallel groups of radio
+// + copy + edit + error-icon controls, one per format row in the
+// details page. Gated independently by loadData() — enabled iff
+// the SW scraped non-empty content for that format. Only one row's
+// radio can be checked at a time (browser-enforced by the shared
+// `name="cap-selection-format"`), and the Capture button's
+// `selectionFormat` payload reads whichever is checked.
+interface SelectionRow {
+  format: SelectionFormat;
+  row: HTMLDivElement;
+  radio: HTMLInputElement;
+  copyBtn: HTMLButtonElement;
+  editBtn: HTMLButtonElement;
+  errorIcon: HTMLSpanElement;
+}
+const selectionRows: Record<SelectionFormat, SelectionRow> = SELECTION_FORMATS.reduce(
+  (acc, format) => {
+    acc[format] = {
+      format,
+      row: document.getElementById(`row-selection-${format}`) as HTMLDivElement,
+      radio: document.getElementById(`cap-selection-${format}`) as HTMLInputElement,
+      copyBtn: document.getElementById(`copy-selection-${format}-name`) as HTMLButtonElement,
+      editBtn: document.getElementById(`edit-selection-${format}-btn`) as HTMLButtonElement,
+      errorIcon: document.getElementById(`error-selection-${format}`) as HTMLSpanElement,
+    };
+    return acc;
+  },
+  {} as Record<SelectionFormat, SelectionRow>,
+);
+
 // Local mirrors of the SW's captured bodies, keyed by artifact
 // kind. Seeded by loadData() and updated whenever the user saves
 // an edit. Kept on the page side so the dialogs can prefill their
@@ -92,8 +143,23 @@ const editSelectionBtn = document.getElementById('edit-selection') as HTMLButton
 // authoritative copy. New editable kinds append one entry here.
 const captured: Record<EditableArtifactKind, string> = {
   html: '',
-  selection: '',
+  selectionHtml: '',
+  selectionText: '',
+  selectionMarkdown: '',
 };
+
+/**
+ * Returns the currently-checked selection format radio, or `null`
+ * when none is checked (no selection captured, or the user
+ * unchecked the default). Written to `SaveDetailsMessage
+ * .selectionFormat` at Capture time.
+ */
+function selectedSelectionFormat(): SelectionFormat | null {
+  for (const format of SELECTION_FORMATS) {
+    if (selectionRows[format].radio.checked) return format;
+  }
+  return null;
+}
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -146,13 +212,26 @@ document.addEventListener('keydown', (e) => {
     if (htmlBox.disabled) return;
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
-  } else if (key === 'n') {
-    // Alt+N toggles Save selection. No-op when the checkbox is
-    // disabled (no selection was captured, or scrape failed) so the
-    // hotkey matches what's on screen.
-    if (selectionBox.disabled) return;
-    e.preventDefault();
-    selectionBox.checked = !selectionBox.checked;
+  } else {
+    // Alt+H already handled above for the HTML row. The three
+    // "Save selection as …" rows bind to distinct hotkeys:
+    //   Alt+Shift+H — selection HTML
+    //   Alt+T       — selection text
+    //   Alt+M       — selection markdown
+    // Each is a no-op when its radio is disabled (no selection in
+    // that format) so the hotkey matches what's on screen. Unlike
+    // the screenshot / HTML checkboxes, picking one selection
+    // format unchecks the other two (radio semantics).
+    const formatByKey: Partial<Record<string, SelectionFormat>> = e.shiftKey
+      ? { h: 'html' }
+      : { t: 'text', m: 'markdown' };
+    const format = formatByKey[key];
+    if (format) {
+      const row = selectionRows[format];
+      if (row.radio.disabled) return;
+      e.preventDefault();
+      row.radio.checked = !row.radio.checked;
+    }
   }
 });
 
@@ -880,24 +959,50 @@ async function loadData(): Promise<void> {
       // practice this never fires today — `executeScript` reads both
       // in one call so the two errors are always twins — but the UI
       // is ready for a future SW that reports them separately. When
-      // the two fire together, we suppress this icon: the HTML row's
-      // icon already explains the situation and a duplicate would
-      // just be visual noise. The selection row stays in its default
-      // disabled state regardless.
-      selectionRow.classList.add('has-error');
-      selectionErrorIcon.title =
-        `Unable to capture selection: ${response.selectionError}`;
-    } else if (response.selection) {
-      // Enable + default-check the Save selection controls iff the SW
-      // saw a non-empty selection at capture time. A user who bothered
-      // to select text probably wants it in the record. The edit
-      // button gates on the same condition so the user can't open an
-      // empty-body dialog when there was no selection to begin with.
-      captured.selection = response.selection;
-      selectionBox.checked = true;
-      selectionBox.disabled = false;
-      copySelectionBtn.disabled = false;
-      editSelectionBtn.disabled = false;
+      // the two fire together, we suppress these icons: the HTML
+      // row's icon already explains the situation and duplicates
+      // would just be visual noise. All three selection rows stay
+      // in their default disabled state regardless.
+      for (const format of SELECTION_FORMATS) {
+        const r = selectionRows[format];
+        r.row.classList.add('has-error');
+        r.errorIcon.title = `Unable to capture selection: ${response.selectionError}`;
+      }
+    } else if (response.selections) {
+      // Enable each selection format row independently on the
+      // presence of non-empty content in that format's body. An
+      // image-only selection, for example, enables HTML but leaves
+      // text / markdown disabled — the user can still save the
+      // fragment as HTML without being blocked by the dead rows.
+      //
+      // Default selection: check the first row that has content.
+      // HTML is tried first (matches the old "Save selection" default
+      // which always used the HTML serialization), then text, then
+      // markdown. A user who bothered to select text almost
+      // certainly wants it in the record in some form.
+      let defaultPicked = false;
+      const kindOf: Record<SelectionFormat, EditableArtifactKind> = SELECTION_WIRE_KIND;
+      for (const format of SELECTION_FORMATS) {
+        const body = response.selections[format];
+        const r = selectionRows[format];
+        captured[kindOf[format]] = body;
+        if (body && body.length > 0) {
+          r.radio.disabled = false;
+          r.copyBtn.disabled = false;
+          r.editBtn.disabled = false;
+          if (!defaultPicked) {
+            r.radio.checked = true;
+            defaultPicked = true;
+          }
+        } else {
+          // Selection *was* captured, but this specific format came
+          // out empty (e.g. image-only selection → empty text). Show
+          // the error icon so the user understands the row isn't
+          // disabled for mysterious reasons.
+          r.row.classList.add('has-error');
+          r.errorIcon.title = `Selection has no ${format} content`;
+        }
+      }
     }
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -943,9 +1048,11 @@ copyScreenshotBtn.addEventListener('click', () => {
 copyHtmlBtn.addEventListener('click', () => {
   void copyArtifactPath('html');
 });
-copySelectionBtn.addEventListener('click', () => {
-  void copyArtifactPath('selection');
-});
+for (const format of SELECTION_FORMATS) {
+  selectionRows[format].copyBtn.addEventListener('click', () => {
+    void copyArtifactPath(SELECTION_WIRE_KIND[format]);
+  });
+}
 
 // ─── Edit dialogs (catalog-driven) ────────────────────────────────
 //
@@ -963,10 +1070,21 @@ copySelectionBtn.addEventListener('click', () => {
 // import turns the file into a module and tsc emits `export {}`,
 // which is a parse error under script semantics. New editable
 // kinds must be added to all three sites.
-type EditableArtifactKind = 'html' | 'selection';
+type EditableArtifactKind =
+  | 'html'
+  | 'selectionHtml'
+  | 'selectionText'
+  | 'selectionMarkdown';
 
 interface EditKindSpec {
   kind: EditableArtifactKind;
+  /** Hyphenated DOM-id slug used by `createEditDialog` to stamp the
+   * cloned template's ids (e.g. `edit-<slug>-dialog`). Separate from
+   * `kind` so camelCase editable kinds (`selectionMarkdown`) map to
+   * readable DOM ids (`edit-selection-markdown-dialog`) without
+   * forcing the TypeScript union into hyphens. Keep in sync with
+   * the matching button ids in `capture.html`. */
+  domSlug: string;
   /** Modal heading + textarea aria-label. Short, user-visible. */
   title: string;
   /** The pencil button inside the details-page row for this kind. */
@@ -978,6 +1096,7 @@ interface EditKindSpec {
 const EDIT_KINDS: EditKindSpec[] = [
   {
     kind: 'html',
+    domSlug: 'html',
     title: 'Edit page contents HTML',
     openBtn: editHtmlBtn,
     onSaved: (v) => {
@@ -985,9 +1104,22 @@ const EDIT_KINDS: EditKindSpec[] = [
     },
   },
   {
-    kind: 'selection',
+    kind: 'selectionHtml',
+    domSlug: 'selection-html',
     title: 'Edit selection HTML',
-    openBtn: editSelectionBtn,
+    openBtn: selectionRows.html.editBtn,
+  },
+  {
+    kind: 'selectionText',
+    domSlug: 'selection-text',
+    title: 'Edit selection text',
+    openBtn: selectionRows.text.editBtn,
+  },
+  {
+    kind: 'selectionMarkdown',
+    domSlug: 'selection-markdown',
+    title: 'Edit selection markdown',
+    openBtn: selectionRows.markdown.editBtn,
   },
 ];
 
@@ -1015,7 +1147,7 @@ interface EditDialogParts {
  * tests can target a specific kind without knowing the full
  * catalog.
  */
-function createEditDialog(kind: EditableArtifactKind, title: string): EditDialogParts {
+function createEditDialog(domSlug: string, title: string): EditDialogParts {
   const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
   const frag = tpl.content.cloneNode(true) as DocumentFragment;
   const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
@@ -1025,22 +1157,22 @@ function createEditDialog(kind: EditableArtifactKind, title: string): EditDialog
   const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
   const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
 
-  dialog.id = `edit-${kind}-dialog`;
-  titleEl.id = `edit-${kind}-title`;
+  dialog.id = `edit-${domSlug}-dialog`;
+  titleEl.id = `edit-${domSlug}-title`;
   titleEl.textContent = title;
   dialog.setAttribute('aria-labelledby', titleEl.id);
-  textarea.id = `edit-${kind}-textarea`;
+  textarea.id = `edit-${domSlug}-textarea`;
   textarea.setAttribute('aria-label', title);
-  errorEl.id = `edit-${kind}-error`;
-  saveBtn.id = `edit-${kind}-save`;
-  cancelBtn.id = `edit-${kind}-cancel`;
+  errorEl.id = `edit-${domSlug}-error`;
+  saveBtn.id = `edit-${domSlug}-save`;
+  cancelBtn.id = `edit-${domSlug}-cancel`;
 
   document.body.appendChild(dialog);
   return { dialog, textarea, saveBtn, cancelBtn, errorEl };
 }
 
 function bindEditDialog(spec: EditKindSpec): void {
-  const parts = createEditDialog(spec.kind, spec.title);
+  const parts = createEditDialog(spec.domSlug, spec.title);
   editDialogs.push(parts.dialog);
 
   spec.openBtn.addEventListener('click', () => {
@@ -1132,7 +1264,9 @@ function anyEditDialogOpen(): boolean {
 // Reset to -1 so the very first Copy with edits forces a bake.
 let lastSentScreenshotEditVersion = -1;
 
-async function copyArtifactPath(kind: 'screenshot' | 'html' | 'selection'): Promise<void> {
+async function copyArtifactPath(
+  kind: 'screenshot' | 'html' | 'selectionHtml' | 'selectionText' | 'selectionMarkdown',
+): Promise<void> {
   // Skip the bake + override when the SW will cache-hit. The cache
   // is keyed by `editVersion`, so if we already shipped this version
   // (and therefore the SW already has the matching file on disk),
@@ -1316,7 +1450,7 @@ captureBtn.addEventListener('click', () => {
       action: 'saveDetails',
       screenshot: screenshotBox.checked,
       html: htmlBox.checked,
-      selection: selectionBox.checked,
+      selectionFormat: selectedSelectionFormat(),
       prompt: promptInput.value.trim(),
       highlights: flags.hasHighlights,
       hasRedactions: flags.hasRedactions,

@@ -35,7 +35,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - Generated at module load from `BASE_CAPTURE_ACTIONS ×
     CAPTURE_DELAYS_SEC` (0, 2, 5 seconds). A base with
     `supportsDelayed: false` (e.g. `capture-url`,
-    `capture-selection`) opts out: only the 0s variant is generated,
+    `capture-selection-*`) opts out: only the 0s variant is generated,
     no 2s / 5s entries appear anywhere for it.
   - Each generated entry has an id (`<baseId>` for delay 0,
     `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
@@ -115,7 +115,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     click action" submenu has a row per delay and includes each
     base that has a variant at that delay. Bases with
     `supportsDelayed: false` (e.g. `capture-url`,
-    `capture-selection`) only show up in the 0s row.
+    `capture-selection-*`) only show up in the 0s row.
   - The toolbar icon's hover tooltip is set from the selected
     action's `tooltip` field via `chrome.action.setTitle`, so the
     icon always tells the user what a click is about to do.
@@ -139,9 +139,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `capture-both`). Separator-grouped by delay. In-submenu
     separators don't count against the top-level cap, so the visual
     grouping is free. More-group actions that don't opt in
-    (capture-url, capture-selection — both `supportsDelayed: false`
-    anyway) are only reachable via "Set default click action" if at
-    all.
+    (capture-url and the three capture-selection-{html,text,markdown}
+    — all `supportsDelayed: false` anyway) are only reachable via
+    "Set default click action" if at all.
   - **Set default click action ▸** — submenu of normal items, one
     per `CAPTURE_ACTIONS` entry: five undelayed items, a separator,
     five 2s-delay items, a separator, then five 5s-delay items.
@@ -169,19 +169,26 @@ design live in [`chrome-extension.md`](chrome-extension.md).
         main "Capture with delay" submenu next to the primary
         delayed entries; matches the other capture actions'
         active-tab-after-delay semantics.
-    - **Capture selection** — `captureSelection()` serializes the
-      active tab's current selection (`window.getSelection()`) to
-      HTML, writes it as `selection-<timestamp>.html`, and records
-      its filename under `selection` in `log.json`. Image-only
-      selections are captured as `<img>` markup — we guard on the
-      cloned fragment being empty rather than on selection *text*,
-      so images (or other media without text) still count.
-      - Throws `No text selected` when the selection is empty, which
-        surfaces through the icon/tooltip error channel.
-      - `BASE_CAPTURE_ACTION` with `supportsDelayed: false` —
-        bindable as the default click action at 0s but deliberately
-        has no 2s/5s variants (a delay doesn't help: the selection
-        already exists when the user triggers the action).
+    - **Capture selection as HTML / text / markdown** — three
+      format-specific shortcuts that each call
+      `captureSelection(format)`. The scrape returns all three
+      bodies in one `executeScript` round-trip (HTML fragment +
+      `selection.toString()`); markdown is produced in the SW by
+      running the HTML through the pure `htmlToMarkdown` converter
+      in `src/markdown.ts`.
+      - File lands at `selection-<timestamp>.{html,txt,md}`; the
+        record is `{ filename, format, isEdited?: true }` with
+        `format` ∈ `{"html","text","markdown"}` so downstream
+        consumers don't have to sniff the extension.
+      - Image-only selections are still captured as long as the
+        chosen format has content: the HTML fragment always does,
+        but text / markdown may be empty — in which case the
+        action throws `No selection {format} content` and surfaces
+        via the icon/tooltip channel.
+      - Each is a `BASE_CAPTURE_ACTION` with `supportsDelayed: false`
+        — bindable as the default click action at 0s but with no
+        2s/5s variants (a delay doesn't help: the selection already
+        exists when the user triggers the action).
     - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
       most recent capture's screenshot or HTML file's *absolute on-disk
       path* to the clipboard.
@@ -345,11 +352,13 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     - `contents` — `Artifact` object
       `{ "filename": "contents-<timestamp>.html", "isEdited"?: true }`,
       set when HTML contents were saved.
-    - `selection` — `Artifact` object
-      `{ "filename": "selection-<timestamp>.html", "isEdited"?: true }`,
-      set by either the More → Capture selection shortcut or the
-      details flow when the user kept the Save selection checkbox
-      checked.
+    - `selection` — selection artifact object
+      `{ "filename": "selection-<timestamp>.{html,txt,md}", "format": "html"|"text"|"markdown", "isEdited"?: true }`,
+      set by the More → Capture-selection-as-… shortcuts or the
+      details flow when the user picked a format on a
+      Save-selection-as-… row. A capture only ever writes one
+      selection format; the `format` field is the ground truth
+      (the extension mirrors it for human readability).
     - `isEdited` (on `contents` / `selection`) — `true` iff the user
       saved an edit through the corresponding Edit dialog before
       capture. Omitted on the raw scrape. See
@@ -435,22 +444,25 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   succeeds via `chrome.tabs.captureVisibleTab`.
 - Impact on the details flow:
   - The details page still opens with the screenshot preview.
-  - Save HTML / Save selection are disabled + unchecked, and their
-    Copy and Edit buttons are hidden (the shared `.copy-btn:disabled`
-    rule covers both).
+  - Save HTML and all three Save-selection-as-… rows are disabled
+    + unchecked, and their Copy and Edit buttons are hidden (the
+    shared `.copy-btn:disabled` rule covers both).
   - The error icon + tooltip is shown only on the Save HTML row.
     Selection is scraped in the same `executeScript` call as HTML,
-    so when the call fails the two errors are always twins and a
-    second icon would just repeat the same message — the selection
-    row stays greyed out without the icon. The page still has a
-    separate `#error-selection` element wired to a future SW that
-    might report a selection-only failure, but today's
+    so when the call fails the errors are always twins and duplicate
+    icons on every selection row would just repeat the same message
+    — the three selection rows stay greyed out without icons. Each
+    row still has its own `#error-selection-{html,text,markdown}`
+    element wired up so a future SW that reports per-format failures
+    separately can light them independently, but today's
     `captureBothToMemory` never emits that combination.
-  - Alt+H / Alt+N are no-ops while the corresponding row is
-    disabled so the hotkeys match what's on screen.
-  - `ensureHtmlDownloaded` / `ensureSelectionDownloaded` throw if
-    the matching `*Error` is set, as a belt-and-suspenders guard
-    so a stale page message can't materialize an empty file.
+  - Alt+H / Alt+Shift+H / Alt+T / Alt+M are no-ops while the
+    corresponding row is disabled so the hotkeys match what's on
+    screen.
+  - `ensureHtmlDownloaded` / `ensureSelectionDownloaded(format)`
+    throw if the matching `*Error` is set (or the requested format's
+    body is empty), as a belt-and-suspenders guard so a stale page
+    message can't materialize an empty file.
 - Impact on the More-menu shortcuts:
   - `capture-url` (URL-only) deliberately ignores `htmlError` —
     it doesn't need HTML anyway.
@@ -463,21 +475,26 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 - **Captured URL** — read-only single-line monospace input.
 - **HTML byte size** — `formatBytes(new Blob([html]).size)` →
   `B` / `KB` / `MB` / `GB` / `TB`.
-- **Save checkboxes** — pick any of screenshot, HTML, selection, or
-  none (URL-only record).
-  - The Save selection checkbox is greyed out (and its Copy button
-    inactive) when the SW reports no selection existed at capture
-    time. When a selection *was* captured, the checkbox defaults to
-    checked — a user who selected text before opening the details
-    page almost certainly wants that selection in the record.
-  - Save HTML / Save selection can also be greyed out because the
-    scrape itself failed (see
+- **Save checkboxes** — pick any of screenshot, HTML, selection
+  (one format), or none (URL-only record).
+  - The three "Save selection as …" rows are mutually exclusive
+    radios covering `html`, `text`, and `markdown`. Each row's
+    radio enables independently based on the presence of non-empty
+    content in that format (e.g. an image-only selection enables
+    HTML but leaves text / markdown disabled with a per-row
+    "no {format} content" error icon). Each row has its own
+    `Copy filename` + `Edit` buttons — the user can materialize or
+    edit any format, independent of which one ends up getting
+    saved.
+  - Save HTML and the selection rows can also be greyed out
+    because the scrape itself failed (see
     [Graceful handling of failed HTML / selection scrape](#graceful-handling-of-failed-html--selection-scrape)).
     In that case the row also shows a hoverable red error icon
     whose tooltip explains the reason.
   - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML
-    (no-op when greyed out), `Alt+N` toggles selection (no-op
-    when greyed out).
+    (no-op when greyed out), `Alt+Shift+H` / `Alt+T` / `Alt+M`
+    pick the selection format (HTML / text / markdown
+    respectively; no-ops when greyed out).
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).
@@ -521,8 +538,9 @@ active crop region.
 ### Edit dialogs (template-driven)
 
 - Pencil icons sit next to each editable artifact's Copy button in
-  the capture page — currently HTML and selection; more kinds can be
-  added without new dialog markup.
+  the capture page — currently HTML plus one per selection format
+  (HTML, text, markdown); more kinds can be added without new dialog
+  markup.
 - A single `<template id="edit-dialog-template">` in `capture.html`
   supplies the modal structure. `capture-page.ts::createEditDialog`
   clones it per kind and stamps `edit-${kind}-${role}` ids onto the
@@ -552,9 +570,13 @@ active crop region.
     same pinned filename (via `conflictAction: 'overwrite'`).
   - The eventual Save — whether Capture clicks or a later Copy —
     therefore writes the edited content.
-- Only the HTML body and selection are editable; the screenshot has
-  no text-edit UI (the highlight overlay covers its annotation use
-  case).
+- Only the HTML body and the three selection-format bodies are
+  editable; the screenshot has no text-edit UI (the highlight
+  overlay covers its annotation use case). The three selection
+  formats edit independently — editing the markdown version
+  doesn't retranslate the HTML body, and vice versa — but only
+  the format the user picks on the Save-selection-as-… radio
+  ends up in `log.json`.
 
 ### `isEdited` sidecar flag
 

@@ -371,33 +371,76 @@
         </span>
       </div>
       <!--
-        Default state is disabled + unchecked. capture-page.ts's
-        loadData() flips these on when the SW reports a captured
-        selection via its `getDetailsData` response. The body as a
-        whole stays `visibility: hidden` until loadData resolves,
-        so the user never sees this row in its disabled-default
-        state during the SW round-trip.
+        Three mutually-exclusive "Save selection as …" rows. A
+        single capture can only write one selection file (its
+        format lands in `selection.format` on the log record), but
+        the Copy / Edit buttons on each row are independent so the
+        user can pre-materialize any format to disk or edit any
+        format in place before picking which one to save.
+
+        Default state: all three disabled + unchecked.
+        capture-page.ts's loadData() flips the rows on based on
+        which formats the SW produced non-empty bodies for (e.g.
+        an image-only selection enables HTML but leaves text /
+        markdown disabled with their "empty" error icon). The body
+        as a whole stays `visibility: hidden` until loadData
+        resolves so the user never sees these rows in their
+        disabled-default state during the SW round-trip.
       -->
-      <div class="checkbox-row" id="row-selection">
-        <label><input type="checkbox" id="cap-selection" disabled> Save selectio<u>n</u></label>
-        <button type="button" class="copy-btn" id="copy-selection-name"
-                title="Copy selection filename"
-                aria-label="Copy selection filename" disabled>
+      <div class="checkbox-row" id="row-selection-html">
+        <label><input type="radio" name="cap-selection-format" value="html"
+                      id="cap-selection-html" disabled>
+          Save selection as <u>H</u>TML</label>
+        <button type="button" class="copy-btn" id="copy-selection-html-name"
+                title="Copy selection HTML filename"
+                aria-label="Copy selection HTML filename" disabled>
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
-        <!--
-          Edit the captured selection before save. Opens a modal
-          dialog with a textarea prefilled with the current selection
-          HTML. Shares structure with the Edit HTML button above —
-          capture-page.ts wires both via a shared helper.
-        -->
-        <button type="button" class="copy-btn" id="edit-selection"
+        <button type="button" class="copy-btn" id="edit-selection-html-btn"
                 title="Edit selection HTML"
                 aria-label="Edit selection HTML" disabled>
           <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
         </button>
-        <span class="error-icon" id="error-selection" title="" role="img"
-              aria-label="Selection capture error">
+        <span class="error-icon" id="error-selection-html" title="" role="img"
+              aria-label="Selection HTML capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
+      </div>
+      <div class="checkbox-row" id="row-selection-text">
+        <label><input type="radio" name="cap-selection-format" value="text"
+                      id="cap-selection-text" disabled>
+          Save selection as <u>t</u>ext</label>
+        <button type="button" class="copy-btn" id="copy-selection-text-name"
+                title="Copy selection text filename"
+                aria-label="Copy selection text filename" disabled>
+          <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
+        <button type="button" class="copy-btn" id="edit-selection-text-btn"
+                title="Edit selection text"
+                aria-label="Edit selection text" disabled>
+          <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
+        </button>
+        <span class="error-icon" id="error-selection-text" title="" role="img"
+              aria-label="Selection text capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
+      </div>
+      <div class="checkbox-row" id="row-selection-markdown">
+        <label><input type="radio" name="cap-selection-format" value="markdown"
+                      id="cap-selection-markdown" disabled>
+          Save selection as <u>m</u>arkdown</label>
+        <button type="button" class="copy-btn" id="copy-selection-markdown-name"
+                title="Copy selection markdown filename"
+                aria-label="Copy selection markdown filename" disabled>
+          <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
+        <button type="button" class="copy-btn" id="edit-selection-markdown-btn"
+                title="Edit selection markdown"
+                aria-label="Edit selection markdown" disabled>
+          <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
+        </button>
+        <span class="error-icon" id="error-selection-markdown" title="" role="img"
+              aria-label="Selection markdown capture error">
           <svg aria-hidden="true"><use href="#error-icon"></use></svg>
         </span>
       </div>

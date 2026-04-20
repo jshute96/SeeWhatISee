@@ -26,7 +26,10 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
-    - **Capture selection** — Saves the HTML of the currently selected text.
+    - **Capture selection as HTML / text / markdown** — Saves the currently selected text. Three formats:
+      - *HTML* — the raw HTML fragment of the selection (closest to the source).
+      - *text* — plain text matching what the user sees selected.
+      - *markdown* — HTML converted to CommonMark-ish markdown (headings, lists, links, tables, inline formatting).
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
@@ -44,11 +47,13 @@ Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submi
 On this page, you can:
 
 - See the page URL and HTML size.
-- Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
-  - With none of these checked, you can still capture the URL.
+- Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
+  - For the selection, choose one of three mutually-exclusive formats: **HTML**, **text**, or **markdown**. Each row gets its own Copy and Edit buttons so you can materialize or edit any format before deciding which one to save.
+  - Rows for formats with no content (e.g. text for an image-only selection) are disabled with a red error icon explaining why.
+  - With nothing checked, you can still capture the URL.
   - On pages where the extension can't read HTML (e.g. `chrome://`
-    pages or the Web Store), *Save HTML* and *Save selection* are
-    disabled. A red error icon next to each greyed-out option
+    pages or the Web Store), *Save HTML* and all *Save selection as …*
+    rows are disabled. A red error icon next to each greyed-out option
     explains why. The screenshot, prompt, and highlight tools still
     work so you can still capture and annotate the page.
 - Copy saved filenames to the clipboard with the copy icon.
@@ -159,7 +164,7 @@ Each capture writes one or more of these, by filename prefix:
 
 - `screenshot-<timestamp>.png` — the captured PNG.
 - `contents-<timestamp>.html` — the captured full-page HTML.
-- `selection-<timestamp>.html` — the captured text selection, as HTML.
+- `selection-<timestamp>.{html,txt,md}` — the captured text selection. Exactly one file per capture — the extension reflects the format the user picked (HTML fragment, plain text, or markdown).
 
 A single Capture may include any subset of these (or
 none — a URL-only record is valid). Filenames are pinned at capture
@@ -191,8 +196,9 @@ present when that action was included.
     - `filename` — filename of the HTML snapshot.
     - `isEdited` — `true` if the user edited the HTML content before saving.
 - `selection` — present when the text selection was saved.
-    - `filename` — filename of the selection HTML file.
-    - `isEdited` — `true` if the user edited the captured HTML before saving.
+    - `filename` — filename of the selection file (`.html`, `.txt`, or `.md`).
+    - `format` — one of `"html"`, `"text"`, `"markdown"`. Tells downstream consumers how to read the file without sniffing the extension.
+    - `isEdited` — `true` if the user edited the captured body before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
   flow, giving instructions for agents on what to do with this capture.
 - `url` — URL of the captured tab, or `""` if unavailable.
@@ -219,6 +225,7 @@ npm run watch        # rebuild on TS changes
 ```bash
 npm test             # run Playwright e2e tests
 npm run test:headed  # same, with a visible browser
+npm run test:unit    # run the HTML→markdown converter unit tests
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by

@@ -905,38 +905,42 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   await installClipboardSpy(capturePage);
   const sw = await getServiceWorker();
 
-  // The Save-selection row was enabled by loadData (the SW saw our
-  // seeded selection), so the pencil button is clickable rather
-  // than stuck in its disabled default state.
-  await expect(capturePage.locator('#edit-selection')).toBeEnabled();
+  // The Save-selection-as-HTML row was enabled by loadData (the SW
+  // saw our seeded selection and the HTML format always has content
+  // when the selection is non-empty), so the pencil button is
+  // clickable rather than stuck in its disabled default state. It's
+  // also the default-checked radio — matching the old "Save
+  // selection" default which always used the HTML serialization.
+  await expect(capturePage.locator('#edit-selection-html-btn')).toBeEnabled();
+  await expect(capturePage.locator('#cap-selection-html')).toBeChecked();
 
-  // Step 1: Copy the selection before editing — SW writes the raw
-  // selection scrape under the pinned `selection-*.html` filename.
-  await capturePage.locator('#copy-selection-name').click();
+  // Step 1: Copy the selection HTML before editing — SW writes the
+  // raw selection scrape under the pinned `selection-*.html` filename.
+  await capturePage.locator('#copy-selection-html-name').click();
   await waitForClipboardWrites(capturePage, 1);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
 
   // Step 2: Open the dialog and replace the selection body. The
   // textarea is seeded with what the SW scraped, which contains
   // our fixture's injected text.
-  await capturePage.locator('#edit-selection').click();
-  expect(await capturePage.locator('#edit-selection-dialog').evaluate(
+  await capturePage.locator('#edit-selection-html-btn').click();
+  expect(await capturePage.locator('#edit-selection-html-dialog').evaluate(
     (d) => (d as HTMLDialogElement).open,
   )).toBe(true);
-  const prefill = await capturePage.locator('#edit-selection-textarea').inputValue();
+  const prefill = await capturePage.locator('#edit-selection-html-textarea').inputValue();
   expect(prefill).toContain('hello selection world');
 
   const EDITED = '<p>selection edited by test 99</p>';
-  await capturePage.locator('#edit-selection-textarea').fill(EDITED);
-  await capturePage.locator('#edit-selection-save').click();
-  await expect(capturePage.locator('#edit-selection-dialog')).toHaveJSProperty(
+  await capturePage.locator('#edit-selection-html-textarea').fill(EDITED);
+  await capturePage.locator('#edit-selection-html-save').click();
+  await expect(capturePage.locator('#edit-selection-html-dialog')).toHaveJSProperty(
     'open',
     false,
   );
 
   // Step 3: Copy again → cache invalidated, second download fires,
   // pinned filename unchanged, new bytes on disk.
-  await capturePage.locator('#copy-selection-name').click();
+  await capturePage.locator('#copy-selection-html-name').click();
   await waitForClipboardWrites(capturePage, 2);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
 
@@ -951,9 +955,10 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   expect(editedBytes).toContain('selection edited by test 99');
   expect(editedBytes).not.toContain('hello selection world');
 
-  // Step 4: Capture with Save selection on (default-checked when a
-  // selection was detected). Cache hit → no third download. Log's
-  // `selection` artifact carries `isEdited: true`.
+  // Step 4: Capture with Save selection as HTML on (default-checked
+  // when a selection was detected). Cache hit → no third download.
+  // Log's `selection` artifact carries `format: 'html'` and
+  // `isEdited: true`.
   await configureAndCapture(capturePage, {
     saveScreenshot: false,
     saveHtml: false,
@@ -962,6 +967,7 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
 
   const record = await readLatestRecord(sw);
   expect(record.selection?.filename).toBeDefined();
+  expect(record.selection?.format).toBe('html');
   expect(record.selection?.isEdited).toBe(true);
 
   await openerPage.close();
@@ -980,10 +986,10 @@ test('details: edit-selection cancel leaves the captured selection untouched', a
     seedSelection,
   );
 
-  await capturePage.locator('#edit-selection').click();
-  await capturePage.locator('#edit-selection-textarea').fill('DISCARDED NONSENSE');
-  await capturePage.locator('#edit-selection-cancel').click();
-  await expect(capturePage.locator('#edit-selection-dialog')).toHaveJSProperty(
+  await capturePage.locator('#edit-selection-html-btn').click();
+  await capturePage.locator('#edit-selection-html-textarea').fill('DISCARDED NONSENSE');
+  await capturePage.locator('#edit-selection-html-cancel').click();
+  await expect(capturePage.locator('#edit-selection-html-dialog')).toHaveJSProperty(
     'open',
     false,
   );
@@ -1201,17 +1207,19 @@ test('details: html scrape failure still opens the page with HTML/selection disa
     new RegExp(`Unable to capture HTML contents.*${reason}`),
   );
 
-  // Selection row stays in its default greyed-out state — the
-  // failure was the same `executeScript` call, so the HTML row's
-  // error already explains it; a duplicate selection icon would
-  // just be noise. We do NOT add `has-error` and do NOT set the
-  // selection-error tooltip in this case.
-  const selectionBox = capturePage.locator('#cap-selection');
-  await expect(selectionBox).toBeDisabled();
-  await expect(selectionBox).not.toBeChecked();
-  await expect(capturePage.locator('#edit-selection')).toBeDisabled();
-  await expect(capturePage.locator('#row-selection')).not.toHaveClass(/has-error/);
-  await expect(capturePage.locator('#error-selection')).toHaveAttribute('title', '');
+  // All three selection rows stay in their default greyed-out
+  // state — the failure was the same `executeScript` call, so the
+  // HTML row's error already explains it; duplicate icons on every
+  // selection row would just be noise. We do NOT add `has-error`
+  // and do NOT set any selection-error tooltip in this case.
+  for (const format of ['html', 'text', 'markdown'] as const) {
+    const radio = capturePage.locator(`#cap-selection-${format}`);
+    await expect(radio).toBeDisabled();
+    await expect(radio).not.toBeChecked();
+    await expect(capturePage.locator(`#edit-selection-${format}-btn`)).toBeDisabled();
+    await expect(capturePage.locator(`#row-selection-${format}`)).not.toHaveClass(/has-error/);
+    await expect(capturePage.locator(`#error-selection-${format}`)).toHaveAttribute('title', '');
+  }
 
   // Screenshot + prompt + highlights remain functional: drawing a
   // rectangle and saving the screenshot + prompt should still produce

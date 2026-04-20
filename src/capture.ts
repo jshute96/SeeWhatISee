@@ -1,3 +1,5 @@
+import { htmlToMarkdown } from './markdown.js';
+
 // Capture functions. Each one corresponds to a user-visible action
 // (toolbar click, right-click context menu entries, future variations)
 // and is responsible for grabbing the content and writing it (plus
@@ -84,6 +86,41 @@ export interface Artifact {
 }
 
 /**
+ * Which serialization format a saved selection file uses. A single
+ * capture only ever writes one format (we can't tell which the user
+ * wants without asking, and the More menu / details page make that
+ * choice explicit), so the record carries exactly one of these.
+ *
+ *   - `'html'`     — raw `innerHTML` of the range, wrapped in `<div>`.
+ *   - `'text'`     — `window.getSelection().toString()` — what the
+ *                    user sees visually, with line breaks preserved.
+ *   - `'markdown'` — HTML fed through `htmlToMarkdown` so nested
+ *                    structure (headings, lists, links, tables)
+ *                    survives in a reader-friendly form.
+ */
+export type SelectionFormat = 'html' | 'text' | 'markdown';
+
+/**
+ * Record-side selection artifact. Extends `Artifact` with a
+ * `format` field so downstream consumers can tell at a glance which
+ * bytes the file carries without inferring from the extension.
+ */
+export interface SelectionArtifact extends Artifact {
+  format: SelectionFormat;
+}
+
+/**
+ * File-extension suffix used for each selection format on disk.
+ * Centralized so the filename computation and any downstream
+ * validation (e.g. shell scripts) stay in one place.
+ */
+export const SELECTION_EXTENSIONS: Record<SelectionFormat, string> = {
+  html: 'html',
+  text: 'txt',
+  markdown: 'md',
+};
+
+/**
  * Screenshot record in `log.json`. Same filename-plus-optional-flags
  * shape as `Artifact`, but the flags describe different "things the
  * user did to this PNG" rather than a single "edited" bit —
@@ -125,8 +162,27 @@ export interface ScreenshotArtifact {
  * (`capture-page.ts`) for the `EDIT_KINDS` catalog — both sides
  * share this single definition so a new kind added in one file
  * can't silently go unhandled on the other.
+ *
+ * The three `selection*` kinds are independent editable mirrors:
+ * the user can edit each selection format separately on the details
+ * page, but only the format chosen for save ends up in `log.json`.
  */
-export type EditableArtifactKind = 'html' | 'selection';
+export type EditableArtifactKind =
+  | 'html'
+  | 'selectionHtml'
+  | 'selectionText'
+  | 'selectionMarkdown';
+
+/**
+ * Map from `SelectionFormat` to its matching editable-artifact id.
+ * Centralized so the page and the SW agree on the naming convention
+ * without each site restating the mapping.
+ */
+export const SELECTION_EDIT_KIND: Record<SelectionFormat, EditableArtifactKind> = {
+  html: 'selectionHtml',
+  text: 'selectionText',
+  markdown: 'selectionMarkdown',
+};
 
 export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
@@ -156,13 +212,18 @@ export interface CaptureRecord {
   contents?: Artifact;
   /**
    * Captured selection artifact. Set by either `captureSelection()`
-   * (the More → Capture selection shortcut) or the details flow
-   * when the user kept the Save selection checkbox checked. Same
-   * shape as `contents` — the optional `isEdited` flag tracks
-   * whether the user edited via the Edit selection dialog before
-   * capture.
+   * (the More → Capture selection shortcuts — one per format) or
+   * the details flow when the user picked a selection format to
+   * save. Carries the bare filename, the chosen `format` (so
+   * downstream consumers can dispatch without parsing the
+   * extension), and an optional `isEdited: true` flag set when the
+   * user edited that format's body via the Edit selection dialog
+   * before capture. A single capture only ever writes one selection
+   * file — selecting "Save as markdown" excludes the text / HTML
+   * versions from the log, even though all three were scraped into
+   * memory.
    */
-  selection?: Artifact;
+  selection?: SelectionArtifact;
   /**
    * User-entered prompt text from the "Capture with details…" flow,
    * trimmed. Omitted entirely when empty so the field's presence
@@ -295,21 +356,46 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
 }
 
 /**
- * Scrape the HTML of the current selection on the given tab. Returns
- * `null` when nothing is selected (no ranges, or only collapsed
- * ranges whose cloned fragment is empty).
+ * Shape returned from the page-side selection scrape. All three
+ * formats are computed in one `executeScript` round-trip so the
+ * More-menu selection-format shortcuts and the details flow share
+ * the same scraped view of the page.
  *
- * Walks every range (Firefox supports multi-range; Chromium normally
- * returns a single range but the API surface is the same) and
- * concatenates their cloned contents into one throwaway `<div>` so
- * `innerHTML` gives us the combined markup.
- *
- * We guard on the *fragment* being empty rather than
- * `sel.toString().length` so image-only selections (`<img>` with no
- * accompanying text) still count as real captures — `toString`
- * returns just the text content and would otherwise drop them.
+ *   - `html`     — `innerHTML` of the selected range fragment, used
+ *                  as the source of truth for the other two formats
+ *                  and as the "Save selection as HTML" payload.
+ *   - `text`     — `window.getSelection().toString()`, which matches
+ *                  what the user visually sees selected (respects
+ *                  line breaks in block elements).
+ *   - `markdown` — `htmlToMarkdown(html)`, computed in the SW after
+ *                  the scrape returns so the converter is a pure
+ *                  function unit-testable without a DOM.
  */
-async function scrapeSelection(tabId: number): Promise<string | null> {
+export interface SelectionBodies {
+  html: string;
+  text: string;
+  markdown: string;
+}
+
+/**
+ * Grab the current selection on the given tab in all three storage
+ * formats (HTML fragment, plain text, markdown). Returns `null` when
+ * nothing is selected (no ranges, or only collapsed ranges whose
+ * cloned fragment is empty).
+ *
+ * The page side produces `html` + `text`; the SW side renders
+ * `markdown` from the HTML via the pure `htmlToMarkdown` converter.
+ * Running the converter in the SW (rather than inlining it into the
+ * `func`) keeps the page-context footprint small and lets the
+ * converter live in its own unit-tested module.
+ *
+ * Empty `text` / `markdown` stay as empty strings — the UI greys out
+ * those format options rather than failing the whole scrape. An
+ * image-only selection, for example, has non-empty HTML but empty
+ * text; picking "Save as text" would error out, but "Save as HTML"
+ * or "Save as markdown" still works.
+ */
+async function scrapeSelection(tabId: number): Promise<SelectionBodies | null> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
@@ -320,43 +406,89 @@ async function scrapeSelection(tabId: number): Promise<string | null> {
         container.appendChild(sel.getRangeAt(i).cloneContents());
       }
       const html = container.innerHTML;
-      return html.length === 0 ? null : html;
+      if (html.length === 0) return null;
+      // `sel.toString()` gives us the native "what the user sees"
+      // text representation — respects line breaks across block
+      // elements, skips `display: none`, etc. Better than walking
+      // the cloned container ourselves and closer to innerText
+      // semantics than textContent would be.
+      return { html, text: sel.toString() };
     },
   });
-  return (results[0]?.result as string | null | undefined) ?? null;
+  const scraped = results[0]?.result as
+    | { html: string; text: string }
+    | null
+    | undefined;
+  if (!scraped) return null;
+  return {
+    html: scraped.html,
+    text: scraped.text,
+    markdown: htmlToMarkdown(scraped.html),
+  };
 }
 
 /**
- * Capture the HTML of the user's current text selection on the
- * active tab, save it as `selection-<timestamp>.html` alongside
- * other captures, and record its filename in `log.json` under
- * `selection`.
+ * Build the per-format selection filenames for a capture pinned at
+ * the given timestamp. All three share the same compact-timestamp
+ * suffix so files written from the same capture sort together
+ * regardless of which format the user ended up saving.
+ */
+function selectionFilenamesFor(ts: string): Record<SelectionFormat, string> {
+  return {
+    html: `selection-${ts}.${SELECTION_EXTENSIONS.html}`,
+    text: `selection-${ts}.${SELECTION_EXTENSIONS.text}`,
+    markdown: `selection-${ts}.${SELECTION_EXTENSIONS.markdown}`,
+  };
+}
+
+/**
+ * Capture the user's current text selection in a specific format
+ * (HTML, text, or markdown), save it under the matching extension,
+ * and record its filename in `log.json` under `selection` with the
+ * format field set.
  *
  * Throws `No text selected` when there is no selected text on the
- * page. Surfaces through the normal icon/tooltip error channel so
- * the user sees *why* the capture was rejected.
+ * page, and `No selection text content` / `No selection markdown
+ * content` when the requested format would produce an empty file
+ * (e.g. asking for text on an image-only selection). Surfaces
+ * through the normal icon/tooltip error channel so the user sees
+ * *why* the capture was rejected and can retry with a different
+ * format.
  */
-export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
+export async function captureSelection(
+  format: SelectionFormat = 'html',
+  delayMs = 0,
+): Promise<CaptureRecord> {
   if (delayMs > 0) {
     await countdownSleep(delayMs);
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
-  const html = await scrapeSelection(active.id!);
-  if (!html) throw new Error('No text selected');
+  const bodies = await scrapeSelection(active.id!);
+  if (!bodies) throw new Error('No text selected');
+  const body = bodies[format];
+  if (!body || body.trim().length === 0) {
+    // Format-specific empty: e.g. text-only scrape on an image, or
+    // markdown that collapsed to whitespace. Spell out which format
+    // was missing so the toolbar error line is actionable.
+    throw new Error(`No selection ${format} content`);
+  }
 
   const now = new Date();
-  const filename = `selection-${compactTimestamp(now)}.html`;
+  const ts = compactTimestamp(now);
+  const filenames = selectionFilenamesFor(ts);
+  const filename = filenames[format];
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    selection: { filename },
+    selection: { filename, format },
     url: active.url ?? '',
   };
 
   // Reuse the details-flow helper so the trailing-newline logic
   // lives in one place. We build a minimal InMemoryCapture to pass
-  // through — only `selection` and `selectionFilename` are read.
+  // through — only `selections`, `selectionFilenames`, and the
+  // chosen `format` are read.
   const asCapture: InMemoryCapture = {
     screenshotDataUrl: '',
     html: '',
@@ -364,12 +496,12 @@ export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
     timestamp: record.timestamp,
     screenshotFilename: '',
     contentsFilename: '',
-    selection: html,
-    selectionFilename: filename,
+    selections: bodies,
+    selectionFilenames: filenames,
   };
   // Save the selection file first. The sidecar is downstream and
   // shouldn't be written if the content itself failed to save.
-  await downloadSelection(asCapture);
+  await downloadSelection(asCapture, format);
 
   await serializeWrite(async () => {
     const log = await appendToLog(record);
@@ -410,19 +542,26 @@ export interface InMemoryCapture {
    */
   contentsFilename: string;
   /**
-   * HTML of the page selection at capture time, when the user had
-   * anything selected. Undefined when no selection existed — the
-   * details page uses that to grey out / uncheck the "Save
-   * selection" checkbox and disable its Copy button.
+   * The user's page selection at capture time, rendered in all
+   * three storage formats (HTML fragment, plain text, and
+   * markdown). Undefined when no selection existed — the details
+   * page uses that to grey out / uncheck every "Save selection as
+   * …" row and disable their Copy / Edit buttons. A given format's
+   * entry may be an empty string even when `selections` is set
+   * (e.g. an image-only selection has non-empty `html` but empty
+   * `text`); each format row on the details page is gated
+   * independently on its per-format emptiness.
    */
-  selection?: string;
+  selections?: SelectionBodies;
   /**
-   * Filename the selection file will be written under if the user
-   * saves it. Only meaningful when `selection` is also set; the two
-   * fields are populated together. Shares the same compact
-   * timestamp suffix as `screenshotFilename` / `contentsFilename`.
+   * Filenames each selection format will be written under if the
+   * user saves it. All three share the same compact timestamp
+   * suffix as `screenshotFilename` / `contentsFilename` so files
+   * written from the same capture sort together regardless of
+   * which format ended up on disk. Populated together with
+   * `selections`.
    */
-  selectionFilename?: string;
+  selectionFilenames?: Record<SelectionFormat, string>;
   /**
    * Reason HTML could not be captured (e.g. restricted URL where
    * `chrome.scripting.executeScript` can't inject). Set only when
@@ -480,7 +619,8 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   // snapshots observe the same DOM state. Selection logic mirrors
   // `scrapeSelection` (executeScript `func`s must be self-contained —
   // they're stringified into the page context and can't call SW-side
-  // helpers).
+  // helpers). The markdown rendering runs in the SW after the scrape
+  // returns — see `htmlToMarkdown` below.
   //
   // Scraping can fail on restricted URLs (chrome://, the Web Store,
   // etc.) where extensions aren't allowed to inject scripts. We catch
@@ -490,7 +630,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   // icon tooltip. The screenshot + prompt + highlights remain usable
   // so the user isn't locked out of the flow entirely.
   let html = '';
-  let selection: string | null = null;
+  let selectionRaw: { html: string; text: string } | null = null;
   let htmlError: string | undefined;
   let selectionError: string | undefined;
   try {
@@ -499,27 +639,29 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
       func: () => {
         const pageHtml = document.documentElement.outerHTML;
         const sel = window.getSelection();
-        let selHtml: string | null = null;
+        let selInfo: { html: string; text: string } | null = null;
         if (sel && sel.rangeCount > 0) {
           const container = document.createElement('div');
           for (let i = 0; i < sel.rangeCount; i++) {
             container.appendChild(sel.getRangeAt(i).cloneContents());
           }
           const inner = container.innerHTML;
-          if (inner.length > 0) selHtml = inner;
+          if (inner.length > 0) {
+            selInfo = { html: inner, text: sel.toString() };
+          }
         }
-        return { html: pageHtml, selection: selHtml };
+        return { html: pageHtml, selection: selInfo };
       },
     });
     const scraped = results[0]?.result as
-      | { html: string; selection: string | null }
+      | { html: string; selection: { html: string; text: string } | null }
       | undefined;
     if (!scraped || !scraped.html) {
       htmlError = 'Failed to retrieve page contents';
       selectionError = htmlError;
     } else {
       html = scraped.html;
-      selection = scraped.selection;
+      selectionRaw = scraped.selection;
     }
   } catch (err) {
     htmlError = err instanceof Error ? err.message : String(err);
@@ -539,9 +681,13 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotFilename: `screenshot-${ts}.png`,
     contentsFilename: `contents-${ts}.html`,
   };
-  if (selection !== null) {
-    capture.selection = selection;
-    capture.selectionFilename = `selection-${ts}.html`;
+  if (selectionRaw !== null) {
+    capture.selections = {
+      html: selectionRaw.html,
+      text: selectionRaw.text,
+      markdown: htmlToMarkdown(selectionRaw.html),
+    };
+    capture.selectionFilenames = selectionFilenamesFor(ts);
   }
   if (htmlError !== undefined) capture.htmlError = htmlError;
   if (selectionError !== undefined) capture.selectionError = selectionError;
@@ -555,11 +701,15 @@ export interface SaveDetailedOptions {
   /** Save the captured HTML as part of this capture. */
   includeHtml: boolean;
   /**
-   * Save the captured page selection as `selection-<timestamp>.html`.
-   * Ignored when `capture.selection` is unset (no selection existed
-   * at capture time).
+   * Save one of the captured selection formats as
+   * `selection-<timestamp>.{html,txt,md}`. `undefined` means "don't
+   * save a selection." Only one format is ever written per capture;
+   * the details page's three Save-selection-as-… rows are mutually
+   * exclusive. Ignored when `capture.selections` is unset (no
+   * selection existed at capture time) or the chosen format's body
+   * is empty.
    */
-  includeSelection: boolean;
+  selectionFormat?: SelectionFormat;
   /**
    * Optional user-entered prompt. Trimmed by the caller; an empty
    * string is treated the same as omitting the field. Stored on the
@@ -597,10 +747,11 @@ export interface SaveDetailedOptions {
    */
   htmlEdited?: boolean;
   /**
-   * True when the user replaced the captured selection via the Edit
-   * selection dialog before saving. Causes the record's `selection`
-   * artifact object to carry `isEdited: true`. Ignored unless
-   * `includeSelection` is also true.
+   * True when the user replaced the captured selection body for the
+   * format named in `selectionFormat` via the Edit selection dialog
+   * before saving. Causes the record's `selection` artifact object
+   * to carry `isEdited: true`. Ignored unless `selectionFormat` is
+   * also set.
    */
   selectionEdited?: boolean;
 }
@@ -661,21 +812,41 @@ export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
 }
 
 /**
- * Start a selection-HTML download. Throws when the capture doesn't
- * carry a selection — callers must ensure `capture.selection` and
- * `capture.selectionFilename` are populated first.
- *
- * Appends a trailing newline when the selection doesn't already end
- * in one. The selection is a DOM fragment — often a single run of
- * text with no line break — and shells / editors read terminator-
- * stripped files more comfortably.
+ * MIME type to embed in the `data:` URL for each selection format.
+ * HTML is served as `text/html` like the page-content snapshot;
+ * text and markdown use `text/plain` / `text/markdown` so any
+ * downstream tool that sniffs the MIME picks the right branch.
  */
-export async function downloadSelection(capture: InMemoryCapture): Promise<number> {
-  if (!capture.selection || !capture.selectionFilename) {
+const SELECTION_DATA_URL_MIME: Record<SelectionFormat, string> = {
+  html: 'text/html',
+  text: 'text/plain',
+  markdown: 'text/markdown',
+};
+
+/**
+ * Start a selection download in a specific format. Throws when the
+ * capture doesn't carry a selection of that format — callers must
+ * ensure `capture.selections` and `capture.selectionFilenames` are
+ * populated first, and that the chosen format's body is non-empty.
+ *
+ * Appends a trailing newline when the body doesn't already end in
+ * one. Selections are often a single run of text with no line
+ * break, and shells / editors read terminator-stripped files more
+ * comfortably.
+ */
+export async function downloadSelection(
+  capture: InMemoryCapture,
+  format: SelectionFormat,
+): Promise<number> {
+  if (!capture.selections || !capture.selectionFilenames) {
     throw new Error('No selection captured');
   }
-  const body = capture.selection.endsWith('\n') ? capture.selection : `${capture.selection}\n`;
-  return downloadArtifact(capture.selectionFilename, htmlDataUrl(body));
+  const body = capture.selections[format];
+  if (!body) throw new Error(`No selection ${format} content`);
+  const withNewline = body.endsWith('\n') ? body : `${body}\n`;
+  const mime = SELECTION_DATA_URL_MIME[format];
+  const url = `data:${mime};charset=utf-8,${encodeURIComponent(withNewline)}`;
+  return downloadArtifact(capture.selectionFilenames[format], url);
 }
 
 /**
@@ -736,6 +907,22 @@ function artifact(filename: string, edited?: boolean): Artifact {
 }
 
 /**
+ * Selection-specific artifact builder. Same wire-format constraint
+ * as `artifact()` — `filename` first — plus a trailing `format`
+ * field so downstream consumers know how to interpret the bytes
+ * without having to sniff the extension.
+ */
+function selectionArtifactOf(
+  filename: string,
+  format: SelectionFormat,
+  edited?: boolean,
+): SelectionArtifact {
+  return edited
+    ? { filename, format, isEdited: true }
+    : { filename, format };
+}
+
+/**
  * Build a `ScreenshotArtifact` object for inclusion in a
  * `CaptureRecord`. Same wire-format constraint as `artifact()`:
  * `filename` must appear first (before any edit flags) so the shell
@@ -776,8 +963,13 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   if (opts.includeHtml) {
     record.contents = artifact(opts.capture.contentsFilename, opts.htmlEdited);
   }
-  if (opts.includeSelection && opts.capture.selectionFilename) {
-    record.selection = artifact(opts.capture.selectionFilename, opts.selectionEdited);
+  if (opts.selectionFormat && opts.capture.selectionFilenames) {
+    const fmt = opts.selectionFormat;
+    record.selection = selectionArtifactOf(
+      opts.capture.selectionFilenames[fmt],
+      fmt,
+      opts.selectionEdited,
+    );
   }
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
