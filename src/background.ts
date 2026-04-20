@@ -1034,12 +1034,26 @@ interface SaveDetailsMessage {
   selection: boolean;
   prompt: string;
   /**
-   * True when the user drew at least one highlight on the preview.
-   * Causes the saved record's screenshot artifact to carry
-   * `hasHighlights: true` (only when `screenshot` is also true — see
-   * capture.ts).
+   * True when at least one un-converted red rectangle or line is on
+   * the preview. Causes the saved record's screenshot artifact to
+   * carry `hasHighlights: true` (only when `screenshot` is also
+   * true — see capture.ts). Rectangles the user converted to
+   * redactions / crops don't count — those get their own flags.
    */
   highlights: boolean;
+  /**
+   * True when the baked PNG contains at least one redaction
+   * rectangle. Causes the saved record's screenshot artifact to
+   * carry `hasRedactions: true` (only when `screenshot` is also
+   * true).
+   */
+  hasRedactions: boolean;
+  /**
+   * True when the baked PNG was cropped to a user-selected region.
+   * Causes the saved record's screenshot artifact to carry
+   * `isCropped: true` (only when `screenshot` is also true).
+   */
+  isCropped: boolean;
   /** Edit counter — same meaning as on `EnsureDownloadedMessage`. */
   editVersion?: number;
   /**
@@ -1461,6 +1475,8 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
           includeSelection: msg.selection,
           prompt: msg.prompt,
           hasHighlights: msg.highlights,
+          hasRedactions: msg.hasRedactions,
+          isCropped: msg.isCropped,
           htmlEdited: session.htmlEdited,
           selectionEdited: session.selectionEdited,
         });

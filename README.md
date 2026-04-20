@@ -189,6 +189,8 @@ present when that action was included.
 - `screenshot` — present when a PNG screenshot was saved.
     - `filename` — filename of the PNG.
     - `hasHighlights` — `true` if the user added highlights.
+    - `hasRedactions` — `true` if the user blacked out at least one region.
+    - `isCropped` — `true` if the image was cropped to a user-selected region.
 - `contents` — present when the full-page HTML was saved.
     - `filename` — filename of the HTML snapshot.
     - `isEdited` — `true` if the user edited the HTML content before saving.

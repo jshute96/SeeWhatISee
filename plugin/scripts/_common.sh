@@ -46,10 +46,7 @@ resolve_dir() {
 # Only rewrites values that don't already start with /.
 #
 # `screenshot`, `contents`, and `selection` are all artifact
-# objects: `{ "filename": "...", <"hasHighlights" | "isEdited">: true? }`.
-# The rewrite reaches into the nested `filename` key; any other
-# keys in the object (e.g. `hasHighlights`, `isEdited`) pass
-# through untouched.
+# objects with `filename` as a nested field.
 absolutize_paths() {
   sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$DIR/\\1\"|" \
       -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$DIR/\\1\"|" \

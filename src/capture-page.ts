@@ -298,10 +298,21 @@ function findEdit(id: number): Edit | undefined {
 // The effective crop rectangle is the most-recently-added 'crop'
 // edit still in the stack. Earlier crops are hidden by the newer
 // one's dim overlay; on save, only the newest crop bounds the output.
+//
+// A crop that covers the entire image (all four edges at the image
+// boundary) is returned as `undefined` — it's functionally a no-op
+// (the saved PNG matches the original) and visually has nothing to
+// show (no dim outside, no meaningful edges), so we treat it as
+// "no crop" everywhere: rendering, the `isCropped` flag on the
+// saved record, and the bake-in transform. The edit itself stays
+// in the stack so Undo can still walk back through it.
 function activeCrop(): RectEdit | undefined {
   for (let i = edits.length - 1; i >= 0; i--) {
     const e = edits[i]!;
-    if (e.kind === 'crop') return e;
+    if (e.kind === 'crop') {
+      if (e.x === 0 && e.y === 0 && e.w === 100 && e.h === 100) return undefined;
+      return e;
+    }
   }
   return undefined;
 }
@@ -369,29 +380,44 @@ function detectCropHandle(p: Point): CropHandle | null {
 //   - Correct axis for each handle (n/s move only the top/bottom
 //     edge; e/w move only the left/right; corners move two edges).
 //   - The crop stays inside the image (0 ≤ x, x+w ≤ 100, likewise y).
-//   - The crop never collapses below MIN_CROP_PCT on either axis.
-// Negative-sized drags (dragging past the opposite edge) clamp to
-// MIN_CROP_PCT rather than flipping — flipping feels surprising on
-// a crop tool and isn't needed for the resize workflow.
+//   - Dragged edges clamp at `MIN_CROP_PCT` away from the opposite
+//     (undragged) edge. The opposite edge never moves — a shrink
+//     drag just stops once it bottoms out at the minimum. This
+//     keeps the behavior symmetric across all four sides; an
+//     earlier version allowed the west/north clamps to push the
+//     opposite edge outward, which made N/W drags feel different
+//     from S/E drags.
 function applyCropDrag(
   start: { startX: number; startY: number; startW: number; startH: number },
   handle: CropHandle,
   dxPct: number, dyPct: number,
 ): { x: number; y: number; w: number; h: number } {
+  const draggingTop = handle === 'n' || handle === 'ne' || handle === 'nw';
+  const draggingBottom = handle === 's' || handle === 'se' || handle === 'sw';
+  const draggingLeft = handle === 'w' || handle === 'nw' || handle === 'sw';
+  const draggingRight = handle === 'e' || handle === 'ne' || handle === 'se';
+
   let left = start.startX;
   let top = start.startY;
   let right = start.startX + start.startW;
   let bottom = start.startY + start.startH;
 
-  if (handle === 'n' || handle === 'ne' || handle === 'nw') top += dyPct;
-  if (handle === 's' || handle === 'se' || handle === 'sw') bottom += dyPct;
-  if (handle === 'w' || handle === 'nw' || handle === 'sw') left += dxPct;
-  if (handle === 'e' || handle === 'ne' || handle === 'se') right += dxPct;
-
-  left = Math.max(0, Math.min(100 - MIN_CROP_PCT, left));
-  right = Math.max(left + MIN_CROP_PCT, Math.min(100, right));
-  top = Math.max(0, Math.min(100 - MIN_CROP_PCT, top));
-  bottom = Math.max(top + MIN_CROP_PCT, Math.min(100, bottom));
+  // Clamp each dragged edge into `[0, 100]` and keep it at least
+  // `MIN_CROP_PCT` away from the opposite edge. The opposite edge
+  // stays at its starting position because we only read its value
+  // (never assign to it) inside each branch.
+  if (draggingTop) {
+    top = Math.max(0, Math.min(bottom - MIN_CROP_PCT, top + dyPct));
+  }
+  if (draggingBottom) {
+    bottom = Math.min(100, Math.max(top + MIN_CROP_PCT, bottom + dyPct));
+  }
+  if (draggingLeft) {
+    left = Math.max(0, Math.min(right - MIN_CROP_PCT, left + dxPct));
+  }
+  if (draggingRight) {
+    right = Math.min(100, Math.max(left + MIN_CROP_PCT, right + dxPct));
+  }
 
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
@@ -487,24 +513,56 @@ function render(): void {
     if (crop) cropPreview = { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
   }
   if (cropPreview) {
-    // Four dim rectangles around the crop region: top, bottom, left,
-    // right. Using four rects (rather than a single evenodd-filled
-    // path) keeps the SVG readable and avoids any platform-specific
-    // rendering quirks around path fill rules.
     const cx = (cropPreview.x / 100) * w;
     const cy = (cropPreview.y / 100) * h;
     const cw = (cropPreview.w / 100) * w;
     const ch = (cropPreview.h / 100) * h;
     const dim = 'rgba(0,0,0,0.55)';
-    if (cy > 0) overlay.appendChild(makeFilledRect(0, 0, w, cy, dim));
-    if (cy + ch < h) overlay.appendChild(makeFilledRect(0, cy + ch, w, h - (cy + ch), dim));
-    if (cx > 0) overlay.appendChild(makeFilledRect(0, cy, cx, ch, dim));
-    if (cx + cw < w) overlay.appendChild(makeFilledRect(cx + cw, cy, w - (cx + cw), ch, dim));
-    // A thin dashed border along the crop edges so the region is
+    // Single `<path>` with fill-rule="evenodd" to paint the dim
+    // "picture frame" outside the crop. An earlier version used
+    // four adjacent dim rects (top/bottom/left/right strips), but
+    // that produced faint horizontal guide lines at the crop's
+    // top and bottom edges: the pixel row straddling y=cy (or
+    // y=cy+ch) got partial coverage from two different dim rects
+    // rather than one solid fill, and composited alpha-over-alpha
+    // comes out brighter than a single dim fill (e.g. white under
+    // 0.55 dim = 0.45, but 0.3-coverage then 0.7-coverage of the
+    // same dim ≈ 0.51 — about 14% lighter). The same seam didn't
+    // show vertically because the left/right strip's inner edge
+    // borders un-dim content, not a second dim rect, so the
+    // antialiased transition was a smooth ramp instead of a
+    // brighter spike. One shape → no internal seams.
+    const frame = document.createElementNS(SVG_NS, 'path');
+    frame.setAttribute(
+      'd',
+      `M0 0 H${w} V${h} H0 Z M${cx} ${cy} H${cx + cw} V${cy + ch} H${cx} Z`,
+    );
+    frame.setAttribute('fill', dim);
+    frame.setAttribute('fill-rule', 'evenodd');
+    overlay.appendChild(frame);
+    // Dashed white border on the crop edges so the region is
     // legible even when the underlying pixels are low-contrast.
-    const border = makeStrokedRect(cx, cy, cw, ch, '#fff', 1);
-    border.setAttribute('stroke-dasharray', '4 3');
-    overlay.appendChild(border);
+    // Drawn per-side (not as one `<rect>`) so a side flush with
+    // the image edge is simply omitted — a dashed line at the
+    // image boundary would be cosmetic noise, and drawing one
+    // there while omitting it on the other axis (the asymmetric
+    // case a full-width-but-not-full-height crop produces) looks
+    // like a guide line extending past the crop.
+    const dashed = (x1: number, y1: number, x2: number, y2: number): void => {
+      const line = document.createElementNS(SVG_NS, 'line');
+      line.setAttribute('x1', String(x1));
+      line.setAttribute('y1', String(y1));
+      line.setAttribute('x2', String(x2));
+      line.setAttribute('y2', String(y2));
+      line.setAttribute('stroke', '#fff');
+      line.setAttribute('stroke-width', '1');
+      line.setAttribute('stroke-dasharray', '4 3');
+      overlay.appendChild(line);
+    };
+    if (cy > 0) dashed(cx, cy, cx + cw, cy);
+    if (cy + ch < h) dashed(cx, cy + ch, cx + cw, cy + ch);
+    if (cx > 0) dashed(cx, cy, cx, cy + ch);
+    if (cx + cw < w) dashed(cx + cw, cy, cx + cw, cy + ch);
     // Small square grips at the four corners so the handles are
     // discoverable without requiring the user to first hover into
     // the invisible hit band. A 6×6 white grip with a 1px dark
@@ -1179,12 +1237,34 @@ function renderHighlightedPng(): string {
 
 // True iff there is at least one edit whose effect must be baked
 // into the saved PNG: any red rect / line / redaction, or an
-// active crop. Used to decide whether to send a `screenshotOverride`
-// (and to flip the `highlights` flag on the saved record). A stack
-// that contains only a 'crop' after undo-chains is still counted
-// because the bake is what realizes the crop on disk.
+// effective crop. A crop that covers the whole image contributes
+// nothing to the bake (`activeCrop()` returns undefined for it),
+// so a stack whose only edits are full-image crops skips the bake
+// and the saved PNG stays identical to the untouched capture.
 function hasBakeableEdits(): boolean {
-  return edits.length > 0;
+  if (edits.some((e) => e.kind !== 'crop')) return true;
+  return activeCrop() !== undefined;
+}
+
+// Per-kind flags reported to the SW so the saved record's screenshot
+// artifact can carry `hasHighlights` / `hasRedactions` / `isCropped`
+// independently. A single red rectangle that the user converts to a
+// redaction flips only `hasRedactions` — not `hasHighlights` —
+// because after conversion the rectangle is no longer a red
+// highlight in the saved PNG.
+//
+// `isCropped` uses `activeCrop()` (not "any crop edit in the stack")
+// so a crop that's been dragged back out to the full image reports
+// as *not cropped* — the saved PNG matches the original, so the
+// flag would mislead downstream consumers.
+function editFlags(): { hasHighlights: boolean; hasRedactions: boolean; isCropped: boolean } {
+  let hasHighlights = false;
+  let hasRedactions = false;
+  for (const e of edits) {
+    if (e.kind === 'rect' || e.kind === 'line') hasHighlights = true;
+    else if (e.kind === 'redact') hasRedactions = true;
+  }
+  return { hasHighlights, hasRedactions, isCropped: activeCrop() !== undefined };
 }
 
 captureBtn.addEventListener('click', () => {
@@ -1209,6 +1289,13 @@ captureBtn.addEventListener('click', () => {
     const hasEdits = hasBakeableEdits();
     const bakeIn = hasEdits && screenshotBox.checked;
     const screenshotOverride = bakeIn ? renderHighlightedPng() : undefined;
+    // Per-kind flags only matter when we're actually saving the
+    // screenshot — they describe what's baked into the PNG, so
+    // there's nothing for the SW to flag on a record that doesn't
+    // include the image. `bakeIn` already folds both conditions in.
+    const flags = bakeIn
+      ? editFlags()
+      : { hasHighlights: false, hasRedactions: false, isCropped: false };
 
     void chrome.runtime.sendMessage({
       action: 'saveDetails',
@@ -1216,7 +1303,9 @@ captureBtn.addEventListener('click', () => {
       html: htmlBox.checked,
       selection: selectionBox.checked,
       prompt: promptInput.value.trim(),
-      highlights: bakeIn,
+      highlights: flags.hasHighlights,
+      hasRedactions: flags.hasRedactions,
+      isCropped: flags.isCropped,
       editVersion,
       screenshotOverride,
     });

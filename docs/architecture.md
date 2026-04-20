@@ -324,13 +324,24 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `tail -1 log.json` to get the latest record. Every record has
     `timestamp` and `url`, plus optional fields:
     - `screenshot` — `ScreenshotArtifact` object
-      `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true }`,
+      `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true, "hasRedactions"?: true, "isCropped"?: true }`,
       set when a screenshot was saved.
-      - `hasHighlights` is `true` iff the saved PNG has user-drawn
-        red markup (boxes, lines) baked into it; omitted otherwise so
-        the field's presence is itself the signal. The see-what-i-see
-        skills check this and steer their attention to the marked
-        regions.
+      - `hasHighlights` is `true` iff the saved PNG has un-converted
+        red markup (boxes, lines) baked into it. Red rectangles the
+        user converted to redactions or crops don't count — those
+        are reported via `hasRedactions` / `isCropped` instead.
+      - `hasRedactions` is `true` iff the saved PNG has at least one
+        opaque black redaction rectangle baked in.
+      - `isCropped` is `true` iff the saved PNG was cropped to a
+        user-selected region (the bytes on disk cover only that
+        region, not the full capture). A crop that was dragged
+        back out to cover the entire image collapses to "no
+        crop" — the flag is omitted and the saved PNG matches
+        the original capture.
+      - All three flags are independent (any combination can appear)
+        and are omitted when false, so presence is itself the
+        signal. The see-what-i-see skills check `hasHighlights` and
+        steer their attention to the marked regions.
     - `contents` — `Artifact` object
       `{ "filename": "contents-<timestamp>.html", "isEdited"?: true }`,
       set when HTML contents were saved.
@@ -633,9 +644,21 @@ active crop region.
     saved PNG is the cropped region with the remaining markup and
     redactions on top.
 - The page sends a `saveDetails` runtime message back to the
-  background with the selected save options, the prompt, a
-  `highlights: boolean` flag, the current `editVersion`, and the
+  background with the selected save options, the prompt, three
+  per-kind edit flags (`highlights`, `hasRedactions`, `isCropped`
+  — see below), the current `editVersion`, and the
   `screenshotOverride` data URL when present.
+  - `highlights` is `true` iff at least one un-converted red
+    rectangle or line survives on the preview. Rectangles the
+    user converted to redactions or crops flip their own flag
+    (`hasRedactions` / `isCropped`) instead, not `highlights`.
+  - `hasRedactions` is `true` iff any redaction rectangle is
+    baked into the PNG.
+  - `isCropped` is `true` iff a crop region is active and the
+    saved PNG covers only that region.
+  - All three are only meaningful when the screenshot is
+    actually being saved; they're forced to `false` when the
+    Save screenshot checkbox is unticked.
 - The background runs each requested artifact through the same
   `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
   `ensureSelectionDownloaded` helpers that powered any earlier
@@ -645,8 +668,9 @@ active crop region.
   Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
   `selection`, and `prompt`, on top of the always-present
-  `timestamp` and `url`. Each artifact object can carry a per-kind
-  flag: `screenshot.hasHighlights`, `contents.isEdited`,
+  `timestamp` and `url`. Each artifact object can carry per-kind
+  flags: `screenshot.hasHighlights`, `screenshot.hasRedactions`,
+  `screenshot.isCropped`, `contents.isEdited`,
   `selection.isEdited`. It's valid to save with no checkboxes
   ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener

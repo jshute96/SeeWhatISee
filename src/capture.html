@@ -419,15 +419,15 @@
     PNG to just that region). Both conversions are undoable.
   -->
   <div class="highlight-bar">
-    <span><b>Add highlights below.</b> Drag to draw boxes, right-click-drag to draw lines. Use Redact or Crop to convert the latest box. Drag the image edges or corners to crop directly.</span>
+    <span><b>Add highlights below.</b> Drag to draw boxes, right-click-drag to draw lines. Drag edges to crop.</span>
     <button id="redact" disabled
-            title="Turn the most recent red box into an opaque black redaction (hides that region in the saved screenshot). Disabled until you draw a red box.">Redact</button>
+            title="Turn the last drawn box into a black redaction.">Redact</button>
     <button id="crop" disabled
-            title="Crop the screenshot to the most recently drawn red box. Disabled unless the top of the highlight stack is an un-converted red box.">Crop</button>
+            title="Crop the screenshot to the last drawn box.">Crop</button>
     <button id="undo" disabled
-            title="Undo the most recent highlight, redaction, or crop.">Undo</button>
+            title="Undo the most recent edit.">Undo</button>
     <button id="clear" disabled
-            title="Clear every highlight, redaction, and crop.">Clear</button>
+            title="Clear all edits.">Clear</button>
   </div>
 
   <hr>
