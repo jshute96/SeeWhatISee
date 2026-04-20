@@ -152,7 +152,7 @@ Each capture writes one or more of these, by filename prefix:
 - `contents-<timestamp>.html` — the captured full-page HTML.
 - `selection-<timestamp>.html` — the captured text selection, as HTML.
 
-A single "Capture with details…" run may produce any subset (or
+A single Capture may include any subset of these (or
 none — a URL-only record is valid). Filenames are pinned at capture
 time so multiple saves within one run overwrite in place.
 
@@ -184,7 +184,7 @@ optional — presence is the signal:
   `contents`. `isEdited: true` means the user edited the captured
   fragment via the Edit selection dialog before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
-  flow.
+  flow, giving instructions for agents on what to do with this capture.
 
 ## Development setup
 
