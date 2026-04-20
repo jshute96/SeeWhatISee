@@ -1337,3 +1337,17 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
 // preview between layout and image-load.
 autoGrowPrompt();
 void loadData();
+
+// Test hook: lets the drawing e2e spec inspect the edit stack and
+// the effective crop without resorting to pixel-sampling tricks or
+// fixture-content probes. Harmless in production: nothing reads
+// `window.__seeState` at runtime, and it only surfaces values that
+// we already ship back to the SW via `saveDetails` / the bake.
+(window as unknown as { __seeState?: unknown }).__seeState = {
+  effectiveCrop: () => {
+    const c = activeCrop();
+    return c ? { x: c.x, y: c.y, w: c.w, h: c.h } : null;
+  },
+  flags: () => editFlags(),
+  editKinds: () => edits.map((e) => e.kind),
+};

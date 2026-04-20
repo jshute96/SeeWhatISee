@@ -57,15 +57,11 @@ On this page, you can:
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
-  - **Redact** turns the most recent red box into an opaque black
-    box that hides whatever was underneath in the saved PNG.
-  - **Crop** shrinks the saved PNG to the most recent red box;
-    everything outside is dimmed in the preview. Only available
-    when the top of the stack is an un-converted red box.
-  - **Drag the image edges or corners** to crop directly, or to
-    resize an existing crop. Each drag is undoable on its own.
-  - **Undo** or **Clear** to roll back edits. Undo also reverses
-    Redact and Crop conversions.
+  - **Redact** turns the most recent red box into an opaque black box that hides whatever was underneath.
+  - **Cropping** the saved PNG to include only a selected region.
+    - **Crop button** crops to the most recent red box.
+    - **Dragging borders** resizes the crop region.
+  - **Undo** or **Clear** to roll back edits.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
 focusing on highlighted areas in the screenshot.
