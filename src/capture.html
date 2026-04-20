@@ -104,6 +104,99 @@
     width: 14px;
     height: 14px;
   }
+  /*
+   * Grey out the label whenever its checkbox is disabled — covers
+   * both the no-selection default and the failed-scrape error case
+   * so they look identical (browser-default disabled checkbox styling
+   * already takes care of the box itself; this is the matching label
+   * fade). Uses `:has()`, fine for our Chrome-only target.
+   */
+  .checkbox-row:has(input:disabled) label {
+    color: #888;
+  }
+  /*
+   * Row-level error indicator. `capture-page.ts` toggles `.has-error`
+   * on `.checkbox-row` when the SW reports the corresponding artifact
+   * couldn't be captured (restricted URL, blocked scrape, etc.). The
+   * error icon becomes visible and its `title` carries the SW-reported
+   * reason so hovering it explains why the row is disabled. The label
+   * fade comes from the disabled-checkbox rule above.
+   */
+  .error-icon {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #c0392b;
+    cursor: help;
+  }
+  .checkbox-row.has-error .error-icon {
+    display: inline-flex;
+  }
+  .error-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+  /*
+   * The HTML edit dialog reuses a modal <dialog> element. We hide it
+   * in CSS rather than via an attribute so toggling via JS doesn't
+   * need to fight the native display. The textarea is full-width with
+   * a capped max-height so it never pushes the action row off-screen
+   * — it scrolls internally on long bodies instead.
+   */
+  dialog.edit-dialog {
+    width: min(900px, 90vw);
+    max-height: 85vh;
+    padding: 16px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #fff;
+  }
+  dialog.edit-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .edit-dialog h2 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .edit-dialog textarea {
+    width: 100%;
+    min-height: 320px;
+    max-height: 60vh;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    box-sizing: border-box;
+    resize: vertical;
+  }
+  .edit-dialog .dialog-error {
+    margin: 8px 0 0 0;
+    padding: 6px 8px;
+    color: #b00020;
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .edit-dialog .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .edit-dialog .dialog-actions button {
+    padding: 6px 14px;
+    font-size: 14px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+  }
   .prompt {
     display: flex;
     align-items: flex-start;
@@ -213,6 +306,21 @@
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
+      <!-- Error glyph: filled circle with a white exclamation mark. -->
+      <symbol id="error-icon" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="currentColor"></circle>
+        <rect x="11" y="6" width="2" height="8" fill="#fff"></rect>
+        <rect x="11" y="16" width="2" height="2" fill="#fff"></rect>
+      </symbol>
+      <!-- Pencil glyph — edit action on the HTML row. -->
+      <symbol id="edit-icon" viewBox="0 0 24 24">
+        <path d="M4 20h4L19 9l-4-4L4 16v4z"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M14 6l4 4"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
     </defs>
   </svg>
 
@@ -238,13 +346,29 @@
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
       </div>
-      <div class="checkbox-row">
+      <div class="checkbox-row" id="row-html">
         <label><input type="checkbox" id="cap-html"> Save <u>H</u>TML</label>
         <button type="button" class="copy-btn" id="copy-html-name"
                 title="Copy HTML filename"
                 aria-label="Copy HTML filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
+        <!--
+          Edit the captured HTML before save. Opens a modal dialog
+          with a textarea prefilled with the current HTML. Follows the
+          same disabled-hides-the-button convention as copy-btn so the
+          row stays tidy. Disabled (and hidden) when the HTML scrape
+          failed — there's nothing to edit in that case.
+        -->
+        <button type="button" class="copy-btn" id="edit-html"
+                title="Edit page contents HTML"
+                aria-label="Edit page contents HTML">
+          <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
+        </button>
+        <span class="error-icon" id="error-html" title="" role="img"
+              aria-label="HTML capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
       </div>
       <!--
         Default state is disabled + unchecked. capture-page.ts's
@@ -254,13 +378,28 @@
         so the user never sees this row in its disabled-default
         state during the SW round-trip.
       -->
-      <div class="checkbox-row">
+      <div class="checkbox-row" id="row-selection">
         <label><input type="checkbox" id="cap-selection" disabled> Save selectio<u>n</u></label>
         <button type="button" class="copy-btn" id="copy-selection-name"
                 title="Copy selection filename"
                 aria-label="Copy selection filename" disabled>
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
+        <!--
+          Edit the captured selection before save. Opens a modal
+          dialog with a textarea prefilled with the current selection
+          HTML. Shares structure with the Edit HTML button above —
+          capture-page.ts wires both via a shared helper.
+        -->
+        <button type="button" class="copy-btn" id="edit-selection"
+                title="Edit selection HTML"
+                aria-label="Edit selection HTML" disabled>
+          <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
+        </button>
+        <span class="error-icon" id="error-selection" title="" role="img"
+              aria-label="Selection capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
       </div>
     </div>
     <button id="capture">Capture</button>
@@ -299,6 +438,37 @@
       <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
     </div>
   </div>
+
+  <!--
+    Edit-dialog template. Each editable artifact kind (HTML,
+    selection, …) gets a cloned instance appended to <body> by
+    capture-page.ts's `createEditDialog`, which fills in the
+    per-kind `id`s, title text, and aria labels. Keeping the markup
+    here (rather than building nodes by hand in JS) lets CSS
+    selectors like `.edit-dialog textarea` apply uniformly to every
+    instance. New kinds don't need any new markup.
+
+    The per-instance ids follow a `edit-${kind}-${role}` convention
+    (e.g. `edit-html-dialog`, `edit-selection-textarea`) so the e2e
+    tests can locate the right element without the test file
+    having to care which kinds exist.
+  -->
+  <template id="edit-dialog-template">
+    <dialog class="edit-dialog">
+      <h2 class="edit-dialog-title"></h2>
+      <textarea class="edit-dialog-textarea" spellcheck="false"></textarea>
+      <!--
+        Hidden until Save fails; capture-page.ts toggles `hidden`
+        and writes the SW error message into textContent.
+        `role="alert"` lets screen readers announce it on appear.
+      -->
+      <p class="edit-dialog-error dialog-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="edit-dialog-cancel">Cancel</button>
+        <button type="button" class="edit-dialog-save">Save</button>
+      </div>
+    </dialog>
+  </template>
 
   <script src="capture-page.js"></script>
 </body>

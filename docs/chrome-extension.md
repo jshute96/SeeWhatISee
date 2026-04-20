@@ -516,11 +516,12 @@ If the user has any edits *and* is saving the screenshot:
   download; on a cache hit (the page already pre-downloaded at
   this `editVersion`) it's dropped because the on-disk file already
   matches. `recordDetailedCapture` then writes the sidecar with
-  `hasHighlights: true`.
-- The resulting sidecar record gets `highlights: true` so the
-  see-what-i-see skills know to focus on the marked regions.
+  the screenshot artifact carrying `hasHighlights: true`.
+- The see-what-i-see skills read `screenshot.hasHighlights === true`
+  as the signal to focus on the marked regions.
 - If there are no edits, or the screenshot isn't being saved, no
-  override is sent and the record never gets the `highlights` field.
+  override is sent and the record's screenshot object stays bare
+  (just `filename`, no `hasHighlights`).
 
 ### Image fit-to-viewport
 

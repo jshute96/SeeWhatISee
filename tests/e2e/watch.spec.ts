@@ -112,7 +112,7 @@ function fakeRecord(index: number): { json: string; timestamp: string; screensho
   const timestamp = `2026-04-09T12:00:00.${ms}Z`;
   const record = {
     timestamp,
-    screenshot,
+    screenshot: { filename: screenshot },
     url: `http://example.com/page${index}`,
   };
   return { json: JSON.stringify(record), timestamp, screenshot };
@@ -297,7 +297,7 @@ test.describe('watch.sh', () => {
     expect(exitCode).toBe(0);
 
     const parsed = JSON.parse(watch.output().trim());
-    expect(parsed.screenshot).toBe(`${tmpDir}/${fakeRecord(1).screenshot}`);
+    expect(parsed.screenshot.filename).toBe(`${tmpDir}/${fakeRecord(1).screenshot}`);
   });
 
   test('loop mode: emits on 3 captures', async () => {

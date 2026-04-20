@@ -323,27 +323,37 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     grep-friendly history of recent captures. Scripts use
     `tail -1 log.json` to get the latest record. Every record has
     `timestamp` and `url`, plus optional fields:
-    - `screenshot` — bare PNG filename, set when a screenshot was saved.
-    - `highlights` — `true` when the saved PNG has user-drawn red
-      markup (boxes, lines) baked into it. Only present when
-      `screenshot` is also present, and only ever set to `true`
-      (absent otherwise) so the field's presence is itself the
-      signal. The see-what-i-see skills check this and steer their
-      attention to the marked regions.
-    - `contents` — bare HTML filename, set when HTML contents were saved.
-    - `selection` — bare HTML filename
-      (`selection-<timestamp>.html`), set only by the experimental
-      More → Capture selection entry. Saved as a separate file
-      alongside other captures.
+    - `screenshot` — `ScreenshotArtifact` object
+      `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true }`,
+      set when a screenshot was saved.
+      - `hasHighlights` is `true` iff the saved PNG has user-drawn
+        red markup (boxes, lines) baked into it; omitted otherwise so
+        the field's presence is itself the signal. The see-what-i-see
+        skills check this and steer their attention to the marked
+        regions.
+    - `contents` — `Artifact` object
+      `{ "filename": "contents-<timestamp>.html", "isEdited"?: true }`,
+      set when HTML contents were saved.
+    - `selection` — `Artifact` object
+      `{ "filename": "selection-<timestamp>.html", "isEdited"?: true }`,
+      set by either the More → Capture selection shortcut or the
+      details flow when the user kept the Save selection checkbox
+      checked.
+    - `isEdited` (on `contents` / `selection`) — `true` iff the user
+      saved an edit through the corresponding Edit dialog before
+      capture. Omitted on the raw scrape. See
+      [`isEdited` sidecar flag](#isedited-sidecar-flag).
     - `prompt` — user-entered text from "Capture with details…", omitted
       when empty.
 
-    Legacy screenshot captures emit `{timestamp, screenshot, url}`;
-    legacy HTML captures emit `{timestamp, contents, url}`. The
-    detailed-capture path can emit any or all of the optional fields —
-    including neither `screenshot` nor `contents` (URL-only, typically
-    with a `prompt`). The screenshot / contents filenames share the
-    *same* compact timestamp so they have a matching suffix.
+    Screenshot captures emit `{timestamp, screenshot, url}`; HTML
+    captures emit `{timestamp, contents, url}`. The detailed-capture
+    path can emit any or all of the optional artifact fields —
+    including none of `screenshot` / `contents` / `selection`
+    (URL-only, typically with a `prompt`). The
+    `screenshot.filename` / `contents.filename` / `selection.filename`
+    timestamps share the *same* compact local-time suffix so all three
+    sort together for a single capture.
     - The Chrome downloads API can only write whole files, so the authoritative log lives in `chrome.storage.local`; `log.json` is a snapshot rewritten on every capture.
     - Deleting `log.json` on disk is harmless — the next capture recreates it from storage. `watch.sh` is also resilient to the whole `~/Downloads/SeeWhatISee/` directory not existing yet (it `mkdir -p`s on startup and polls for `log.json` to appear), so `/see-what-i-see-watch` can be launched before any capture.
     - To clear history, use the **More → Clear log history** context-menu entry on the toolbar icon (or call `SeeWhatISee.clearCaptureLog()` from the service-worker devtools console). Both wipe the `captureLog` key from `chrome.storage.local` *and* overwrite the on-disk `log.json` with an empty file so downstream consumers see the cleared state immediately. `get-latest.sh` treats an empty `log.json` the same as "no captures yet"; `watch.sh` swallows the clear's mtime bump without emitting a blank line.
@@ -404,6 +414,39 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `chrome.storage.session` keyed by the new tab's id, in a
   `DetailsSession` wrapper.
 
+### Graceful handling of failed HTML / selection scrape
+
+- `captureBothToMemory` catches failures from
+  `chrome.scripting.executeScript` and returns an `InMemoryCapture`
+  with `htmlError` / `selectionError` set instead of throwing.
+- Common trigger: restricted URLs (chrome://, the Web Store) where
+  extensions can't inject scripts. The screenshot itself still
+  succeeds via `chrome.tabs.captureVisibleTab`.
+- Impact on the details flow:
+  - The details page still opens with the screenshot preview.
+  - Save HTML / Save selection are disabled + unchecked, and their
+    Copy and Edit buttons are hidden (the shared `.copy-btn:disabled`
+    rule covers both).
+  - The error icon + tooltip is shown only on the Save HTML row.
+    Selection is scraped in the same `executeScript` call as HTML,
+    so when the call fails the two errors are always twins and a
+    second icon would just repeat the same message — the selection
+    row stays greyed out without the icon. The page still has a
+    separate `#error-selection` element wired to a future SW that
+    might report a selection-only failure, but today's
+    `captureBothToMemory` never emits that combination.
+  - Alt+H / Alt+N are no-ops while the corresponding row is
+    disabled so the hotkeys match what's on screen.
+  - `ensureHtmlDownloaded` / `ensureSelectionDownloaded` throw if
+    the matching `*Error` is set, as a belt-and-suspenders guard
+    so a stale page message can't materialize an empty file.
+- Impact on the More-menu shortcuts:
+  - `capture-url` (URL-only) deliberately ignores `htmlError` —
+    it doesn't need HTML anyway.
+  - `capture-both` (screenshot + HTML) re-throws `htmlError` so
+    the toolbar icon / tooltip surfaces the reason via the
+    standard error-reporting channel.
+
 ### What the page shows
 
 - **Captured URL** — read-only single-line monospace input.
@@ -416,8 +459,14 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     time. When a selection *was* captured, the checkbox defaults to
     checked — a user who selected text before opening the details
     page almost certainly wants that selection in the record.
-  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML,
-    `Alt+N` toggles selection (no-op when greyed out).
+  - Save HTML / Save selection can also be greyed out because the
+    scrape itself failed (see
+    [Graceful handling of failed HTML / selection scrape](#graceful-handling-of-failed-html--selection-scrape)).
+    In that case the row also shows a hoverable red error icon
+    whose tooltip explains the reason.
+  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML
+    (no-op when greyed out), `Alt+N` toggles selection (no-op
+    when greyed out).
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).
@@ -458,6 +507,62 @@ active crop region.
 - Every button carries a `title` tooltip explaining what it does,
   shown on hover even while disabled.
 
+### Edit dialogs (template-driven)
+
+- Pencil icons sit next to each editable artifact's Copy button in
+  the capture page — currently HTML and selection; more kinds can be
+  added without new dialog markup.
+- A single `<template id="edit-dialog-template">` in `capture.html`
+  supplies the modal structure. `capture-page.ts::createEditDialog`
+  clones it per kind and stamps `edit-${kind}-${role}` ids onto the
+  inner elements so e2e tests can target a specific kind without
+  knowing the full catalog.
+- `EDIT_KINDS` in `capture-page.ts` is the catalog — one entry per
+  editable kind with its pencil button, title, and optional
+  `onSaved` hook (e.g. HTML's size-readout refresh). Adding a kind
+  is one entry + one markup button.
+- Per-kind behavior:
+  - Open: seeds the textarea from the page's `captured[kind]`
+    mirror, clears any prior error, focuses the textarea at the top.
+  - Save: no-op when the body is unchanged; otherwise posts
+    `{ action: 'updateArtifact', kind, value }` to the SW and runs
+    the per-kind `onSaved` hook on success. Errors surface inline
+    in a `role="alert"` region.
+  - Cancel / Escape: closes without touching anything.
+- SW-side `updateArtifact` handler:
+  - Dispatches on `msg.kind` via the `EDITABLE_ARTIFACTS` spec
+    table — each entry declares how to commit the new body to
+    `DetailsSession.capture` and which `session.downloads` entry to
+    drop. New kinds add one entry.
+  - Writes the body, sets the sticky `session.{html,selection}Edited`
+    flag, and drops the matching `session.downloads.{html,selection}`
+    entry so the next `ensureHtmlDownloaded` /
+    `ensureSelectionDownloaded` re-materializes the file under the
+    same pinned filename (via `conflictAction: 'overwrite'`).
+  - The eventual Save — whether Capture clicks or a later Copy —
+    therefore writes the edited content.
+- Only the HTML body and selection are editable; the screenshot has
+  no text-edit UI (the highlight overlay covers its annotation use
+  case).
+
+### `isEdited` sidecar flag
+
+- Emitted inside `contents` / `selection` artifact objects in
+  `log.json` whenever the user saved an edit through the
+  corresponding dialog and then kept the artifact on the details
+  page — i.e. the artifact carries `{ "filename": "…", "isEdited":
+  true }` instead of the bare-filename object.
+- Sticky per session: once the user has saved an *actual change*
+  through the dialog (an unchanged-textarea Save is a no-op and
+  doesn't flip the flag), later saves on the same details tab carry
+  `isEdited: true` regardless of whether they edit again — the
+  on-disk body *is* the edit.
+- Omitted on unedited records, matching the `screenshot.hasHighlights`
+  policy where presence is itself the signal.
+- Intended to let downstream consumers (e.g. the see-what-i-see
+  skills) distinguish "this is the raw page scrape" from "the user
+  reshaped this before handing it off."
+
 ### Copy-filename buttons
 
 - A small icon button sits next to each Save checkbox.
@@ -479,11 +584,13 @@ active crop region.
     counter the page bumps on every highlight draw / undo / clear.
     On mismatch the SW re-downloads with the page's freshly
     baked-in PNG (sent as `screenshotOverride` in the message).
-  - HTML cache is unconditional: there's no editing UI for the
-    body, so once written it stays valid for the session.
-  - Selection cache follows the same pattern as HTML — the
-    selection is frozen at capture time (no editing UI), so once
-    written the path is valid for the life of the details tab.
+  - HTML cache is unconditional until the user edits the body via
+    the Edit HTML dialog — `updateArtifact { kind: 'html' }` clears
+    the cache so the next Copy / Capture writes the edited content.
+  - Selection cache follows the same pattern as HTML: unconditional
+    until the user edits the body via the Edit selection dialog,
+    which fires `updateArtifact { kind: 'selection' }` to clear the
+    cache.
 - Filenames are pinned at capture time in `captureBothToMemory`
   (`screenshotFilename` / `contentsFilename` / optional
   `selectionFilename` on `InMemoryCapture`) and reused by every
@@ -537,10 +644,11 @@ active crop region.
   on-disk file from the Copy step is what the log entry references.
   Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
-  `selection`, `prompt`, and `highlights: true`, on top of the
-  always-present `timestamp` and `url`. It's valid to save with no
-  checkboxes ticked — the record then carries just the URL (and
-  any prompt).
+  `selection`, and `prompt`, on top of the always-present
+  `timestamp` and `url`. Each artifact object can carry a per-kind
+  flag: `screenshot.hasHighlights`, `contents.isEdited`,
+  `selection.isEdited`. It's valid to save with no checkboxes
+  ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener
   tab and then removes the details tab — the user lands back on
   the page they captured from. Chrome's natural close-time pick is
