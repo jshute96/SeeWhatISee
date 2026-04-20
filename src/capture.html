@@ -409,10 +409,25 @@
     </div>
   </div>
 
+  <!--
+    Highlight toolbar. Drag on the image draws red rectangles; right-
+    click-drag draws red lines. Redact converts the most recent
+    unconverted red rectangle into an opaque black box (irreversibly
+    hiding whatever was underneath in the saved PNG). Crop converts
+    the most recent unconverted red rectangle at the top of the stack
+    into a crop region (dims everything outside and shrinks the saved
+    PNG to just that region). Both conversions are undoable.
+  -->
   <div class="highlight-bar">
-    <span><b>Add highlights below.</b> Drag to draw boxes, right-click-drag to draw lines.</span>
-    <button id="undo" disabled>Undo</button>
-    <button id="clear" disabled>Clear</button>
+    <span><b>Add highlights below.</b> Drag to draw boxes, right-click-drag to draw lines. Drag edges to crop.</span>
+    <button id="redact" disabled
+            title="Turn the last drawn box into a black redaction.">Redact</button>
+    <button id="crop" disabled
+            title="Crop the screenshot to the last drawn box.">Crop</button>
+    <button id="undo" disabled
+            title="Undo the most recent edit.">Undo</button>
+    <button id="clear" disabled
+            title="Clear all edits.">Clear</button>
   </div>
 
   <hr>

@@ -84,23 +84,38 @@ export interface Artifact {
 }
 
 /**
- * Screenshot record in `log.json`. Same filename-plus-optional-flag
- * shape as `Artifact`, but the flag means "user drew highlights on
- * this PNG" rather than "user edited this body" — distinct types
- * keep the semantics honest and let new kind-specific flags land
- * without a loose `{ [k: string]: unknown }` fallback.
+ * Screenshot record in `log.json`. Same filename-plus-optional-flags
+ * shape as `Artifact`, but the flags describe different "things the
+ * user did to this PNG" rather than a single "edited" bit —
+ * distinct types let new kind-specific flags land without a loose
+ * `{ [k: string]: unknown }` fallback.
+ *
+ * The three edit flags are independent (any combination can appear)
+ * and only the ones that apply are emitted — presence is the signal.
  */
 export interface ScreenshotArtifact {
   /** Bare basename of the PNG on disk (no directory segment). */
   filename: string;
   /**
-   * `true` iff the saved PNG bytes carry user-drawn red highlights
-   * (boxes / lines) baked in. Omitted on unannotated screenshots,
-   * so presence is itself the signal — downstream consumers treat
-   * `hasHighlights: true` as "the user marked specific regions on
-   * this image; focus your description on those."
+   * `true` iff the saved PNG bytes carry un-converted red highlights
+   * (boxes / lines) baked in. Rectangles that the user converted to
+   * redactions or crops do *not* count — those get their own flags
+   * below. Downstream consumers treat `hasHighlights: true` as "the
+   * user marked specific regions on this image; focus your
+   * description on those."
    */
   hasHighlights?: true;
+  /**
+   * `true` iff the saved PNG bytes carry at least one opaque black
+   * redaction rectangle baked in. Downstream consumers should treat
+   * these regions as deliberately hidden by the user.
+   */
+  hasRedactions?: true;
+  /**
+   * `true` iff the saved PNG was cropped to a user-selected region
+   * (the saved bytes cover only that region, not the full capture).
+   */
+  isCropped?: true;
 }
 
 /**
@@ -120,8 +135,8 @@ export interface CaptureRecord {
    * Captured screenshot artifact. Set on the immediate / delayed
    * screenshot paths, and on the "Capture with details…" path when
    * the user keeps the screenshot. Carries the bare PNG filename
-   * plus an optional `hasHighlights: true` flag (see
-   * `ScreenshotArtifact`).
+   * plus optional `hasHighlights` / `hasRedactions` / `isCropped`
+   * flags (see `ScreenshotArtifact`).
    *
    * The embedded compact timestamp in `filename` is in *local* time
    * (chosen so filenames sort the way the user expects when browsing
@@ -552,14 +567,27 @@ export interface SaveDetailedOptions {
    */
   prompt?: string;
   /**
-   * True when `capture.screenshotDataUrl` already has user-drawn red
-   * highlights baked into the PNG bytes. Causes the saved record's
-   * `screenshot` artifact object to carry `hasHighlights: true`.
-   * Ignored unless `includeScreenshot` is also true — there's no
-   * point flagging highlights on a record that didn't save the
-   * image they're on.
+   * True when `capture.screenshotDataUrl` has at least one
+   * un-converted red rectangle / line baked into the PNG bytes.
+   * Causes the saved record's `screenshot` artifact object to carry
+   * `hasHighlights: true`. Ignored unless `includeScreenshot` is
+   * also true — there's no point flagging highlights on a record
+   * that didn't save the image they're on.
    */
   hasHighlights?: boolean;
+  /**
+   * True when the baked PNG contains at least one redaction
+   * rectangle. Causes the saved record's `screenshot` artifact to
+   * carry `hasRedactions: true`. Same `includeScreenshot` gating as
+   * `hasHighlights`.
+   */
+  hasRedactions?: boolean;
+  /**
+   * True when the baked PNG was cropped to a user-selected region.
+   * Causes the saved record's `screenshot` artifact to carry
+   * `isCropped: true`. Same `includeScreenshot` gating as above.
+   */
+  isCropped?: boolean;
   /**
    * True when the user replaced the captured HTML via the Edit HTML
    * dialog before saving. Causes the record's `contents` artifact
@@ -710,13 +738,23 @@ function artifact(filename: string, edited?: boolean): Artifact {
 /**
  * Build a `ScreenshotArtifact` object for inclusion in a
  * `CaptureRecord`. Same wire-format constraint as `artifact()`:
- * `filename` must appear before `hasHighlights` so the shell
+ * `filename` must appear first (before any edit flags) so the shell
  * consumers in `plugin/scripts/_common.sh` and
  * `.gemini/scripts/_common.sh` can anchor their rewrites on
  * `"filename"` being the first key inside the object.
+ *
+ * Flags are only emitted when true, so the object shape stays
+ * minimal on un-edited captures.
  */
-function screenshotArtifact(filename: string, hasHighlights?: boolean): ScreenshotArtifact {
-  return hasHighlights ? { filename, hasHighlights: true } : { filename };
+function screenshotArtifact(
+  filename: string,
+  flags?: { hasHighlights?: boolean; hasRedactions?: boolean; isCropped?: boolean },
+): ScreenshotArtifact {
+  const a: ScreenshotArtifact = { filename };
+  if (flags?.hasHighlights) a.hasHighlights = true;
+  if (flags?.hasRedactions) a.hasRedactions = true;
+  if (flags?.isCropped) a.isCropped = true;
+  return a;
 }
 
 export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
@@ -729,7 +767,11 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     url: opts.capture.url,
   };
   if (opts.includeScreenshot) {
-    record.screenshot = screenshotArtifact(opts.capture.screenshotFilename, opts.hasHighlights);
+    record.screenshot = screenshotArtifact(opts.capture.screenshotFilename, {
+      hasHighlights: opts.hasHighlights,
+      hasRedactions: opts.hasRedactions,
+      isCropped: opts.isCropped,
+    });
   }
   if (opts.includeHtml) {
     record.contents = artifact(opts.capture.contentsFilename, opts.htmlEdited);
@@ -857,9 +899,10 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   // key order keeps log.json diff-stable.
   const ordered: Record<string, unknown> = { timestamp: r.timestamp };
   // `screenshot` / `contents` / `selection` are all artifact objects
-  // (`{ filename, <flag>? }`) — emitted as-is so `JSON.stringify`
-  // handles the nested shape and the optional per-kind flag
-  // (`hasHighlights` / `isEdited`) naturally.
+  // (`{ filename, <flags>? }`) — emitted as-is so `JSON.stringify`
+  // handles the nested shape and the optional per-kind flags
+  // (`hasHighlights` / `hasRedactions` / `isCropped` on screenshots,
+  // `isEdited` on contents/selection) naturally.
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
   if (r.contents !== undefined) ordered.contents = r.contents;
   if (r.selection !== undefined) ordered.selection = r.selection;

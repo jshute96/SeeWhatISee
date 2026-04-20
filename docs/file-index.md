@@ -69,7 +69,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default/More submenus, details-flow, error surface |
 | `src/capture.ts` | Capture functions (`captureVisible`, `savePageContents`, `captureBothToMemory`, `captureSelection`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`/`waitForDownloadComplete`, `recordDetailedCapture`, `clearCaptureLog`) and `log.json` sidecar writing |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay) |
-| `src/capture-page.ts` | Controller script for `capture.html`: data fetch, prompt/textarea behavior, Copy-filename clipboard writes, shared HTML + selection edit dialogs, SVG highlight overlay, canvas bake-in on save, image fit-to-viewport |
+| `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, highlight overlay (rects/lines/Redact/Crop/drag-to-crop), bake-in, fit-to-viewport |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
@@ -96,7 +96,9 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
-| `tests/e2e/capture-with-details.spec.ts` | E2E for the details flow and `handleActionClick` dispatch — save combos, highlights, tab positioning, tooltip sync |
+| `tests/e2e/capture-with-details.spec.ts` | E2E for the details flow and `handleActionClick` dispatch — save combos, tab positioning, copy/edit caching, scrape-failure UX |
+| `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing overlay — boxes/lines/Redact/Crop/Undo/Clear, drag-to-crop, edit-flag semantics on log.json |
+| `tests/e2e/details-helpers.ts` | Shared helpers for the two details specs — flow open, capture submit, overlay drag, on-disk record lookup |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureBoth` (PNG + HTML + record) |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |

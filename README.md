@@ -57,6 +57,10 @@ On this page, you can:
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
+  - **Redact** turns the most recent red box into an opaque black box that hides whatever was underneath.
+  - **Cropping** the saved PNG to include only a selected region.
+    - **Crop button** crops to the most recent red box.
+    - **Drag borders** of the image or crop region to create or resize the crop.
   - **Undo** or **Clear** to roll back edits.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
@@ -181,6 +185,8 @@ present when that action was included.
 - `screenshot` — present when a PNG screenshot was saved.
     - `filename` — filename of the PNG.
     - `hasHighlights` — `true` if the user added highlights.
+    - `hasRedactions` — `true` if the user blacked out at least one region.
+    - `isCropped` — `true` if the image was cropped to a user-selected region.
 - `contents` — present when the full-page HTML was saved.
     - `filename` — filename of the HTML snapshot.
     - `isEdited` — `true` if the user edited the HTML content before saving.

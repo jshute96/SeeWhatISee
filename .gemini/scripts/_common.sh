@@ -41,11 +41,10 @@ mtime_log() {
 emit_record() {
   local line="$1"
   local contents screenshot selection
-  # `screenshot`, `contents`, and `selection` are all
-  # `{ "filename": "...", <flag>: true? }` artifact objects — the
-  # grep reaches into the nested `filename` key to pick out the
-  # bare basename, and the sed below rewrites that same key to an
-  # absolute path under $TARGET_DIR.
+  # `screenshot`, `contents`, and `selection` are all artifact
+  # objects with `filename` as a nested field.
+  # The grep reaches into the nested `filename` key to pick out the basename,
+  # and the sed below rewrites that to an absolute path under $TARGET_DIR.
   contents=$(echo "$line" | grep -oP '"contents":\s*\{"filename":\s*"\K[^"]+' || true)
   screenshot=$(echo "$line" | grep -oP '"screenshot":\s*\{"filename":\s*"\K[^"]+' || true)
   selection=$(echo "$line" | grep -oP '"selection":\s*\{"filename":\s*"\K[^"]+' || true)

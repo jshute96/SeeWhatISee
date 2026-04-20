@@ -324,13 +324,24 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `tail -1 log.json` to get the latest record. Every record has
     `timestamp` and `url`, plus optional fields:
     - `screenshot` — `ScreenshotArtifact` object
-      `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true }`,
+      `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true, "hasRedactions"?: true, "isCropped"?: true }`,
       set when a screenshot was saved.
-      - `hasHighlights` is `true` iff the saved PNG has user-drawn
-        red markup (boxes, lines) baked into it; omitted otherwise so
-        the field's presence is itself the signal. The see-what-i-see
-        skills check this and steer their attention to the marked
-        regions.
+      - `hasHighlights` is `true` iff the saved PNG has un-converted
+        red markup (boxes, lines) baked into it. Red rectangles the
+        user converted to redactions or crops don't count — those
+        are reported via `hasRedactions` / `isCropped` instead.
+      - `hasRedactions` is `true` iff the saved PNG has at least one
+        opaque black redaction rectangle baked in.
+      - `isCropped` is `true` iff the saved PNG was cropped to a
+        user-selected region (the bytes on disk cover only that
+        region, not the full capture). A crop that was dragged
+        back out to cover the entire image collapses to "no
+        crop" — the flag is omitted and the saved PNG matches
+        the original capture.
+      - All three flags are independent (any combination can appear)
+        and are omitted when false, so presence is itself the
+        signal. The see-what-i-see skills check `hasHighlights` and
+        steer their attention to the marked regions.
     - `contents` — `Artifact` object
       `{ "filename": "contents-<timestamp>.html", "isEdited"?: true }`,
       set when HTML contents were saved.
@@ -476,14 +487,36 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 ### Image annotation
 
 The screenshot preview is wrapped in an SVG overlay where the user
-can draw red markup on the regions they want the agent to focus on.
+can draw red markup on the regions they want the agent to focus on,
+and optionally convert drawn boxes into opaque redactions or the
+active crop region.
 
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser context
   menu is suppressed on the overlay.
-- **Undo / Clear** — single edit stack; buttons disabled when empty.
+- **Redact button** — converts the most recent unconverted red
+  rectangle in the stack into an opaque black box. Hides whatever
+  was underneath in the saved PNG. Disabled when no unconverted red
+  rectangle exists. Each click converts one box, so repeated clicks
+  walk backward through the stack.
+- **Crop button** — converts the top-of-stack red rectangle into
+  the active crop region; everything outside dims in the preview
+  and the saved PNG is reduced to just that region. Disabled
+  unless the top of the stack is an unconverted red rectangle, so
+  a crop always applies to the box the user just drew.
+- **Drag-to-crop** — the four edges and four corners of the image
+  (or the active crop, when one exists) are draggable handles.
+  Hovering one flips the cursor to the matching resize cursor; a
+  drag inward commits a new 'crop' edit on the stack. Each drag is
+  its own undoable step, so resizes nest naturally — Undo peels
+  back one resize at a time rather than collapsing them.
+- **Undo / Clear** — single edit-history stack; disabled when
+  empty. Undo reverses both draws and conversions — popping a
+  conversion turns the box back into a red rectangle.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
+- Every button carries a `title` tooltip explaining what it does,
+  shown on hover even while disabled.
 
 ### Edit dialogs (template-driven)
 
@@ -597,15 +630,35 @@ can draw red markup on the regions they want the agent to focus on.
 
 ### Save and close
 
-- On Capture click, if there are highlights *and* the screenshot is
+- On Capture click, if there are any edits *and* the screenshot is
   being saved, the page bakes the SVG overlay onto a `<canvas>` at
   the screenshot's natural resolution and produces a fresh PNG data
-  URL. Stroke widths scale by the display→natural ratio so they look
-  the same in the saved file as during editing.
+  URL.
+  - Red rectangles and lines stroke at 3px, scaled by the
+    display→natural ratio so they look the same in the saved
+    file as during editing.
+  - Redactions paint as solid black fills.
+  - If an active crop exists, the canvas is sized to the crop
+    region (not the full image) and every edit's coordinates are
+    translated into the cropped frame before being drawn — so the
+    saved PNG is the cropped region with the remaining markup and
+    redactions on top.
 - The page sends a `saveDetails` runtime message back to the
-  background with the selected save options, the prompt, a
-  `highlights: boolean` flag, the current `editVersion`, and the
+  background with the selected save options, the prompt, three
+  per-kind edit flags (`highlights`, `hasRedactions`, `isCropped`
+  — see below), the current `editVersion`, and the
   `screenshotOverride` data URL when present.
+  - `highlights` is `true` iff at least one un-converted red
+    rectangle or line survives on the preview. Rectangles the
+    user converted to redactions or crops flip their own flag
+    (`hasRedactions` / `isCropped`) instead, not `highlights`.
+  - `hasRedactions` is `true` iff any redaction rectangle is
+    baked into the PNG.
+  - `isCropped` is `true` iff a crop region is active and the
+    saved PNG covers only that region.
+  - All three are only meaningful when the screenshot is
+    actually being saved; they're forced to `false` when the
+    Save screenshot checkbox is unticked.
 - The background runs each requested artifact through the same
   `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
   `ensureSelectionDownloaded` helpers that powered any earlier
@@ -615,8 +668,9 @@ can draw red markup on the regions they want the agent to focus on.
   Then `recordDetailedCapture` writes the sidecar. The saved
   sidecar record can include any of `screenshot`, `contents`,
   `selection`, and `prompt`, on top of the always-present
-  `timestamp` and `url`. Each artifact object can carry a per-kind
-  flag: `screenshot.hasHighlights`, `contents.isEdited`,
+  `timestamp` and `url`. Each artifact object can carry per-kind
+  flags: `screenshot.hasHighlights`, `screenshot.hasRedactions`,
+  `screenshot.isCropped`, `contents.isEdited`,
   `selection.isEdited`. It's valid to save with no checkboxes
   ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener
