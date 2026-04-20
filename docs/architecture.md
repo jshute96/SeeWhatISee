@@ -424,10 +424,17 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   succeeds via `chrome.tabs.captureVisibleTab`.
 - Impact on the details flow:
   - The details page still opens with the screenshot preview.
-  - Save HTML / Save selection are disabled + unchecked, their
+  - Save HTML / Save selection are disabled + unchecked, and their
     Copy and Edit buttons are hidden (the shared `.copy-btn:disabled`
-    rule covers both), and each row shows a hoverable error icon
-    carrying the SW-reported reason.
+    rule covers both).
+  - The error icon + tooltip is shown only on the Save HTML row.
+    Selection is scraped in the same `executeScript` call as HTML,
+    so when the call fails the two errors are always twins and a
+    second icon would just repeat the same message — the selection
+    row stays greyed out without the icon. The page still has a
+    separate `#error-selection` element wired to a future SW that
+    might report a selection-only failure, but today's
+    `captureBothToMemory` never emits that combination.
   - Alt+H / Alt+N are no-ops while the corresponding row is
     disabled so the hotkeys match what's on screen.
   - `ensureHtmlDownloaded` / `ensureSelectionDownloaded` throw if

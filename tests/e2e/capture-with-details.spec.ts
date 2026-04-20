@@ -1551,17 +1551,17 @@ test('details: html scrape failure still opens the page with HTML/selection disa
     new RegExp(`Unable to capture HTML contents.*${reason}`),
   );
 
-  // Selection row gets the same treatment. Edit selection was already
-  // disabled by default; the error icon + tooltip is what's new.
+  // Selection row stays in its default greyed-out state — the
+  // failure was the same `executeScript` call, so the HTML row's
+  // error already explains it; a duplicate selection icon would
+  // just be noise. We do NOT add `has-error` and do NOT set the
+  // selection-error tooltip in this case.
   const selectionBox = capturePage.locator('#cap-selection');
   await expect(selectionBox).toBeDisabled();
   await expect(selectionBox).not.toBeChecked();
   await expect(capturePage.locator('#edit-selection')).toBeDisabled();
-  await expect(capturePage.locator('#row-selection')).toHaveClass(/has-error/);
-  await expect(capturePage.locator('#error-selection')).toHaveAttribute(
-    'title',
-    new RegExp(`Unable to capture selection.*${reason}`),
-  );
+  await expect(capturePage.locator('#row-selection')).not.toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-selection')).toHaveAttribute('title', '');
 
   // Screenshot + prompt + highlights remain functional: drawing a
   // rectangle and saving the screenshot + prompt should still produce

@@ -381,31 +381,39 @@ async function loadData(): Promise<void> {
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
     // Apply per-artifact error states first so the HTML size readout
-    // below reflects the right value (— + error message rather than
+    // below reflects the right value (a dash placeholder rather than
     // the empty-string byte count of a failed scrape).
     if (response.htmlError) {
       // HTML couldn't be scraped (restricted URL, blocked injection,
       // etc.). Disable + uncheck Save HTML, hide its Copy / Edit
       // buttons, and flag the row with a hoverable error icon so the
       // user understands why it's greyed out — while still letting
-      // them use the rest of the capture flow.
+      // them use the rest of the capture flow. The reason itself
+      // lives on the row's error-icon tooltip; the size field just
+      // gets a dash so the layout stays stable without restating the
+      // same message twice.
       htmlBox.checked = false;
       htmlBox.disabled = true;
       copyHtmlBtn.disabled = true;
       editHtmlBtn.disabled = true;
       htmlRow.classList.add('has-error');
       htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
-      htmlSizeEl.textContent = `— (${response.htmlError})`;
+      htmlSizeEl.textContent = '—';
     } else {
       captured.html = response.html;
       // True UTF-8 byte count of the captured HTML, not the JS string
       // length (which counts UTF-16 code units).
       htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
     }
-    if (response.selectionError) {
-      // Same treatment for the selection row. The checkbox + Edit
-      // button are already disabled + unchecked by default, so we
-      // only need to flag the row with the error icon + tooltip.
+    if (response.selectionError && !response.htmlError) {
+      // Selection couldn't be scraped *independently* of HTML. In
+      // practice this never fires today — `executeScript` reads both
+      // in one call so the two errors are always twins — but the UI
+      // is ready for a future SW that reports them separately. When
+      // the two fire together, we suppress this icon: the HTML row's
+      // icon already explains the situation and a duplicate would
+      // just be visual noise. The selection row stays in its default
+      // disabled state regardless.
       selectionRow.classList.add('has-error');
       selectionErrorIcon.title =
         `Unable to capture selection: ${response.selectionError}`;

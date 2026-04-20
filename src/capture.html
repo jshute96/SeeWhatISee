@@ -105,16 +105,23 @@
     height: 14px;
   }
   /*
+   * Grey out the label whenever its checkbox is disabled — covers
+   * both the no-selection default and the failed-scrape error case
+   * so they look identical (browser-default disabled checkbox styling
+   * already takes care of the box itself; this is the matching label
+   * fade). Uses `:has()`, fine for our Chrome-only target.
+   */
+  .checkbox-row:has(input:disabled) label {
+    color: #888;
+  }
+  /*
    * Row-level error indicator. `capture-page.ts` toggles `.has-error`
    * on `.checkbox-row` when the SW reports the corresponding artifact
    * couldn't be captured (restricted URL, blocked scrape, etc.). The
-   * row's label text fades, the error icon becomes visible, and the
-   * icon's `title` carries the SW-reported reason so hovering it
-   * explains why the row is disabled.
+   * error icon becomes visible and its `title` carries the SW-reported
+   * reason so hovering it explains why the row is disabled. The label
+   * fade comes from the disabled-checkbox rule above.
    */
-  .checkbox-row.has-error label {
-    color: #888;
-  }
   .error-icon {
     display: none;
     align-items: center;
