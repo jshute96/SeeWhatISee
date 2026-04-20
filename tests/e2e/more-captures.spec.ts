@@ -100,7 +100,6 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(record.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
@@ -151,6 +150,122 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
   const screenshotStem = record.screenshot!.filename.replace(/^screenshot-|\.png$/g, '');
   const contentsStem = record.contents!.filename.replace(/^contents-|\.html$/g, '');
   expect(screenshotStem).toBe(contentsStem);
+
+  await page.close();
+});
+
+// ─── HTML scrape failure (restricted URLs etc.) ───────────────────
+//
+// The two More-submenu shortcuts deliberately diverge when
+// `captureBothToMemory` returns an `htmlError`:
+//   - `captureUrlOnly` ignores it (URL-only records never need HTML).
+//   - `captureBoth` re-throws so `runWithErrorReporting` can swap in
+//     the toolbar error icon + tooltip — the shortcut requires HTML
+//     by definition.
+// We simulate the failure by stubbing `chrome.scripting.executeScript`
+// in the SW, same trick used in capture-with-details.spec.ts.
+
+async function withFailedScrape<T>(
+  sw: Worker,
+  errorMessage: string,
+  body: () => Promise<T>,
+): Promise<T> {
+  await sw.evaluate((msg) => {
+    interface ScrapeSpy {
+      __seeScrapeOrig?: typeof chrome.scripting.executeScript;
+    }
+    const g = self as unknown as ScrapeSpy;
+    if (!g.__seeScrapeOrig) {
+      g.__seeScrapeOrig = chrome.scripting.executeScript.bind(chrome.scripting);
+    }
+    (chrome.scripting as { executeScript: typeof chrome.scripting.executeScript }).executeScript =
+      (async () => {
+        throw new Error(msg);
+      }) as typeof chrome.scripting.executeScript;
+  }, errorMessage);
+
+  try {
+    return await body();
+  } finally {
+    // Restore executeScript so later tests in this worker see normal
+    // scraping again.
+    await sw.evaluate(() => {
+      interface ScrapeSpy {
+        __seeScrapeOrig?: typeof chrome.scripting.executeScript;
+      }
+      const g = self as unknown as ScrapeSpy;
+      if (g.__seeScrapeOrig) {
+        (chrome.scripting as { executeScript: typeof chrome.scripting.executeScript }).executeScript =
+          g.__seeScrapeOrig;
+      }
+    });
+  }
+}
+
+test('captureUrlOnly: htmlError is ignored — URL-only record still lands', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  await withFailedScrape(sw, 'Cannot access contents of the page', () =>
+    runWithSpy(sw, 'captureUrlOnly'),
+  );
+
+  // URL-only record still written, identical to the no-failure case.
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot).toBeUndefined();
+  expect(record.contents).toBeUndefined();
+  expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  expect(record.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+  // No PNG or HTML on disk — only log.json.
+  const names = await sw.evaluate(() => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
+  });
+  expect(names.every((n) => n.endsWith('log.json'))).toBe(true);
+
+  await page.close();
+});
+
+test('captureBoth: htmlError is re-thrown so the toolbar error channel surfaces it', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/green.html`);
+  await page.bringToFront();
+
+  const reason = 'Cannot access contents of the page';
+  const sw = await getServiceWorker();
+  const errorMessage = await withFailedScrape(sw, reason, async () => {
+    return await sw.evaluate(async () => {
+      try {
+        await (
+          self as unknown as {
+            SeeWhatISee: { captureBoth: () => Promise<void> };
+          }
+        ).SeeWhatISee.captureBoth();
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    });
+  });
+
+  expect(errorMessage).toBe(reason);
 
   await page.close();
 });

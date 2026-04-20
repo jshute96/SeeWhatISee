@@ -105,6 +105,40 @@
     height: 14px;
   }
   /*
+   * Grey out the label whenever its checkbox is disabled — covers
+   * both the no-selection default and the failed-scrape error case
+   * so they look identical (browser-default disabled checkbox styling
+   * already takes care of the box itself; this is the matching label
+   * fade). Uses `:has()`, fine for our Chrome-only target.
+   */
+  .checkbox-row:has(input:disabled) label {
+    color: #888;
+  }
+  /*
+   * Row-level error indicator. `capture-page.ts` toggles `.has-error`
+   * on `.checkbox-row` when the SW reports the corresponding artifact
+   * couldn't be captured (restricted URL, blocked scrape, etc.). The
+   * error icon becomes visible and its `title` carries the SW-reported
+   * reason so hovering it explains why the row is disabled. The label
+   * fade comes from the disabled-checkbox rule above.
+   */
+  .error-icon {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #c0392b;
+    cursor: help;
+  }
+  .checkbox-row.has-error .error-icon {
+    display: inline-flex;
+  }
+  .error-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+  /*
    * The HTML edit dialog reuses a modal <dialog> element. We hide it
    * in CSS rather than via an attribute so toggling via JS doesn't
    * need to fight the native display. The textarea is full-width with
@@ -272,6 +306,12 @@
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
+      <!-- Error glyph: filled circle with a white exclamation mark. -->
+      <symbol id="error-icon" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="currentColor"></circle>
+        <rect x="11" y="6" width="2" height="8" fill="#fff"></rect>
+        <rect x="11" y="16" width="2" height="2" fill="#fff"></rect>
+      </symbol>
       <!-- Pencil glyph — edit action on the HTML row. -->
       <symbol id="edit-icon" viewBox="0 0 24 24">
         <path d="M4 20h4L19 9l-4-4L4 16v4z"
@@ -306,7 +346,7 @@
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
       </div>
-      <div class="checkbox-row">
+      <div class="checkbox-row" id="row-html">
         <label><input type="checkbox" id="cap-html"> Save <u>H</u>TML</label>
         <button type="button" class="copy-btn" id="copy-html-name"
                 title="Copy HTML filename"
@@ -317,13 +357,18 @@
           Edit the captured HTML before save. Opens a modal dialog
           with a textarea prefilled with the current HTML. Follows the
           same disabled-hides-the-button convention as copy-btn so the
-          row stays tidy.
+          row stays tidy. Disabled (and hidden) when the HTML scrape
+          failed — there's nothing to edit in that case.
         -->
         <button type="button" class="copy-btn" id="edit-html"
                 title="Edit page contents HTML"
                 aria-label="Edit page contents HTML">
           <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
         </button>
+        <span class="error-icon" id="error-html" title="" role="img"
+              aria-label="HTML capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
       </div>
       <!--
         Default state is disabled + unchecked. capture-page.ts's
@@ -333,7 +378,7 @@
         so the user never sees this row in its disabled-default
         state during the SW round-trip.
       -->
-      <div class="checkbox-row">
+      <div class="checkbox-row" id="row-selection">
         <label><input type="checkbox" id="cap-selection" disabled> Save selectio<u>n</u></label>
         <button type="button" class="copy-btn" id="copy-selection-name"
                 title="Copy selection filename"
@@ -351,6 +396,10 @@
                 aria-label="Edit selection HTML" disabled>
           <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
         </button>
+        <span class="error-icon" id="error-selection" title="" role="img"
+              aria-label="Selection capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
       </div>
     </div>
     <button id="capture">Capture</button>

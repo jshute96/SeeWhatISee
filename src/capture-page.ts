@@ -33,6 +33,20 @@ interface DetailsData {
    * seed value for the Edit selection dialog's textarea.
    */
   selection?: string;
+  /**
+   * Reason HTML couldn't be captured (e.g. restricted URL). When
+   * set, we grey out the Save HTML row + disable its Copy and Edit
+   * buttons and show a hoverable error icon explaining why. The
+   * details flow still opens so the user can capture just a URL /
+   * screenshot / prompt / highlights.
+   */
+  htmlError?: string;
+  /**
+   * Reason the page selection couldn't be captured. Same handling
+   * as `htmlError` but for the Save selection row. Fires alongside
+   * `htmlError` when the whole `executeScript` scrape failed.
+   */
+  selectionError?: string;
 }
 
 /**
@@ -42,8 +56,14 @@ interface DetailsData {
  * cached on-disk PNG still represents the user's current state or
  * needs to be re-downloaded with the new highlights baked in.
  *
- * HTML never edits, so it doesn't need an equivalent counter — the
- * SW caches the HTML download unconditionally for the session.
+ * HTML and selection are also editable (via the Edit dialogs), but
+ * they don't need a parallel counter: the SW invalidates their
+ * download cache by dropping the entry on `updateArtifact`, and the
+ * page never speculatively materializes them — only Copy / Capture
+ * trigger a download, and that download path always reads the SW's
+ * authoritative body. The screenshot is the only artifact whose
+ * "current state" lives entirely on the page (in the SVG overlay)
+ * and so needs a version handshake to coordinate cache validity.
  */
 let editVersion = 0;
 
@@ -58,6 +78,10 @@ const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
+const htmlRow = document.getElementById('row-html') as HTMLDivElement;
+const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
+const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
+const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
 const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
 // Local mirrors of the SW's captured bodies, keyed by artifact
@@ -114,12 +138,16 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
   } else if (key === 'h') {
+    // Alt+H toggles Save HTML. No-op when the checkbox is disabled
+    // (HTML couldn't be captured) so the hotkey matches what's on
+    // screen.
+    if (htmlBox.disabled) return;
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
   } else if (key === 'n') {
     // Alt+N toggles Save selection. No-op when the checkbox is
-    // disabled (no selection was captured) so the hotkey matches
-    // what's on screen.
+    // disabled (no selection was captured, or scrape failed) so the
+    // hotkey matches what's on screen.
     if (selectionBox.disabled) return;
     e.preventDefault();
     selectionBox.checked = !selectionBox.checked;
@@ -352,16 +380,49 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
-    captured.html = response.html;
-    // True UTF-8 byte count of the captured HTML, not the JS string
-    // length (which counts UTF-16 code units).
-    htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
-    // Enable + default-check the Save selection controls iff the SW
-    // saw a non-empty selection at capture time. A user who bothered
-    // to select text probably wants it in the record. The edit
-    // button gates on the same condition so the user can't open an
-    // empty-body dialog when there was no selection to begin with.
-    if (response.selection) {
+    // Apply per-artifact error states first so the HTML size readout
+    // below reflects the right value (a dash placeholder rather than
+    // the empty-string byte count of a failed scrape).
+    if (response.htmlError) {
+      // HTML couldn't be scraped (restricted URL, blocked injection,
+      // etc.). Disable + uncheck Save HTML, hide its Copy / Edit
+      // buttons, and flag the row with a hoverable error icon so the
+      // user understands why it's greyed out — while still letting
+      // them use the rest of the capture flow. The reason itself
+      // lives on the row's error-icon tooltip; the size field just
+      // gets a dash so the layout stays stable without restating the
+      // same message twice.
+      htmlBox.checked = false;
+      htmlBox.disabled = true;
+      copyHtmlBtn.disabled = true;
+      editHtmlBtn.disabled = true;
+      htmlRow.classList.add('has-error');
+      htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
+      htmlSizeEl.textContent = '—';
+    } else {
+      captured.html = response.html;
+      // True UTF-8 byte count of the captured HTML, not the JS string
+      // length (which counts UTF-16 code units).
+      htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
+    }
+    if (response.selectionError && !response.htmlError) {
+      // Selection couldn't be scraped *independently* of HTML. In
+      // practice this never fires today — `executeScript` reads both
+      // in one call so the two errors are always twins — but the UI
+      // is ready for a future SW that reports them separately. When
+      // the two fire together, we suppress this icon: the HTML row's
+      // icon already explains the situation and a duplicate would
+      // just be visual noise. The selection row stays in its default
+      // disabled state regardless.
+      selectionRow.classList.add('has-error');
+      selectionErrorIcon.title =
+        `Unable to capture selection: ${response.selectionError}`;
+    } else if (response.selection) {
+      // Enable + default-check the Save selection controls iff the SW
+      // saw a non-empty selection at capture time. A user who bothered
+      // to select text probably wants it in the record. The edit
+      // button gates on the same condition so the user can't open an
+      // empty-body dialog when there was no selection to begin with.
       captured.selection = response.selection;
       selectionBox.checked = true;
       selectionBox.disabled = false;

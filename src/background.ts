@@ -243,6 +243,9 @@ interface CaptureAction {
  * so the delay / active-tab-after-delay semantics match every other
  * capture, but the screenshot + HTML payloads are discarded — only
  * the timestamp + URL (and any future prompt plumbing) hit the log.
+ *
+ * Deliberately ignores `data.htmlError` — a URL-only record doesn't
+ * need HTML, so a restricted-URL scrape failure shouldn't block it.
  */
 async function captureUrlOnly(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
@@ -258,9 +261,18 @@ async function captureUrlOnly(delayMs = 0): Promise<void> {
  * "Capture screenshot and HTML" — the details-page "both files
  * checked" path, run without opening the page. Grabs both artifacts,
  * writes them, and records a sidecar entry referencing both.
+ *
+ * Unlike the details flow (which gracefully falls back to a
+ * screenshot-only UI), this shortcut *requires* HTML by definition,
+ * so we surface an `htmlError` as a thrown error — the action's
+ * error-reporting channel then swaps the icon / tooltip so the user
+ * sees why nothing landed.
  */
 async function captureBoth(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
+  if (data.htmlError) {
+    throw new Error(data.htmlError);
+  }
   await downloadScreenshot(data);
   await downloadHtml(data);
   await recordDetailedCapture({
@@ -1215,6 +1227,12 @@ function editableShouldCommit(
  * saves an edit in the Edit HTML dialog — the `updateArtifact`
  * handler drops the cache entry so the next call re-downloads with
  * the edited body under the same pinned `contentsFilename`.
+ *
+ * Throws when the capture carries an `htmlError` (scrape failed at
+ * capture time). Under normal use the page's Save HTML checkbox and
+ * Copy / Edit buttons are disabled in that case, so this branch is
+ * unreachable; it's a belt-and-suspenders guard so a stale page
+ * message can't write an empty HTML file.
  */
 async function ensureHtmlDownloaded(tabId: number): Promise<string> {
   // Snapshot the sticky edited flag so the commit predicate can
@@ -1223,6 +1241,11 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
   const pre = await requireDetailsSession(tabId);
   const wasEdited = pre.htmlEdited === true;
   return ensureArtifactDownloaded(tabId, {
+    precondition: (s) => {
+      if (s.capture.htmlError) {
+        throw new Error(`HTML not captured: ${s.capture.htmlError}`);
+      }
+    },
     getCachedPath: (s) => s.downloads?.html?.path,
     startDownload: downloadHtml,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
@@ -1237,16 +1260,23 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
  * `ensureHtmlDownloaded`: unconditional until the user saves in the
  * Edit selection dialog, with the same pre-start snapshot of
  * `selectionEdited` protecting a mid-flight download from
- * committing a stale cache entry. Throws when the capture carries
- * no selection; callers should gate on `session.capture.selection`
- * first (the page's checkbox + copy button are disabled in that
- * case, so under normal use this is unreachable).
+ * committing a stale cache entry.
+ *
+ * Throws when the capture carries a `selectionError` (scrape failed
+ * at capture time) or when no selection was present. Under normal
+ * use the page's Save selection checkbox and Copy / Edit buttons are
+ * disabled in both cases, so this branch is unreachable; it's a
+ * belt-and-suspenders guard so a stale page message can't write an
+ * empty file.
  */
 async function ensureSelectionDownloaded(tabId: number): Promise<string> {
   const pre = await requireDetailsSession(tabId);
   const wasEdited = pre.selectionEdited === true;
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
+      if (s.capture.selectionError) {
+        throw new Error(`Selection not captured: ${s.capture.selectionError}`);
+      }
       if (!s.capture.selection || !s.capture.selectionFilename) {
         throw new Error('No selection was captured');
       }
@@ -1298,12 +1328,25 @@ const EDITABLE_ARTIFACTS: Record<
  * cache so the next Copy / Capture re-downloads with the edited
  * content at the pinned filename. Mutates `session` in place;
  * caller must persist via `saveDetailsSession`.
+ *
+ * Throws when the matching `*Error` is set on the capture (scrape
+ * failed at capture time). Under normal use the page-side Edit
+ * button is disabled in that case, so the message never arrives;
+ * the throw is a defense-in-depth guard so a stray `updateArtifact`
+ * can't write content the SW would then refuse to materialize via
+ * its `ensure*Downloaded` precondition — leaving the sticky edit
+ * flag set on a body the user can never actually save.
  */
 function applyArtifactEdit(
   session: DetailsSession,
   kind: EditableArtifactKind,
   value: string,
 ): void {
+  const errorKey = `${kind}Error` as const;
+  const reason = session.capture[errorKey];
+  if (reason) {
+    throw new Error(`Cannot edit ${kind}: ${reason}`);
+  }
   const spec = EDITABLE_ARTIFACTS[kind];
   spec.write(session, value);
   if (session.downloads && spec.downloadsKey in session.downloads) {
@@ -1336,11 +1379,17 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       // the role the old `hasSelection` flag did). File paths are
       // not sent here; they come back via the on-demand
       // `ensureDownloaded` round-trip when a Copy button is clicked.
+      //
+      // `htmlError` / `selectionError` propagate any scrape failure
+      // from `captureBothToMemory` so the page can grey out the
+      // corresponding rows and show an error icon with the reason.
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
         selection: session.capture.selection,
         url: session.capture.url,
+        htmlError: session.capture.htmlError,
+        selectionError: session.capture.selectionError,
       });
     })();
     return true;

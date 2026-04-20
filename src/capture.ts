@@ -366,6 +366,12 @@ export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
 
 export interface InMemoryCapture {
   screenshotDataUrl: string;
+  /**
+   * Full HTML of the captured tab. Empty string when scraping failed
+   * — `htmlError` is then set with the reason. The details page uses
+   * the error field (not the empty string) to decide whether to
+   * grey out the Save HTML checkbox.
+   */
   html: string;
   url: string;
   /**
@@ -402,6 +408,24 @@ export interface InMemoryCapture {
    * timestamp suffix as `screenshotFilename` / `contentsFilename`.
    */
   selectionFilename?: string;
+  /**
+   * Reason HTML could not be captured (e.g. restricted URL where
+   * `chrome.scripting.executeScript` can't inject). Set only when
+   * scraping failed — the details page reads this to disable + flag
+   * the Save HTML row with an error icon while still opening the
+   * details flow so the user can add a URL-only / screenshot-only
+   * record with any prompt or highlights they want.
+   */
+  htmlError?: string;
+  /**
+   * Reason the page selection could not be captured. In practice
+   * this fires together with `htmlError` (selection is scraped in
+   * the same `executeScript` call) but is kept as a separate field
+   * so the UI can distinguish "no selection existed" from
+   * "couldn't even check for a selection". Only "no selection
+   * existed" leaves both `selection` and `selectionError` unset.
+   */
+  selectionError?: string;
 }
 
 /**
@@ -442,26 +466,50 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   // `scrapeSelection` (executeScript `func`s must be self-contained —
   // they're stringified into the page context and can't call SW-side
   // helpers).
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: active.id! },
-    func: () => {
-      const html = document.documentElement.outerHTML;
-      const sel = window.getSelection();
-      let selection: string | null = null;
-      if (sel && sel.rangeCount > 0) {
-        const container = document.createElement('div');
-        for (let i = 0; i < sel.rangeCount; i++) {
-          container.appendChild(sel.getRangeAt(i).cloneContents());
+  //
+  // Scraping can fail on restricted URLs (chrome://, the Web Store,
+  // etc.) where extensions aren't allowed to inject scripts. We catch
+  // those failures and still return a valid `InMemoryCapture` with the
+  // screenshot + URL so the details page can open — it just disables
+  // the Save HTML / Save selection rows and surfaces the error via an
+  // icon tooltip. The screenshot + prompt + highlights remain usable
+  // so the user isn't locked out of the flow entirely.
+  let html = '';
+  let selection: string | null = null;
+  let htmlError: string | undefined;
+  let selectionError: string | undefined;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: active.id! },
+      func: () => {
+        const pageHtml = document.documentElement.outerHTML;
+        const sel = window.getSelection();
+        let selHtml: string | null = null;
+        if (sel && sel.rangeCount > 0) {
+          const container = document.createElement('div');
+          for (let i = 0; i < sel.rangeCount; i++) {
+            container.appendChild(sel.getRangeAt(i).cloneContents());
+          }
+          const inner = container.innerHTML;
+          if (inner.length > 0) selHtml = inner;
         }
-        const inner = container.innerHTML;
-        if (inner.length > 0) selection = inner;
-      }
-      return { html, selection };
-    },
-  });
-  const scraped = results[0]?.result as { html: string; selection: string | null } | undefined;
-  if (!scraped || !scraped.html) throw new Error('Failed to retrieve page contents');
-  const { html, selection } = scraped;
+        return { html: pageHtml, selection: selHtml };
+      },
+    });
+    const scraped = results[0]?.result as
+      | { html: string; selection: string | null }
+      | undefined;
+    if (!scraped || !scraped.html) {
+      htmlError = 'Failed to retrieve page contents';
+      selectionError = htmlError;
+    } else {
+      html = scraped.html;
+      selection = scraped.selection;
+    }
+  } catch (err) {
+    htmlError = err instanceof Error ? err.message : String(err);
+    selectionError = htmlError;
+  }
 
   // Pin the capture moment + filenames here so the details page can
   // show / copy the exact filename the file will land at, even if
@@ -480,6 +528,8 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     capture.selection = selection;
     capture.selectionFilename = `selection-${ts}.html`;
   }
+  if (htmlError !== undefined) capture.htmlError = htmlError;
+  if (selectionError !== undefined) capture.selectionError = selectionError;
   return capture;
 }
 

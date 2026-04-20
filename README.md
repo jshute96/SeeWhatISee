@@ -46,6 +46,11 @@ On this page, you can:
 - See the page URL and HTML size.
 - Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
   - With none of these checked, you can still capture the URL.
+  - On pages where the extension can't read HTML (e.g. `chrome://`
+    pages or the Web Store), *Save HTML* and *Save selection* are
+    disabled. A red error icon next to each greyed-out option
+    explains why. The screenshot, prompt, and highlight tools still
+    work so you can still capture and annotate the page.
 - Copy saved filenames to the clipboard with the copy icon.
 - View or edit the captured HTML or selection before saving with the pencil icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)

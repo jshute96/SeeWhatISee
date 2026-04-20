@@ -260,7 +260,6 @@ test('details: html only with prompt', async ({
   expect(record.screenshot).toBeUndefined();
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('find the bug');
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
   // The HTML file should contain the fixture page's marker.
@@ -385,7 +384,6 @@ test('details: url-only (no screenshot, no html) with prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBe('what runs on this host?');
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -413,7 +411,6 @@ test('details: url-only with no prompt', async ({
   const record: CaptureRecord = JSON.parse(lines[lines.length - 1]);
   expect(record.screenshot).toBeUndefined();
   expect(record.contents).toBeUndefined();
-  expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.prompt).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -1471,6 +1468,151 @@ test('details: edit → edit → save keeps isEdited: true across multiple dialo
   const html = fs.readFileSync(contentsPath, 'utf8');
   expect(html).toContain('second edit B');
   expect(html).not.toContain('first edit A');
+
+  await openerPage.close();
+});
+
+// ─── Graceful handling of failed HTML / selection scrape ──────────
+//
+// `chrome.scripting.executeScript` fails on restricted URLs
+// (chrome://, the Web Store, file:// without explicit opt-in, etc.)
+// — the details flow must still open, with Save HTML + Save
+// selection disabled and error icons explaining why, so the user
+// can still take a URL- / screenshot- / prompt-only capture with
+// annotations. We simulate the failure by stubbing executeScript in
+// the SW; driving an actual chrome:// page from Playwright is
+// flaky across headless modes.
+
+async function openDetailsFlowWithFailedScrape(
+  extensionContext: BrowserContext,
+  fixtureServer: { baseUrl: string },
+  getServiceWorker: () => Promise<Worker>,
+  errorMessage: string,
+): Promise<{ openerPage: Page; capturePage: Page }> {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate((msg) => {
+    interface ScrapeSpy {
+      __seeScrapeOrig?: typeof chrome.scripting.executeScript;
+    }
+    const g = self as unknown as ScrapeSpy;
+    if (!g.__seeScrapeOrig) {
+      g.__seeScrapeOrig = chrome.scripting.executeScript.bind(chrome.scripting);
+    }
+    (chrome.scripting as { executeScript: typeof chrome.scripting.executeScript }).executeScript =
+      (async () => {
+        throw new Error(msg);
+      }) as typeof chrome.scripting.executeScript;
+  }, errorMessage);
+
+  try {
+    return await openDetailsFlow(extensionContext, fixtureServer, getServiceWorker);
+  } finally {
+    // Restore executeScript on its way out so later tests in the
+    // worker see normal scraping again.
+    const sw = await getServiceWorker();
+    await sw.evaluate(() => {
+      interface ScrapeSpy {
+        __seeScrapeOrig?: typeof chrome.scripting.executeScript;
+      }
+      const g = self as unknown as ScrapeSpy;
+      if (g.__seeScrapeOrig) {
+        (chrome.scripting as { executeScript: typeof chrome.scripting.executeScript }).executeScript =
+          g.__seeScrapeOrig;
+      }
+    });
+  }
+}
+
+test('details: html scrape failure still opens the page with HTML/selection disabled + error icons', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const reason = 'Cannot access contents of the page';
+  const { openerPage, capturePage } = await openDetailsFlowWithFailedScrape(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    reason,
+  );
+
+  // Save HTML is disabled + unchecked, its Copy and Edit buttons are
+  // disabled (and hidden via the shared `.copy-btn:disabled` rule),
+  // and the row carries the `has-error` class + a tooltip explaining
+  // what went wrong.
+  const htmlBox = capturePage.locator('#cap-html');
+  await expect(htmlBox).toBeDisabled();
+  await expect(htmlBox).not.toBeChecked();
+  await expect(capturePage.locator('#copy-html-name')).toBeDisabled();
+  await expect(capturePage.locator('#edit-html')).toBeDisabled();
+  await expect(capturePage.locator('#row-html')).toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-html')).toHaveAttribute(
+    'title',
+    new RegExp(`Unable to capture HTML contents.*${reason}`),
+  );
+
+  // Selection row stays in its default greyed-out state — the
+  // failure was the same `executeScript` call, so the HTML row's
+  // error already explains it; a duplicate selection icon would
+  // just be noise. We do NOT add `has-error` and do NOT set the
+  // selection-error tooltip in this case.
+  const selectionBox = capturePage.locator('#cap-selection');
+  await expect(selectionBox).toBeDisabled();
+  await expect(selectionBox).not.toBeChecked();
+  await expect(capturePage.locator('#edit-selection')).toBeDisabled();
+  await expect(capturePage.locator('#row-selection')).not.toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-selection')).toHaveAttribute('title', '');
+
+  // Screenshot + prompt + highlights remain functional: drawing a
+  // rectangle and saving the screenshot + prompt should still produce
+  // a normal record.
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
+  await capturePage.locator('#prompt-text').fill('scrape failed but I can still use this');
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#capture').click(),
+  ]);
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+  expect(record.contents).toBeUndefined();
+  expect(record.selection).toBeUndefined();
+  expect(record.prompt).toBe('scrape failed but I can still use this');
+
+  await openerPage.close();
+});
+
+test('details: html scrape failure allows url-only capture (no checkboxes)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlowWithFailedScrape(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'restricted url',
+  );
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: false,
+    prompt: 'just the url please',
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot).toBeUndefined();
+  expect(record.contents).toBeUndefined();
+  expect(record.selection).toBeUndefined();
+  expect(record.prompt).toBe('just the url please');
+  expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
   await openerPage.close();
 });
