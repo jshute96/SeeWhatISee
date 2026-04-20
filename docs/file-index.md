@@ -45,6 +45,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/skills_templates/claude.help.md` | Template for `plugin/skills/see-what-i-see-help/SKILL.md` |
 | `src/skills_templates/gemini.see.md` | Template for `.gemini/commands/see-what-i-see.toml` |
 | `src/skills_templates/gemini.watch.md` | Template for `.gemini/commands/see-what-i-see-watch.toml` |
+| `src/skills_templates/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 
 ## Marketplace (`.claude-plugin/`)
 
