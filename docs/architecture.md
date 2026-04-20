@@ -93,36 +93,55 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     Downloads both artifacts and writes a record that references
     both.
 
-- **Default click action.** The id of one `CAPTURE_ACTIONS` entry
-  is persisted in `chrome.storage.local` under the
-  `defaultClickAction` key.
+- **Default click action.** Two separate defaults are persisted:
+  one for clicks on a page that has a selection, another for clicks
+  on a page that doesn't.
 
+  - Storage keys: `defaultClickWithSelection` and
+    `defaultClickWithoutSelection` in `chrome.storage.local`.
+  - Fresh installs default to `capture-selection` (with selection)
+    and `capture-with-details` (without selection).
   - A click on the toolbar icon fires `chrome.action.onClicked`,
-    which routes through `handleActionClick`. Three cases:
+    which routes through `handleActionClick`. Four cases:
     1. **Viewing the capture page** — if the active tab is a
        `capture.html` page with stashed session data, the click
        sends it a `triggerCapture` message, which programmatically
        clicks the Capture button.
     2. **Double-click** — a second click within 250 ms runs an
-       alternate action: screenshot when the default is
-       `capture-with-details`, or capture-with-details when
-       the default is anything else.
-    3. **Single click** — waits 250 ms for a potential second
-       click, then runs the default action.
-  - Fresh installs default to `capture-with-details` — the details
-    page with double-click screenshot shortcut.
-  - Every generated variant is defaultable — the "Set default
-    click action" submenu has a row per delay and includes each
-    base that has a variant at that delay. Bases with
-    `supportsDelayed: false` (e.g. `capture-url`,
-    `capture-selection`) only show up in the 0s row.
-  - The toolbar icon's hover tooltip is set from the selected
-    action's `tooltip` field via `chrome.action.setTitle`, so the
-    icon always tells the user what a click is about to do.
-    `refreshActionTooltip()` rewrites it whenever the preference
+       alternate action, derived from the without-selection default
+       only (screenshot when the default is `capture-with-details`,
+       otherwise `capture-with-details`). Menu hints stay in sync
+       regardless of selection state.
+    3. **Single click, selection present** — if the with-selection
+       default is `capture-selection` or `capture-with-details`,
+       run it. `ignore-selection` skips the selection probe
+       entirely and falls through to the without-selection default.
+    4. **Single click, no selection** — run the without-selection
+       default.
+  - Selection probe runs `scrapeSelection` on the active tab inside
+    the 250 ms double-click timer, so it reflects the tab state at
+    dispatch time (after any tab switch during the window). Probe
+    failures (restricted URL, closed tab) fall through to
+    `false` so the click still runs the without-selection default.
+  - **With-selection choices** (three, all at delay 0):
+    - `capture-selection` — save only the selection HTML.
+    - `capture-with-details` — open the details page with
+      `selectionOnly: true`, which default-checks **only** the Save
+      selection checkbox; the user can still tick screenshot / HTML
+      before clicking Capture.
+    - `ignore-selection` — sentinel. Skip the probe and use the
+      without-selection default.
+  - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
+    except `capture-selection`. `capture-selection` is deliberately
+    excluded — it would just error on every click without a
+    selection.
+  - The toolbar icon's hover tooltip is built dynamically from both
+    defaults in three lines:
+    - First line: the without-selection default's main description.
+    - `With selection: <action>` — the with-selection default.
+    - `Double-click for <action>` — the alternate for double-click.
+  - `refreshActionTooltip()` rewrites it whenever either preference
     changes and on `onInstalled` / `onStartup`.
-  - Every tooltip includes a second line ("Double-click for …")
-    describing the alternate action.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
@@ -142,15 +161,26 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     (capture-url, capture-selection — both `supportsDelayed: false`
     anyway) are only reachable via "Set default click action" if at
     all.
-  - **Set default click action ▸** — submenu of normal items, one
-    per `CAPTURE_ACTIONS` entry: five undelayed items, a separator,
-    five 2s-delay items, a separator, then five 5s-delay items.
-    The selected item gets a `✓ ` title prefix; picking one
-    persists its id as `defaultClickAction` and refreshes the
-    tooltip.
+  - **Set default click action ▸** — submenu with two sections,
+    each introduced by a disabled-item subheading:
+    - **— When text is selected —** header (`enabled: false`),
+      then the three with-selection choices (`capture-selection`,
+      `capture-with-details`, `ignore-selection`).
+    - Separator.
+    - **— When no text is selected —** header (`enabled: false`),
+      then every `CAPTURE_ACTIONS` entry *except* the
+      `capture-selection` base, grouped by delay (0s, 2s, 5s) with
+      separators between delay groups.
+    - The selected item in each section gets a `✓ ` title prefix.
+      Picking one persists its id under the matching storage key
+      (`defaultClickWithSelection` /
+      `defaultClickWithoutSelection`) and refreshes the tooltip.
     - Uses normal items instead of `type: 'radio'` because Chrome's
       radio mutual-exclusion only covers a contiguous run — the
       separator would cause two items to appear selected.
+    - Uses `enabled: false` normal items for the subheadings
+      because `chrome.contextMenus` has no "label" / "group
+      header" type.
 
   - **More ▸** — submenu home for the more-group capture actions
     and for infrequent utilities that would otherwise crowd out

@@ -10,6 +10,7 @@ import {
   LOG_STORAGE_KEY,
   recordDetailedCapture,
   savePageContents,
+  scrapeSelection,
   waitForDownloadComplete,
   type CaptureRecord,
   type InMemoryCapture,
@@ -385,46 +386,126 @@ function isDefaultableDelay(delaySec: number): boolean {
   return (CAPTURE_DELAYS_SEC as readonly number[]).includes(delaySec);
 }
 
-const DEFAULT_CLICK_ACTION_KEY = 'defaultClickAction';
-const DEFAULT_CLICK_ACTION_ID = 'capture-with-details';
+// The default click action is split in two so the toolbar behaves
+// sensibly in both states the user can put a page in:
+//   - With a selection on the page — most users want the selection
+//     captured; "Capture selection" and the details flow (with the
+//     selection-only checkbox set) are meaningful defaults here.
+//     `Ignore selection` is the opt-out: treat the click as if no
+//     selection existed and fall through to the other default.
+//   - Without a selection — any of the CAPTURE_ACTIONS entries
+//     except `capture-selection` (which would just error).
+const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
+const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
+const DEFAULT_WITH_SELECTION_ID = 'capture-selection';
+const DEFAULT_WITHOUT_SELECTION_ID = 'capture-with-details';
+// Sentinel used in place of a CAPTURE_ACTIONS id when the user wants
+// a page selection to *not* steer the click default. Never appears in
+// CAPTURE_ACTIONS; `handleActionClick` treats it as "fall through to
+// the without-selection default".
+const IGNORE_SELECTION_ID = 'ignore-selection';
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 const DELAYED_PARENT_ID = 'delayed-capture-parent';
 const MORE_PARENT_ID = 'more-parent';
-// Child radio items under "Set default click action" use this prefix on
-// their ids so the onClicked handler can tell "pick this default"
-// clicks apart from the top-level / Delayed-capture "run this now"
-// entries, which share the CAPTURE_ACTIONS ids verbatim.
-const DEFAULT_CLICK_CHILD_PREFIX = 'set-default-';
+// Child items under "Set default click action" use these prefixes on
+// their ids so the onClicked handler can tell "pick this with-selection
+// default" / "pick this without-selection default" clicks apart from
+// the top-level / Delayed-capture "run this now" entries, which share
+// the CAPTURE_ACTIONS ids verbatim.
+const DEFAULT_CLICK_WITH_SEL_PREFIX = 'set-default-with-sel-';
+const DEFAULT_CLICK_WITHOUT_SEL_PREFIX = 'set-default-without-sel-';
+// Grayed-out subheadings that visually split the submenu into its two
+// sections. Built as `enabled: false` normal items because
+// `chrome.contextMenus` has no "label" / "group header" type.
+const WITH_SEL_HEADER_ID = 'default-with-sel-header';
+const WITHOUT_SEL_HEADER_ID = 'default-without-sel-header';
+
+// Selectable defaults for the "when there is a selection" row. Only
+// three options — `ignore-selection` is a sentinel, the other two
+// reuse CAPTURE_ACTIONS ids so the click path can route through
+// `findCaptureAction`.
+interface WithSelectionChoice {
+  id: string;
+  title: string;
+}
+const WITH_SELECTION_CHOICES: WithSelectionChoice[] = [
+  { id: 'capture-selection', title: 'Capture selection' },
+  { id: 'capture-with-details', title: 'Capture with details...' },
+  { id: IGNORE_SELECTION_ID, title: 'Ignore selection (use default below)' },
+];
 
 function findCaptureAction(id: string | undefined): CaptureAction | undefined {
   return CAPTURE_ACTIONS.find((a) => a.id === id);
 }
 
-async function getDefaultClickActionId(): Promise<string> {
-  const stored = await chrome.storage.local.get(DEFAULT_CLICK_ACTION_KEY);
-  const id = stored[DEFAULT_CLICK_ACTION_KEY];
-  // Fall back to capture-with-details if storage is empty or holds
-  // a stale id (e.g. after a release that renamed an action).
-  return typeof id === 'string' && findCaptureAction(id)
-    ? id
-    : DEFAULT_CLICK_ACTION_ID;
+function findWithSelectionChoice(id: string | undefined): WithSelectionChoice | undefined {
+  return WITH_SELECTION_CHOICES.find((c) => c.id === id);
 }
 
-async function getDefaultClickAction(): Promise<CaptureAction> {
-  const id = await getDefaultClickActionId();
+async function getDefaultWithSelectionId(): Promise<string> {
+  const stored = await chrome.storage.local.get(DEFAULT_CLICK_WITH_SELECTION_KEY);
+  const id = stored[DEFAULT_CLICK_WITH_SELECTION_KEY];
+  return typeof id === 'string' && findWithSelectionChoice(id)
+    ? id
+    : DEFAULT_WITH_SELECTION_ID;
+}
+
+async function getDefaultWithoutSelectionId(): Promise<string> {
+  const stored = await chrome.storage.local.get(DEFAULT_CLICK_WITHOUT_SELECTION_KEY);
+  const id = stored[DEFAULT_CLICK_WITHOUT_SELECTION_KEY];
+  // Fall back if storage is empty, holds a stale id, or holds
+  // `capture-selection` (no longer permitted in this slot — it
+  // would just error on every click without a selection).
+  if (typeof id !== 'string') return DEFAULT_WITHOUT_SELECTION_ID;
+  const action = findCaptureAction(id);
+  if (!action || action.baseId === 'capture-selection') {
+    return DEFAULT_WITHOUT_SELECTION_ID;
+  }
+  return id;
+}
+
+async function getDefaultWithoutSelectionAction(): Promise<CaptureAction> {
+  const id = await getDefaultWithoutSelectionId();
   return findCaptureAction(id) ?? CAPTURE_ACTIONS[0]!;
 }
 
+function withSelectionSummary(id: string): string {
+  const choice = findWithSelectionChoice(id);
+  if (!choice) return 'capture selection';
+  if (choice.id === IGNORE_SELECTION_ID) return 'ignore (use default)';
+  // Tooltip is lowercase, sentence-fragment style to match the
+  // existing "Double-click for …" line.
+  return choice.title.replace(/\.\.\.$/, '').toLowerCase();
+}
+
+/**
+ * Build the toolbar icon tooltip from the two current defaults.
+ *
+ * Layout is three lines:
+ *   1. The without-selection action's main description (first line of
+ *      its baked-in tooltip).
+ *   2. A `With selection: …` line describing the with-selection
+ *      default.
+ *   3. The without-selection action's `Double-click for …` line,
+ *      taken verbatim from its baked-in tooltip — the double-click
+ *      branch in `handleActionClick` derives its target from the
+ *      without-selection default, so this stays accurate.
+ */
 async function getDefaultActionTooltip(): Promise<string> {
-  return (await getDefaultClickAction()).tooltip;
+  const withoutAction = await getDefaultWithoutSelectionAction();
+  const withId = await getDefaultWithSelectionId();
+  const [mainLine, ...rest] = withoutAction.tooltip.split('\n');
+  const dblLine = rest.join('\n');
+  const withLine = `With selection: ${withSelectionSummary(withId)}`;
+  return dblLine ? `${mainLine}\n${withLine}\n${dblLine}` : `${mainLine}\n${withLine}`;
 }
 
 const DEFAULT_SELECTED_PREFIX = '✓ ';
 const DEFAULT_UNSELECTED_PREFIX = '    ';
 
-function defaultMenuTitle(action: CaptureAction, selected: boolean): string {
+function defaultMenuTitle(title: string, selected: boolean): string {
   const prefix = selected ? DEFAULT_SELECTED_PREFIX : DEFAULT_UNSELECTED_PREFIX;
-  return prefix + action.title;
+  return prefix + title;
 }
 
 // Hints marking which top-level / "Capture with delay" entries will
@@ -441,12 +522,18 @@ const HINT_SEPARATOR = '  -  ';
 const CLICK_HINT = `${HINT_SEPARATOR}(𝘊𝘭𝘪𝘤𝘬)`;
 const DOUBLE_CLICK_HINT = `${HINT_SEPARATOR}(𝘋𝘰𝘶𝘣𝘭𝘦-𝘤𝘭𝘪𝘤𝘬)`;
 
-// The double-click target is derived from the current click default:
-// if details is the default, double-click takes a screenshot; otherwise
-// double-click opens capture-with-details. Mirrors the branch in
-// handleActionClick so menu hints always match runtime behavior.
-function doubleClickActionId(clickId: string): string {
-  return clickId === DEFAULT_CLICK_ACTION_ID ? 'capture-now' : DEFAULT_CLICK_ACTION_ID;
+// The double-click target is derived from the without-selection click
+// default: if details is the default, double-click takes a screenshot;
+// otherwise double-click opens capture-with-details. Mirrors the
+// branch in handleActionClick so menu hints always match runtime
+// behavior. The with-selection default does *not* influence this —
+// keeping the hint stable across selection state avoids a menu that
+// re-flows between opens depending on whether the user has selected
+// something.
+function doubleClickActionId(withoutSelectionId: string): string {
+  return withoutSelectionId === DEFAULT_WITHOUT_SELECTION_ID
+    ? 'capture-now'
+    : DEFAULT_WITHOUT_SELECTION_ID;
 }
 
 function actionMenuTitle(
@@ -460,40 +547,50 @@ function actionMenuTitle(
 }
 
 /**
- * Persist a new default click action and update the toolbar
- * tooltip to match. Also update every entry in the "Set default
- * click action" submenu so only the chosen one shows a ✓
- * prefix.
+ * Persist a new "when there is no selection" click default and
+ * update the toolbar tooltip + "Set default click action" submenu
+ * checkmarks / hint labels to match.
  *
- * Updating a not-yet-created menu id throws
- * `No item with id "…"`; we suppress that because
- * `setDefaultClickActionId` is also called from tests before the
- * first menu install.
+ * Updating a not-yet-created menu id throws `No item with id "…"`;
+ * we suppress that because these setters are also called from tests
+ * before the first menu install.
  */
-async function setDefaultClickActionId(id: string): Promise<void> {
-  if (!findCaptureAction(id)) {
-    throw new Error(`Unknown capture action id: ${id}`);
+async function setDefaultWithoutSelectionId(id: string): Promise<void> {
+  const action = findCaptureAction(id);
+  if (!action) throw new Error(`Unknown capture action id: ${id}`);
+  if (action.baseId === 'capture-selection') {
+    // `capture-selection` would just error on every click without a
+    // selection, so it's deliberately not offered in this slot.
+    throw new Error(`capture-selection is not a valid without-selection default`);
   }
-  await chrome.storage.local.set({ [DEFAULT_CLICK_ACTION_KEY]: id });
-  const dblId = doubleClickActionId(id);
-  const defaultables = CAPTURE_ACTIONS.filter((a) => isDefaultableDelay(a.delaySec));
+  await chrome.storage.local.set({ [DEFAULT_CLICK_WITHOUT_SELECTION_KEY]: id });
+
+  // Update the ✓ prefixes in the without-selection section. We skip
+  // any action whose base is `capture-selection` — it's filtered out
+  // of that section entirely.
+  const withoutDefaultables = CAPTURE_ACTIONS.filter(
+    (a) => isDefaultableDelay(a.delaySec) && a.baseId !== 'capture-selection',
+  );
   await Promise.all(
-    defaultables.map(async (a) => {
-      const childId = DEFAULT_CLICK_CHILD_PREFIX + a.id;
+    withoutDefaultables.map(async (a) => {
+      const childId = DEFAULT_CLICK_WITHOUT_SEL_PREFIX + a.id;
       try {
         await chrome.contextMenus.update(childId, {
-          title: defaultMenuTitle(a, a.id === id),
+          title: defaultMenuTitle(a.title, a.id === id),
         });
       } catch {
-        // Menu not installed yet — first install will pick up the
-        // stored preference via installContextMenu.
+        /* menu not installed yet */
       }
     }),
   );
-  // Refresh the (Click) / (Double-click) hints on every run entry —
-  // every CAPTURE_ACTIONS entry is registered under `a.id` in exactly
-  // one place (top-level when delaySec === 0, Capture-with-delay
-  // submenu otherwise), so a single update call per id covers both.
+
+  // Refresh (Click) / (Double-click) hints on every run entry. Hints
+  // are tied to the without-selection default because that's what
+  // the menu assumes when the user is about to click; the
+  // with-selection default only kicks in when a selection exists on
+  // the active tab, which we can't reliably predict at menu-render
+  // time.
+  const dblId = doubleClickActionId(id);
   await Promise.all(
     CAPTURE_ACTIONS.map(async (a) => {
       try {
@@ -501,8 +598,34 @@ async function setDefaultClickActionId(id: string): Promise<void> {
           title: actionMenuTitle(a, id, dblId),
         });
       } catch {
-        // Menu not installed yet — first install picks up the hints
-        // via installContextMenu.
+        /* menu not installed yet */
+      }
+    }),
+  );
+  await refreshActionTooltip();
+}
+
+/**
+ * Persist a new "when there is a selection" click default. Same
+ * swallowed-update shape as `setDefaultWithoutSelectionId`, but only
+ * the with-selection section's ✓ prefixes need updating — the
+ * without-selection hints are derived from the other default and
+ * stay put.
+ */
+async function setDefaultWithSelectionId(id: string): Promise<void> {
+  if (!findWithSelectionChoice(id)) {
+    throw new Error(`Unknown with-selection default id: ${id}`);
+  }
+  await chrome.storage.local.set({ [DEFAULT_CLICK_WITH_SELECTION_KEY]: id });
+  await Promise.all(
+    WITH_SELECTION_CHOICES.map(async (c) => {
+      const childId = DEFAULT_CLICK_WITH_SEL_PREFIX + c.id;
+      try {
+        await chrome.contextMenus.update(childId, {
+          title: defaultMenuTitle(c.title, c.id === id),
+        });
+      } catch {
+        /* menu not installed yet */
       }
     }),
   );
@@ -555,6 +678,26 @@ let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
 
 const DOUBLE_CLICK_MS = 250;
 
+/**
+ * Probe the active tab for a non-empty selection. Used by the click
+ * dispatch to pick between the with/without-selection defaults.
+ *
+ * Errors (no active tab, restricted URL, scripting rejection) all
+ * fall through to `false` — a probe failure shouldn't block the
+ * click from running the without-selection default, and the
+ * subsequent action itself will surface any real failure through
+ * the icon/tooltip error channel.
+ */
+async function activeTabHasSelection(): Promise<boolean> {
+  try {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (active?.id === undefined) return false;
+    return !!(await scrapeSelection(active.id));
+  } catch {
+    return false;
+  }
+}
+
 async function handleActionClick(): Promise<void> {
   // If the user is currently looking at a capture.html tab, clicking
   // the toolbar icon triggers its Capture button — same as clicking
@@ -573,13 +716,19 @@ async function handleActionClick(): Promise<void> {
     }
   }
 
-  const actionId = await getDefaultClickActionId();
+  const withoutId = await getDefaultWithoutSelectionId();
 
-  // Double-click: run the alternate action.
+  // Double-click: run the alternate action. Derived from the
+  // without-selection default for consistency with the menu hints,
+  // which assume the user is about to click without a selection (we
+  // can't predict selection state at menu-render time). A user who
+  // wants capture-with-details via double-click on a selection gets
+  // the same dialog, just without the selection-only pre-checked
+  // state — close enough, and keeps the double-click target stable.
   if (pendingClickTimer !== undefined) {
     clearTimeout(pendingClickTimer);
     pendingClickTimer = undefined;
-    if (actionId === DEFAULT_CLICK_ACTION_ID) {
+    if (withoutId === DEFAULT_WITHOUT_SELECTION_ID) {
       await runWithErrorReporting(() => captureVisible());
     } else {
       await runWithErrorReporting(() => startCaptureWithDetails());
@@ -592,11 +741,40 @@ async function handleActionClick(): Promise<void> {
   // window, the capture targets whatever tab is visible when the
   // timer fires — captureVisibleTab can only capture what's on
   // screen, and re-activating the original tab would be surprising.
+  const withId = await getDefaultWithSelectionId();
   await new Promise<void>((resolve) => {
-    pendingClickTimer = setTimeout(() => {
+    pendingClickTimer = setTimeout(async () => {
       pendingClickTimer = undefined;
-      const action = findCaptureAction(actionId) ?? CAPTURE_ACTIONS[0]!;
-      void runWithErrorReporting(() => action.run()).then(resolve, resolve);
+      // Selection detection happens inside the timer so it reflects
+      // the tab state at dispatch time (after any tab switch during
+      // the double-click window). Ignore-selection skips the probe
+      // entirely — the user has opted out of selection-steered
+      // behavior.
+      let useWith = false;
+      if (withId !== IGNORE_SELECTION_ID) {
+        useWith = await activeTabHasSelection();
+      }
+      void runWithErrorReporting(async () => {
+        if (useWith) {
+          if (withId === 'capture-with-details') {
+            // Selection-only details: the details page opens with
+            // Save selection checked and screenshot/html unchecked,
+            // matching the "I'm here for the selection" intent.
+            await startCaptureWithDetails(0, { selectionOnly: true });
+            return;
+          }
+          const action = findCaptureAction(withId);
+          if (action) {
+            await action.run();
+            return;
+          }
+          // Fall through — unrecognized with-selection id behaves
+          // like ignore-selection. Shouldn't happen in practice
+          // (the setter rejects unknown ids).
+        }
+        const action = findCaptureAction(withoutId) ?? CAPTURE_ACTIONS[0]!;
+        await action.run();
+      }).then(resolve, resolve);
     }, DOUBLE_CLICK_MS);
   });
 }
@@ -618,13 +796,18 @@ chrome.action.onClicked.addListener(handleActionClick);
 //       • Save html contents in 5s
 //       • Capture with details in 5s...
 //       • Capture screenshot and HTML in 5s
-//   Set default click action  ▸     (submenu, ✓ on selected; every base × its delays)
+//   Set default click action  ▸     (submenu; ✓ on selected in each section)
+//       — When text is selected —          (disabled header)
+//       ✓ Capture selection
+//         Capture with details...
+//         Ignore selection (use default below)
+//       ─────────
+//       — When no text is selected —       (disabled header)
 //       ✓ Take screenshot
 //         Save html contents
 //         Capture with details...
-//         Capture URL                 (no delayed variants)
+//         Capture URL                      (no delayed variants)
 //         Capture screenshot and HTML
-//         Capture selection           (no delayed variants)
 //       ─────────
 //         Take screenshot in 2s
 //         Save html contents in 2s
@@ -711,7 +894,7 @@ async function getLatestCaptureRecord(): Promise<CaptureRecord | undefined> {
  */
 async function refreshCopyMenuState(): Promise<void> {
   const r = await getLatestCaptureRecord();
-  // Same suppression pattern as `setDefaultClickActionId`: updating a
+  // Same suppression pattern as the default-setter helpers: updating a
   // not-yet-created menu id throws `No item with id "…"`; harmless
   // during first install before the items exist.
   try {
@@ -898,6 +1081,13 @@ interface DetailsSession {
   // it when the details tab closes. Optional: the active-tab
   // lookup can in principle return no id (chrome:// pages, races).
   openerTabId?: number;
+  // True when the details page should open with *only* Save
+  // selection checked (screenshot/html unchecked). Set by
+  // `handleActionClick` when the with-selection click default is
+  // `capture-with-details` and the active tab had a selection.
+  // The page reads this via `getDetailsData` and overrides its
+  // normal checkbox defaults.
+  selectionOnly?: boolean;
   // Per-artifact download tracking.
   //
   // The page's Copy-filename buttons materialize the file on demand
@@ -924,7 +1114,17 @@ function detailsStorageKey(tabId: number): string {
   return `${DETAILS_STORAGE_PREFIX}${tabId}`;
 }
 
-async function startCaptureWithDetails(delayMs = 0): Promise<void> {
+interface StartDetailsOptions {
+  /** When true, open the details page with only Save selection
+   * checked (screenshot + html unchecked). Used by the with-selection
+   * click-default path where `capture-with-details` is chosen. */
+  selectionOnly?: boolean;
+}
+
+async function startCaptureWithDetails(
+  delayMs = 0,
+  options: StartDetailsOptions = {},
+): Promise<void> {
   // Capture both artifacts *before* opening the new tab so we
   // snapshot the user's current page (not the empty capture.html
   // tab). captureBothToMemory queries the active tab itself, after
@@ -962,7 +1162,11 @@ async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   if (tab.id === undefined) {
     throw new Error('Failed to open capture details tab');
   }
-  const session: DetailsSession = { capture: data, openerTabId: active?.id };
+  const session: DetailsSession = {
+    capture: data,
+    openerTabId: active?.id,
+    selectionOnly: options.selectionOnly,
+  };
   await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: session });
 }
 
@@ -1218,6 +1422,11 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         html: session.capture.html,
         url: session.capture.url,
         hasSelection: !!session.capture.selection,
+        // `selectionOnly` is only meaningful when a selection was
+        // captured (otherwise there's nothing for the checkbox to
+        // default-check). Forwarded unconditionally — the page
+        // ignores it when `hasSelection` is false.
+        selectionOnly: !!session.selectionOnly,
       });
     })();
     return true;
@@ -1333,11 +1542,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 async function installContextMenu(): Promise<void> {
-  // Read the current default up front so each submenu child can be
+  // Read both defaults up front so each submenu child can be
   // created with the correct title prefix — `removeAll` wipes
   // Chrome's per-item state along with the entries themselves, so
-  // we can't rely on persisted state.
-  const defaultId = await getDefaultClickActionId();
+  // we can't rely on persisted state. Menu hints (Click /
+  // Double-click) track the without-selection default only.
+  const defaultId = await getDefaultWithoutSelectionId();
+  const withId = await getDefaultWithSelectionId();
   const dblId = doubleClickActionId(defaultId);
 
   // ── Top-level entries (delay 0, primary group only) ────────
@@ -1389,30 +1600,82 @@ async function installContextMenu(): Promise<void> {
   }
 
   // ── "Set default click action" submenu ──────────────────────
-  // Uses normal items with a ✓ prefix on the selected entry
-  // instead of radio items. Chrome's radio mutual-exclusion only
-  // covers a contiguous run, so a separator causes two items to
-  // appear selected. Normal items with a text marker avoid that.
+  // Two sections, each with a grayed-out header (normal item with
+  // `enabled: false` — contextMenus has no "label" item type):
+  //
+  //   — When text is selected —         (header)
+  //     ✓ Capture selection
+  //       Capture with details...
+  //       Ignore selection (use default below)
+  //   ─────────
+  //   — When no text is selected —      (header)
+  //     ✓ Take screenshot
+  //       Save html contents
+  //       Capture with details...
+  //       Capture URL
+  //       Capture screenshot and HTML
+  //   ─────────
+  //       Take screenshot in 2s
+  //       …
+  //
+  // Uses normal items with a ✓ prefix on the selected entry rather
+  // than radio items: Chrome's radio mutual-exclusion only covers a
+  // contiguous run, so a separator would let two items appear
+  // selected. `capture-selection` is deliberately not offered in the
+  // without-selection section (it would just error on every click
+  // with no selection on the page).
   chrome.contextMenus.create({
     id: DEFAULT_CLICK_PARENT_ID,
     title: 'Set default click action',
+    contexts: ['action'],
+  });
+
+  chrome.contextMenus.create({
+    id: WITH_SEL_HEADER_ID,
+    parentId: DEFAULT_CLICK_PARENT_ID,
+    title: '— When text is selected —',
+    enabled: false,
+    contexts: ['action'],
+  });
+  for (const choice of WITH_SELECTION_CHOICES) {
+    chrome.contextMenus.create({
+      id: DEFAULT_CLICK_WITH_SEL_PREFIX + choice.id,
+      parentId: DEFAULT_CLICK_PARENT_ID,
+      title: defaultMenuTitle(choice.title, choice.id === withId),
+      contexts: ['action'],
+    });
+  }
+
+  chrome.contextMenus.create({
+    id: `${DEFAULT_CLICK_PARENT_ID}-sep-sections`,
+    parentId: DEFAULT_CLICK_PARENT_ID,
+    type: 'separator',
+    contexts: ['action'],
+  });
+
+  chrome.contextMenus.create({
+    id: WITHOUT_SEL_HEADER_ID,
+    parentId: DEFAULT_CLICK_PARENT_ID,
+    title: '— When no text is selected —',
+    enabled: false,
     contexts: ['action'],
   });
   for (let i = 0; i < CAPTURE_DELAYS_SEC.length; i++) {
     const delaySec = CAPTURE_DELAYS_SEC[i]!;
     if (i > 0) {
       chrome.contextMenus.create({
-        id: `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,
+        id: `${DEFAULT_CLICK_PARENT_ID}-sep-delay-${delaySec}`,
         parentId: DEFAULT_CLICK_PARENT_ID,
         type: 'separator',
         contexts: ['action'],
       });
     }
     for (const action of captureActionsWithDelay(delaySec)) {
+      if (action.baseId === 'capture-selection') continue;
       chrome.contextMenus.create({
-        id: DEFAULT_CLICK_CHILD_PREFIX + action.id,
+        id: DEFAULT_CLICK_WITHOUT_SEL_PREFIX + action.id,
         parentId: DEFAULT_CLICK_PARENT_ID,
-        title: defaultMenuTitle(action, action.id === defaultId),
+        title: defaultMenuTitle(action.title, action.id === defaultId),
         contexts: ['action'],
       });
     }
@@ -1435,7 +1698,7 @@ async function installContextMenu(): Promise<void> {
   // reachable via "Set default click action"). They use the bare
   // CAPTURE_ACTIONS id like the primary top-level entries, so the
   // onClicked dispatcher's `findCaptureAction(id)` branch handles them
-  // without a special case, and `setDefaultClickActionId`'s
+  // without a special case, and `setDefaultWithoutSelectionId`'s
   // hint-refresh loop can update their titles too.
   for (const action of captureActionsWithDelay(0, 'more')) {
     chrome.contextMenus.create({
@@ -1539,19 +1802,29 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const id = String(info.menuItemId);
 
   // "Set default click action" submenu: a click just persists the
-  // new preference. Not routed through runWithErrorReporting —
-  // flipping a setting isn't a capture, and painting the error
-  // icon on a failed storage write would be misleading.
+  // new preference for whichever section the item lives in. Not
+  // routed through runWithErrorReporting — flipping a setting isn't
+  // a capture, and painting the error icon on a failed storage
+  // write would be misleading.
   //
   // On failure the ✓ prefix stays on the old item (the title
   // updates happen after the storage write), so the menu remains
   // consistent with the stored value.
-  if (id.startsWith(DEFAULT_CLICK_CHILD_PREFIX)) {
-    const actionId = id.slice(DEFAULT_CLICK_CHILD_PREFIX.length);
+  if (id.startsWith(DEFAULT_CLICK_WITH_SEL_PREFIX)) {
+    const choiceId = id.slice(DEFAULT_CLICK_WITH_SEL_PREFIX.length);
     try {
-      await setDefaultClickActionId(actionId);
+      await setDefaultWithSelectionId(choiceId);
     } catch (err) {
-      console.warn('[SeeWhatISee] failed to set default click action:', err);
+      console.warn('[SeeWhatISee] failed to set with-selection default:', err);
+    }
+    return;
+  }
+  if (id.startsWith(DEFAULT_CLICK_WITHOUT_SEL_PREFIX)) {
+    const actionId = id.slice(DEFAULT_CLICK_WITHOUT_SEL_PREFIX.length);
+    try {
+      await setDefaultWithoutSelectionId(actionId);
+    } catch (err) {
+      console.warn('[SeeWhatISee] failed to set without-selection default:', err);
     }
     return;
   }
@@ -1632,7 +1905,9 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   clearCaptureError,
   runWithErrorReporting,
   handleActionClick,
-  getDefaultClickActionId,
-  setDefaultClickActionId,
+  getDefaultWithSelectionId,
+  getDefaultWithoutSelectionId,
+  setDefaultWithSelectionId,
+  setDefaultWithoutSelectionId,
   refreshActionTooltip,
 };

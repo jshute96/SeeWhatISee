@@ -328,7 +328,9 @@ promising — the main issue was the `onActivated` restore logic.
     checked in each.
   - The "Set default click action" submenu avoids radio items for
     this reason — it uses normal items with a `✓ ` title prefix
-    on the selected entry, updated by `setDefaultClickActionId`.
+    on the selected entry, updated by
+    `setDefaultWithSelectionId` / `setDefaultWithoutSelectionId`
+    (one per section).
 - **Click / double-click hints on run entries.** Top-level entries
   and the "Capture with delay" submenu entries append a
   `  -  (Click)` or `  -  (Double-click)` hint to whichever item
@@ -344,9 +346,11 @@ promising — the main issue was the `onActivated` restore logic.
   - The "Set default click action" submenu is unchanged — its ✓
     already covers "this is the click action", and stacking another
     `(Click)` on the same row is noise.
-  - Hints are refreshed by `setDefaultClickActionId` alongside the ✓
-    prefix updates, so the menu stays in sync with the stored
-    preference.
+  - Hints track the without-selection default only — the
+    with-selection default only kicks in when a selection exists
+    on the active tab, which we can't reliably predict at
+    menu-render time. Refresh happens inside
+    `setDefaultWithoutSelectionId` alongside the ✓ prefix updates.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.

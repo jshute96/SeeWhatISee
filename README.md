@@ -14,14 +14,23 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 - Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
+  - If you've made a text selection on the page, the click instead runs the *with-selection* default (Capture selection by default). You can change both defaults under **Set default click action ▸** (see below).
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
   - **Capture with details…** Opens a review page (see below).
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
-  - **Set default click action ▸** — Choose which action to apply
-    when clicking the icon.
+  - **Set default click action ▸** — Two sections, one per
+    selection state:
+    - **— When text is selected —** — *Capture selection* (default),
+      *Capture with details…* (opens the details page with only the
+      Save selection checkbox pre-ticked), or *Ignore selection*
+      (fall through to the other default).
+    - **— When no text is selected —** — Any of the other capture
+      actions (*Take screenshot*, *Save html contents*, *Capture
+      with details…*, *Capture URL*, *Capture screenshot and HTML*)
+      at delays 0s, 2s, or 5s.
     - If you choose another default single-click action, double-click will open *Capture with details*.
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.

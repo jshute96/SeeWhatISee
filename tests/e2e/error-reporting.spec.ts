@@ -27,14 +27,18 @@ import { test, expect } from '../fixtures/extension';
 // background script derives the toolbar title from whichever
 // CAPTURE_ACTIONS entry the user has picked as the default; the
 // tests here pin that selection to `capture-now` in beforeEach so
-// the expected baseline is stable.
-const DEFAULT_TITLE = 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details';
+// the expected baseline is stable. The "With selection:" line
+// reflects the default with-selection action (`capture-selection`
+// on a fresh install).
+const DEFAULT_TITLE =
+  'SeeWhatISee — Capture visible tab\nWith selection: capture selection\nDouble-click for capture with details';
 
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;
   clearCaptureError: () => Promise<void>;
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
-  setDefaultClickActionId: (id: string) => Promise<void>;
+  setDefaultWithSelectionId: (id: string) => Promise<void>;
+  setDefaultWithoutSelectionId: (id: string) => Promise<void>;
 }
 
 // Per-test harness that hooks chrome.action.setIcon in the service
@@ -80,9 +84,16 @@ test.beforeEach(async ({ getServiceWorker }) => {
   const sw = await getServiceWorker();
   await sw.evaluate(async () => {
     const api = (self as unknown as {
-      SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      SeeWhatISee: {
+        setDefaultWithSelectionId: (id: string) => Promise<void>;
+        setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+      };
     }).SeeWhatISee;
-    await api.setDefaultClickActionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-now');
+    // Pin the with-selection default too so the tooltip's
+    // "With selection: …" line stays stable regardless of the
+    // starting storage state.
+    await api.setDefaultWithSelectionId('capture-selection');
   });
   await installSetIconSpy(sw);
 });

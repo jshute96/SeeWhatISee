@@ -247,7 +247,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
  * accompanying text) still count as real captures — `toString`
  * returns just the text content and would otherwise drop them.
  */
-async function scrapeSelection(tabId: number): Promise<string | null> {
+export async function scrapeSelection(tabId: number): Promise<string | null> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {

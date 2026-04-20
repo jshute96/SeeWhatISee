@@ -700,9 +700,9 @@ test('default click action set to capture-now: handleActionClick takes a direct 
     await chrome.storage.local.clear();
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
   });
 
   const openerPage = await extensionContext.newPage();
@@ -754,9 +754,9 @@ test('default click action set to capture-with-details: handleActionClick opens 
     await chrome.storage.local.clear();
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-with-details');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-with-details');
   });
 
   const openerPage = await extensionContext.newPage();
@@ -793,41 +793,56 @@ test('default click action set to capture-with-details: handleActionClick opens 
   await sw2.evaluate(async () => {
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
   });
 
   await openerPage.close();
 });
 
-test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
+test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
   const titles = await sw.evaluate(async () => {
     const api = (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: {
+          setDefaultWithSelectionId: (id: string) => Promise<void>;
+          setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+        };
       }
     ).SeeWhatISee;
-    await api.setDefaultClickActionId('capture-now');
+    // Pin the with-selection default so the middle tooltip line
+    // stays stable regardless of the starting storage state.
+    await api.setDefaultWithSelectionId('capture-selection');
+    await api.setDefaultWithoutSelectionId('capture-now');
     const a = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('capture-now-2s');
+    await api.setDefaultWithoutSelectionId('capture-now-2s');
     const b = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('save-page-contents');
+    await api.setDefaultWithoutSelectionId('save-page-contents');
     const c = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('capture-with-details');
+    await api.setDefaultWithoutSelectionId('capture-with-details');
     const d = await chrome.action.getTitle({});
     // Restore default so the rest of the suite is unaffected.
-    await api.setDefaultClickActionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-now');
     return { a, b, c, d };
   });
 
-  expect(titles.a).toBe('SeeWhatISee — Capture visible tab\nDouble-click for capture with details');
-  expect(titles.b).toBe('SeeWhatISee — Capture visible tab in 2s\nDouble-click for capture with details');
-  expect(titles.c).toBe('SeeWhatISee — Save HTML contents\nDouble-click for capture with details');
-  expect(titles.d).toBe('SeeWhatISee — Capture with details\nDouble-click for screenshot');
+  const WITH_SEL_LINE = 'With selection: capture selection';
+  expect(titles.a).toBe(
+    `SeeWhatISee — Capture visible tab\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
+  );
+  expect(titles.b).toBe(
+    `SeeWhatISee — Capture visible tab in 2s\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
+  );
+  expect(titles.c).toBe(
+    `SeeWhatISee — Save HTML contents\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
+  );
+  expect(titles.d).toBe(
+    `SeeWhatISee — Capture with details\n${WITH_SEL_LINE}\nDouble-click for screenshot`,
+  );
 });
 
 // ─── Copy-filename buttons on the capture page ────────────────────

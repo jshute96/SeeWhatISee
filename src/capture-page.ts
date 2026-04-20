@@ -32,6 +32,16 @@ interface DetailsData {
    * the Save selection checkbox.
    */
   hasSelection?: boolean;
+  /**
+   * True when the details flow was opened via the with-selection
+   * click default ("Capture with details" on a page with a
+   * selection). In that case the page opens with *only* Save
+   * selection checked (screenshot + html unchecked) to match the
+   * "I'm here for the selection" intent — the user can still tick
+   * the other boxes before clicking Capture. Ignored when
+   * `hasSelection` is false (nothing to default-check).
+   */
+  selectionOnly?: boolean;
 }
 
 /**
@@ -345,6 +355,14 @@ async function loadData(): Promise<void> {
       selectionBox.checked = true;
       selectionBox.disabled = false;
       copySelectionBtn.disabled = false;
+      // Selection-only mode: opened via the with-selection click
+      // default. Uncheck screenshot + html so Capture writes just
+      // the selection by default. The user can still tick them
+      // back on before clicking Capture.
+      if (response.selectionOnly) {
+        screenshotBox.checked = false;
+        htmlBox.checked = false;
+      }
     }
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
