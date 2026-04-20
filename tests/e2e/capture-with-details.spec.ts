@@ -258,7 +258,7 @@ test('details: html only with prompt', async ({
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
   expect(record.screenshot).toBeUndefined();
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('find the bug');
   expect(record.highlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
@@ -290,13 +290,13 @@ test('details: png + html with prompt', async ({
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('compare these');
   expect(record.highlights).toBeUndefined();
   // Both files share the same compact-timestamp suffix when written
   // by the detailed-capture path.
   const screenshotSuffix = record.screenshot!.replace(/^screenshot-/, '').replace(/\.png$/, '');
-  const contentsSuffix = record.contents!.replace(/^contents-/, '').replace(/\.html$/, '');
+  const contentsSuffix = record.contents!.filename.replace(/^contents-/, '').replace(/\.html$/, '');
   expect(screenshotSuffix).toBe(contentsSuffix);
 
   await openerPage.close();
@@ -443,7 +443,7 @@ test('details: png + html with highlights, no prompt', async ({
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.highlights).toBe(true);
   expect(record.prompt).toBeUndefined();
 
@@ -959,7 +959,7 @@ test('details: copy buttons download files and put real paths on the clipboard',
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(fs.existsSync(writes[0])).toBe(true);
   expect(fs.existsSync(writes[1])).toBe(true);
 
@@ -1219,8 +1219,8 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
 
   const record = await readLatestRecord(sw);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
-  expect(record.contents_edited).toBe(true);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.isEdited).toBe(true);
 
   await openerPage.close();
 });
@@ -1313,8 +1313,8 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
 
   const record = await readLatestRecord(sw);
-  expect(record.selection).toBeDefined();
-  expect(record.selection_edited).toBe(true);
+  expect(record.selection?.filename).toBeDefined();
+  expect(record.selection?.isEdited).toBe(true);
 
   await openerPage.close();
 });
@@ -1347,9 +1347,9 @@ test('details: edit-selection cancel leaves the captured selection untouched', a
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  // No edit actually landed, so the sidecar must not carry the
-  // sticky `selection_edited` flag.
-  expect(record.selection_edited).toBeUndefined();
+  // No edit actually landed, so the sidecar's selection object
+  // must not carry the sticky `isEdited` flag.
+  expect(record.selection?.isEdited).toBeUndefined();
 
   const selPath = await findCapturedDownload(sw, '.html');
   const body = fs.readFileSync(selPath, 'utf8');

@@ -58,7 +58,7 @@ test.describe('copy-last-snapshot.sh', () => {
     const record = {
       timestamp: '2026-04-09T12:00:00.000Z',
       screenshot: screenshotFile,
-      contents: contentsFile,
+      contents: { filename: contentsFile },
       url: 'http://example.com/page0',
     };
     writeLog(srcDir, [record]);
@@ -71,7 +71,7 @@ test.describe('copy-last-snapshot.sh', () => {
     const parsed = JSON.parse(r.stdout.trim());
     const outDir = `${targetDir}/SeeWhatISee`;
     expect(parsed.screenshot).toBe(`${outDir}/${screenshotFile}`);
-    expect(parsed.contents).toBe(`${outDir}/${contentsFile}`);
+    expect(parsed.contents.filename).toBe(`${outDir}/${contentsFile}`);
 
     expect(fs.existsSync(path.join(outDir, screenshotFile))).toBe(true);
     expect(fs.existsSync(path.join(outDir, contentsFile))).toBe(true);
@@ -108,7 +108,7 @@ test.describe('copy-last-snapshot.sh', () => {
     const contentsFile = 'contents-20260409-120000-000.html';
     const record = {
       timestamp: '2026-04-09T12:00:00.000Z',
-      contents: contentsFile,
+      contents: { filename: contentsFile },
       url: 'http://example.com/page0',
     };
     writeLog(srcDir, [record]);
@@ -119,7 +119,7 @@ test.describe('copy-last-snapshot.sh', () => {
 
     const parsed = JSON.parse(r.stdout.trim());
     const outDir = `${targetDir}/SeeWhatISee`;
-    expect(parsed.contents).toBe(`${outDir}/${contentsFile}`);
+    expect(parsed.contents.filename).toBe(`${outDir}/${contentsFile}`);
     expect(parsed.screenshot).toBeUndefined();
 
     fs.rmSync(fakeHome, { recursive: true, force: true });

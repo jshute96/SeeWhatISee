@@ -852,7 +852,7 @@ async function copyLastHtmlFilename(): Promise<void> {
   if (!r) throw new Error('No captures in the log to copy from');
   if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.contents));
+  await copyToClipboard(joinCapturePath(dir, r.contents.filename));
 }
 
 /**
@@ -1003,22 +1003,24 @@ interface EnsureDownloadedMessage {
    */
   screenshotOverride?: string;
 }
-interface UpdateHtmlMessage {
-  action: 'updateHtml';
+/**
+ * Kinds of artifact body that the details page's Edit dialogs can
+ * replace. Kept as a literal-string union so the union on
+ * `DetailsMessage` still narrows cleanly on `msg.kind` — a raw
+ * `string` would lose the compile-time guarantee that every case is
+ * handled in the dispatch table below.
+ */
+type EditableArtifactKind = 'html' | 'selection';
+
+interface UpdateArtifactMessage {
+  action: 'updateArtifact';
+  /** Which captured body to replace. */
+  kind: EditableArtifactKind;
   /**
-   * Full replacement body for the captured HTML. Sent by the details
-   * page when the user saves an edit in the HTML edit dialog.
+   * Full replacement body. Sent by the details page when the user
+   * saves an edit in the corresponding Edit dialog.
    */
-  html: string;
-}
-interface UpdateSelectionMessage {
-  action: 'updateSelection';
-  /**
-   * Full replacement body for the captured selection. Sent by the
-   * details page when the user saves an edit in the Edit selection
-   * dialog.
-   */
-  selection: string;
+  value: string;
 }
 interface SaveDetailsMessage {
   action: 'saveDetails';
@@ -1046,8 +1048,7 @@ interface SaveDetailsMessage {
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
-  | UpdateHtmlMessage
-  | UpdateSelectionMessage
+  | UpdateArtifactMessage
   | SaveDetailsMessage;
 
 /**
@@ -1230,6 +1231,60 @@ async function ensureSelectionDownloaded(tabId: number): Promise<string> {
   });
 }
 
+/**
+ * Per-kind spec driving the generic `updateArtifact` handler. Each
+ * entry says how to commit the edited body to the session and
+ * which `session.downloads` entry to drop so the next Copy /
+ * Capture re-materializes under the same pinned filename.
+ *
+ * New editable artifact kinds add one entry here (and one to the
+ * `EditableArtifactKind` literal union); the handler loop and the
+ * surrounding session bookkeeping stay untouched.
+ */
+const EDITABLE_ARTIFACTS: Record<
+  EditableArtifactKind,
+  {
+    write: (session: DetailsSession, value: string) => void;
+    downloadsKey: 'html' | 'selection';
+  }
+> = {
+  html: {
+    write: (s, v) => {
+      s.capture.html = v;
+      s.htmlEdited = true;
+    },
+    downloadsKey: 'html',
+  },
+  selection: {
+    write: (s, v) => {
+      s.capture.selection = v;
+      s.selectionEdited = true;
+    },
+    downloadsKey: 'selection',
+  },
+};
+
+/**
+ * Apply an Edit-dialog save to the given session: replace the body
+ * + set the sticky edited flag + drop the corresponding download
+ * cache so the next Copy / Capture re-downloads with the edited
+ * content at the pinned filename. Mutates `session` in place;
+ * caller must persist via `saveDetailsSession`.
+ */
+function applyArtifactEdit(
+  session: DetailsSession,
+  kind: EditableArtifactKind,
+  value: string,
+): void {
+  const spec = EDITABLE_ARTIFACTS[kind];
+  spec.write(session, value);
+  if (session.downloads && spec.downloadsKey in session.downloads) {
+    const copy = { ...session.downloads };
+    delete copy[spec.downloadsKey];
+    session.downloads = copy;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
   const tabId = sender.tab?.id;
   if (tabId === undefined) return false;
@@ -1286,43 +1341,11 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
     return true;
   }
 
-  if (msg.action === 'updateHtml') {
+  if (msg.action === 'updateArtifact') {
     void (async () => {
       try {
         const session = await requireDetailsSession(tabId);
-        session.capture.html = msg.html;
-        session.htmlEdited = true;
-        // Drop any cached HTML download: the on-disk file (if a Copy
-        // click already materialized one) is now stale. The next
-        // Copy / Capture run will re-materialize under the same
-        // pinned filename via `conflictAction: 'overwrite'`.
-        if (session.downloads?.html) {
-          const { html: _html, ...rest } = session.downloads;
-          session.downloads = rest;
-        }
-        await saveDetailsSession(tabId, session);
-        sendResponse({ ok: true });
-      } catch (err) {
-        sendResponse({ error: err instanceof Error ? err.message : String(err) });
-      }
-    })();
-    return true;
-  }
-
-  if (msg.action === 'updateSelection') {
-    void (async () => {
-      try {
-        const session = await requireDetailsSession(tabId);
-        session.capture.selection = msg.selection;
-        session.selectionEdited = true;
-        // Same cache-invalidation dance as `updateHtml` — drop any
-        // pre-materialized selection download so the next Copy /
-        // Capture re-materializes under the same pinned
-        // `selectionFilename`.
-        if (session.downloads?.selection) {
-          const { selection: _selection, ...rest } = session.downloads;
-          session.downloads = rest;
-        }
+        applyArtifactEdit(session, msg.kind, msg.value);
         await saveDetailsSession(tabId, session);
         sendResponse({ ok: true });
       } catch (err) {

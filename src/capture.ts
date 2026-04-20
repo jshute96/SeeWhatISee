@@ -59,6 +59,30 @@ export const LOG_STORAGE_KEY = 'captureLog';
 // are evicted FIFO when the cap is exceeded.
 const LOG_MAX_ENTRIES = 100;
 
+/**
+ * A saved file the capture flow wants to surface in `log.json`.
+ * Wraps the bare basename (no directory; the downloads root sits
+ * elsewhere) with optional metadata flags. Omitted flags carry the
+ * "default / not-set" meaning — e.g. `isEdited` absent ≡ unedited
+ * — so downstream consumers can ignore fields they don't care
+ * about and presence is itself the signal.
+ *
+ * Used uniformly for artifacts that may be produced either as a
+ * raw scrape or as a user-edited body: currently `contents` and
+ * `selection`. Future editable artifact kinds should adopt the
+ * same shape so the record is symmetrical across kinds.
+ */
+export interface Artifact {
+  /** Bare basename of the file on disk (no directory segment). */
+  filename: string;
+  /**
+   * `true` iff the user replaced the body via the corresponding
+   * Edit dialog before the save that produced this record. Omitted
+   * when the artifact is the raw scrape.
+   */
+  isEdited?: true;
+}
+
 export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
@@ -76,43 +100,23 @@ export interface CaptureRecord {
    */
   screenshot?: string;
   /**
-   * Bare filename of the captured HTML file (no directory). Set on
-   * HTML captures — the "Save html contents" menu entry, and the
-   * "Capture with details…" path when the user keeps the HTML.
+   * Captured HTML artifact. Set on HTML captures — the "Save html
+   * contents" menu entry, and the "Capture with details…" path when
+   * the user keeps the HTML. Carries the bare filename (no
+   * directory) plus an optional `isEdited: true` flag that appears
+   * iff the user saved an edit via the Edit HTML dialog before
+   * capture; the flag is omitted on an unedited scrape.
    */
-  contents?: string;
+  contents?: Artifact;
   /**
-   * Set to `true` only when the saved HTML body was modified through
-   * the Edit HTML dialog on the "Capture with details…" page — i.e.
-   * the on-disk HTML file is the user's edit, not the raw scrape.
-   * Omitted when false so presence itself is the signal to
-   * downstream consumers.
-   *
-   * Snake_case on both the TS type and the JSON key so the record
-   * shape is a faithful reflection of what `log.json` contains — the
-   * test suite casts `JSON.parse` output to `CaptureRecord` directly
-   * and would silently lose the flag on a camel-to-snake rename.
-   *
-   * Only meaningful on records that also have a `contents` field.
+   * Captured selection artifact. Set by either `captureSelection()`
+   * (the More → Capture selection shortcut) or the details flow
+   * when the user kept the Save selection checkbox checked. Same
+   * shape as `contents` — the optional `isEdited` flag tracks
+   * whether the user edited via the Edit selection dialog before
+   * capture.
    */
-  contents_edited?: true;
-  /**
-   * Bare filename of the captured selection HTML
-   * (`selection-<timestamp>.html`, no directory). Set by either
-   * `captureSelection()` (the More → Capture selection shortcut)
-   * or the details flow when the user kept the Save selection
-   * checkbox checked. Absent on every other capture mode.
-   */
-  selection?: string;
-  /**
-   * Set to `true` only when the saved selection was modified through
-   * the Edit selection dialog on the "Capture with details…" page.
-   * Same semantics and naming convention as `contents_edited` —
-   * snake_case matches the JSON key, omitted when false.
-   *
-   * Only meaningful on records that also have a `selection` field.
-   */
-  selection_edited?: true;
+  selection?: Artifact;
   /**
    * User-entered prompt text from the "Capture with details…" flow,
    * trimmed. Omitted entirely when empty so the field's presence
@@ -239,7 +243,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   const filename = `contents-${compactTimestamp(now)}.html`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    contents: filename,
+    contents: { filename },
     url: active.url ?? '',
   };
 
@@ -312,7 +316,7 @@ export async function captureSelection(delayMs = 0): Promise<CaptureRecord> {
   const filename = `selection-${compactTimestamp(now)}.html`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
-    selection: filename,
+    selection: { filename },
     url: active.url ?? '',
   };
 
@@ -614,6 +618,16 @@ export async function waitForDownloadComplete(
  * `timestamp`, `url`, and any `prompt`, so a downstream agent can
  * act on just the URL (and prompt) without ever reading a file.
  */
+/**
+ * Build an `Artifact` object for inclusion in a `CaptureRecord`.
+ * Keeps the `isEdited` flag conditional at a single site — the two
+ * call paths (contents and selection) would otherwise duplicate
+ * the same "set iff truthy" conditional.
+ */
+function artifact(filename: string, edited?: boolean): Artifact {
+  return edited ? { filename, isEdited: true } : { filename };
+}
+
 export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<CaptureRecord> {
   // Timestamp + filenames were pinned at capture time (see
   // captureBothToMemory) so they describe when the screenshot was
@@ -628,12 +642,10 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     if (opts.hasHighlights) record.highlights = true;
   }
   if (opts.includeHtml) {
-    record.contents = opts.capture.contentsFilename;
-    if (opts.htmlEdited) record.contents_edited = true;
+    record.contents = artifact(opts.capture.contentsFilename, opts.htmlEdited);
   }
   if (opts.includeSelection && opts.capture.selectionFilename) {
-    record.selection = opts.capture.selectionFilename;
-    if (opts.selectionEdited) record.selection_edited = true;
+    record.selection = artifact(opts.capture.selectionFilename, opts.selectionEdited);
   }
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
@@ -756,12 +768,11 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   const ordered: Record<string, unknown> = { timestamp: r.timestamp };
   if (r.screenshot !== undefined) ordered.screenshot = r.screenshot;
   if (r.highlights !== undefined) ordered.highlights = r.highlights;
+  // `contents` / `selection` are `Artifact` objects (`{ filename,
+  // isEdited? }`) — emitted as-is so `JSON.stringify` handles the
+  // nested shape and the optional `isEdited` key naturally.
   if (r.contents !== undefined) ordered.contents = r.contents;
-  // Placed right after `contents` / `selection` so the edited-flag
-  // sits next to the filename it qualifies in grepped output.
-  if (r.contents_edited !== undefined) ordered.contents_edited = r.contents_edited;
   if (r.selection !== undefined) ordered.selection = r.selection;
-  if (r.selection_edited !== undefined) ordered.selection_edited = r.selection_edited;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;
   ordered.url = r.url;
   return JSON.stringify(ordered, null, indent);

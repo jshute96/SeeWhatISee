@@ -132,7 +132,7 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
 
   const record = await readLatestRecord(sw);
   expect(record.screenshot).toMatch(SCREENSHOT_PATTERN);
-  expect(record.contents).toMatch(CONTENTS_PATTERN);
+  expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBeUndefined();
   expect(record.highlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/green.html`);
@@ -149,7 +149,7 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
   // Both files share the same compact-timestamp suffix since they
   // came from one captureBothToMemory call.
   const screenshotStem = record.screenshot!.replace(/^screenshot-|\.png$/g, '');
-  const contentsStem = record.contents!.replace(/^contents-|\.html$/g, '');
+  const contentsStem = record.contents!.filename.replace(/^contents-|\.html$/g, '');
   expect(screenshotStem).toBe(contentsStem);
 
   await page.close();

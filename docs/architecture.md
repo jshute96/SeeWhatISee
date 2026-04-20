@@ -436,41 +436,51 @@ can draw red markup on the regions they want the agent to focus on.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
 
-### Edit HTML / selection dialogs
+### Edit dialogs (template-driven)
 
-- Pencil icons sit next to the Copy HTML and Copy selection buttons.
-  - Click opens a modal `<dialog>` with a textarea prefilled with the
-    current captured body and Save / Cancel buttons.
-  - The two dialogs (`#edit-html-dialog` and `#edit-selection-dialog`)
-    share wiring — capture-page.ts routes both through a single
-    `bindEditDialog` helper so the save / cancel / no-op-guard /
-    error-surface behavior stays identical.
-- SW-side `updateHtml` / `updateSelection` handlers:
-  - Overwrite `session.capture.html` / `session.capture.selection` on
-    the `DetailsSession`.
-  - Set the sticky `session.htmlEdited` / `session.selectionEdited`
-    flag — forwarded to `recordDetailedCapture` at save time so the
-    sidecar record carries `contents_edited: true` /
-    `selection_edited: true` on any artifact the user keeps.
-  - Drop the matching `session.downloads.{html,selection}` entry so
-    the next `ensureHtmlDownloaded` / `ensureSelectionDownloaded`
-    re-materializes the file under the same pinned filename (via
-    `conflictAction: 'overwrite'`).
+- Pencil icons sit next to each editable artifact's Copy button in
+  the capture page — currently HTML and selection; more kinds can be
+  added without new dialog markup.
+- A single `<template id="edit-dialog-template">` in `capture.html`
+  supplies the modal structure. `capture-page.ts::createEditDialog`
+  clones it per kind and stamps `edit-${kind}-${role}` ids onto the
+  inner elements so e2e tests can target a specific kind without
+  knowing the full catalog.
+- `EDIT_KINDS` in `capture-page.ts` is the catalog — one entry per
+  editable kind with its pencil button, title, and optional
+  `onSaved` hook (e.g. HTML's size-readout refresh). Adding a kind
+  is one entry + one markup button.
+- Per-kind behavior:
+  - Open: seeds the textarea from the page's `captured[kind]`
+    mirror, clears any prior error, focuses the textarea at the top.
+  - Save: no-op when the body is unchanged; otherwise posts
+    `{ action: 'updateArtifact', kind, value }` to the SW and runs
+    the per-kind `onSaved` hook on success. Errors surface inline
+    in a `role="alert"` region.
+  - Cancel / Escape: closes without touching anything.
+- SW-side `updateArtifact` handler:
+  - Dispatches on `msg.kind` via the `EDITABLE_ARTIFACTS` spec
+    table — each entry declares how to commit the new body to
+    `DetailsSession.capture` and which `session.downloads` entry to
+    drop. New kinds add one entry.
+  - Writes the body, sets the sticky `session.{html,selection}Edited`
+    flag, and drops the matching `session.downloads.{html,selection}`
+    entry so the next `ensureHtmlDownloaded` /
+    `ensureSelectionDownloaded` re-materializes the file under the
+    same pinned filename (via `conflictAction: 'overwrite'`).
   - The eventual Save — whether Capture clicks or a later Copy —
     therefore writes the edited content.
-- The page refreshes its local HTML-size readout after an HTML save
-  so the user sees the byte count reflect the edit immediately;
-  selection has no size readout, so its dialog has no post-save UI
-  beyond closing itself.
 - Only the HTML body and selection are editable; the screenshot has
   no text-edit UI (the highlight overlay covers its annotation use
   case).
 
-### `contents_edited` / `selection_edited` sidecar flags
+### `isEdited` sidecar flag
 
-- Written to `log.json` whenever the user saved an edit through the
-  Edit HTML / Edit selection dialog and then kept the corresponding
-  artifact on the details page.
+- Emitted inside `contents` / `selection` artifact objects in
+  `log.json` whenever the user saved an edit through the
+  corresponding dialog and then kept the artifact on the details
+  page — i.e. the artifact carries `{ "filename": "…", "isEdited":
+  true }` instead of the bare-filename object.
 - Sticky per session: once the user has opened the dialog and saved,
   later saves on the same details tab carry the flag regardless of
   whether they edit again — the on-disk body *is* the edit.

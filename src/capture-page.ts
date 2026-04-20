@@ -59,24 +59,17 @@ const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTM
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
-const editHtmlDialog = document.getElementById('edit-html-dialog') as HTMLDialogElement;
-const editHtmlTextarea = document.getElementById('edit-html-textarea') as HTMLTextAreaElement;
-const editHtmlSaveBtn = document.getElementById('edit-html-save') as HTMLButtonElement;
-const editHtmlCancelBtn = document.getElementById('edit-html-cancel') as HTMLButtonElement;
-const editHtmlErrorEl = document.getElementById('edit-html-error') as HTMLParagraphElement;
 const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
-const editSelectionDialog = document.getElementById('edit-selection-dialog') as HTMLDialogElement;
-const editSelectionTextarea = document.getElementById('edit-selection-textarea') as HTMLTextAreaElement;
-const editSelectionSaveBtn = document.getElementById('edit-selection-save') as HTMLButtonElement;
-const editSelectionCancelBtn = document.getElementById('edit-selection-cancel') as HTMLButtonElement;
-const editSelectionErrorEl = document.getElementById('edit-selection-error') as HTMLParagraphElement;
-// Local mirrors of the SW's captured bodies. Seeded by loadData()
-// and updated whenever the user saves an edit. Kept on the page
-// side so the dialogs can prefill their textareas without an extra
-// round-trip and so the HTML-size readout stays in sync with the
-// SW's authoritative copy.
-let capturedHtml = '';
-let capturedSelection = '';
+// Local mirrors of the SW's captured bodies, keyed by artifact
+// kind. Seeded by loadData() and updated whenever the user saves
+// an edit. Kept on the page side so the dialogs can prefill their
+// textareas without an extra round-trip and so any per-kind
+// readouts (e.g. HTML-size) stay in sync with the SW's
+// authoritative copy. New editable kinds append one entry here.
+const captured: Record<EditableArtifactKind, string> = {
+  html: '',
+  selection: '',
+};
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -114,7 +107,7 @@ document.addEventListener('keydown', (e) => {
   // Suspend the page-wide hotkeys while any edit dialog is up —
   // e.g. Alt+H in the HTML dialog should type `h`, not silently
   // flip the Save HTML checkbox behind the modal.
-  if (editHtmlDialog.open || editSelectionDialog.open) return;
+  if (anyEditDialogOpen()) return;
   if (!e.altKey) return;
   const key = e.key.toLowerCase();
   if (key === 's') {
@@ -359,17 +352,17 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
-    capturedHtml = response.html;
+    captured.html = response.html;
     // True UTF-8 byte count of the captured HTML, not the JS string
     // length (which counts UTF-16 code units).
-    htmlSizeEl.textContent = formatBytes(new Blob([capturedHtml]).size);
+    htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
     // Enable + default-check the Save selection controls iff the SW
     // saw a non-empty selection at capture time. A user who bothered
     // to select text probably wants it in the record. The edit
     // button gates on the same condition so the user can't open an
     // empty-body dialog when there was no selection to begin with.
     if (response.selection) {
-      capturedSelection = response.selection;
+      captured.selection = response.selection;
       selectionBox.checked = true;
       selectionBox.disabled = false;
       copySelectionBtn.disabled = false;
@@ -422,20 +415,49 @@ copySelectionBtn.addEventListener('click', () => {
   void copyArtifactPath('selection');
 });
 
-// ─── Edit dialogs (HTML + selection) ──────────────────────────────
+// ─── Edit dialogs (catalog-driven) ────────────────────────────────
 //
-// Both edit dialogs share the same wiring: the pencil button opens a
-// modal with the current body prefilled, Save pushes the new body to
-// the SW (which invalidates the corresponding download cache so the
-// next Copy / Capture writes the edited content) and runs an
-// optional `onSaved` hook, and Cancel closes without touching
-// anything. A single `bindEditDialog` helper wires both so the two
-// stay in lockstep — the HTML and selection flows must behave
-// identically except for the action / field name and any per-kind
-// post-save UI.
+// Each editable artifact kind gets one dialog cloned from
+// `#edit-dialog-template` in capture.html. A Save pushes the new
+// body to the SW via `updateArtifact`, which invalidates the
+// corresponding download cache so the next Copy / Capture writes
+// the edited content. Adding a future kind is one entry in
+// `EDIT_KINDS` below plus a pencil button in the markup.
 
-interface EditDialogBindings {
+type EditableArtifactKind = 'html' | 'selection';
+
+interface EditKindSpec {
+  kind: EditableArtifactKind;
+  /** Modal heading + textarea aria-label. Short, user-visible. */
+  title: string;
+  /** The pencil button inside the details-page row for this kind. */
   openBtn: HTMLButtonElement;
+  /** Optional post-save hook — e.g. refresh the HTML-size readout. */
+  onSaved?: (value: string) => void;
+}
+
+const EDIT_KINDS: EditKindSpec[] = [
+  {
+    kind: 'html',
+    title: 'Edit page contents HTML',
+    openBtn: editHtmlBtn,
+    onSaved: (v) => {
+      htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
+    },
+  },
+  {
+    kind: 'selection',
+    title: 'Edit selection HTML',
+    openBtn: editSelectionBtn,
+  },
+];
+
+// Built in `bindEditDialogs` once the DOM is cloned from the
+// template; populated in insertion order so `anyEditDialogOpen()`
+// and future iteration walk the same catalog EDIT_KINDS sees.
+const editDialogs: HTMLDialogElement[] = [];
+
+interface EditDialogParts {
   dialog: HTMLDialogElement;
   textarea: HTMLTextAreaElement;
   saveBtn: HTMLButtonElement;
@@ -443,123 +465,114 @@ interface EditDialogBindings {
   errorEl: HTMLParagraphElement;
 }
 
-interface EditDialogOptions {
-  /** Current body as the page understands it — used both as dialog seed and as the no-op guard. */
-  getCurrent: () => string;
-  /** Commit the new body to the page's local mirror after a successful SW save. */
-  setCurrent: (value: string) => void;
-  /** SW message action name; the full message is `{ action, [field]: value }`. */
-  updateAction: 'updateHtml' | 'updateSelection';
-  /** Field name on the update message (`html` or `selection`). */
-  updateField: 'html' | 'selection';
-  /** Optional post-save hook for per-kind UI (e.g. refresh HTML-size readout). */
-  onSaved?: (value: string) => void;
+/**
+ * Clone the edit-dialog template, fill in per-kind ids / text /
+ * aria wiring, and append the new <dialog> to document.body.
+ * Returns refs to the interactive parts so the caller can wire
+ * them up.
+ *
+ * Per-instance ids follow the `edit-${kind}-${role}` convention
+ * (e.g. `edit-html-dialog`, `edit-selection-textarea`) so e2e
+ * tests can target a specific kind without knowing the full
+ * catalog.
+ */
+function createEditDialog(kind: EditableArtifactKind, title: string): EditDialogParts {
+  const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
+  const frag = tpl.content.cloneNode(true) as DocumentFragment;
+  const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
+  const titleEl = dialog.querySelector('.edit-dialog-title') as HTMLHeadingElement;
+  const textarea = dialog.querySelector('.edit-dialog-textarea') as HTMLTextAreaElement;
+  const errorEl = dialog.querySelector('.edit-dialog-error') as HTMLParagraphElement;
+  const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
+  const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
+
+  dialog.id = `edit-${kind}-dialog`;
+  titleEl.id = `edit-${kind}-title`;
+  titleEl.textContent = title;
+  dialog.setAttribute('aria-labelledby', titleEl.id);
+  textarea.id = `edit-${kind}-textarea`;
+  textarea.setAttribute('aria-label', title);
+  errorEl.id = `edit-${kind}-error`;
+  saveBtn.id = `edit-${kind}-save`;
+  cancelBtn.id = `edit-${kind}-cancel`;
+
+  document.body.appendChild(dialog);
+  return { dialog, textarea, saveBtn, cancelBtn, errorEl };
 }
 
-function bindEditDialog(b: EditDialogBindings, opts: EditDialogOptions): void {
-  b.openBtn.addEventListener('click', () => {
-    b.textarea.value = opts.getCurrent();
+function bindEditDialog(spec: EditKindSpec): void {
+  const parts = createEditDialog(spec.kind, spec.title);
+  editDialogs.push(parts.dialog);
+
+  spec.openBtn.addEventListener('click', () => {
+    parts.textarea.value = captured[spec.kind];
     clearError();
-    b.dialog.showModal();
+    parts.dialog.showModal();
     // Defer focus so showModal's own autofocus doesn't overwrite us.
     requestAnimationFrame(() => {
-      b.textarea.focus();
+      parts.textarea.focus();
       // Place the caret at the start — bodies are often long and
       // the user is most likely to want to search / scroll from the
       // top rather than land at the end.
-      b.textarea.setSelectionRange(0, 0);
-      b.textarea.scrollTop = 0;
+      parts.textarea.setSelectionRange(0, 0);
+      parts.textarea.scrollTop = 0;
     });
   });
 
-  b.cancelBtn.addEventListener('click', () => {
-    b.dialog.close();
+  parts.cancelBtn.addEventListener('click', () => {
+    parts.dialog.close();
   });
 
-  b.saveBtn.addEventListener('click', () => {
+  parts.saveBtn.addEventListener('click', () => {
     void save();
   });
 
   async function save(): Promise<void> {
-    const newValue = b.textarea.value;
+    const newValue = parts.textarea.value;
     // No-op when unchanged: avoid an SW round-trip (and the cache
     // invalidation side-effect that would re-download on next Copy).
-    if (newValue === opts.getCurrent()) {
-      b.dialog.close();
+    if (newValue === captured[spec.kind]) {
+      parts.dialog.close();
       return;
     }
     clearError();
-    b.saveBtn.disabled = true;
+    parts.saveBtn.disabled = true;
     try {
       const response = (await chrome.runtime.sendMessage({
-        action: opts.updateAction,
-        [opts.updateField]: newValue,
+        action: 'updateArtifact',
+        kind: spec.kind,
+        value: newValue,
       })) as { ok?: boolean; error?: string } | undefined;
       if (!response?.ok) {
         const detail = response?.error ?? 'no response from background';
-        console.warn(`[SeeWhatISee] ${opts.updateAction} failed:`, detail);
+        console.warn(`[SeeWhatISee] updateArtifact(${spec.kind}) failed:`, detail);
         showError(`Couldn't save edit: ${detail}`);
         return;
       }
-      opts.setCurrent(newValue);
-      opts.onSaved?.(newValue);
-      b.dialog.close();
+      captured[spec.kind] = newValue;
+      spec.onSaved?.(newValue);
+      parts.dialog.close();
     } finally {
-      b.saveBtn.disabled = false;
+      parts.saveBtn.disabled = false;
     }
   }
 
   function showError(message: string): void {
-    b.errorEl.textContent = message;
-    b.errorEl.hidden = false;
+    parts.errorEl.textContent = message;
+    parts.errorEl.hidden = false;
   }
 
   function clearError(): void {
-    b.errorEl.textContent = '';
-    b.errorEl.hidden = true;
+    parts.errorEl.textContent = '';
+    parts.errorEl.hidden = true;
   }
 }
 
-bindEditDialog(
-  {
-    openBtn: editHtmlBtn,
-    dialog: editHtmlDialog,
-    textarea: editHtmlTextarea,
-    saveBtn: editHtmlSaveBtn,
-    cancelBtn: editHtmlCancelBtn,
-    errorEl: editHtmlErrorEl,
-  },
-  {
-    getCurrent: () => capturedHtml,
-    setCurrent: (v) => {
-      capturedHtml = v;
-    },
-    updateAction: 'updateHtml',
-    updateField: 'html',
-    onSaved: (v) => {
-      htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
-    },
-  },
-);
+for (const spec of EDIT_KINDS) bindEditDialog(spec);
 
-bindEditDialog(
-  {
-    openBtn: editSelectionBtn,
-    dialog: editSelectionDialog,
-    textarea: editSelectionTextarea,
-    saveBtn: editSelectionSaveBtn,
-    cancelBtn: editSelectionCancelBtn,
-    errorEl: editSelectionErrorEl,
-  },
-  {
-    getCurrent: () => capturedSelection,
-    setCurrent: (v) => {
-      capturedSelection = v;
-    },
-    updateAction: 'updateSelection',
-    updateField: 'selection',
-  },
-);
+function anyEditDialogOpen(): boolean {
+  return editDialogs.some((d) => d.open);
+}
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially

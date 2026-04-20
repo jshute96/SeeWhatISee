@@ -59,7 +59,7 @@ test.describe('get-latest.sh', () => {
   test('prints JSON with absolute contents path', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
-      contents: 'contents-20260409-120000-000.html',
+      contents: { filename: 'contents-20260409-120000-000.html' },
       url: 'http://example.com/page0',
     }]);
 
@@ -67,14 +67,14 @@ test.describe('get-latest.sh', () => {
     expect(r.exitCode).toBe(0);
 
     const parsed = JSON.parse(r.stdout.trim());
-    expect(parsed.contents).toBe(`${tmpDir}/contents-20260409-120000-000.html`);
+    expect(parsed.contents.filename).toBe(`${tmpDir}/contents-20260409-120000-000.html`);
   });
 
   test('absolutizes both screenshot and contents', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.000Z',
       screenshot: 'screenshot-20260409-120000-000.png',
-      contents: 'contents-20260409-120000-000.html',
+      contents: { filename: 'contents-20260409-120000-000.html', isEdited: true },
       url: 'http://example.com/page0',
     }]);
 
@@ -83,7 +83,9 @@ test.describe('get-latest.sh', () => {
 
     const parsed = JSON.parse(r.stdout.trim());
     expect(parsed.screenshot).toBe(`${tmpDir}/screenshot-20260409-120000-000.png`);
-    expect(parsed.contents).toBe(`${tmpDir}/contents-20260409-120000-000.html`);
+    expect(parsed.contents.filename).toBe(`${tmpDir}/contents-20260409-120000-000.html`);
+    // The nested `isEdited` flag passes through the rewrite untouched.
+    expect(parsed.contents.isEdited).toBe(true);
   });
 
   test('does not double-absolutize already-absolute paths', () => {

@@ -376,42 +376,35 @@
   </div>
 
   <!--
-    HTML edit modal. Opened by the pencil button next to Copy HTML.
-    capture-page.ts populates the textarea with the current captured
-    HTML on open, and on Save pushes the new body back to the SW so
-    the next Copy / Capture writes the edited content.
-  -->
-  <dialog id="edit-html-dialog" class="edit-dialog" aria-labelledby="edit-html-title">
-    <h2 id="edit-html-title">Edit captured HTML</h2>
-    <textarea id="edit-html-textarea" spellcheck="false"
-              aria-label="Captured HTML content"></textarea>
-    <!--
-      Hidden until Save fails; capture-page.ts toggles `hidden` and
-      writes the SW error message into textContent. `role="alert"`
-      lets screen readers announce the message when it appears.
-    -->
-    <p id="edit-html-error" class="dialog-error" role="alert" hidden></p>
-    <div class="dialog-actions">
-      <button type="button" id="edit-html-cancel">Cancel</button>
-      <button type="button" id="edit-html-save">Save</button>
-    </div>
-  </dialog>
+    Edit-dialog template. Each editable artifact kind (HTML,
+    selection, …) gets a cloned instance appended to <body> by
+    capture-page.ts's `createEditDialog`, which fills in the
+    per-kind `id`s, title text, and aria labels. Keeping the markup
+    here (rather than building nodes by hand in JS) lets CSS
+    selectors like `.edit-dialog textarea` apply uniformly to every
+    instance. New kinds don't need any new markup.
 
-  <!--
-    Selection edit modal. Same structure as the HTML dialog above —
-    the two are wired by a shared helper in capture-page.ts.
+    The per-instance ids follow a `edit-${kind}-${role}` convention
+    (e.g. `edit-html-dialog`, `edit-selection-textarea`) so the e2e
+    tests can locate the right element without the test file
+    having to care which kinds exist.
   -->
-  <dialog id="edit-selection-dialog" class="edit-dialog"
-          aria-labelledby="edit-selection-title">
-    <h2 id="edit-selection-title">Edit captured selection</h2>
-    <textarea id="edit-selection-textarea" spellcheck="false"
-              aria-label="Captured selection content"></textarea>
-    <p id="edit-selection-error" class="dialog-error" role="alert" hidden></p>
-    <div class="dialog-actions">
-      <button type="button" id="edit-selection-cancel">Cancel</button>
-      <button type="button" id="edit-selection-save">Save</button>
-    </div>
-  </dialog>
+  <template id="edit-dialog-template">
+    <dialog class="edit-dialog">
+      <h2 class="edit-dialog-title"></h2>
+      <textarea class="edit-dialog-textarea" spellcheck="false"></textarea>
+      <!--
+        Hidden until Save fails; capture-page.ts toggles `hidden`
+        and writes the SW error message into textContent.
+        `role="alert"` lets screen readers announce it on appear.
+      -->
+      <p class="edit-dialog-error dialog-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="edit-dialog-cancel">Cancel</button>
+        <button type="button" class="edit-dialog-save">Save</button>
+      </div>
+    </dialog>
+  </template>
 
   <script src="capture-page.js"></script>
 </body>
