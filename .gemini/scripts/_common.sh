@@ -11,14 +11,16 @@ SRC_DIR="$REAL_HOME/Downloads/SeeWhatISee"
 LOG_JSON="$SRC_DIR/log.json"
 
 # Resolve $TARGET_DIR — the Gemini tmp dir we copy capture files into.
-# Gemini CLI restricts file reads to a workspace-named tmp dir;
-# ${WORKSPACE,,} lowercases it (Gemini lowercases the workspace name
-# it resolves to on its side too). Honors $TARGET_DIR from the
-# environment when set, for tests.
+# Gemini CLI restricts file reads to a workspace-named tmp dir.
+# Honors $TARGET_DIR from the environment when set, for tests.
 resolve_target_dir() {
   if [ -z "${TARGET_DIR:-}" ]; then
     WORKSPACE="$(basename "$(pwd)")"
-    TARGET_DIR="$HOME/.gemini/tmp/${WORKSPACE,,}"
+    # Replace . with -, matching Gemini workspace dir selection.
+    WORKSPACE="${WORKSPACE//./-}"
+    # Lowercase the name, matching Gemini workspace dir selection.
+    WORKSPACE="${WORKSPACE,,}"
+    TARGET_DIR="$HOME/.gemini/tmp/$WORKSPACE"
   fi
   TARGET_DIR="$TARGET_DIR/SeeWhatISee"
   mkdir -p "$TARGET_DIR"
