@@ -173,17 +173,6 @@ export type EditableArtifactKind =
   | 'selectionText'
   | 'selectionMarkdown';
 
-/**
- * Map from `SelectionFormat` to its matching editable-artifact id.
- * Centralized so the page and the SW agree on the naming convention
- * without each site restating the mapping.
- */
-export const SELECTION_EDIT_KIND: Record<SelectionFormat, EditableArtifactKind> = {
-  html: 'selectionHtml',
-  text: 'selectionText',
-  markdown: 'selectionMarkdown',
-};
-
 export interface CaptureRecord {
   /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
   timestamp: string;
@@ -842,7 +831,9 @@ export async function downloadSelection(
     throw new Error('No selection captured');
   }
   const body = capture.selections[format];
-  if (!body) throw new Error(`No selection ${format} content`);
+  if (!body || body.trim().length === 0) {
+    throw new Error(`No selection ${format} content`);
+  }
   const withNewline = body.endsWith('\n') ? body : `${body}\n`;
   const mime = SELECTION_DATA_URL_MIME[format];
   const url = `data:${mime};charset=utf-8,${encodeURIComponent(withNewline)}`;

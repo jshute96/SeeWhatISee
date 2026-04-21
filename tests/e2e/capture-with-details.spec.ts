@@ -890,6 +890,56 @@ async function seedSelection(page: Page): Promise<void> {
   });
 }
 
+// Whitespace-only variant: the scraped fragment's `innerHTML` is
+// non-empty (so the SW sends us a `selections` object), but every
+// format trims to empty. The details page must collapse the whole
+// selection group to disabled + unchecked, not leave the master
+// enabled with three dead radios underneath.
+async function seedWhitespaceOnlySelection(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const span = document.createElement('span');
+    span.id = 'sel-seed';
+    span.textContent = '   \n\t  ';
+    document.body.appendChild(span);
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const sel = window.getSelection();
+    sel!.removeAllRanges();
+    sel!.addRange(range);
+  });
+}
+
+test('details: whitespace-only selection disables the whole Save selection group', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedWhitespaceOnlySelection,
+  );
+
+  // Master checkbox stays disabled + unchecked, with the shared
+  // selection-error icon explaining why.
+  const selectionBox = capturePage.locator('#cap-selection');
+  await expect(selectionBox).toBeDisabled();
+  await expect(selectionBox).not.toBeChecked();
+  await expect(capturePage.locator('#row-selection')).toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-selection')).toHaveAttribute(
+    'title',
+    /Selection has no saveable content/,
+  );
+
+  // The whole format group is hidden; the per-format rows don't
+  // surface at all so the user sees only the master's explanation.
+  await expect(capturePage.locator('.selection-formats')).toBeHidden();
+
+  await openerPage.close();
+});
+
 test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is no-op', async ({
   extensionContext,
   fixtureServer,
@@ -1207,19 +1257,21 @@ test('details: html scrape failure still opens the page with HTML/selection disa
     new RegExp(`Unable to capture HTML contents.*${reason}`),
   );
 
-  // All three selection rows stay in their default greyed-out
-  // state — the failure was the same `executeScript` call, so the
-  // HTML row's error already explains it; duplicate icons on every
-  // selection row would just be noise. We do NOT add `has-error`
-  // and do NOT set any selection-error tooltip in this case.
-  for (const format of ['html', 'text', 'markdown'] as const) {
-    const radio = capturePage.locator(`#cap-selection-${format}`);
-    await expect(radio).toBeDisabled();
-    await expect(radio).not.toBeChecked();
-    await expect(capturePage.locator(`#edit-selection-${format}-btn`)).toBeDisabled();
-    await expect(capturePage.locator(`#row-selection-${format}`)).not.toHaveClass(/has-error/);
-    await expect(capturePage.locator(`#error-selection-${format}`)).toHaveAttribute('title', '');
-  }
+  // Master "Save selection" checkbox stays in its default
+  // greyed-out state. The failure was the same `executeScript`
+  // call, so the HTML row's error already explains it; a
+  // duplicate icon on the selection master row would just be
+  // noise. We do NOT add `has-error` and do NOT set any
+  // selection-error tooltip in this case.
+  const selectionBox = capturePage.locator('#cap-selection');
+  await expect(selectionBox).toBeDisabled();
+  await expect(selectionBox).not.toBeChecked();
+  await expect(capturePage.locator('#row-selection')).not.toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-selection')).toHaveAttribute('title', '');
+
+  // With no selection at all the whole format group is hidden —
+  // the per-format rows don't surface in any scrape-failure path.
+  await expect(capturePage.locator('.selection-formats')).toBeHidden();
 
   // Screenshot + prompt + highlights remain functional: drawing a
   // rectangle and saving the screenshot + prompt should still produce

@@ -33,8 +33,9 @@ type SelectionFormat = 'html' | 'text' | 'markdown';
 
 /**
  * Wire kind used on `ensureDownloaded` / `updateArtifact` messages
- * for a given selection format. Matches `SELECTION_EDIT_KIND` on
- * the SW side — again duplicated because of the non-module loading.
+ * for a given selection format. The SW holds the matching reverse
+ * lookup (`WIRE_TO_SELECTION_FORMAT` in `background.ts`); keep both
+ * sites in sync.
  */
 const SELECTION_WIRE_KIND: Record<SelectionFormat, EditableArtifactKind> = {
   html: 'selectionHtml',
@@ -105,6 +106,21 @@ const htmlRow = document.getElementById('row-html') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
 
+// Master "Save selection:" checkbox + its row and shared error
+// icon. The checkbox drives the "save selection at all?" decision;
+// the three per-format radios below pick which serialization gets
+// written. See loadData() / wireSelectionControls() for the full
+// master ↔ radio coupling.
+const selectionBox = document.getElementById('cap-selection') as HTMLInputElement;
+const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
+const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
+// Wrapper around the three format radio rows. Hidden by default
+// and only revealed when at least one format has content — see
+// loadData(). The per-format rows + their error icons never show
+// when this wrapper is hidden, so the master row alone carries
+// any error state.
+const selectionFormatsEl = document.querySelector('.selection-formats') as HTMLDivElement;
+
 // Per-selection-format controls. Three parallel groups of radio
 // + copy + edit + error-icon controls, one per format row in the
 // details page. Gated independently by loadData() — enabled iff
@@ -149,17 +165,80 @@ const captured: Record<EditableArtifactKind, string> = {
 };
 
 /**
- * Returns the currently-checked selection format radio, or `null`
- * when none is checked (no selection captured, or the user
- * unchecked the default). Written to `SaveDetailsMessage
- * .selectionFormat` at Capture time.
+ * Format to restore when the user re-checks the master "Save
+ * selection" checkbox after having unchecked it. Seeded by
+ * loadData() with the first non-empty format (same rule as the
+ * initial default-check) so the user's first click always lands
+ * on a format with content. Updated whenever the user explicitly
+ * picks a different radio so the restore feels sticky.
+ */
+let defaultSelectionFormat: SelectionFormat | null = null;
+
+/**
+ * Returns the selection format to save, or `null` when no
+ * selection is being saved. The master checkbox gates the whole
+ * group: if it's unchecked we never save, regardless of which
+ * radio happens to still be checked. If it's checked but no radio
+ * is (shouldn't happen once wireSelectionControls runs, but
+ * defensive), we also return null. Written to
+ * `SaveDetailsMessage.selectionFormat` at Capture time.
  */
 function selectedSelectionFormat(): SelectionFormat | null {
+  if (!selectionBox.checked) return null;
   for (const format of SELECTION_FORMATS) {
     if (selectionRows[format].radio.checked) return format;
   }
   return null;
 }
+
+/**
+ * Couple the master "Save selection" checkbox to the three
+ * per-format radios:
+ *   - Clicking a radio implies "yes save the selection," so flip
+ *     the master on.
+ *   - Unchecking the master clears all three radios (per the
+ *     design: "unclicking the checkbox unclicks all the radios").
+ *   - Checking the master re-selects the remembered default
+ *     format so the save payload is never master-checked-but-no-
+ *     format-chosen.
+ * Each row's disabled state is managed by loadData(); this
+ * function only wires the persistent event listeners.
+ */
+function wireSelectionControls(): void {
+  for (const format of SELECTION_FORMATS) {
+    selectionRows[format].radio.addEventListener('change', () => {
+      if (selectionRows[format].radio.checked) {
+        selectionBox.checked = true;
+        defaultSelectionFormat = format;
+      }
+    });
+  }
+  selectionBox.addEventListener('change', () => {
+    if (selectionBox.checked) {
+      // Pick the remembered default; fall back to the first
+      // enabled format if the default is somehow unavailable
+      // (e.g. its body was later edited to empty — not reachable
+      // today but cheap to be defensive).
+      const preferred = defaultSelectionFormat;
+      const pickFrom: SelectionFormat[] = preferred
+        ? [preferred, ...SELECTION_FORMATS.filter((f) => f !== preferred)]
+        : [...SELECTION_FORMATS];
+      for (const format of pickFrom) {
+        if (!selectionRows[format].radio.disabled) {
+          selectionRows[format].radio.checked = true;
+          return;
+        }
+      }
+      // No enabled formats — leave master checked but nothing
+      // picked. The save payload's null-fallback covers this.
+    } else {
+      for (const format of SELECTION_FORMATS) {
+        selectionRows[format].radio.checked = false;
+      }
+    }
+  });
+}
+wireSelectionControls();
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -200,38 +279,42 @@ document.addEventListener('keydown', (e) => {
   // e.g. Alt+H in the HTML dialog should type `h`, not silently
   // flip the Save HTML checkbox behind the modal.
   if (anyEditDialogOpen()) return;
-  if (!e.altKey) return;
+  if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
+  // Alt+S / Alt+H toggle the screenshot / HTML checkboxes. Alt+N
+  // toggles the master "Save selection" checkbox. Alt+L / Alt+T /
+  // Alt+M pick one of the three format radios (and auto-check the
+  // master via the change listener wired in
+  // wireSelectionControls). Each is a no-op when its control is
+  // disabled so the hotkey matches what's on screen. The label
+  // underlines in capture.html mirror these keys.
+  const selectionFormat: Partial<Record<string, SelectionFormat>> = {
+    l: 'html', t: 'text', m: 'markdown',
+  };
   if (key === 's') {
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
   } else if (key === 'h') {
-    // Alt+H toggles Save HTML. No-op when the checkbox is disabled
-    // (HTML couldn't be captured) so the hotkey matches what's on
-    // screen.
     if (htmlBox.disabled) return;
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
+  } else if (key === 'n') {
+    if (selectionBox.disabled) return;
+    e.preventDefault();
+    selectionBox.checked = !selectionBox.checked;
+    // `.checked = …` doesn't fire `change`, but the coupling to
+    // the radios lives there — dispatch manually.
+    selectionBox.dispatchEvent(new Event('change'));
   } else {
-    // Alt+H already handled above for the HTML row. The three
-    // "Save selection as …" rows bind to distinct hotkeys:
-    //   Alt+Shift+H — selection HTML
-    //   Alt+T       — selection text
-    //   Alt+M       — selection markdown
-    // Each is a no-op when its radio is disabled (no selection in
-    // that format) so the hotkey matches what's on screen. Unlike
-    // the screenshot / HTML checkboxes, picking one selection
-    // format unchecks the other two (radio semantics).
-    const formatByKey: Partial<Record<string, SelectionFormat>> = e.shiftKey
-      ? { h: 'html' }
-      : { t: 'text', m: 'markdown' };
-    const format = formatByKey[key];
-    if (format) {
-      const row = selectionRows[format];
-      if (row.radio.disabled) return;
-      e.preventDefault();
-      row.radio.checked = !row.radio.checked;
-    }
+    const format = selectionFormat[key];
+    if (!format) return;
+    const row = selectionRows[format];
+    if (row.radio.disabled) return;
+    e.preventDefault();
+    row.radio.checked = true;
+    // Radio changes via JS don't fire `change` either; dispatch
+    // so the master checkbox auto-checks.
+    row.radio.dispatchEvent(new Event('change'));
   }
 });
 
@@ -959,49 +1042,61 @@ async function loadData(): Promise<void> {
       // practice this never fires today — `executeScript` reads both
       // in one call so the two errors are always twins — but the UI
       // is ready for a future SW that reports them separately. When
-      // the two fire together, we suppress these icons: the HTML
-      // row's icon already explains the situation and duplicates
-      // would just be visual noise. All three selection rows stay
-      // in their default disabled state regardless.
-      for (const format of SELECTION_FORMATS) {
-        const r = selectionRows[format];
-        r.row.classList.add('has-error');
-        r.errorIcon.title = `Unable to capture selection: ${response.selectionError}`;
-      }
+      // the two fire together, we suppress the icon here: the HTML
+      // row's icon already explains the situation and a duplicate
+      // would just be visual noise. The master + all three format
+      // rows stay in their default disabled state regardless.
+      selectionRow.classList.add('has-error');
+      selectionErrorIcon.title = `Unable to capture selection: ${response.selectionError}`;
     } else if (response.selections) {
-      // Enable each selection format row independently on the
-      // presence of non-empty content in that format's body. An
-      // image-only selection, for example, enables HTML but leaves
-      // text / markdown disabled — the user can still save the
-      // fragment as HTML without being blocked by the dead rows.
-      //
-      // Default selection: check the first row that has content.
-      // HTML is tried first (matches the old "Save selection" default
-      // which always used the HTML serialization), then text, then
-      // markdown. A user who bothered to select text almost
-      // certainly wants it in the record in some form.
-      let defaultPicked = false;
+      // Selection was scraped. Seed each format row's body and
+      // mark per-format emptiness before deciding the master
+      // state — the master is only enabled if at least one
+      // format has non-empty content. A whitespace-only selection
+      // produces non-null `selections` (the raw `innerHTML` is
+      // non-empty) but every format trims to empty, so the group
+      // collapses to the "no usable selection" case.
       const kindOf: Record<SelectionFormat, EditableArtifactKind> = SELECTION_WIRE_KIND;
+      let anyFormatHasContent = false;
       for (const format of SELECTION_FORMATS) {
         const body = response.selections[format];
         const r = selectionRows[format];
         captured[kindOf[format]] = body;
-        if (body && body.length > 0) {
+        if (body && body.trim().length > 0) {
           r.radio.disabled = false;
           r.copyBtn.disabled = false;
           r.editBtn.disabled = false;
-          if (!defaultPicked) {
+          if (defaultSelectionFormat === null) {
             r.radio.checked = true;
-            defaultPicked = true;
+            defaultSelectionFormat = format;
           }
+          anyFormatHasContent = true;
         } else {
           // Selection *was* captured, but this specific format came
-          // out empty (e.g. image-only selection → empty text). Show
-          // the error icon so the user understands the row isn't
-          // disabled for mysterious reasons.
+          // out empty (e.g. image-only selection → empty text, or
+          // a whitespace-only selection across all three). Show the
+          // per-format error icon so the user understands the row
+          // isn't disabled for mysterious reasons.
           r.row.classList.add('has-error');
           r.errorIcon.title = `Selection has no ${format} content`;
         }
+      }
+      if (anyFormatHasContent) {
+        // At least one format is saveable — enable the master,
+        // default-check it, and reveal the format rows. A user
+        // who bothered to select text almost certainly wants it
+        // in the record.
+        selectionBox.disabled = false;
+        selectionBox.checked = true;
+        selectionFormatsEl.hidden = false;
+      } else {
+        // Every format is empty (typically a whitespace-only
+        // selection). Leave the format rows hidden and surface a
+        // single error on the master row — the per-format icons
+        // are inside the hidden block so the master's reason is
+        // the only thing the user sees.
+        selectionRow.classList.add('has-error');
+        selectionErrorIcon.title = 'Selection has no saveable content';
       }
     }
     // Wait for the preview image to decode before revealing, so the

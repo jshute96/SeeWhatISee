@@ -456,9 +456,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     element wired up so a future SW that reports per-format failures
     separately can light them independently, but today's
     `captureBothToMemory` never emits that combination.
-  - Alt+H / Alt+Shift+H / Alt+T / Alt+M are no-ops while the
-    corresponding row is disabled so the hotkeys match what's on
-    screen.
+  - Hotkeys (Alt+H, etc) are no-ops while the corresponding row is disabled.
   - `ensureHtmlDownloaded` / `ensureSelectionDownloaded(format)`
     throw if the matching `*Error` is set (or the requested format's
     body is empty), as a belt-and-suspenders guard so a stale page
@@ -477,24 +475,35 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `B` / `KB` / `MB` / `GB` / `TB`.
 - **Save checkboxes** — pick any of screenshot, HTML, selection
   (one format), or none (URL-only record).
-  - The three "Save selection as …" rows are mutually exclusive
-    radios covering `html`, `text`, and `markdown`. Each row's
-    radio enables independently based on the presence of non-empty
-    content in that format (e.g. an image-only selection enables
-    HTML but leaves text / markdown disabled with a per-row
-    "no {format} content" error icon). Each row has its own
-    `Copy filename` + `Edit` buttons — the user can materialize or
-    edit any format, independent of which one ends up getting
-    saved.
-  - Save HTML and the selection rows can also be greyed out
-    because the scrape itself failed (see
+  - Save selection is a master checkbox (`Save selection:`) plus a
+    group of three mutually-exclusive format radios (`as HTML`,
+    `as text`, `as markdown`). The master gates whether anything
+    is saved; the radios pick which serialization.
+  - Master / radio coupling, wired in `wireSelectionControls()`:
+    - Clicking a radio also checks the master (picking a format
+      implies "save the selection").
+    - Unchecking the master clears all three radios.
+    - Re-checking the master restores the last-picked format (or
+      the default — first non-empty format — on the first check).
+  - Each radio enables independently based on the presence of
+    non-empty content in that format (an image-only selection
+    enables HTML but leaves text / markdown disabled with a
+    per-row "no {format} content" error icon). Each format row
+    has its own `Copy filename` + `Edit` buttons — the user can
+    materialize or edit any format independent of which one ends
+    up getting saved.
+  - Save HTML and the whole selection group can also be greyed
+    out because the scrape itself failed (see
     [Graceful handling of failed HTML / selection scrape](#graceful-handling-of-failed-html--selection-scrape)).
-    In that case the row also shows a hoverable red error icon
+    In that case the master row shows a hoverable red error icon
     whose tooltip explains the reason.
-  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML
-    (no-op when greyed out), `Alt+Shift+H` / `Alt+T` / `Alt+M`
-    pick the selection format (HTML / text / markdown
-    respectively; no-ops when greyed out).
+  - Hotkeys: `Alt+S` toggles screenshot, `Alt+H` toggles HTML,
+    `Alt+N` toggles the master Save-selection checkbox (triggering
+    the coupling above), and `Alt+L` / `Alt+T` / `Alt+M` pick the
+    selection format (HTML / text / markdown respectively), also
+    auto-checking the master. All are no-ops when their control
+    is disabled. Holding Shift suppresses every Alt hotkey so the
+    user can still type shifted letters in other focus paths.
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
 - **Highlight overlay** — see [Image annotation](#image-annotation).

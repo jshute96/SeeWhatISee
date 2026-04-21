@@ -1378,7 +1378,8 @@ async function ensureSelectionDownloaded(
       if (!s.capture.selections || !s.capture.selectionFilenames) {
         throw new Error('No selection was captured');
       }
-      if (!s.capture.selections[format]) {
+      const body = s.capture.selections[format];
+      if (!body || body.trim().length === 0) {
         throw new Error(`No selection ${format} content`);
       }
     },
