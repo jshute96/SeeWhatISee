@@ -159,11 +159,26 @@ test('links and images', () => {
   );
 });
 
-test('link with no text becomes autolink', () => {
-  assert.equal(
-    norm(htmlToMarkdown('<a href="https://x.example"></a>')),
-    '<https://x.example>',
-  );
+test('empty-text anchors are dropped', () => {
+  // No text = decorative chrome (permalink icons, font-icon
+  // buttons, skip-to-content links). Dropping is friendlier than
+  // emitting an autolink the reader didn't ask for.
+  assert.equal(norm(htmlToMarkdown('<a href="https://x.example"></a>')), '');
+  assert.equal(norm(htmlToMarkdown('<a href="#usage"></a>')), '');
+});
+
+test('github-style heading permalink anchor is dropped', () => {
+  // Real-world GitHub source — a visible heading followed by an
+  // invisible `<a href="#usage"><svg>...</svg></a>` permalink
+  // icon. The anchor should disappear, not emit `<#usage>` or a
+  // stray `[](#usage)`.
+  const html =
+    '<div><h2>Usage</h2>' +
+    '<a id="user-content-usage" class="anchor" href="#usage">' +
+    '<svg class="octicon"><path d=""></path></svg>' +
+    '</a></div>' +
+    '<h3>Chrome extension</h3>';
+  assert.equal(norm(htmlToMarkdown(html)), '## Usage\n\n### Chrome extension');
 });
 
 test('blockquote', () => {

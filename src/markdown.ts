@@ -513,7 +513,14 @@ function emitNode(node: Node, ctx: EmitContext): string {
         return emitInline(node.children, ctx);
       }
       const text = emitInline(node.children, { ...ctx, insideLink: true }).trim();
-      if (!text) return `<${href}>`;
+      // Drop empty-text anchors outright. They're almost always
+      // decorative chrome — GitHub's `#permalink` icons (`<a
+      // href="#foo"><svg>...</svg></a>`), font-icon buttons, and
+      // invisible skip-to-content links. A markdown autolink
+      // (`<https://x>`) is not a useful fallback here: if the
+      // author wanted the URL text visible they'd have written it
+      // inside the anchor.
+      if (!text) return '';
       return `[${text}](${href})`;
     }
     case 'img': {
