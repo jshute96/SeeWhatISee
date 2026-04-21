@@ -313,6 +313,12 @@ promising — the main issue was the `onActivated` restore logic.
   the 6-item cap, so we don't use any there. Inside submenus
   they're free and we use them to group "Capture with delay" by
   delay and "Set default click action" by delay.
+  - **ChromeOS workaround.** ChromeOS sometimes fails to render
+    native `type: 'separator'` items in the extension action menu.
+    `installContextMenu` in `background.ts` detects the platform
+    via `chrome.runtime.getPlatformInfo()` and falls back to a
+    disabled normal item with a line-drawing title (`────`) on
+    ChromeOS to ensure the visual grouping remains visible.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment
