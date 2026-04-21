@@ -1551,10 +1551,10 @@ async function installContextMenu(): Promise<void> {
   const useFakeSeparator = platform.os === 'cros';
 
   // Chrome menus use the OS's proportional system font, so character
-  // count only approximates pixel width. 24 U+2500 chars was chosen
+  // count only approximates pixel width. 30 U+2500 chars was chosen
   // empirically to look like a full-width rule against the current
   // submenu entries; revisit if noticeably wider entries are added.
-  const FAKE_SEPARATOR_TITLE = '─'.repeat(24);
+  const FAKE_SEPARATOR_TITLE = '─'.repeat(30);
 
   const createSeparator = (id: string, parentId: string) => {
     if (useFakeSeparator) {
