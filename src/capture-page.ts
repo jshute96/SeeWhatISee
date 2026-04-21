@@ -21,18 +21,43 @@
 // Must live in a separate .js file (not inline in capture.html)
 // because the default extension-page CSP forbids inline scripts.
 
+/**
+ * Three-value `SelectionFormat` literal union, duplicated here
+ * because the details page loads via a classic (non-module)
+ * `<script>` tag and can't `import type` from capture.ts without
+ * turning itself into a module. The SW ships this exact same union
+ * on the wire; keep the three sites (`src/capture.ts`,
+ * `src/background.ts`, here) in sync.
+ */
+type SelectionFormat = 'html' | 'text' | 'markdown';
+
+/**
+ * Wire kind used on `ensureDownloaded` / `updateArtifact` messages
+ * for a given selection format. The SW holds the matching reverse
+ * lookup (`WIRE_TO_SELECTION_FORMAT` in `background.ts`); keep both
+ * sites in sync.
+ */
+const SELECTION_WIRE_KIND: Record<SelectionFormat, EditableArtifactKind> = {
+  html: 'selectionHtml',
+  text: 'selectionText',
+  markdown: 'selectionMarkdown',
+};
+
+const SELECTION_FORMATS: SelectionFormat[] = ['html', 'text', 'markdown'];
+
 interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
   /**
-   * Captured selection HTML. Present (non-empty) iff the SW saw a
-   * selection on the active tab at capture time; undefined or empty
-   * otherwise. Used both as the enable gate for the Save selection
-   * controls (replaces the old `hasSelection` boolean) and as the
-   * seed value for the Edit selection dialog's textarea.
+   * Captured selection bodies, one per storage format. Present iff
+   * the SW saw a selection on the active tab at capture time; each
+   * format's entry may be an empty string on its own (e.g. `text`
+   * is empty when the user selected an image-only region). The
+   * details page uses each format's emptiness to gate its Save
+   * selection row independently.
    */
-  selection?: string;
+  selections?: { html: string; text: string; markdown: string };
   /**
    * Reason HTML couldn't be captured (e.g. restricted URL). When
    * set, we grey out the Save HTML row + disable its Copy and Edit
@@ -43,8 +68,9 @@ interface DetailsData {
   htmlError?: string;
   /**
    * Reason the page selection couldn't be captured. Same handling
-   * as `htmlError` but for the Save selection row. Fires alongside
-   * `htmlError` when the whole `executeScript` scrape failed.
+   * as `htmlError` but applies uniformly to every Save-selection-as-…
+   * row. Fires alongside `htmlError` when the whole `executeScript`
+   * scrape failed.
    */
   selectionError?: string;
 }
@@ -69,7 +95,6 @@ let editVersion = 0;
 
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
-const selectionBox = document.getElementById('cap-selection') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
 const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElement;
 const previewImg = document.getElementById('preview') as HTMLImageElement;
@@ -77,13 +102,55 @@ const capturedUrlInput = document.getElementById('captured-url') as HTMLInputEle
 const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
-const copySelectionBtn = document.getElementById('copy-selection-name') as HTMLButtonElement;
 const htmlRow = document.getElementById('row-html') as HTMLDivElement;
-const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
-const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
-const editSelectionBtn = document.getElementById('edit-selection') as HTMLButtonElement;
+
+// Master "Save selection:" checkbox + its row and shared error
+// icon. The checkbox drives the "save selection at all?" decision;
+// the three per-format radios below pick which serialization gets
+// written. See loadData() / wireSelectionControls() for the full
+// master ↔ radio coupling.
+const selectionBox = document.getElementById('cap-selection') as HTMLInputElement;
+const selectionRow = document.getElementById('row-selection') as HTMLDivElement;
+const selectionErrorIcon = document.getElementById('error-selection') as HTMLSpanElement;
+// Wrapper around the three format radio rows. Hidden by default
+// and only revealed when at least one format has content — see
+// loadData(). The per-format rows + their error icons never show
+// when this wrapper is hidden, so the master row alone carries
+// any error state.
+const selectionFormatsEl = document.querySelector('.selection-formats') as HTMLDivElement;
+
+// Per-selection-format controls. Three parallel groups of radio
+// + copy + edit + error-icon controls, one per format row in the
+// details page. Gated independently by loadData() — enabled iff
+// the SW scraped non-empty content for that format. Only one row's
+// radio can be checked at a time (browser-enforced by the shared
+// `name="cap-selection-format"`), and the Capture button's
+// `selectionFormat` payload reads whichever is checked.
+interface SelectionRow {
+  format: SelectionFormat;
+  row: HTMLDivElement;
+  radio: HTMLInputElement;
+  copyBtn: HTMLButtonElement;
+  editBtn: HTMLButtonElement;
+  errorIcon: HTMLSpanElement;
+}
+const selectionRows: Record<SelectionFormat, SelectionRow> = SELECTION_FORMATS.reduce(
+  (acc, format) => {
+    acc[format] = {
+      format,
+      row: document.getElementById(`row-selection-${format}`) as HTMLDivElement,
+      radio: document.getElementById(`cap-selection-${format}`) as HTMLInputElement,
+      copyBtn: document.getElementById(`copy-selection-${format}-name`) as HTMLButtonElement,
+      editBtn: document.getElementById(`edit-selection-${format}-btn`) as HTMLButtonElement,
+      errorIcon: document.getElementById(`error-selection-${format}`) as HTMLSpanElement,
+    };
+    return acc;
+  },
+  {} as Record<SelectionFormat, SelectionRow>,
+);
+
 // Local mirrors of the SW's captured bodies, keyed by artifact
 // kind. Seeded by loadData() and updated whenever the user saves
 // an edit. Kept on the page side so the dialogs can prefill their
@@ -92,8 +159,86 @@ const editSelectionBtn = document.getElementById('edit-selection') as HTMLButton
 // authoritative copy. New editable kinds append one entry here.
 const captured: Record<EditableArtifactKind, string> = {
   html: '',
-  selection: '',
+  selectionHtml: '',
+  selectionText: '',
+  selectionMarkdown: '',
 };
+
+/**
+ * Format to restore when the user re-checks the master "Save
+ * selection" checkbox after having unchecked it. Seeded by
+ * loadData() with the first non-empty format (same rule as the
+ * initial default-check) so the user's first click always lands
+ * on a format with content. Updated whenever the user explicitly
+ * picks a different radio so the restore feels sticky.
+ */
+let defaultSelectionFormat: SelectionFormat | null = null;
+
+/**
+ * Returns the selection format to save, or `null` when no
+ * selection is being saved. The master checkbox gates the whole
+ * group: if it's unchecked we never save, regardless of which
+ * radio happens to still be checked. If it's checked but no radio
+ * is (shouldn't happen once wireSelectionControls runs, but
+ * defensive), we also return null. Written to
+ * `SaveDetailsMessage.selectionFormat` at Capture time.
+ */
+function selectedSelectionFormat(): SelectionFormat | null {
+  if (!selectionBox.checked) return null;
+  for (const format of SELECTION_FORMATS) {
+    if (selectionRows[format].radio.checked) return format;
+  }
+  return null;
+}
+
+/**
+ * Couple the master "Save selection" checkbox to the three
+ * per-format radios:
+ *   - Clicking a radio implies "yes save the selection," so flip
+ *     the master on.
+ *   - Unchecking the master clears all three radios (per the
+ *     design: "unclicking the checkbox unclicks all the radios").
+ *   - Checking the master re-selects the remembered default
+ *     format so the save payload is never master-checked-but-no-
+ *     format-chosen.
+ * Each row's disabled state is managed by loadData(); this
+ * function only wires the persistent event listeners.
+ */
+function wireSelectionControls(): void {
+  for (const format of SELECTION_FORMATS) {
+    selectionRows[format].radio.addEventListener('change', () => {
+      if (selectionRows[format].radio.checked) {
+        selectionBox.checked = true;
+        defaultSelectionFormat = format;
+      }
+    });
+  }
+  selectionBox.addEventListener('change', () => {
+    if (selectionBox.checked) {
+      // Pick the remembered default; fall back to the first
+      // enabled format if the default is somehow unavailable
+      // (e.g. its body was later edited to empty — not reachable
+      // today but cheap to be defensive).
+      const preferred = defaultSelectionFormat;
+      const pickFrom: SelectionFormat[] = preferred
+        ? [preferred, ...SELECTION_FORMATS.filter((f) => f !== preferred)]
+        : [...SELECTION_FORMATS];
+      for (const format of pickFrom) {
+        if (!selectionRows[format].radio.disabled) {
+          selectionRows[format].radio.checked = true;
+          return;
+        }
+      }
+      // No enabled formats — leave master checked but nothing
+      // picked. The save payload's null-fallback covers this.
+    } else {
+      for (const format of SELECTION_FORMATS) {
+        selectionRows[format].radio.checked = false;
+      }
+    }
+  });
+}
+wireSelectionControls();
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -134,25 +279,42 @@ document.addEventListener('keydown', (e) => {
   // e.g. Alt+H in the HTML dialog should type `h`, not silently
   // flip the Save HTML checkbox behind the modal.
   if (anyEditDialogOpen()) return;
-  if (!e.altKey) return;
+  if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
+  // Alt+S / Alt+H toggle the screenshot / HTML checkboxes. Alt+N
+  // toggles the master "Save selection" checkbox. Alt+L / Alt+T /
+  // Alt+M pick one of the three format radios (and auto-check the
+  // master via the change listener wired in
+  // wireSelectionControls). Each is a no-op when its control is
+  // disabled so the hotkey matches what's on screen. The label
+  // underlines in capture.html mirror these keys.
+  const selectionFormat: Partial<Record<string, SelectionFormat>> = {
+    l: 'html', t: 'text', m: 'markdown',
+  };
   if (key === 's') {
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
   } else if (key === 'h') {
-    // Alt+H toggles Save HTML. No-op when the checkbox is disabled
-    // (HTML couldn't be captured) so the hotkey matches what's on
-    // screen.
     if (htmlBox.disabled) return;
     e.preventDefault();
     htmlBox.checked = !htmlBox.checked;
   } else if (key === 'n') {
-    // Alt+N toggles Save selection. No-op when the checkbox is
-    // disabled (no selection was captured, or scrape failed) so the
-    // hotkey matches what's on screen.
     if (selectionBox.disabled) return;
     e.preventDefault();
     selectionBox.checked = !selectionBox.checked;
+    // `.checked = …` doesn't fire `change`, but the coupling to
+    // the radios lives there — dispatch manually.
+    selectionBox.dispatchEvent(new Event('change'));
+  } else {
+    const format = selectionFormat[key];
+    if (!format) return;
+    const row = selectionRows[format];
+    if (row.radio.disabled) return;
+    e.preventDefault();
+    row.radio.checked = true;
+    // Radio changes via JS don't fire `change` either; dispatch
+    // so the master checkbox auto-checks.
+    row.radio.dispatchEvent(new Event('change'));
   }
 });
 
@@ -880,24 +1042,61 @@ async function loadData(): Promise<void> {
       // practice this never fires today — `executeScript` reads both
       // in one call so the two errors are always twins — but the UI
       // is ready for a future SW that reports them separately. When
-      // the two fire together, we suppress this icon: the HTML row's
-      // icon already explains the situation and a duplicate would
-      // just be visual noise. The selection row stays in its default
-      // disabled state regardless.
+      // the two fire together, we suppress the icon here: the HTML
+      // row's icon already explains the situation and a duplicate
+      // would just be visual noise. The master + all three format
+      // rows stay in their default disabled state regardless.
       selectionRow.classList.add('has-error');
-      selectionErrorIcon.title =
-        `Unable to capture selection: ${response.selectionError}`;
-    } else if (response.selection) {
-      // Enable + default-check the Save selection controls iff the SW
-      // saw a non-empty selection at capture time. A user who bothered
-      // to select text probably wants it in the record. The edit
-      // button gates on the same condition so the user can't open an
-      // empty-body dialog when there was no selection to begin with.
-      captured.selection = response.selection;
-      selectionBox.checked = true;
-      selectionBox.disabled = false;
-      copySelectionBtn.disabled = false;
-      editSelectionBtn.disabled = false;
+      selectionErrorIcon.title = `Unable to capture selection: ${response.selectionError}`;
+    } else if (response.selections) {
+      // Selection was scraped. Seed each format row's body and
+      // mark per-format emptiness before deciding the master
+      // state — the master is only enabled if at least one
+      // format has non-empty content. A whitespace-only selection
+      // produces non-null `selections` (the raw `innerHTML` is
+      // non-empty) but every format trims to empty, so the group
+      // collapses to the "no usable selection" case.
+      let anyFormatHasContent = false;
+      for (const format of SELECTION_FORMATS) {
+        const body = response.selections[format];
+        const r = selectionRows[format];
+        captured[SELECTION_WIRE_KIND[format]] = body;
+        if (body && body.trim().length > 0) {
+          r.radio.disabled = false;
+          r.copyBtn.disabled = false;
+          r.editBtn.disabled = false;
+          if (defaultSelectionFormat === null) {
+            r.radio.checked = true;
+            defaultSelectionFormat = format;
+          }
+          anyFormatHasContent = true;
+        } else {
+          // Selection *was* captured, but this specific format came
+          // out empty (e.g. image-only selection → empty text, or
+          // a whitespace-only selection across all three). Show the
+          // per-format error icon so the user understands the row
+          // isn't disabled for mysterious reasons.
+          r.row.classList.add('has-error');
+          r.errorIcon.title = `Selection has no ${format} content`;
+        }
+      }
+      if (anyFormatHasContent) {
+        // At least one format is saveable — enable the master,
+        // default-check it, and reveal the format rows. A user
+        // who bothered to select text almost certainly wants it
+        // in the record.
+        selectionBox.disabled = false;
+        selectionBox.checked = true;
+        selectionFormatsEl.hidden = false;
+      } else {
+        // Every format is empty (typically a whitespace-only
+        // selection). Leave the format rows hidden and surface a
+        // single error on the master row — the per-format icons
+        // are inside the hidden block so the master's reason is
+        // the only thing the user sees.
+        selectionRow.classList.add('has-error');
+        selectionErrorIcon.title = 'Selection has no saveable content';
+      }
     }
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -943,9 +1142,11 @@ copyScreenshotBtn.addEventListener('click', () => {
 copyHtmlBtn.addEventListener('click', () => {
   void copyArtifactPath('html');
 });
-copySelectionBtn.addEventListener('click', () => {
-  void copyArtifactPath('selection');
-});
+for (const format of SELECTION_FORMATS) {
+  selectionRows[format].copyBtn.addEventListener('click', () => {
+    void copyArtifactPath(SELECTION_WIRE_KIND[format]);
+  });
+}
 
 // ─── Edit dialogs (catalog-driven) ────────────────────────────────
 //
@@ -963,10 +1164,21 @@ copySelectionBtn.addEventListener('click', () => {
 // import turns the file into a module and tsc emits `export {}`,
 // which is a parse error under script semantics. New editable
 // kinds must be added to all three sites.
-type EditableArtifactKind = 'html' | 'selection';
+type EditableArtifactKind =
+  | 'html'
+  | 'selectionHtml'
+  | 'selectionText'
+  | 'selectionMarkdown';
 
 interface EditKindSpec {
   kind: EditableArtifactKind;
+  /** Hyphenated DOM-id slug used by `createEditDialog` to stamp the
+   * cloned template's ids (e.g. `edit-<slug>-dialog`). Separate from
+   * `kind` so camelCase editable kinds (`selectionMarkdown`) map to
+   * readable DOM ids (`edit-selection-markdown-dialog`) without
+   * forcing the TypeScript union into hyphens. Keep in sync with
+   * the matching button ids in `capture.html`. */
+  domSlug: string;
   /** Modal heading + textarea aria-label. Short, user-visible. */
   title: string;
   /** The pencil button inside the details-page row for this kind. */
@@ -978,6 +1190,7 @@ interface EditKindSpec {
 const EDIT_KINDS: EditKindSpec[] = [
   {
     kind: 'html',
+    domSlug: 'html',
     title: 'Edit page contents HTML',
     openBtn: editHtmlBtn,
     onSaved: (v) => {
@@ -985,9 +1198,22 @@ const EDIT_KINDS: EditKindSpec[] = [
     },
   },
   {
-    kind: 'selection',
+    kind: 'selectionHtml',
+    domSlug: 'selection-html',
     title: 'Edit selection HTML',
-    openBtn: editSelectionBtn,
+    openBtn: selectionRows.html.editBtn,
+  },
+  {
+    kind: 'selectionText',
+    domSlug: 'selection-text',
+    title: 'Edit selection text',
+    openBtn: selectionRows.text.editBtn,
+  },
+  {
+    kind: 'selectionMarkdown',
+    domSlug: 'selection-markdown',
+    title: 'Edit selection markdown',
+    openBtn: selectionRows.markdown.editBtn,
   },
 ];
 
@@ -1015,7 +1241,7 @@ interface EditDialogParts {
  * tests can target a specific kind without knowing the full
  * catalog.
  */
-function createEditDialog(kind: EditableArtifactKind, title: string): EditDialogParts {
+function createEditDialog(domSlug: string, title: string): EditDialogParts {
   const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
   const frag = tpl.content.cloneNode(true) as DocumentFragment;
   const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
@@ -1025,22 +1251,22 @@ function createEditDialog(kind: EditableArtifactKind, title: string): EditDialog
   const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
   const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
 
-  dialog.id = `edit-${kind}-dialog`;
-  titleEl.id = `edit-${kind}-title`;
+  dialog.id = `edit-${domSlug}-dialog`;
+  titleEl.id = `edit-${domSlug}-title`;
   titleEl.textContent = title;
   dialog.setAttribute('aria-labelledby', titleEl.id);
-  textarea.id = `edit-${kind}-textarea`;
+  textarea.id = `edit-${domSlug}-textarea`;
   textarea.setAttribute('aria-label', title);
-  errorEl.id = `edit-${kind}-error`;
-  saveBtn.id = `edit-${kind}-save`;
-  cancelBtn.id = `edit-${kind}-cancel`;
+  errorEl.id = `edit-${domSlug}-error`;
+  saveBtn.id = `edit-${domSlug}-save`;
+  cancelBtn.id = `edit-${domSlug}-cancel`;
 
   document.body.appendChild(dialog);
   return { dialog, textarea, saveBtn, cancelBtn, errorEl };
 }
 
 function bindEditDialog(spec: EditKindSpec): void {
-  const parts = createEditDialog(spec.kind, spec.title);
+  const parts = createEditDialog(spec.domSlug, spec.title);
   editDialogs.push(parts.dialog);
 
   spec.openBtn.addEventListener('click', () => {
@@ -1132,7 +1358,9 @@ function anyEditDialogOpen(): boolean {
 // Reset to -1 so the very first Copy with edits forces a bake.
 let lastSentScreenshotEditVersion = -1;
 
-async function copyArtifactPath(kind: 'screenshot' | 'html' | 'selection'): Promise<void> {
+async function copyArtifactPath(
+  kind: 'screenshot' | EditableArtifactKind,
+): Promise<void> {
   // Skip the bake + override when the SW will cache-hit. The cache
   // is keyed by `editVersion`, so if we already shipped this version
   // (and therefore the SW already has the matching file on disk),
@@ -1316,7 +1544,7 @@ captureBtn.addEventListener('click', () => {
       action: 'saveDetails',
       screenshot: screenshotBox.checked,
       html: htmlBox.checked,
-      selection: selectionBox.checked,
+      selectionFormat: selectedSelectionFormat(),
       prompt: promptInput.value.trim(),
       highlights: flags.hasHighlights,
       hasRedactions: flags.hasRedactions,

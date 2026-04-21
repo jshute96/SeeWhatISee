@@ -8,12 +8,14 @@ import {
   downloadSelection,
   DOWNLOAD_SUBDIR,
   LOG_STORAGE_KEY,
+  noSelectionContentMessage,
   recordDetailedCapture,
   savePageContents,
   waitForDownloadComplete,
   type CaptureRecord,
   type EditableArtifactKind,
   type InMemoryCapture,
+  type SelectionFormat,
 } from './capture.js';
 
 // User-visible error reporting for failed captures.
@@ -129,6 +131,10 @@ const SUPPRESSED_UNHANDLED = [
   'No active tab found to capture',
   'Failed to retrieve page contents',
   'No text selected',
+  // Per-format "No selection X content" strings — generated from
+  // the same helper the throw sites use, so rewording the message
+  // in one place can't drift away from the suppression list.
+  ...(['html', 'text', 'markdown'] as const).map(noSelectionContentMessage),
 ];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);
@@ -253,7 +259,6 @@ async function captureUrlOnly(delayMs = 0): Promise<void> {
     capture: data,
     includeScreenshot: false,
     includeHtml: false,
-    includeSelection: false,
   });
 }
 
@@ -279,7 +284,6 @@ async function captureBoth(delayMs = 0): Promise<void> {
     capture: data,
     includeScreenshot: true,
     includeHtml: true,
-    includeSelection: false,
   });
 }
 
@@ -333,16 +337,39 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     showInDelayedSubmenu: true,
     run: (delayMs) => captureBoth(delayMs),
   },
+  // Three selection-format shortcuts. A single capture can only
+  // produce one selection file, so we expose each serialization
+  // format as its own action rather than asking the user to pick
+  // mid-capture. `captureSelection` throws if the chosen format's
+  // body is empty (e.g. "Capture selection as text" on an
+  // image-only selection), and the toolbar error channel surfaces
+  // the reason so the user can retry with a different format.
   {
-    baseId: 'capture-selection',
-    baseTitle: 'Capture selection',
-    baseTooltip: 'SeeWhatISee — Capture selected text\nDouble-click for capture with details',
+    baseId: 'capture-selection-html',
+    baseTitle: 'Capture selection as HTML',
+    baseTooltip: 'SeeWhatISee — Capture selected text as HTML\nDouble-click for capture with details',
     group: 'more',
     // The selection already exists when the user triggers the
     // action; waiting doesn't help. Still bindable as the default
     // click action at 0s via "Set default click action".
     supportsDelayed: false,
-    run: (delayMs) => captureSelection(delayMs),
+    run: (delayMs) => captureSelection('html', delayMs),
+  },
+  {
+    baseId: 'capture-selection-text',
+    baseTitle: 'Capture selection as text',
+    baseTooltip: 'SeeWhatISee — Capture selected text as plain text\nDouble-click for capture with details',
+    group: 'more',
+    supportsDelayed: false,
+    run: (delayMs) => captureSelection('text', delayMs),
+  },
+  {
+    baseId: 'capture-selection-markdown',
+    baseTitle: 'Capture selection as markdown',
+    baseTooltip: 'SeeWhatISee — Capture selected text as markdown\nDouble-click for capture with details',
+    group: 'more',
+    supportsDelayed: false,
+    run: (delayMs) => captureSelection('markdown', delayMs),
   },
 ];
 
@@ -637,7 +664,9 @@ chrome.action.onClicked.addListener(handleActionClick);
 //         Capture with details...
 //         Capture URL                 (no delayed variants)
 //         Capture screenshot and HTML
-//         Capture selection           (no delayed variants)
+//         Capture selection as HTML       (no delayed variants)
+//         Capture selection as text       (no delayed variants)
+//         Capture selection as markdown   (no delayed variants)
 //       ─────────
 //         Take screenshot in 2s
 //         Save html contents in 2s
@@ -651,7 +680,9 @@ chrome.action.onClicked.addListener(handleActionClick);
 //   More  ▸                         (submenu)
 //       • Capture URL
 //       • Capture screenshot and HTML
-//       • Capture selection     (saves HTML of the page selection)
+//       • Capture selection as HTML      (saves the selected HTML fragment)
+//       • Capture selection as text      (saves selection.toString())
+//       • Capture selection as markdown  (saves HTML → markdown)
 //       ─────────
 //       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
 //       • Copy last HTML filename     (greyed unless latest record has HTML)
@@ -932,8 +963,11 @@ interface DetailsSession {
     // `html`: unconditional until the user saves an edit via the
     // Edit selection dialog, which fires `updateArtifact` and drops
     // this entry so the next Copy / Capture re-materializes the
-    // edited body under the same pinned `selectionFilename`.
-    selection?: { downloadId: number; path: string };
+    // edited body under the same pinned `selectionFilenames[fmt]`.
+    // Keyed per format because the details page exposes independent
+    // Copy + Edit controls for each of HTML / text / markdown and
+    // any of them can have a file materialized.
+    selections?: Partial<Record<SelectionFormat, { downloadId: number; path: string }>>;
   };
   /**
    * Sticky per-artifact "was edited" flags. Set by the
@@ -943,9 +977,14 @@ interface DetailsSession {
    * artifact object carries `isEdited: true`. Never cleared within
    * a session — once the body is the user's edit, it stays the
    * user's edit for any later save.
+   *
+   * `selectionEdited` is per-format so the Edit-markdown dialog
+   * doesn't mark the HTML version as edited (or vice versa); the
+   * save path reads only the flag for whichever format is being
+   * written.
    */
   htmlEdited?: boolean;
-  selectionEdited?: boolean;
+  selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
 }
 
 function detailsStorageKey(tabId: number): string {
@@ -997,10 +1036,35 @@ async function startCaptureWithDetails(delayMs = 0): Promise<void> {
 interface GetDetailsMessage {
   action: 'getDetailsData';
 }
+/**
+ * Keys the page can use on `EnsureDownloadedMessage.kind`. The three
+ * `selection*` kinds are the same strings as the editable-artifact
+ * kinds so the page doesn't juggle two separate enums; see
+ * `WIRE_TO_SELECTION_FORMAT` below for the format-side reverse
+ * lookup.
+ */
+type EnsureDownloadedKind =
+  | 'screenshot'
+  | 'html'
+  | 'selectionHtml'
+  | 'selectionText'
+  | 'selectionMarkdown';
+
+/**
+ * Reverse lookup from the wire kind string to a `SelectionFormat`.
+ * Keeps the `kind === 'selection…' ? format : undefined` branches
+ * off the message handlers.
+ */
+const WIRE_TO_SELECTION_FORMAT: Partial<Record<EnsureDownloadedKind, SelectionFormat>> = {
+  selectionHtml: 'html',
+  selectionText: 'text',
+  selectionMarkdown: 'markdown',
+};
+
 interface EnsureDownloadedMessage {
   action: 'ensureDownloaded';
   /** Which artifact the page wants on disk and a path for. */
-  kind: 'screenshot' | 'html' | 'selection';
+  kind: EnsureDownloadedKind;
   /**
    * Page's monotonically-incrementing edit counter at the moment of
    * this request. Only meaningful for `kind === 'screenshot'`; the
@@ -1031,7 +1095,13 @@ interface SaveDetailsMessage {
   action: 'saveDetails';
   screenshot: boolean;
   html: boolean;
-  selection: boolean;
+  /**
+   * Which selection format the user picked on the details page, or
+   * `null` when no selection is being saved. The three "Save
+   * selection as …" rows are mutually exclusive so at most one is
+   * ever set.
+   */
+  selectionFormat: SelectionFormat | null;
   prompt: string;
   /**
    * True when at least one un-converted red rectangle or line is on
@@ -1161,8 +1231,14 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
      *   - screenshot: `!fresh || our editVersion >= fresh.editVersion`.
      */
     shouldCommit: (fresh: T | undefined, freshSession: DetailsSession) => boolean;
-    /** Key under which to store the entry on session.downloads. */
-    downloadsKey: 'screenshot' | 'html' | 'selection';
+    /** Read the currently committed cache entry (if any) out of the
+     * session. Used to feed `shouldCommit` and to detect mid-flight
+     * writes that invalidate our completed download. */
+    getCurrentEntry: (session: DetailsSession) => T | undefined;
+    /** Commit the new cache entry under the right key. Selection
+     * artifacts nest under `downloads.selections[format]`, which
+     * a flat key can't express — hence the callback. */
+    setCacheEntry: (session: DetailsSession, entry: T) => void;
   },
 ): Promise<string> {
   const session = await requireDetailsSession(tabId);
@@ -1175,12 +1251,10 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
   const path = await waitForDownloadComplete(downloadId);
 
   const fresh = await requireDetailsSession(tabId);
-  const freshCached = fresh.downloads?.[options.downloadsKey] as T | undefined;
+  const freshCached = options.getCurrentEntry(fresh);
   if (options.shouldCommit(freshCached, fresh)) {
-    fresh.downloads = {
-      ...(fresh.downloads ?? {}),
-      [options.downloadsKey]: options.makeCacheEntry(downloadId, path),
-    };
+    fresh.downloads = fresh.downloads ?? {};
+    options.setCacheEntry(fresh, options.makeCacheEntry(downloadId, path));
     await saveDetailsSession(tabId, fresh);
   }
   return path;
@@ -1212,7 +1286,10 @@ async function ensureScreenshotDownloaded(
     startDownload: (capture) => downloadScreenshot(capture, screenshotOverride),
     makeCacheEntry: (downloadId, path) => ({ downloadId, editVersion, path }),
     shouldCommit: (fresh) => !fresh || editVersion >= fresh.editVersion,
-    downloadsKey: 'screenshot',
+    getCurrentEntry: (s) => s.downloads?.screenshot,
+    setCacheEntry: (s, entry) => {
+      s.downloads!.screenshot = entry;
+    },
   });
 }
 
@@ -1224,14 +1301,18 @@ async function ensureScreenshotDownloaded(
  * download was in flight — if it committed blindly, the on-disk
  * file would hold pre-edit bytes but the eventual sidecar's
  * `isEdited: true` would claim otherwise.
+ *
+ * The `readEdited` callback lets callers point at either the flat
+ * `htmlEdited` flag or the per-format `selectionEdited[format]`
+ * entry without the helper having to know the shape.
  */
 function editableShouldCommit(
-  editedFlag: 'htmlEdited' | 'selectionEdited',
+  readEdited: (session: DetailsSession) => boolean,
   wasEditedAtStart: boolean,
 ): (fresh: unknown, freshSession: DetailsSession) => boolean {
   return (fresh, freshSession) => {
     if (fresh) return false;
-    return (freshSession[editedFlag] === true) === wasEditedAtStart;
+    return readEdited(freshSession) === wasEditedAtStart;
   };
 }
 
@@ -1263,8 +1344,11 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
     getCachedPath: (s) => s.downloads?.html?.path,
     startDownload: downloadHtml,
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: editableShouldCommit('htmlEdited', wasEdited),
-    downloadsKey: 'html',
+    shouldCommit: editableShouldCommit((s) => s.htmlEdited === true, wasEdited),
+    getCurrentEntry: (s) => s.downloads?.html,
+    setCacheEntry: (s, entry) => {
+      s.downloads!.html = entry;
+    },
   });
 }
 
@@ -1283,57 +1367,97 @@ async function ensureHtmlDownloaded(tabId: number): Promise<string> {
  * belt-and-suspenders guard so a stale page message can't write an
  * empty file.
  */
-async function ensureSelectionDownloaded(tabId: number): Promise<string> {
+async function ensureSelectionDownloaded(
+  tabId: number,
+  format: SelectionFormat,
+): Promise<string> {
   const pre = await requireDetailsSession(tabId);
-  const wasEdited = pre.selectionEdited === true;
+  const wasEdited = pre.selectionEdited?.[format] === true;
   return ensureArtifactDownloaded(tabId, {
     precondition: (s) => {
       if (s.capture.selectionError) {
         throw new Error(`Selection not captured: ${s.capture.selectionError}`);
       }
-      if (!s.capture.selection || !s.capture.selectionFilename) {
+      if (!s.capture.selections || !s.capture.selectionFilenames) {
         throw new Error('No selection was captured');
       }
+      const body = s.capture.selections[format];
+      if (!body || body.trim().length === 0) {
+        throw new Error(noSelectionContentMessage(format));
+      }
     },
-    getCachedPath: (s) => s.downloads?.selection?.path,
-    startDownload: downloadSelection,
+    getCachedPath: (s) => s.downloads?.selections?.[format]?.path,
+    startDownload: (capture) => downloadSelection(capture, format),
     makeCacheEntry: (downloadId, path) => ({ downloadId, path }),
-    shouldCommit: editableShouldCommit('selectionEdited', wasEdited),
-    downloadsKey: 'selection',
+    shouldCommit: editableShouldCommit(
+      (s) => s.selectionEdited?.[format] === true,
+      wasEdited,
+    ),
+    getCurrentEntry: (s) => s.downloads?.selections?.[format],
+    setCacheEntry: (s, entry) => {
+      s.downloads!.selections = { ...(s.downloads!.selections ?? {}), [format]: entry };
+    },
   });
 }
 
 /**
  * Per-kind spec driving the generic `updateArtifact` handler. Each
- * entry says how to commit the edited body to the session and
- * which `session.downloads` entry to drop so the next Copy /
+ * entry says how to commit the edited body to the session and how
+ * to drop the matching `session.downloads` entry so the next Copy /
  * Capture re-materializes under the same pinned filename.
+ *
+ * The three `selection*` kinds mirror the `SelectionFormat` values:
+ * each writes its own slot under `capture.selections[fmt]` + flips
+ * `session.selectionEdited[fmt] = true` + drops
+ * `session.downloads.selections[fmt]`. A selection-markdown edit
+ * doesn't touch the HTML or text bodies — on the details page each
+ * format row has its own Edit dialog.
  *
  * New editable artifact kinds add one entry here (and one to the
  * `EditableArtifactKind` literal union); the handler loop and the
  * surrounding session bookkeeping stay untouched.
  */
-const EDITABLE_ARTIFACTS: Record<
-  EditableArtifactKind,
-  {
-    write: (session: DetailsSession, value: string) => void;
-    downloadsKey: EditableArtifactKind;
-  }
-> = {
+interface EditableArtifactSpec {
+  /** Write the edited body into the right slot on the session. */
+  write: (session: DetailsSession, value: string) => void;
+  /** Drop the matching `session.downloads` entry so the next
+   *  materialization re-downloads with the edited body. */
+  dropDownload: (session: DetailsSession) => void;
+}
+
+function selectionEditableSpec(format: SelectionFormat): EditableArtifactSpec {
+  return {
+    write: (s, v) => {
+      if (s.capture.selections) s.capture.selections[format] = v;
+      s.selectionEdited = { ...(s.selectionEdited ?? {}), [format]: true };
+    },
+    dropDownload: (s) => {
+      if (s.downloads?.selections && format in s.downloads.selections) {
+        const copy = { ...s.downloads.selections };
+        delete copy[format];
+        s.downloads = { ...s.downloads, selections: copy };
+      }
+    },
+  };
+}
+
+const EDITABLE_ARTIFACTS: Record<EditableArtifactKind, EditableArtifactSpec> = {
   html: {
     write: (s, v) => {
       s.capture.html = v;
       s.htmlEdited = true;
     },
-    downloadsKey: 'html',
-  },
-  selection: {
-    write: (s, v) => {
-      s.capture.selection = v;
-      s.selectionEdited = true;
+    dropDownload: (s) => {
+      if (s.downloads?.html) {
+        const copy = { ...s.downloads };
+        delete copy.html;
+        s.downloads = copy;
+      }
     },
-    downloadsKey: 'selection',
   },
+  selectionHtml: selectionEditableSpec('html'),
+  selectionText: selectionEditableSpec('text'),
+  selectionMarkdown: selectionEditableSpec('markdown'),
 };
 
 /**
@@ -1351,23 +1475,36 @@ const EDITABLE_ARTIFACTS: Record<
  * its `ensure*Downloaded` precondition — leaving the sticky edit
  * flag set on a body the user can never actually save.
  */
+/**
+ * Which `capture.*Error` field guards a given editable kind. HTML
+ * gates on its own scrape error; every selection format currently
+ * gates on the shared `selectionError` because today's
+ * `captureBothToMemory` produces all three bodies from one
+ * `executeScript` call, so a failure is shared by all formats. If
+ * per-format scrape errors ever land (each format failing
+ * independently), this map becomes a per-format lookup —
+ * `selectionHtmlError` / `selectionTextError` / etc. on
+ * `InMemoryCapture`.
+ */
+const EDIT_GUARD_ERROR: Record<EditableArtifactKind, 'htmlError' | 'selectionError'> = {
+  html: 'htmlError',
+  selectionHtml: 'selectionError',
+  selectionText: 'selectionError',
+  selectionMarkdown: 'selectionError',
+};
+
 function applyArtifactEdit(
   session: DetailsSession,
   kind: EditableArtifactKind,
   value: string,
 ): void {
-  const errorKey = `${kind}Error` as const;
-  const reason = session.capture[errorKey];
+  const reason = session.capture[EDIT_GUARD_ERROR[kind]];
   if (reason) {
     throw new Error(`Cannot edit ${kind}: ${reason}`);
   }
   const spec = EDITABLE_ARTIFACTS[kind];
   spec.write(session, value);
-  if (session.downloads && spec.downloadsKey in session.downloads) {
-    const copy = { ...session.downloads };
-    delete copy[spec.downloadsKey];
-    session.downloads = copy;
-  }
+  spec.dropDownload(session);
 }
 
 chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse) => {
@@ -1387,12 +1524,13 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       }
       // Forward the fields the page actually renders or mirrors:
       // the preview image, the captured URL, the HTML body (for
-      // byte counting + the Edit HTML dialog), and the selection
-      // body (for the Edit selection dialog + enabling the Save
-      // selection controls — presence of a non-empty string plays
-      // the role the old `hasSelection` flag did). File paths are
-      // not sent here; they come back via the on-demand
-      // `ensureDownloaded` round-trip when a Copy button is clicked.
+      // byte counting + the Edit HTML dialog), and the three
+      // selection bodies (for the Edit-selection dialogs and for
+      // enabling each Save-selection-as-… row — presence of a
+      // non-empty string in the matching format plays the role
+      // the old `hasSelection` flag did). File paths are not sent
+      // here; they come back via the on-demand `ensureDownloaded`
+      // round-trip when a Copy button is clicked.
       //
       // `htmlError` / `selectionError` propagate any scrape failure
       // from `captureBothToMemory` so the page can grey out the
@@ -1400,7 +1538,7 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
-        selection: session.capture.selection,
+        selections: session.capture.selections,
         url: session.capture.url,
         htmlError: session.capture.htmlError,
         selectionError: session.capture.selectionError,
@@ -1422,7 +1560,11 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         } else if (msg.kind === 'html') {
           path = await ensureHtmlDownloaded(tabId);
         } else {
-          path = await ensureSelectionDownloaded(tabId);
+          const format = WIRE_TO_SELECTION_FORMAT[msg.kind];
+          if (!format) {
+            throw new Error(`Unknown ensureDownloaded kind: ${String(msg.kind)}`);
+          }
+          path = await ensureSelectionDownloaded(tabId, format);
         }
         sendResponse({ path });
       } catch (err) {
@@ -1465,20 +1607,27 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         if (msg.html) {
           await ensureHtmlDownloaded(tabId);
         }
-        if (msg.selection) {
-          await ensureSelectionDownloaded(tabId);
+        if (msg.selectionFormat) {
+          await ensureSelectionDownloaded(tabId, msg.selectionFormat);
         }
         await recordDetailedCapture({
           capture: session.capture,
           includeScreenshot: msg.screenshot,
           includeHtml: msg.html,
-          includeSelection: msg.selection,
+          selectionFormat: msg.selectionFormat ?? undefined,
           prompt: msg.prompt,
           hasHighlights: msg.highlights,
           hasRedactions: msg.hasRedactions,
           isCropped: msg.isCropped,
           htmlEdited: session.htmlEdited,
-          selectionEdited: session.selectionEdited,
+          // Only the chosen selection format's edit flag matters for
+          // the sidecar — edits to other formats stay on disk but
+          // never land in `log.json` because they weren't picked
+          // for save.
+          selectionEdited:
+            msg.selectionFormat !== null
+              ? session.selectionEdited?.[msg.selectionFormat] === true
+              : undefined,
         });
       } finally {
         // Always clean up the stored capture and close the tab, even

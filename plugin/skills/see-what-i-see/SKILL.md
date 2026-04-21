@@ -25,8 +25,9 @@ You can't run this autonomously since it requires the user to have just clicked 
   - `contents` — object describing a captured whole-page HTML snapshot, with:
     - `filename` — absolute path.
     - `isEdited: true` means the user edited the captured HTML before saving, so it didn't come exactly from the website.
-  - `selection` — object describing a captured HTML fragment (the user's page selection at capture time), with:
+  - `selection` — object describing the user's selected text in the page, with:
     - `filename` — absolute path.
+    - `format` — one of `"html"`, `"text"`, `"markdown"`.
     - `isEdited: true` — same as `contents.isEdited`.
   - `prompt` — the user's instruction for this capture.
 

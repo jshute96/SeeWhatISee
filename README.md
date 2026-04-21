@@ -6,6 +6,8 @@ This is a Chrome extension for taking screenshots and saving HTML snapshots, opt
 
 You can share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
 
+When you select text in the page, that text is saved, as your choice of HTML, text, or agent-friendly markdown.
+
 The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skills read them automatically from there.
 
 ## Usage
@@ -26,7 +28,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
-    - **Capture selection** — Saves the HTML of the currently selected text.
+    - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
@@ -44,13 +46,9 @@ Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submi
 On this page, you can:
 
 - See the page URL and HTML size.
-- Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
-  - With none of these checked, you can still capture the URL.
-  - On pages where the extension can't read HTML (e.g. `chrome://`
-    pages or the Web Store), *Save HTML* and *Save selection* are
-    disabled. A red error icon next to each greyed-out option
-    explains why. The screenshot, prompt, and highlight tools still
-    work so you can still capture and annotate the page.
+- Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
+  - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
+  - With nothing checked, you can still capture the URL.
 - Copy saved filenames to the clipboard with the copy icon.
 - View or edit the captured HTML or selection before saving with the pencil icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
@@ -159,7 +157,7 @@ Each capture writes one or more of these, by filename prefix:
 
 - `screenshot-<timestamp>.png` — the captured PNG.
 - `contents-<timestamp>.html` — the captured full-page HTML.
-- `selection-<timestamp>.html` — the captured text selection, as HTML.
+- `selection-<timestamp>.{html,txt,md}` — the captured text selection. Exactly one file per capture — the extension reflects the format the user picked (HTML fragment, plain text, or markdown).
 
 A single Capture may include any subset of these (or
 none — a URL-only record is valid). Filenames are pinned at capture
@@ -191,8 +189,9 @@ present when that action was included.
     - `filename` — filename of the HTML snapshot.
     - `isEdited` — `true` if the user edited the HTML content before saving.
 - `selection` — present when the text selection was saved.
-    - `filename` — filename of the selection HTML file.
-    - `isEdited` — `true` if the user edited the captured HTML before saving.
+    - `filename` — filename of the selection file (`.html`, `.txt`, or `.md`).
+    - `format` — one of `"html"`, `"text"`, `"markdown"`.
+    - `isEdited` — `true` if the user edited the captured body before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
   flow, giving instructions for agents on what to do with this capture.
 - `url` — URL of the captured tab, or `""` if unavailable.
@@ -221,6 +220,7 @@ npm test             # validate skill templates, then run Playwright e2e tests
 npm run test:skills  # validate skill templates only (fast, no build)
 npm run test:e2e     # run Playwright e2e tests only
 npm run test:headed  # same as test:e2e, with a visible browser
+npm run test:unit    # run the HTML→markdown converter unit tests
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by
