@@ -31,6 +31,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
+| `.claude/commands/test-markdown-converter.md` | `/test-markdown-converter` slash command — tests the HTML→markdown converter against URLs / HTML files via parallel background agents |
 
 ## Skill Templates (`src/skills_templates/`)
 
@@ -107,6 +108,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, and `capture.html`, then runs `tsc` |
 | `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
+| `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
 | `scripts/get-latest.sh` | Symlink to `plugin/scripts/get-latest.sh` |
 | `scripts/watch-and-copy.sh` | Symlink to `.gemini/scripts/watch-and-copy.sh` |

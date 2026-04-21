@@ -373,7 +373,8 @@ function emitText(nodes: Node[]): string {
 
 function emitNodes(nodes: Node[], ctx: EmitContext): string {
   let out = '';
-  for (const node of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]!;
     // Drop whitespace-only text nodes that sit between block-level
     // siblings in pretty-printed HTML. If we kept them they'd leak
     // through as a stray " " right after the previous block's
@@ -386,6 +387,30 @@ function emitNodes(nodes: Node[], ctx: EmitContext): string {
       node.value.trim().length === 0 &&
       (out.length === 0 || out.endsWith('\n'))
     ) {
+      continue;
+    }
+    // Stray `<tr>` fragment (no surrounding `<table>`). Happens
+    // when a selection starts or ends mid-table and clones only
+    // some rows. Collect consecutive `<tr>` siblings into a
+    // pseudo-`<table>` with a blank header row so no data row
+    // gets demoted to a heading, then let `emitTable` render it
+    // as a GFM pipe table — much more readable than flattening
+    // every cell onto one line.
+    if (node.type === 'element' && node.tag === 'tr') {
+      const run: ElementNode[] = [];
+      while (i < nodes.length) {
+        const n = nodes[i]!;
+        if (n.type === 'element' && n.tag === 'tr') {
+          run.push(n);
+          i++;
+        } else if (n.type === 'text' && n.value.trim().length === 0) {
+          i++;
+        } else {
+          break;
+        }
+      }
+      i--; // for-loop will re-increment
+      out += emitStrayTrRun(run, ctx);
       continue;
     }
     // Ensure a block-level child doesn't get glued to preceding
@@ -631,6 +656,49 @@ function wrapInline(
   const text = emitInline(children, ctx);
   if (!text.trim()) return text;
   return `${open}${text}${close ?? open}`;
+}
+
+function emitStrayTrRun(trs: ElementNode[], ctx: EmitContext): string {
+  // Synthesize a `<table>` wrapper so a selected run of rows that
+  // lacks one still renders as a pipe table. Prepend an *empty*
+  // header row so no data row gets visually promoted to a header
+  // — for partial-table captures every row is body content.
+  const countCells = (tr: ElementNode): number =>
+    tr.children.filter(
+      (c) => c.type === 'element' && (c.tag === 'td' || c.tag === 'th'),
+    ).length;
+  const cellCounts = trs.map(countCells);
+  const maxCells = Math.max(0, ...cellCounts);
+  if (maxCells === 0) return '';
+
+  // If the first row has fewer cells than the widest row, treat it
+  // as a selection that started mid-row: the cells it carries are
+  // the RIGHTMOST columns of the full row, so pad the missing
+  // slots onto the *left* side. Default `emitTable` padding is
+  // trailing (right), which works for the last row (a selection
+  // that ended mid-row → early columns only) but would mis-align
+  // the first-row tail case.
+  const adjusted = trs.slice();
+  if (adjusted.length > 0 && cellCounts[0]! < maxCells) {
+    const missing = maxCells - cellCounts[0]!;
+    const blanks: ElementNode[] = [];
+    for (let k = 0; k < missing; k++) {
+      blanks.push({ type: 'element', tag: 'td', attrs: {}, children: [] });
+    }
+    adjusted[0] = { ...adjusted[0]!, children: [...blanks, ...adjusted[0]!.children] };
+  }
+
+  const blankHeaderCells: ElementNode[] = [];
+  for (let k = 0; k < maxCells; k++) {
+    blankHeaderCells.push({ type: 'element', tag: 'th', attrs: {}, children: [] });
+  }
+  const blankHeader: ElementNode = {
+    type: 'element', tag: 'tr', attrs: {}, children: blankHeaderCells,
+  };
+  const syntheticTable: ElementNode = {
+    type: 'element', tag: 'table', attrs: {}, children: [blankHeader, ...adjusted],
+  };
+  return blockSep(emitTable(syntheticTable, ctx));
 }
 
 function emitTable(node: ElementNode, ctx: EmitContext): string {

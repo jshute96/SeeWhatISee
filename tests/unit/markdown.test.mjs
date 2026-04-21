@@ -251,6 +251,44 @@ test('simple table', () => {
   );
 });
 
+test('stray <tr> fragments render as a pipe table with blank header', () => {
+  // Selection started / ended mid-table — the clone has `<tr>`s but
+  // no `<table>`. We synthesize an empty header so no data row gets
+  // demoted to a heading, and emit a valid GFM pipe table.
+  const out = norm(htmlToMarkdown(
+    '<tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr>',
+  ));
+  assert.equal(
+    out,
+    '|  |  |\n| --- | --- |\n| a | b |\n| c | d |',
+  );
+});
+
+test('stray <tr> fragments with mixed cell counts pad to widest row', () => {
+  // First row shorter — treat as the tail of a mid-row selection,
+  // left-pad its cells into the rightmost columns. Later rows keep
+  // trailing-pad (head of a cut row).
+  const out = norm(htmlToMarkdown(
+    '<tr><td>a</td></tr><tr><td>x</td><td>y</td><td>z</td></tr>',
+  ));
+  assert.equal(
+    out,
+    '|  |  |  |\n| --- | --- | --- |\n|  |  | a |\n| x | y | z |',
+  );
+});
+
+test('stray <tr> fragments: last row short keeps trailing pad', () => {
+  // Head of a mid-row-ending selection: cells are the leftmost
+  // columns; trailing pad is correct.
+  const out = norm(htmlToMarkdown(
+    '<tr><td>a</td><td>b</td><td>c</td></tr><tr><td>x</td></tr>',
+  ));
+  assert.equal(
+    out,
+    '|  |  |  |\n| --- | --- | --- |\n| a | b | c |\n| x |  |  |',
+  );
+});
+
 test('table with unaligned row widths pads trailing empty cells', () => {
   const out = norm(htmlToMarkdown(
     '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td></tr></table>',
