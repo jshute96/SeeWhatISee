@@ -88,6 +88,55 @@ test('ordered list with start attribute', () => {
   assert.equal(out, '5. a\n6. b');
 });
 
+test('whitespace text nodes between block siblings do not bleed as indent', () => {
+  // Pretty-printed HTML with newlines between block siblings would
+  // otherwise emit " ### Heading" (leading space pushing the `#`s
+  // off the start of the line and breaking the heading).
+  const out = norm(htmlToMarkdown(
+    '<h3>A</h3>\n<p>body</p>\n<h3>B</h3>',
+  ));
+  assert.equal(out, '### A\n\nbody\n\n### B');
+});
+
+test('empty headings are dropped', () => {
+  const out = norm(htmlToMarkdown('<h3>A</h3><h3></h3><h3>B</h3>'));
+  assert.equal(out, '### A\n\n### B');
+});
+
+test('sibling block divs inside a <li> become loose list-item continuation paragraphs', () => {
+  // Real-world case: a React-rendered task list where each task is
+  // a separate `<div>` inside a single `<li>`. Want each task on its
+  // own line (as a continuation paragraph), not all run together.
+  const out = norm(htmlToMarkdown(
+    '<ul><li>' +
+      '<div>task one</div>' +
+      '<div>task two</div>' +
+      '<div>task three</div>' +
+    '</li></ul>',
+  ));
+  assert.equal(out, '- task one\n\n  task two\n\n  task three');
+});
+
+test('leading whitespace inside a block container is trimmed', () => {
+  // `<div> I have searched <a>existing issues</a></div>` — the
+  // literal leading space in the text node would otherwise show up
+  // as `   text` on the emitted line.
+  const out = norm(htmlToMarkdown(
+    '<div> hello <a href="https://x">world</a></div>',
+  ));
+  assert.equal(out, 'hello [world](https://x)');
+});
+
+test('whitespace text nodes between <li> are ignored', () => {
+  // Pretty-printed HTML with newlines + indentation between list
+  // items would otherwise emit " 1. one\n 2. two", which reads as
+  // an indented pre-block rather than a numbered list.
+  const out = norm(htmlToMarkdown(
+    '<ol>\n  <li>/config</li>\n  <li>change a setting</li>\n  <li>exit config</li>\n</ol>',
+  ));
+  assert.equal(out, '1. /config\n2. change a setting\n3. exit config');
+});
+
 test('nested lists indent', () => {
   const out = norm(htmlToMarkdown(
     '<ul><li>a<ul><li>a.1</li><li>a.2</li></ul></li><li>b</li></ul>',
@@ -174,6 +223,36 @@ test('ignores comments', () => {
   assert.equal(out, 'helloworld');
 });
 
+test('ignores comments between block siblings', () => {
+  assert.equal(
+    norm(htmlToMarkdown('<p>a</p><!-- gap --><p>b</p>')),
+    'a\n\nb',
+  );
+});
+
+test('ignores comments between <li> elements', () => {
+  // A non-`<li>` child of `<ul>` would otherwise trip the list
+  // emitter. The parser skips the comment entirely so the ul sees
+  // only its two `<li>` children.
+  assert.equal(
+    norm(htmlToMarkdown('<ul><li>a</li><!-- between --><li>b</li></ul>')),
+    '- a\n- b',
+  );
+});
+
+test('ignores comments that wrap <li>-looking content', () => {
+  assert.equal(
+    norm(htmlToMarkdown('<ul><li>only<!-- <li>fake</li> --></li></ul>')),
+    '- only',
+  );
+});
+
+test('unclosed comment eats the rest of the input', () => {
+  // Defensive: a truncated selection ending mid-comment shouldn't
+  // surface as raw `<!--` in the output.
+  assert.equal(norm(htmlToMarkdown('<p>a</p><!-- never closed')), 'a');
+});
+
 test('collapses whitespace in inline runs', () => {
   const out = norm(htmlToMarkdown('<p>  extra    space\n\nbetween\t  words  </p>'));
   assert.equal(out, 'extra space between words');
@@ -200,6 +279,77 @@ test('attribute value with embedded greater-than is parsed safely', () => {
   const out = norm(htmlToMarkdown('<a href="https://x?q=a>b">go</a>'));
   assert.equal(out, '[go](https://x?q=a>b)');
 });
+
+// ─── Relative URL resolution ──────────────────────────────────────
+
+test('relative link resolves against base URL', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="next.html">go</a>',
+    'https://example.com/docs/index.html',
+  ));
+  assert.equal(out, '[go](https://example.com/docs/next.html)');
+});
+
+test('root-absolute link resolves against base origin', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="/about">about</a>',
+    'https://example.com/docs/index.html',
+  ));
+  assert.equal(out, '[about](https://example.com/about)');
+});
+
+test('protocol-relative link picks up base protocol', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="//cdn.example.com/x">x</a>',
+    'https://example.com/',
+  ));
+  assert.equal(out, '[x](https://cdn.example.com/x)');
+});
+
+test('absolute link is left alone', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="https://other.example/y">y</a>',
+    'https://example.com/',
+  ));
+  assert.equal(out, '[y](https://other.example/y)');
+});
+
+test('fragment-only link stays as anchor', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="#section-2">jump</a>',
+    'https://example.com/docs/',
+  ));
+  assert.equal(out, '[jump](#section-2)');
+});
+
+test('query-only link resolves against base path', () => {
+  const out = norm(htmlToMarkdown(
+    '<a href="?tab=2">t</a>',
+    'https://example.com/docs/page.html',
+  ));
+  assert.equal(out, '[t](https://example.com/docs/page.html?tab=2)');
+});
+
+test('relative image src resolves against base URL', () => {
+  const out = norm(htmlToMarkdown(
+    '<img src="img/pic.png" alt="p">',
+    'https://example.com/docs/index.html',
+  ));
+  assert.equal(out, '![p](https://example.com/docs/img/pic.png)');
+});
+
+test('no base URL → relative hrefs pass through unchanged', () => {
+  const out = norm(htmlToMarkdown('<a href="foo.html">f</a>'));
+  assert.equal(out, '[f](foo.html)');
+});
+
+test('malformed base URL leaves hrefs unchanged', () => {
+  // `new URL('x', 'not a url')` throws; the converter should swallow
+  // and emit the raw ref rather than propagating the error.
+  const out = norm(htmlToMarkdown('<a href="x">x</a>', 'not a url'));
+  assert.equal(out, '[x](x)');
+});
+
 
 // ─── htmlToText ────────────────────────────────────────────────────
 

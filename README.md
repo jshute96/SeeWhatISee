@@ -48,14 +48,8 @@ On this page, you can:
 
 - See the page URL and HTML size.
 - Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
-  - For the selection, choose one of three mutually-exclusive formats: **HTML**, **text**, or **markdown**. Each row gets its own Copy and Edit buttons so you can materialize or edit any format before deciding which one to save.
-  - Rows for formats with no content (e.g. text for an image-only selection) are disabled with a red error icon explaining why.
+  - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
   - With nothing checked, you can still capture the URL.
-  - On pages where the extension can't read HTML (e.g. `chrome://`
-    pages or the Web Store), *Save HTML* and all *Save selection as …*
-    rows are disabled. A red error icon next to each greyed-out option
-    explains why. The screenshot, prompt, and highlight tools still
-    work so you can still capture and annotate the page.
 - Copy saved filenames to the clipboard with the copy icon.
 - View or edit the captured HTML or selection before saving with the pencil icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)

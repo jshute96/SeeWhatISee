@@ -257,19 +257,63 @@ interface EmitContext {
   /** True inside `<a>` — suppress nested link emission so we don't
    *  produce `[foo[bar](u2)](u1)` for weird nested markup. */
   insideLink: boolean;
+  /**
+   * Page URL the fragment was scraped from, used to resolve relative
+   * `<a href>` and `<img src>` values so they keep working when the
+   * markdown file is read on its own. `undefined` disables resolution
+   * (relative hrefs pass through unchanged). Fragment-only hrefs
+   * (`#foo`) are *always* left alone regardless — they point inside
+   * the saved page, not the source page.
+   */
+  baseUrl: string | undefined;
 }
 
-function newContext(): EmitContext {
-  return { listStack: [], preformatted: false, insideLink: false };
+function newContext(baseUrl?: string): EmitContext {
+  return {
+    listStack: [],
+    preformatted: false,
+    insideLink: false,
+    baseUrl: baseUrl && baseUrl.length > 0 ? baseUrl : undefined,
+  };
+}
+
+/**
+ * Resolve an HTML `href` / `src` against the page URL so relative
+ * references (`foo.html`, `/x/y`, `?q=1`) become absolute and keep
+ * working when the markdown file is read on its own. Fragment-only
+ * refs (`#section`) stay as-is — they point inside whatever file
+ * the markdown ends up in, which is the right behavior for anchor
+ * links captured alongside the selection.
+ *
+ * Returns the original value unchanged on:
+ *   - empty strings,
+ *   - fragment-only refs,
+ *   - missing `baseUrl` (no resolution requested),
+ *   - malformed URLs (`new URL` throws).
+ */
+function resolveUrl(ref: string, baseUrl: string | undefined): string {
+  if (!ref) return ref;
+  if (ref.startsWith('#')) return ref;
+  if (!baseUrl) return ref;
+  try {
+    return new URL(ref, baseUrl).href;
+  } catch {
+    return ref;
+  }
 }
 
 /**
  * Convert an HTML fragment to CommonMark-ish markdown. Never throws
  * on malformed input; unhandled elements unwrap to their text.
+ *
+ * When `baseUrl` is supplied, relative `<a href>` and `<img src>`
+ * values are resolved against it so the saved markdown's links and
+ * images keep working outside the original page. Anchor-only
+ * references (`#foo`) pass through unchanged.
  */
-export function htmlToMarkdown(html: string): string {
+export function htmlToMarkdown(html: string, baseUrl?: string): string {
   const nodes = parseHtml(html);
-  const out = emitNodes(nodes, newContext()).trim();
+  const out = emitNodes(nodes, newContext(baseUrl)).trim();
   // Collapse runs of >2 blank lines down to the canonical "one blank
   // line between blocks" so block elements separated by phantom
   // inline wrappers still produce clean output.
@@ -320,6 +364,20 @@ function emitText(nodes: Node[]): string {
 function emitNodes(nodes: Node[], ctx: EmitContext): string {
   let out = '';
   for (const node of nodes) {
+    // Drop whitespace-only text nodes that sit between block-level
+    // siblings in pretty-printed HTML. If we kept them they'd leak
+    // through as a stray " " right after the previous block's
+    // trailing "\n", which then reads as a one-space indent on the
+    // next block's first line (e.g. `\n - bullet` instead of
+    // `\n- bullet`). Preformatted content keeps every character.
+    if (
+      node.type === 'text' &&
+      !ctx.preformatted &&
+      node.value.trim().length === 0 &&
+      (out.length === 0 || out.endsWith('\n'))
+    ) {
+      continue;
+    }
     out += emitNode(node, ctx);
   }
   return out;
@@ -357,6 +415,7 @@ function emitNode(node: Node, ctx: EmitContext): string {
     case 'h4': case 'h5': case 'h6': {
       const level = Number(tag[1]);
       const text = emitInline(node.children, ctx).trim();
+      if (!text) return '';
       return blockSep(`${'#'.repeat(level)} ${text}`);
     }
     case 'p': {
@@ -414,7 +473,17 @@ function emitNode(node: Node, ctx: EmitContext): string {
       const kind: 'ul' | 'ol' = tag === 'ol' ? 'ol' : 'ul';
       const start = Number(node.attrs['start']);
       ctx.listStack.push({ type: kind, index: Number.isFinite(start) && start > 0 ? start : 1 });
-      const body = emitNodes(node.children, ctx);
+      // Pretty-printed HTML (`<ol>\n  <li>…</li>\n  <li>…</li>\n</ol>`)
+      // includes whitespace-only text nodes between the `<li>`
+      // children. Emitting them would prepend stray spaces before
+      // each list marker and the output would render as an indented
+      // pseudo-code block rather than a list. Drop non-`<li>`
+      // children here — nested `<ul>`/`<ol>` live inside a `<li>`
+      // anyway.
+      const items = node.children.filter(
+        (c): c is ElementNode => c.type === 'element' && c.tag === 'li',
+      );
+      const body = emitNodes(items, ctx);
       ctx.listStack.pop();
       // Nested lists: lead with a newline so the parent `<li>`'s text
       // and the first nested marker don't end up on the same line.
@@ -438,7 +507,8 @@ function emitNode(node: Node, ctx: EmitContext): string {
       return `${marker} ${first}${rest ? '\n' + rest : ''}\n`;
     }
     case 'a': {
-      const href = node.attrs['href'] ?? '';
+      const rawHref = node.attrs['href'] ?? '';
+      const href = resolveUrl(rawHref, ctx.baseUrl);
       if (ctx.insideLink || !href) {
         return emitInline(node.children, ctx);
       }
@@ -447,7 +517,7 @@ function emitNode(node: Node, ctx: EmitContext): string {
       return `[${text}](${href})`;
     }
     case 'img': {
-      const src = node.attrs['src'] ?? '';
+      const src = resolveUrl(node.attrs['src'] ?? '', ctx.baseUrl);
       const alt = node.attrs['alt'] ?? '';
       if (!src) return alt;
       return `![${alt}](${src})`;
@@ -463,8 +533,15 @@ function emitNode(node: Node, ctx: EmitContext): string {
     case 'div': case 'section': case 'article':
     case 'main': case 'header': case 'footer':
     case 'aside': case 'nav': case 'figure': case 'figcaption': {
-      const body = emitNodes(node.children, ctx);
-      return body.endsWith('\n') ? body : body + (body.length > 0 ? '\n' : '');
+      // Block-level containers: trim leading/trailing whitespace the
+      // source HTML put inside them (pretty-print indent, stray
+      // spaces at the start of the text) and separate from adjacent
+      // siblings with a blank line. Sibling block divs then read as
+      // separate paragraphs instead of running together on one line,
+      // and inside a `<li>` each becomes a loose list-item
+      // continuation paragraph.
+      const body = emitNodes(node.children, ctx).trim();
+      return body ? blockSep(body) : '';
     }
     default:
       // Unknown / inline-ish tag: unwrap its children.

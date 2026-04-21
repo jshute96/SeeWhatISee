@@ -444,23 +444,28 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   succeeds via `chrome.tabs.captureVisibleTab`.
 - Impact on the details flow:
   - The details page still opens with the screenshot preview.
-  - Save HTML and all three Save-selection-as-… rows are disabled
-    + unchecked, and their Copy and Edit buttons are hidden (the
-    shared `.copy-btn:disabled` rule covers both).
+  - Save HTML and the master Save-selection checkbox are
+    disabled + unchecked; their Copy and Edit buttons are hidden
+    (the shared `.copy-btn:disabled` rule covers both).
+  - The `.selection-formats` wrapper around the three format
+    radios stays hidden whenever no selection has saveable
+    content — so scrape failures simply show no format rows.
   - The error icon + tooltip is shown only on the Save HTML row.
-    Selection is scraped in the same `executeScript` call as HTML,
-    so when the call fails the errors are always twins and duplicate
-    icons on every selection row would just repeat the same message
-    — the three selection rows stay greyed out without icons. Each
-    row still has its own `#error-selection-{html,text,markdown}`
-    element wired up so a future SW that reports per-format failures
-    separately can light them independently, but today's
-    `captureBothToMemory` never emits that combination.
-  - Hotkeys (Alt+H, etc) are no-ops while the corresponding row is disabled.
+    Selection is scraped in the same `executeScript` call as
+    HTML, so when the call fails the errors are always twins and
+    a duplicate icon on the master row would just repeat the
+    same message. The master row stays greyed out without an
+    icon; the wiring is ready for a future SW that reports
+    per-format failures separately (each format row keeps its
+    own `#error-selection-{html,text,markdown}` element) but
+    today's `captureBothToMemory` never emits that combination.
+  - Hotkeys (Alt+H, etc) are no-ops while the corresponding
+    control is disabled.
   - `ensureHtmlDownloaded` / `ensureSelectionDownloaded(format)`
-    throw if the matching `*Error` is set (or the requested format's
-    body is empty), as a belt-and-suspenders guard so a stale page
-    message can't materialize an empty file.
+    throw if the matching `*Error` is set (or the requested
+    format's body trims to empty), as a belt-and-suspenders
+    guard so a stale page message can't materialize an empty
+    file.
 - Impact on the More-menu shortcuts:
   - `capture-url` (URL-only) deliberately ignores `htmlError` —
     it doesn't need HTML anyway.
@@ -475,7 +480,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `B` / `KB` / `MB` / `GB` / `TB`.
 - **Save checkboxes** — pick any of screenshot, HTML, selection
   (one format), or none (URL-only record).
-  - Save selection is a master checkbox (`Save selection:`) plus a
+  - Save selection is a master checkbox (`Save selection`) plus a
     group of three mutually-exclusive format radios (`as HTML`,
     `as text`, `as markdown`). The master gates whether anything
     is saved; the radios pick which serialization.

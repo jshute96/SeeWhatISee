@@ -8,6 +8,7 @@ import {
   downloadSelection,
   DOWNLOAD_SUBDIR,
   LOG_STORAGE_KEY,
+  noSelectionContentMessage,
   recordDetailedCapture,
   savePageContents,
   waitForDownloadComplete,
@@ -130,9 +131,10 @@ const SUPPRESSED_UNHANDLED = [
   'No active tab found to capture',
   'Failed to retrieve page contents',
   'No text selected',
-  'No selection text content',
-  'No selection markdown content',
-  'No selection html content',
+  // Per-format "No selection X content" strings — generated from
+  // the same helper the throw sites use, so rewording the message
+  // in one place can't drift away from the suppression list.
+  ...(['html', 'text', 'markdown'] as const).map(noSelectionContentMessage),
 ];
 self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const message = String((event.reason as Error)?.message ?? event.reason);
@@ -1036,9 +1038,10 @@ interface GetDetailsMessage {
 }
 /**
  * Keys the page can use on `EnsureDownloadedMessage.kind`. The three
- * `selection*` kinds map 1:1 to the `SelectionFormat` values via
- * `SELECTION_EDIT_KIND` — they're the same strings as the editable-
- * artifact kinds so the page doesn't juggle two separate enums.
+ * `selection*` kinds are the same strings as the editable-artifact
+ * kinds so the page doesn't juggle two separate enums; see
+ * `WIRE_TO_SELECTION_FORMAT` below for the format-side reverse
+ * lookup.
  */
 type EnsureDownloadedKind =
   | 'screenshot'
@@ -1380,7 +1383,7 @@ async function ensureSelectionDownloaded(
       }
       const body = s.capture.selections[format];
       if (!body || body.trim().length === 0) {
-        throw new Error(`No selection ${format} content`);
+        throw new Error(noSelectionContentMessage(format));
       }
     },
     getCachedPath: (s) => s.downloads?.selections?.[format]?.path,

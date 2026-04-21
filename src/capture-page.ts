@@ -1056,12 +1056,11 @@ async function loadData(): Promise<void> {
       // produces non-null `selections` (the raw `innerHTML` is
       // non-empty) but every format trims to empty, so the group
       // collapses to the "no usable selection" case.
-      const kindOf: Record<SelectionFormat, EditableArtifactKind> = SELECTION_WIRE_KIND;
       let anyFormatHasContent = false;
       for (const format of SELECTION_FORMATS) {
         const body = response.selections[format];
         const r = selectionRows[format];
-        captured[kindOf[format]] = body;
+        captured[SELECTION_WIRE_KIND[format]] = body;
         if (body && body.trim().length > 0) {
           r.radio.disabled = false;
           r.copyBtn.disabled = false;

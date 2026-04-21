@@ -121,6 +121,19 @@ export const SELECTION_EXTENSIONS: Record<SelectionFormat, string> = {
 };
 
 /**
+ * Canonical error message for a per-format empty selection body.
+ * Every site that throws (`captureSelection`, `downloadSelection`,
+ * `ensureSelectionDownloaded`) and the SW's `SUPPRESSED_UNHANDLED`
+ * list both go through this helper so wording stays in lock-step —
+ * rewording the message at one site without updating the suppress
+ * list would otherwise silently leak the failure into the
+ * chrome://extensions Errors console.
+ */
+export function noSelectionContentMessage(format: SelectionFormat): string {
+  return `No selection ${format} content`;
+}
+
+/**
  * Screenshot record in `log.json`. Same filename-plus-optional-flags
  * shape as `Artifact`, but the flags describe different "things the
  * user did to this PNG" rather than a single "edited" bit —
@@ -356,9 +369,12 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
  *   - `text`     — `window.getSelection().toString()`, which matches
  *                  what the user visually sees selected (respects
  *                  line breaks in block elements).
- *   - `markdown` — `htmlToMarkdown(html)`, computed in the SW after
- *                  the scrape returns so the converter is a pure
- *                  function unit-testable without a DOM.
+ *   - `markdown` — `htmlToMarkdown(html, pageUrl)`, computed in the
+ *                  SW after the scrape returns so the converter is a
+ *                  pure function unit-testable without a DOM. Passing
+ *                  the page URL lets the converter resolve relative
+ *                  `<a href>` / `<img src>` refs to absolute URLs so
+ *                  the saved markdown stays useful standalone.
  */
 export interface SelectionBodies {
   html: string;
@@ -384,7 +400,10 @@ export interface SelectionBodies {
  * text; picking "Save as text" would error out, but "Save as HTML"
  * or "Save as markdown" still works.
  */
-async function scrapeSelection(tabId: number): Promise<SelectionBodies | null> {
+async function scrapeSelection(
+  tabId: number,
+  pageUrl: string,
+): Promise<SelectionBodies | null> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
@@ -410,9 +429,16 @@ async function scrapeSelection(tabId: number): Promise<SelectionBodies | null> {
     | undefined;
   if (!scraped) return null;
   return {
+    // HTML stays byte-identical to what the page serialized — a
+    // user opening the file in a browser (via a saved page, a
+    // pipe into viewer, etc.) is the authoritative read and no
+    // rewriting is safe to do universally. Markdown, by contrast,
+    // has to stand alone: pass `pageUrl` so `htmlToMarkdown`
+    // resolves relative `<a href>` / `<img src>` to absolute URLs
+    // in its output.
     html: scraped.html,
     text: scraped.text,
-    markdown: htmlToMarkdown(scraped.html),
+    markdown: htmlToMarkdown(scraped.html, pageUrl),
   };
 }
 
@@ -454,14 +480,14 @@ export async function captureSelection(
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
-  const bodies = await scrapeSelection(active.id!);
+  const bodies = await scrapeSelection(active.id!, active.url ?? '');
   if (!bodies) throw new Error('No text selected');
   const body = bodies[format];
   if (!body || body.trim().length === 0) {
     // Format-specific empty: e.g. text-only scrape on an image, or
     // markdown that collapsed to whitespace. Spell out which format
     // was missing so the toolbar error line is actionable.
-    throw new Error(`No selection ${format} content`);
+    throw new Error(noSelectionContentMessage(format));
   }
 
   const now = new Date();
@@ -671,10 +697,13 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     contentsFilename: `contents-${ts}.html`,
   };
   if (selectionRaw !== null) {
+    // HTML stays byte-identical to the scrape (see `scrapeSelection`
+    // for why); markdown gets the page URL so its relative hrefs /
+    // srcs resolve to absolute.
     capture.selections = {
       html: selectionRaw.html,
       text: selectionRaw.text,
-      markdown: htmlToMarkdown(selectionRaw.html),
+      markdown: htmlToMarkdown(selectionRaw.html, active.url ?? ''),
     };
     capture.selectionFilenames = selectionFilenamesFor(ts);
   }
@@ -832,7 +861,7 @@ export async function downloadSelection(
   }
   const body = capture.selections[format];
   if (!body || body.trim().length === 0) {
-    throw new Error(`No selection ${format} content`);
+    throw new Error(noSelectionContentMessage(format));
   }
   const withNewline = body.endsWith('\n') ? body : `${body}\n`;
   const mime = SELECTION_DATA_URL_MIME[format];

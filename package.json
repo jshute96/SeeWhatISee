@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
-    "test": "npm run test:skills && npm run test:e2e",
+    "test": "npm run test:skills && npm run test:unit && npm run test:e2e",
     "test:skills": "python3 src/skills_templates/generate-skills.py",
     "pretest:e2e": "node scripts/build.mjs",
     "test:e2e": "playwright test",
