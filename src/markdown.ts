@@ -155,19 +155,36 @@ function parseHtml(html: string): Node[] {
       // Open tag. Find the end of the tag proper while respecting
       // attribute quotes, since e.g. `<a title="1 > 2">` embeds a `>`.
       let j = i + 1;
+      let quoteFailed = false;
       while (j < n) {
         const c = html[j]!;
         if (c === '"' || c === "'") {
           const q = c;
           j++;
           while (j < n && html[j] !== q) j++;
+          if (j >= n) { quoteFailed = true; break; }
           j++; // consume closing quote
           continue;
         }
         if (c === '>') break;
         j++;
       }
-      if (j >= n) { i = n; break; }
+      if (quoteFailed || j >= n) {
+        // Malformed tag: unclosed attribute quote, or no `>` anywhere
+        // before EOF. Try one last recovery — if there's a `>`
+        // somewhere after the tag start, pretend the tag ends there
+        // (sacrifices attribute fidelity for the one bad tag but
+        // keeps the rest of the input parseable). Otherwise emit
+        // the `<` as literal text and advance one char so we don't
+        // drop everything that follows.
+        const recover = html.indexOf('>', i + 1);
+        if (recover < 0) {
+          pushText('<');
+          i = i + 1;
+          continue;
+        }
+        j = recover;
+      }
       const inner = html.slice(i + 1, j);
       i = j + 1;
 
@@ -569,6 +586,27 @@ function emitNode(node: Node, ctx: EmitContext): string {
     case 'li': {
       const frame = ctx.listStack[ctx.listStack.length - 1];
       const marker = frame?.type === 'ol' ? `${frame.index++}.` : '-';
+      // If the only meaningful child is a nested list, render an
+      // empty outer item with the nested list indented below.
+      // Without this we'd flow through the normal path, emit the
+      // nested list's `- a` on the same line as our `- ` marker,
+      // and produce the ambiguous `- - a` double-marker.
+      const meaningful = node.children.filter(
+        (c) => !(c.type === 'text' && c.value.trim().length === 0),
+      );
+      if (
+        meaningful.length === 1 &&
+        meaningful[0]!.type === 'element' &&
+        (meaningful[0]!.tag === 'ul' || meaningful[0]!.tag === 'ol')
+      ) {
+        const nested = emitNode(meaningful[0]!, ctx);
+        // Nested list emits with a leading `\n` (see the `ul`/`ol`
+        // case). Strip it, indent the body, re-attach after our
+        // empty marker line.
+        const lines = nested.replace(/^\n/, '').split('\n');
+        const indented = lines.map((l) => (l.length ? '  ' + l : '')).join('\n');
+        return `${marker}\n${indented}${indented.endsWith('\n') ? '' : '\n'}`;
+      }
       const body = emitNodes(node.children, ctx).trim();
       if (!body) return `${marker}\n`;
       // The li renders at the current depth with no leading indent;
@@ -591,6 +629,20 @@ function emitNode(node: Node, ctx: EmitContext): string {
       const href = resolveUrl(rawHref, ctx.baseUrl);
       if (ctx.insideLink || !href) {
         return emitInline(node.children, ctx);
+      }
+      // `<a>` wrapping a block element (e.g. a GitHub theme's
+      // anchor-wrapped heading: `<a href="#perma"><h2>Title</h2></a>`)
+      // can't become `[## Title](url)` — the `##` would land inside
+      // the link label and render as literal text, not a heading.
+      // Unwrap: emit the block content at block level and drop the
+      // link target. The author almost always means "this heading
+      // *is* the permalink anchor," and losing the URL is cleaner
+      // than mangling the structure.
+      const hasBlockChild = node.children.some(
+        (c): c is ElementNode => c.type === 'element' && BLOCK_ELEMENTS.has(c.tag),
+      );
+      if (hasBlockChild) {
+        return emitNodes(node.children, ctx);
       }
       const text = emitInline(node.children, { ...ctx, insideLink: true }).trim();
       // Drop empty-text anchors outright. They're almost always

@@ -176,6 +176,15 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       `selection.toString()`); markdown is produced in the SW by
       running the HTML through the pure `htmlToMarkdown` converter
       in `src/markdown.ts`.
+      - The converter is called with the page URL as a `baseUrl`
+        argument so relative `<a href>` / `<img src>` values get
+        resolved to absolute URLs (the saved file lives outside
+        the page, so a bare `foo.html` would otherwise point
+        nowhere). Fragment-only refs (`#section`) pass through
+        unchanged.
+      - Saved HTML stays byte-identical to the scrape — only the
+        markdown output gets URL rewriting. Saved text comes from
+        `selection.toString()` and carries no URLs.
       - File lands at `selection-<timestamp>.{html,txt,md}`; the
         record is `{ filename, format, isEdited?: true }` with
         `format` ∈ `{"html","text","markdown"}` so downstream

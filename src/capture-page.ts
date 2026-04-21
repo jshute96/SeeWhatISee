@@ -1359,7 +1359,7 @@ function anyEditDialogOpen(): boolean {
 let lastSentScreenshotEditVersion = -1;
 
 async function copyArtifactPath(
-  kind: 'screenshot' | 'html' | 'selectionHtml' | 'selectionText' | 'selectionMarkdown',
+  kind: 'screenshot' | EditableArtifactKind,
 ): Promise<void> {
   // Skip the bake + override when the SW will cache-hit. The cache
   // is keyed by `editVersion`, so if we already shipped this version

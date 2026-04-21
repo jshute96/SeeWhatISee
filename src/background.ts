@@ -1477,9 +1477,14 @@ const EDITABLE_ARTIFACTS: Record<EditableArtifactKind, EditableArtifactSpec> = {
  */
 /**
  * Which `capture.*Error` field guards a given editable kind. HTML
- * gates on its own scrape error; every selection format gates on
- * the one shared `selectionError` since the three bodies come out
- * of the same `executeScript` call.
+ * gates on its own scrape error; every selection format currently
+ * gates on the shared `selectionError` because today's
+ * `captureBothToMemory` produces all three bodies from one
+ * `executeScript` call, so a failure is shared by all formats. If
+ * per-format scrape errors ever land (each format failing
+ * independently), this map becomes a per-format lookup —
+ * `selectionHtmlError` / `selectionTextError` / etc. on
+ * `InMemoryCapture`.
  */
 const EDIT_GUARD_ERROR: Record<EditableArtifactKind, 'htmlError' | 'selectionError'> = {
   html: 'htmlError',

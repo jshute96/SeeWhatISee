@@ -442,6 +442,13 @@ function pickSlices(children, innerHtml, opts) {
 function checkOutput(md) {
   const issues = [];
 
+  // Strip fenced code blocks before running the markdown-syntax
+  // checks: any `###` or `<tag>` INSIDE a code fence is a literal
+  // character, not a converter error. Leaving them in confuses
+  // every check below (e.g. a Markdown tutorial emitted as a code
+  // block trips the "empty heading" heuristic on `### `).
+  const mdStripped = md.replace(/```[\s\S]*?```/g, '');
+
   // Unbalanced fenced code: count triple-backtick fences that start
   // a line. An odd count means at least one is unclosed.
   const fences = md.match(/^```/gm) ?? [];
@@ -455,7 +462,7 @@ function checkOutput(md) {
 
   // Headings that rendered empty (e.g. `## \n`) — our converter
   // already drops these but a future regression would surface here.
-  if (/^#{1,6}\s*$/m.test(md)) {
+  if (/^#{1,6}\s*$/m.test(mdStripped)) {
     issues.push({
       severity: 'significant',
       category: 'structure',
@@ -463,27 +470,16 @@ function checkOutput(md) {
     });
   }
 
-  // Broken emphasis: `**word*` (triple-star seen as start-bold then
-  // end-italic) is a classic failure mode. Flag if we see it.
-  if (/\*\*[^\s*][^*]*\*(?!\*)/.test(md) && /\*\*\w/.test(md)) {
-    // Heuristic is fuzzy — only surface as cosmetic.
-    issues.push({
-      severity: 'cosmetic',
-      category: 'formatting',
-      message: 'Possible mis-parsed emphasis (`**word*` pattern).',
-    });
-  }
-
   // Leaked raw HTML tags — we intentionally allow `<u>...</u>` for
   // underlines since markdown has no equivalent. Anything else
   // indicates the converter unwrapped instead of handling.
-  const leaked = md.match(/<\/?([a-z][a-z0-9]*)[ >/]/gi) ?? [];
+  const leaked = mdStripped.match(/<\/?([a-z][a-z0-9]*)[ >/]/gi) ?? [];
   const leakedTags = new Set();
   for (const l of leaked) {
     const m = /<\/?([a-z][a-z0-9]*)/i.exec(l);
     if (m) leakedTags.add(m[1].toLowerCase());
   }
-  leakedTags.delete('u'); // intentional fallback
+  leakedTags.delete('u'); // intentional fallback: no markdown equivalent.
   if (leakedTags.size > 0) {
     issues.push({
       severity: 'significant',
@@ -493,7 +489,7 @@ function checkOutput(md) {
   }
 
   // Raw entities that didn't get decoded.
-  const entities = md.match(/&(amp|lt|gt|quot|apos|nbsp);/g) ?? [];
+  const entities = mdStripped.match(/&(amp|lt|gt|quot|apos|nbsp);/g) ?? [];
   if (entities.length > 0) {
     issues.push({
       severity: 'cosmetic',

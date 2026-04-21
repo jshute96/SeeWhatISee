@@ -370,6 +370,32 @@ test('tolerates unclosed tag', () => {
   assert.equal(out, 'never closed');
 });
 
+test('tolerates unclosed attribute quote without eating the rest', () => {
+  // Regression: the tag scanner used to run the quote-match to EOF
+  // and then abort, silently dropping everything after the bad
+  // tag. The converter promises best-effort on malformed input; at
+  // minimum the content after the broken tag must survive.
+  const out = norm(htmlToMarkdown('<a href="unclosed>text</a><p>more</p>'));
+  assert.match(out, /more/);
+});
+
+test('<a> wrapping a heading unwraps instead of emitting ## inside label', () => {
+  // A GitHub theme pattern: `<a href="#perma"><h2>Section</h2></a>`.
+  // Emitting the children as a link label would produce the literal
+  // text `[## Section](#perma)` — the `##` renders as text, not a
+  // heading. Drop the anchor and emit the block content.
+  const out = norm(htmlToMarkdown('<a href="/x"><h2>Section</h2></a>'));
+  assert.equal(out, '## Section');
+});
+
+test('<li> containing only a nested list emits an empty outer marker', () => {
+  // Without this special case the outer `<li>` prepends its `- `
+  // to the nested list's already-emitted `- a`, giving an ambiguous
+  // `- - a` double-marker line.
+  const out = norm(htmlToMarkdown('<ul><li><ul><li>a</li></ul></li></ul>'));
+  assert.equal(out, '-\n  - a');
+});
+
 test('attribute value with embedded greater-than is parsed safely', () => {
   const out = norm(htmlToMarkdown('<a href="https://x?q=a>b">go</a>'));
   assert.equal(out, '[go](https://x?q=a>b)');

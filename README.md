@@ -6,6 +6,8 @@ This is a Chrome extension for taking screenshots and saving HTML snapshots, opt
 
 You can share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
 
+When you select text in the page, that text is saved, as your choice of HTML, text, or agent-friendly markdown.
+
 The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skills read them automatically from there.
 
 ## Usage
@@ -26,10 +28,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
-    - **Capture selection as HTML / text / markdown** — Saves the currently selected text. Three formats:
-      - *HTML* — the raw HTML fragment of the selection (closest to the source).
-      - *text* — plain text matching what the user sees selected.
-      - *markdown* — HTML converted to CommonMark-ish markdown (headings, lists, links, tables, inline formatting).
+    - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
@@ -191,7 +190,7 @@ present when that action was included.
     - `isEdited` — `true` if the user edited the HTML content before saving.
 - `selection` — present when the text selection was saved.
     - `filename` — filename of the selection file (`.html`, `.txt`, or `.md`).
-    - `format` — one of `"html"`, `"text"`, `"markdown"`. Tells downstream consumers how to read the file without sniffing the extension.
+    - `format` — one of `"html"`, `"text"`, `"markdown"`.
     - `isEdited` — `true` if the user edited the captured body before saving.
 - `prompt` — user-entered prompt from the "Capture with details…"
   flow, giving instructions for agents on what to do with this capture.
