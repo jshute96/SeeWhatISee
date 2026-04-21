@@ -45,7 +45,8 @@ Targets come in as space-separated arguments below — each is either:
    - Returns a one-line summary: `Report at tmp/md-convert-<slug>.md — B blocking, S significant, C cosmetic`.
 
    Give each agent this context:
-   - **Working directory:** `/home/jshute/dev/SeeWhatISee`.
+   - **Working directory:** the repo root (the directory that
+     contains `package.json` and `scripts/test-md-slice.mjs`).
    - **The helper script does all the deterministic work** (fetching,
      stripping noise, slicing at balanced tag boundaries, running
      the converter, running cheap sanity checks). The agent's
