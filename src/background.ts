@@ -1539,16 +1539,29 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 async function installContextMenu(): Promise<void> {
   const platform = await chrome.runtime.getPlatformInfo();
   // ChromeOS rendering of `type: 'separator'` in extension menus is
-  // sometimes broken/invisible; on that platform we use a disabled
-  // normal item with a line-drawing title instead.
+  // sometimes broken/invisible; on that platform we fall back to a
+  // disabled normal item titled with U+2500 box-drawing chars.
+  //
+  // A11y trade-off: `chrome.contextMenus` has no API to mark an item
+  // non-focusable or aria-hidden, so the fake separator is still
+  // reachable via keyboard and screen readers announce it as a row
+  // of dashes (dimmed). Native `type: 'separator'` entries skip
+  // focus. We accept this because the native path is already broken
+  // on ChromeOS — invisible grouping is worse than a dimmed dash row.
   const useFakeSeparator = platform.os === 'cros';
 
-  const createSeparator = (id: string, parentId?: string) => {
+  // Chrome menus use the OS's proportional system font, so character
+  // count only approximates pixel width. 24 U+2500 chars was chosen
+  // empirically to look like a full-width rule against the current
+  // submenu entries; revisit if noticeably wider entries are added.
+  const FAKE_SEPARATOR_TITLE = '─'.repeat(24);
+
+  const createSeparator = (id: string, parentId: string) => {
     if (useFakeSeparator) {
       chrome.contextMenus.create({
         id,
         parentId,
-        title: '────────────────────────',
+        title: FAKE_SEPARATOR_TITLE,
         enabled: false,
         contexts: ['action'],
       });
@@ -1597,7 +1610,10 @@ async function installContextMenu(): Promise<void> {
     if (i > 0) {
       // Visual separator between delay groups. Separators inside a
       // submenu don't count against the top-level cap.
-      createSeparator(`${DELAYED_PARENT_ID}-sep-${delaySec}`, DELAYED_PARENT_ID);
+      createSeparator(
+        `${DELAYED_PARENT_ID}-sep-${delaySec}`,
+        DELAYED_PARENT_ID,
+      );
     }
     const entries = CAPTURE_ACTIONS.filter(
       (a) => a.delaySec === delaySec && a.showInDelayedSubmenu,
@@ -1625,7 +1641,10 @@ async function installContextMenu(): Promise<void> {
   for (let i = 0; i < CAPTURE_DELAYS_SEC.length; i++) {
     const delaySec = CAPTURE_DELAYS_SEC[i]!;
     if (i > 0) {
-      createSeparator(`${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`, DEFAULT_CLICK_PARENT_ID);
+      createSeparator(
+        `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,
+        DEFAULT_CLICK_PARENT_ID,
+      );
     }
     for (const action of captureActionsWithDelay(delaySec)) {
       chrome.contextMenus.create({
