@@ -1677,6 +1677,44 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 async function installContextMenu(): Promise<void> {
+  const platform = await chrome.runtime.getPlatformInfo();
+  // ChromeOS rendering of `type: 'separator'` in extension menus is
+  // sometimes broken/invisible; on that platform we fall back to a
+  // disabled normal item titled with U+2500 box-drawing chars.
+  //
+  // A11y trade-off: `chrome.contextMenus` has no API to mark an item
+  // non-focusable or aria-hidden, so the fake separator is still
+  // reachable via keyboard and screen readers announce it as a row
+  // of dashes (dimmed). Native `type: 'separator'` entries skip
+  // focus. We accept this because the native path is already broken
+  // on ChromeOS — invisible grouping is worse than a dimmed dash row.
+  const useFakeSeparator = platform.os === 'cros';
+
+  // Chrome menus use the OS's proportional system font, so character
+  // count only approximates pixel width. 30 U+2500 chars was chosen
+  // empirically to look like a full-width rule against the current
+  // submenu entries; revisit if noticeably wider entries are added.
+  const FAKE_SEPARATOR_TITLE = '─'.repeat(30);
+
+  const createSeparator = (id: string, parentId: string) => {
+    if (useFakeSeparator) {
+      chrome.contextMenus.create({
+        id,
+        parentId,
+        title: FAKE_SEPARATOR_TITLE,
+        enabled: false,
+        contexts: ['action'],
+      });
+    } else {
+      chrome.contextMenus.create({
+        id,
+        parentId,
+        type: 'separator',
+        contexts: ['action'],
+      });
+    }
+  };
+
   // Read the current default up front so each submenu child can be
   // created with the correct title prefix — `removeAll` wipes
   // Chrome's per-item state along with the entries themselves, so
@@ -1712,12 +1750,10 @@ async function installContextMenu(): Promise<void> {
     if (i > 0) {
       // Visual separator between delay groups. Separators inside a
       // submenu don't count against the top-level cap.
-      chrome.contextMenus.create({
-        id: `${DELAYED_PARENT_ID}-sep-${delaySec}`,
-        parentId: DELAYED_PARENT_ID,
-        type: 'separator',
-        contexts: ['action'],
-      });
+      createSeparator(
+        `${DELAYED_PARENT_ID}-sep-${delaySec}`,
+        DELAYED_PARENT_ID,
+      );
     }
     const entries = CAPTURE_ACTIONS.filter(
       (a) => a.delaySec === delaySec && a.showInDelayedSubmenu,
@@ -1745,12 +1781,10 @@ async function installContextMenu(): Promise<void> {
   for (let i = 0; i < CAPTURE_DELAYS_SEC.length; i++) {
     const delaySec = CAPTURE_DELAYS_SEC[i]!;
     if (i > 0) {
-      chrome.contextMenus.create({
-        id: `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,
-        parentId: DEFAULT_CLICK_PARENT_ID,
-        type: 'separator',
-        contexts: ['action'],
-      });
+      createSeparator(
+        `${DEFAULT_CLICK_PARENT_ID}-sep-${delaySec}`,
+        DEFAULT_CLICK_PARENT_ID,
+      );
     }
     for (const action of captureActionsWithDelay(delaySec)) {
       chrome.contextMenus.create({
@@ -1789,12 +1823,7 @@ async function installContextMenu(): Promise<void> {
       contexts: ['action'],
     });
   }
-  chrome.contextMenus.create({
-    id: `${MORE_PARENT_ID}-sep-capture`,
-    parentId: MORE_PARENT_ID,
-    type: 'separator',
-    contexts: ['action'],
-  });
+  createSeparator(`${MORE_PARENT_ID}-sep-capture`, MORE_PARENT_ID);
   // The Copy-last-… entries are created `enabled: false` and flipped
   // on by `refreshCopyMenuState()` once we've checked the latest
   // record. That avoids a brief flash of "enabled but does nothing"
@@ -1813,24 +1842,14 @@ async function installContextMenu(): Promise<void> {
     enabled: false,
     contexts: ['action'],
   });
-  chrome.contextMenus.create({
-    id: `${MORE_PARENT_ID}-sep-copy`,
-    parentId: MORE_PARENT_ID,
-    type: 'separator',
-    contexts: ['action'],
-  });
+  createSeparator(`${MORE_PARENT_ID}-sep-copy`, MORE_PARENT_ID);
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,
     title: 'Snapshots directory',
     contexts: ['action'],
   });
-  chrome.contextMenus.create({
-    id: `${MORE_PARENT_ID}-sep-snapshots`,
-    parentId: MORE_PARENT_ID,
-    type: 'separator',
-    contexts: ['action'],
-  });
+  createSeparator(`${MORE_PARENT_ID}-sep-snapshots`, MORE_PARENT_ID);
   chrome.contextMenus.create({
     id: CLEAR_LOG_MENU_ID,
     parentId: MORE_PARENT_ID,

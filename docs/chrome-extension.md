@@ -313,6 +313,20 @@ promising — the main issue was the `onActivated` restore logic.
   the 6-item cap, so we don't use any there. Inside submenus
   they're free and we use them to group "Capture with delay" by
   delay and "Set default click action" by delay.
+  - **ChromeOS workaround.** ChromeOS sometimes fails to render
+    native `type: 'separator'` items in the extension action menu.
+    `installContextMenu` in `background.ts` detects the platform
+    via `chrome.runtime.getPlatformInfo()` and falls back to a
+    disabled normal item titled with a fixed-length run of U+2500
+    box-drawing chars (`────…`) on ChromeOS to preserve visual
+    grouping.
+    - **A11y trade-off.** `chrome.contextMenus` has no API to mark
+      an item non-focusable or aria-hidden, so the fake separator
+      is still reachable via keyboard navigation and screen readers
+      announce it as a dimmed row of dashes. Native separators skip
+      focus. We accept this because the native path is already
+      broken on ChromeOS — invisible grouping is worse than a
+      focusable dash row.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment

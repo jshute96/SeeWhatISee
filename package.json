@@ -7,8 +7,10 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
-    "pretest": "node scripts/build.mjs",
-    "test": "playwright test",
+    "test": "npm run test:skills && npm run test:e2e",
+    "test:skills": "python3 src/skills_templates/generate-skills.py",
+    "pretest:e2e": "node scripts/build.mjs",
+    "test:e2e": "playwright test",
     "test:headed": "playwright test --headed",
     "pretest:unit": "node scripts/build.mjs",
     "test:unit": "node --test tests/unit/",

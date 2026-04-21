@@ -15,25 +15,6 @@ One-line descriptions of every source file, grouped by directory.
 | `playwright.config.ts` | Playwright test runner config |
 | `.gitignore` | Git ignore rules |
 
-## Marketplace (`.claude-plugin/`)
-
-| File | Description |
-|------|-------------|
-| `.claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin |
-
-## Claude Plugin (`plugin/`)
-
-| File | Description |
-|------|-------------|
-| `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
-| `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
-| `plugin/scripts/watch.sh` | CLI watcher for `log.json` (`--loop`, `--after`, `--stop`, `--directory`) |
-| `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
-| `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
-| `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
-| `plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — summary of see-what-i-see commands |
-
 ## Local Claude Config (`.claude/`)
 
 | File | Description |
@@ -51,15 +32,59 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
 
+## Skill Templates (`src/skills_templates/`)
+
+| File | Description |
+|------|-------------|
+| `src/skills_templates/generate-skills.py` | Generator/validator that produces the Claude skill and Gemini command files from the templates below |
+| `src/skills_templates/json-record.template.md` | Shared block describing the `log.json` record shape, embedded via `[[...]]` |
+| `src/skills_templates/process.template.md` | Shared block describing how to process a capture record, embedded via `[[...]]` |
+| `src/skills_templates/claude.see.md` | Template for `plugin/skills/see-what-i-see/SKILL.md` |
+| `src/skills_templates/claude.watch.md` | Template for `plugin/skills/see-what-i-see-watch/SKILL.md` |
+| `src/skills_templates/claude.stop.md` | Template for `plugin/skills/see-what-i-see-stop/SKILL.md` |
+| `src/skills_templates/claude.help.md` | Template for `plugin/skills/see-what-i-see-help/SKILL.md` |
+| `src/skills_templates/gemini.see.md` | Template for `.gemini/commands/see-what-i-see.toml` |
+| `src/skills_templates/gemini.watch.md` | Template for `.gemini/commands/see-what-i-see-watch.toml` |
+| `src/skills_templates/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
+
+## Marketplace (`.claude-plugin/`)
+
+| File | Description |
+|------|-------------|
+| `.claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin |
+
+## Claude Plugin (`plugin/`)
+
+| File | Description |
+|------|-------------|
+| `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
+| `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
+| `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
+| `plugin/scripts/watch.sh` | CLI watcher for `log.json` (`--loop`, `--after`, `--stop`, `--directory`) |
+
+**NOTE: the skills below are generated from `src/skills_templates/`, do not edit directly**
+
+| File | Description |
+|------|-------------|
+| `plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
+| `plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
+| `plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
+| `plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — summary of see-what-i-see commands |
+
 ## Gemini CLI Commands (`.gemini/`)
+
+| File | Description |
+|------|-------------|
+| `.gemini/scripts/_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
+| `.gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `_common.sh`'s `emit_record` |
+| `.gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
+
+**NOTE: the commands below are generated from `src/skills_templates/`, do not edit directly**
 
 | File | Description |
 |------|-------------|
 | `.gemini/commands/see-what-i-see.toml` | Gemini CLI command — describes the latest capture (uses `copy-last-snapshot.sh`) |
 | `.gemini/commands/see-what-i-see-watch.toml` | Gemini CLI command — foreground watch loop that describes each new capture (uses `watch-and-copy.sh`) |
-| `.gemini/scripts/_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
-| `.gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `_common.sh`'s `emit_record` |
-| `.gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
 
 ## Extension Source (`src/`)
 
