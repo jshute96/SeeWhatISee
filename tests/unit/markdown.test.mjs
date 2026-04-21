@@ -51,6 +51,17 @@ test('bold / italic / strikethrough', () => {
   assert.equal(norm(htmlToMarkdown('<del>gone</del>')), '~~gone~~');
 });
 
+test('literal asterisk next to <i> stays distinguishable', () => {
+  // Wikipedia PIE-reconstruction pattern: `*<i>gʷṓws</i>`. Without
+  // escaping, the `*` collides with the italic's opening `*` and
+  // the output reads as `**gʷṓws*` — unterminated bold. Backslash-
+  // escape keeps the literal asterisk a literal.
+  assert.equal(
+    norm(htmlToMarkdown('*<i>gʷṓws</i>')),
+    '\\**gʷṓws*',
+  );
+});
+
 test('inline code wraps in backticks', () => {
   assert.equal(norm(htmlToMarkdown('use <code>grep -rn</code> here')),
     'use `grep -rn` here');
@@ -196,6 +207,37 @@ test('fenced code block with language hint', () => {
 test('fenced code block without language hint', () => {
   const out = norm(htmlToMarkdown('<pre>plain text\nnext line</pre>'));
   assert.equal(out, '```\nplain text\nnext line\n```');
+});
+
+test('fenced code inside <li> breaks onto its own line', () => {
+  // Real-world case: a GitHub-rendered install step whose `<li>`
+  // contains "Clone…:" followed by `<div class="highlight"><pre>…`.
+  // Without the block-boundary insertion the output glues the
+  // opening fence onto the text line (`Clone…:\`\`\``), which
+  // doesn't render as a code block.
+  const out = norm(htmlToMarkdown(
+    '<ol><li>Clone this repo:<pre>git clone foo\ncd foo</pre></li></ol>',
+  ));
+  assert.equal(
+    out,
+    '1. Clone this repo:\n\n  ```\n  git clone foo\n  cd foo\n  ```',
+  );
+});
+
+test('language hint on github-style highlight wrapper propagates to <pre>', () => {
+  // GitHub ships rendered code blocks as `<div class="highlight
+  // highlight-source-<lang>"><pre>…</pre></div>`. The language
+  // name lives on the wrapper, not on `<pre>` / `<code>` — our
+  // ctx-hint plumbing lets the inner `<pre>` pick it up.
+  const out = norm(htmlToMarkdown(
+    '<div class="highlight highlight-source-bash"><pre>npm install</pre></div>',
+  ));
+  assert.equal(out, '```bash\nnpm install\n```');
+});
+
+test('language hint on <pre class="language-X"> is honored', () => {
+  const out = norm(htmlToMarkdown('<pre class="language-ts">let x: number;</pre>'));
+  assert.equal(out, '```ts\nlet x: number;\n```');
 });
 
 test('simple table', () => {

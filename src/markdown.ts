@@ -258,6 +258,15 @@ interface EmitContext {
    *  produce `[foo[bar](u2)](u1)` for weird nested markup. */
   insideLink: boolean;
   /**
+   * Language hint inherited from a containing element for the next
+   * `<pre>` emission. Set by GitHub-style `<div class="highlight
+   * highlight-source-<lang>">` wrappers, where the language name
+   * lives on the outer `<div>` rather than on `<pre>` / `<code>`.
+   * Used only as a fallback when `<pre>` / `<code>` don't carry
+   * their own `language-*` class. `undefined` means no hint.
+   */
+  preHintedLanguage: string | undefined;
+  /**
    * Page URL the fragment was scraped from, used to resolve relative
    * `<a href>` and `<img src>` values so they keep working when the
    * markdown file is read on its own. `undefined` disables resolution
@@ -273,6 +282,7 @@ function newContext(baseUrl?: string): EmitContext {
     listStack: [],
     preformatted: false,
     insideLink: false,
+    preHintedLanguage: undefined,
     baseUrl: baseUrl && baseUrl.length > 0 ? baseUrl : undefined,
   };
 }
@@ -378,6 +388,27 @@ function emitNodes(nodes: Node[], ctx: EmitContext): string {
     ) {
       continue;
     }
+    // Ensure a block-level child doesn't get glued to preceding
+    // inline text. Without this, `<li>Clone this:<pre>…</pre></li>`
+    // produces `Clone this:\`\`\`…` — the `<pre>`'s fenced output
+    // starts with "```" with no leading newline, concatenates onto
+    // the "Clone this:" text, and the opening fence lands on the
+    // same line as the list-item prose. We only prepend when the
+    // running output ends mid-line (no trailing `\n`): if the
+    // previous sibling already ended with a newline we leave list
+    // tightness alone. List tags are excluded outright — they
+    // manage their own boundary (nested `<ul>` prepends its own
+    // `\n`, sibling `<li>`s chain tightly) and a forced blank
+    // line would demote every nested list to "loose."
+    if (
+      node.type === 'element' &&
+      BLOCK_ELEMENTS.has(node.tag) &&
+      node.tag !== 'ul' && node.tag !== 'ol' && node.tag !== 'li'
+    ) {
+      if (out.length > 0 && !out.endsWith('\n')) {
+        out += '\n\n';
+      }
+    }
     out += emitNode(node, ctx);
   }
   return out;
@@ -405,8 +436,14 @@ function emitNode(node: Node, ctx: EmitContext): string {
   if (node.type === 'text') {
     if (ctx.preformatted) return node.value;
     // Outside <pre>, collapse runs of whitespace; the surrounding
-    // block emitter adds its own newlines.
-    return node.value.replace(/\s+/g, ' ');
+    // block emitter adds its own newlines. Also escape bare `*`
+    // in text: a literal asterisk immediately adjacent to an
+    // `<em>` / `<i>` emission (e.g. "*" + "*word*" from a
+    // Wiki-style Proto-Indo-European reconstruction `*<i>gʷṓws</i>`)
+    // otherwise collapses to `**word*` — bold-not-closed in most
+    // renderers. Backslash-escape keeps the literal character
+    // stable without leaking emphasis semantics.
+    return node.value.replace(/\s+/g, ' ').replace(/\*/g, '\\*');
   }
 
   const tag = node.tag;
@@ -448,17 +485,31 @@ function emitNode(node: Node, ctx: EmitContext): string {
       return `${fence}${pad}${text}${pad}${fence}`;
     }
     case 'pre': {
-      // Gather the raw text from the block; if the user nested a
-      // <code class="language-js"> inside, honor its language hint.
+      // Discover the language hint in priority order:
+      //   1. `<pre class="language-X">` or `highlight-source-X`.
+      //   2. `<code class="language-X">` as the sole meaningful
+      //      child (the Markdown-generator convention).
+      //   3. An ancestor hint supplied via ctx, e.g. GitHub's
+      //      `<div class="highlight highlight-source-<lang>">`
+      //      wrapper — the language name lives on the wrapper
+      //      `<div>`, not on the `<pre>` or `<code>` itself.
       let lang = '';
-      const codeChild = node.children.find(
-        (c): c is ElementNode => c.type === 'element' && c.tag === 'code',
-      );
-      if (codeChild) {
-        const cls = codeChild.attrs['class'] ?? '';
-        const m = /language-([\w+-]+)/.exec(cls);
-        if (m) lang = m[1]!;
+      const preCls = node.attrs['class'] ?? '';
+      const preMatch =
+        /language-([\w+-]+)/.exec(preCls) ??
+        /highlight-source-([\w+-]+)/.exec(preCls);
+      if (preMatch) lang = preMatch[1]!;
+      if (!lang) {
+        const codeChild = node.children.find(
+          (c): c is ElementNode => c.type === 'element' && c.tag === 'code',
+        );
+        if (codeChild) {
+          const cls = codeChild.attrs['class'] ?? '';
+          const m = /language-([\w+-]+)/.exec(cls);
+          if (m) lang = m[1]!;
+        }
       }
+      if (!lang && ctx.preHintedLanguage) lang = ctx.preHintedLanguage;
       const inner = emitNodes(node.children, { ...ctx, preformatted: true });
       const body = inner.replace(/\n+$/, '');
       return blockSep(`\`\`\`${lang}\n${body}\n\`\`\``);
@@ -500,7 +551,11 @@ function emitNode(node: Node, ctx: EmitContext): string {
       // uniformly. Subsequent lines (nested lists, wrapped paragraphs)
       // get a 2-space hanging indent so they sit under the marker.
       const lines = body.split('\n');
-      const first = lines.shift() ?? '';
+      // `trimEnd` on the first line kills the stray space that
+      // ends up between the parent-li text and a following
+      // nested sublist (`<li>Foo: <ul>…</ul></li>` collapses the
+      // whitespace before `<ul>` into a single trailing " ").
+      const first = (lines.shift() ?? '').trimEnd();
       const rest = lines
         .map((l) => (l.length === 0 ? '' : '  ' + l))
         .join('\n');
@@ -547,7 +602,18 @@ function emitNode(node: Node, ctx: EmitContext): string {
       // separate paragraphs instead of running together on one line,
       // and inside a `<li>` each becomes a loose list-item
       // continuation paragraph.
-      const body = emitNodes(node.children, ctx).trim();
+      //
+      // Also sniff the class attribute for a GitHub-style code-
+      // block language hint (`<div class="highlight
+      // highlight-source-bash">…<pre>…</pre>…</div>`) and push it
+      // down via ctx so the inner `<pre>` can pick it up.
+      let childCtx = ctx;
+      const cls = node.attrs['class'] ?? '';
+      const langMatch = /highlight-source-([\w+-]+)/.exec(cls);
+      if (langMatch) {
+        childCtx = { ...ctx, preHintedLanguage: langMatch[1] };
+      }
+      const body = emitNodes(node.children, childCtx).trim();
       return body ? blockSep(body) : '';
     }
     default:
