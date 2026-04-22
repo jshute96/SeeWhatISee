@@ -2154,6 +2154,7 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         url: session.capture.url,
         htmlError: session.capture.htmlError,
         selectionError: session.capture.selectionError,
+        screenshotError: session.capture.screenshotError,
         defaultSelectionFormat: detailsDefaultSelectionFormat(withId),
       });
     })();

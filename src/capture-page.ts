@@ -74,6 +74,12 @@ interface DetailsData {
    */
   selectionError?: string;
   /**
+   * Reason screenshot could not be captured. Set only when
+   * captureVisibleTab failed — the details page reads this to flag
+   * the screenshot row/preview with an error icon.
+   */
+  screenshotError?: string;
+  /**
    * Format the details page should pre-check when the selection
    * has content. Derived by the SW from the user's with-selection
    * click default: a `capture-selection-<fmt>` default maps to its
@@ -113,6 +119,8 @@ const capturedUrlInput = document.getElementById('captured-url') as HTMLInputEle
 const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
+const screenshotRow = document.getElementById('row-screenshot') as HTMLDivElement;
+const screenshotErrorIcon = document.getElementById('error-screenshot') as HTMLSpanElement;
 const htmlRow = document.getElementById('row-html') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
@@ -1023,6 +1031,15 @@ async function loadData(): Promise<void> {
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
     capturedUrlInput.value = response.url;
+
+    if (response.screenshotError) {
+      screenshotBox.checked = false;
+      screenshotBox.disabled = true;
+      copyScreenshotBtn.disabled = true;
+      screenshotRow.classList.add('has-error');
+      screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
+    }
+
     // Apply per-artifact error states first so the HTML size readout
     // below reflects the right value (a dash placeholder rather than
     // the empty-string byte count of a failed scrape).
