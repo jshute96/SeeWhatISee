@@ -46,6 +46,18 @@ await cp(resolve(root, 'src/capture.html'), resolve(dist, 'capture.html'));
 //     just hosts a <script> tag pointing at the compiled offscreen.js.
 await cp(resolve(root, 'src/offscreen.html'), resolve(dist, 'offscreen.html'));
 
+// 3d. Copy the marked UMD bundle into dist/. capture.html loads it via
+//     a classic <script> tag before capture-page.js so the markdown
+//     Preview mode (selection markdown dialog) can render via
+//     `window.marked.parse(...)`. We ship the UMD build (not ESM)
+//     because capture-page.ts is compiled as a non-module script —
+//     turning it into a module would force a rewrite of how the
+//     extension page wires up.
+await cp(
+  resolve(root, 'node_modules/marked/lib/marked.umd.js'),
+  resolve(dist, 'marked.umd.js'),
+);
+
 // 4. Run tsc. Watch mode keeps tsc running until the user Ctrl-C's; we
 //    await its exit so signals route through the build script and a spawn
 //    failure surfaces as a non-zero exit instead of being silently

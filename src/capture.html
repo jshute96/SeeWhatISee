@@ -637,6 +637,18 @@
     </dialog>
   </template>
 
+  <!--
+    Marked (markdown → HTML) runs in the page rather than the SW so we
+    keep the rendering close to the dialog. Loaded before
+    capture-page.js so `window.marked` is available when setMode()
+    renders the Selection markdown preview. capture-page.ts pipes
+    marked's HTML output through the same `buildPreviewHtml`
+    sanitizer used by the HTML previews (strips <script> and
+    <meta http-equiv=refresh>, injects <meta charset> and
+    <base target=_blank>), so raw HTML inside markdown can't execute
+    anything beyond what the sandboxed iframe already permits.
+  -->
+  <script src="marked.umd.js"></script>
   <script src="capture-page.js"></script>
 </body>
 </html>

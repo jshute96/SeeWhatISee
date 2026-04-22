@@ -106,7 +106,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, and `capture.html`, then runs `tsc` |
+| `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, `capture.html`, offscreen assets, and `marked.umd.js`, then runs `tsc` |
 | `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |

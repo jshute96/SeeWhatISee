@@ -1197,27 +1197,49 @@ test('details: edit → edit → save keeps isEdited: true across multiple dialo
   await openerPage.close();
 });
 
-// Both HTML-bearing Edit dialogs (page contents + selection HTML)
-// expose the Edit/Preview toggle. The preview wiring is identical,
-// so we run the same matrix of assertions for each kind — opening
-// via the kind-specific pencil button and asserting against the
-// kind-specific DOM ids. The selection variant needs a seeded
-// selection so its row (and pencil) come out enabled.
+// All three previewable Edit dialogs (page contents HTML, selection
+// HTML, selection markdown) expose the Edit/Preview toggle. The
+// preview wiring is identical, so we run the same matrix of
+// assertions for each kind — opening via the kind-specific pencil
+// button and asserting against the kind-specific DOM ids. The
+// selection variants need a seeded selection so their rows (and
+// pencils) come out enabled. Markdown gets a markdown-shaped input
+// that still renders an <h1> so the shared assertions apply.
 interface PreviewCase {
-  kind: 'html' | 'selection-html';
+  kind: 'html' | 'selection-html' | 'selection-markdown';
   openBtnId: string;
   slug: string;
   /** Optional opener hook to inject a live selection. */
   beforeCapture?: (page: Page) => Promise<void>;
+  /** Produce the textarea body for this case. HTML kinds get an
+   *  HTML fragment; markdown gets markdown source. Both must render
+   *  an `<h1>` containing `marker` plus a link so the shared
+   *  assertions (h1 text, base target=_blank) all apply. */
+  makeInput: (marker: string) => string;
 }
 
 const PREVIEW_CASES: PreviewCase[] = [
-  { kind: 'html', openBtnId: '#edit-html', slug: 'html' },
+  {
+    kind: 'html',
+    openBtnId: '#edit-html',
+    slug: 'html',
+    makeInput: (m) =>
+      `<html><body><h1>${m}</h1><a href="foo.html">link</a></body></html>`,
+  },
   {
     kind: 'selection-html',
     openBtnId: '#edit-selection-html-btn',
     slug: 'selection-html',
     beforeCapture: seedSelection,
+    makeInput: (m) =>
+      `<html><body><h1>${m}</h1><a href="foo.html">link</a></body></html>`,
+  },
+  {
+    kind: 'selection-markdown',
+    openBtnId: '#edit-selection-markdown-btn',
+    slug: 'selection-markdown',
+    beforeCapture: seedSelection,
+    makeInput: (m) => `# ${m}\n\n[link](foo.html)\n`,
   },
 ];
 
@@ -1250,11 +1272,12 @@ for (const c of PREVIEW_CASES) {
     await expect(capturePage.locator(iframeSel)).toBeHidden();
 
     // Replace the body with a unique marker so we can check it
-    // renders via the preview iframe.
+    // renders via the preview iframe. HTML kinds get HTML; the
+    // markdown kind gets markdown — both produce an <h1> containing
+    // the marker and a link, so the downstream assertions are
+    // shared.
     const MARKER = `preview-marker-${c.slug}-9817`;
-    await capturePage.locator(textareaSel).fill(
-      `<html><body><h1>${MARKER}</h1><a href="foo.html">link</a></body></html>`,
-    );
+    await capturePage.locator(textareaSel).fill(c.makeInput(MARKER));
 
     // Flip to Preview. The iframe shows, the toggle's selected state
     // flips. The textarea stays in the DOM (kept as layout anchor)
@@ -1406,6 +1429,93 @@ test('details: non-HTML edit dialogs (selection text) have no Preview toggle', a
     '#edit-selection-text-dialog .edit-dialog-mode-toggle',
   );
   await expect(toggle).toBeHidden();
+
+  await openerPage.close();
+});
+
+test('details: selection-markdown preview renders markdown syntax as HTML', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+
+  // Markdown input exercising the syntax we most care about:
+  // heading, strong, link, and a code fence. marked renders these
+  // to <h1>/<strong>/<a>/<pre><code>; the iframe sandbox + our
+  // buildPreviewHtml sanitizer keep any embedded raw HTML from
+  // executing.
+  const MARKER = 'md-preview-marker-7321';
+  const MD = [
+    `# ${MARKER}`,
+    '',
+    'Some **bold** text and a [link](https://example.test/).',
+    '',
+    '```',
+    'code block',
+    '```',
+  ].join('\n');
+  await capturePage.locator('#edit-selection-markdown-btn').click();
+  await capturePage.locator('#edit-selection-markdown-textarea').fill(MD);
+  await capturePage.locator('#edit-selection-markdown-mode-preview').click();
+
+  const iframe = capturePage.frameLocator('#edit-selection-markdown-preview');
+  await expect(iframe.locator('h1')).toHaveText(MARKER);
+  await expect(iframe.locator('strong')).toHaveText('bold');
+  const link = iframe.locator('a[href="https://example.test/"]');
+  await expect(link).toHaveText('link');
+  await expect(iframe.locator('pre code')).toContainText('code block');
+
+  // Confirm we're going through the same blob + sandbox pipeline as
+  // the HTML previews so <base target="_blank"> still opens links
+  // in a new tab.
+  const src = await capturePage.locator('#edit-selection-markdown-preview')
+    .getAttribute('src');
+  expect(src).toMatch(/^blob:/);
+  const baseTarget = await iframe.locator('head > base').first().evaluate(
+    (el) => el.getAttribute('target') ?? '',
+  );
+  expect(baseTarget).toBe('_blank');
+
+  await openerPage.close();
+});
+
+test('details: selection-markdown preview strips <script> from raw HTML inside markdown', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+
+  // marked preserves raw HTML blocks in markdown, so a user-supplied
+  // markdown file containing a <script> reaches the preview before
+  // the sanitizer runs. buildPreviewHtml must still strip it (and
+  // the sandbox denies `allow-scripts` regardless).
+  const MARKER = 'md-hostile-marker-4419';
+  const MD = [
+    `# ${MARKER}`,
+    '',
+    '<script>window.top.location = "https://evil.example/"</script>',
+  ].join('\n');
+  await capturePage.locator('#edit-selection-markdown-btn').click();
+  await capturePage.locator('#edit-selection-markdown-textarea').fill(MD);
+  await capturePage.locator('#edit-selection-markdown-mode-preview').click();
+
+  const iframe = capturePage.frameLocator('#edit-selection-markdown-preview');
+  await expect(iframe.locator('h1')).toHaveText(MARKER);
+  await expect(iframe.locator('script')).toHaveCount(0);
 
   await openerPage.close();
 });

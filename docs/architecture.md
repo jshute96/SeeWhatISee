@@ -662,23 +662,34 @@ active crop region.
   the format the user picks on the Save-selection-as-… radio
   ends up in `log.json`.
 
-#### Preview mode (HTML-bearing dialogs)
+#### Preview mode (HTML / markdown dialogs)
 
-- HTML and Selection HTML dialogs expose an Edit / Preview
-  segmented toggle next to the title. `EDIT_KINDS` marks the two
-  via `previewable: true`; the other kinds stay edit-only.
+- Three dialogs expose an Edit / Preview segmented toggle next to
+  the title: **Page contents HTML**, **Selection HTML**, and
+  **Selection markdown**. `EDIT_KINDS` marks each via `preview:
+  'html' | 'markdown'`; selection-text (plain text) stays
+  edit-only.
 - Edit is selected on open; `setMode()` swaps between the textarea
   and a sandboxed preview iframe positioned absolutely inside
   `.edit-dialog-body`. The textarea stays in the DOM with
   `visibility: hidden` in Preview so its resized height keeps
   defining the slot — dialog dimensions can't jump across modes.
+- Pipeline:
+  - HTML kinds pass the textarea value straight into
+    `buildPreviewHtml()`.
+  - Markdown kind first calls `renderMarkdown()` (which delegates
+    to `window.marked.parse()` from the UMD bundle loaded by
+    `capture.html`), then feeds the HTML into `buildPreviewHtml()`
+    so the same sanitizer + charset + base-href wrapping applies.
 - `buildPreviewHtml()` assembles the previewed document:
-  - Parses the textarea value via `DOMParser('text/html')` (tolerant
-    parser — malformed HTML still yields a full document).
+  - Parses the HTML via `DOMParser('text/html')` (tolerant parser
+    — malformed HTML still yields a full document).
   - Removes `<script>` tags (defense-in-depth; sandbox already
     denies `allow-scripts`) and `<meta http-equiv="refresh">` tags
     (the one remaining vector by which captured HTML could hijack
-    the preview iframe to an attacker URL without JS).
+    the preview iframe to an attacker URL without JS). Raw HTML
+    embedded in markdown passes through marked, so this stripping
+    matters for the markdown preview too.
   - Strips any existing `<meta charset>` / `Content-Type meta` and
     injects `<meta charset="utf-8">` as the first child of `<head>`
     so non-ASCII captures don't render as mojibake (Chrome falls
@@ -696,6 +707,12 @@ active crop region.
   denied; link clicks via `target="_blank"` open a normal new tab
   that escapes the sandbox so it behaves like a regular browser
   tab.
+- `marked` ships as `dist/marked.umd.js`, copied from
+  `node_modules/marked/lib/marked.umd.js` by `scripts/build.mjs`
+  and loaded as a classic `<script>` before `capture-page.js`. UMD
+  (not ESM) because `capture-page.ts` compiles to a non-module
+  script — `import` would force a module-worker rewrite of how
+  the extension page is wired up.
 
 ### `isEdited` sidecar flag
 

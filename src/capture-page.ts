@@ -1202,10 +1202,18 @@ interface EditKindSpec {
   title: string;
   /** The pencil button inside the details-page row for this kind. */
   openBtn: HTMLButtonElement;
-  /** Whether the dialog should expose the Edit / Preview toggle.
-   * Only HTML-bearing kinds render a meaningful preview; text and
-   * markdown kinds stay edit-only. */
-  previewable?: boolean;
+  /** If set, the dialog exposes the Edit / Preview toggle and
+   * renders a preview using the named renderer:
+   *   - `'html'`     — parse textarea value as HTML (DOMParser) and
+   *                    drop it into a sandboxed iframe.
+   *   - `'markdown'` — parse as markdown via `marked`, then reuse
+   *                    the same iframe + sanitizer pipeline on the
+   *                    resulting HTML. Raw HTML inside the markdown
+   *                    flows through the same script / meta-refresh
+   *                    stripping as the HTML preview.
+   * Omitted for plain-text kinds that have nothing meaningful to
+   * render. */
+  preview?: 'html' | 'markdown';
   /** Optional post-save hook — e.g. refresh the HTML-size readout. */
   onSaved?: (value: string) => void;
 }
@@ -1216,7 +1224,7 @@ const EDIT_KINDS: EditKindSpec[] = [
     domSlug: 'html',
     title: 'Page contents HTML',
     openBtn: editHtmlBtn,
-    previewable: true,
+    preview: 'html',
     onSaved: (v) => {
       htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
     },
@@ -1226,7 +1234,7 @@ const EDIT_KINDS: EditKindSpec[] = [
     domSlug: 'selection-html',
     title: 'Selection HTML',
     openBtn: selectionRows.html.editBtn,
-    previewable: true,
+    preview: 'html',
   },
   {
     kind: 'selectionText',
@@ -1237,8 +1245,9 @@ const EDIT_KINDS: EditKindSpec[] = [
   {
     kind: 'selectionMarkdown',
     domSlug: 'selection-markdown',
-    title: 'Edit selection markdown',
+    title: 'Selection markdown',
     openBtn: selectionRows.markdown.editBtn,
+    preview: 'markdown',
   },
 ];
 
@@ -1354,11 +1363,37 @@ function buildPreviewHtml(htmlBody: string, baseUrl: string): string {
   return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 }
 
+// `marked` is loaded by `marked.umd.js` before this script and
+// exposed as a page-scoped global. Declared (not imported) to keep
+// capture-page.ts a non-module script — any `import` would make tsc
+// emit `export {}` and break the classic `<script>` load. Loose
+// typing because we only call `.parse` and don't want to install
+// `@types/marked` (whose version we'd then have to keep pinned to
+// the bundled runtime). marked 18's default `async: false` makes
+// `.parse` return a string synchronously; if a future marked flips
+// that default we must pass `{ async: false }` explicitly — calling
+// `marked.parse()` without awaiting would otherwise return a
+// Promise<string> and `buildPreviewHtml` would see "[object Promise]"
+// in the preview.
+declare const marked: { parse: (src: string) => string };
+
+/**
+ * Render markdown source to an HTML string via `marked`. `marked`
+ * does NOT sanitize — raw HTML inside the markdown flows through
+ * untouched — so every caller must pipe the result through
+ * `buildPreviewHtml`, which strips `<script>` / `<meta refresh>`
+ * before the iframe load, and the iframe sandbox denies
+ * `allow-scripts` as defense in depth.
+ */
+function renderMarkdown(md: string): string {
+  return marked.parse(md);
+}
+
 function bindEditDialog(spec: EditKindSpec): void {
   const parts = createEditDialog(spec.domSlug, spec.title);
   editDialogs.push(parts.dialog);
 
-  if (spec.previewable) {
+  if (spec.preview) {
     parts.modeToggle.hidden = false;
     parts.editModeBtn.addEventListener('click', () => setMode('edit'));
     parts.previewModeBtn.addEventListener('click', () => setMode('preview'));
@@ -1368,7 +1403,7 @@ function bindEditDialog(spec: EditKindSpec): void {
     parts.textarea.value = captured[spec.kind];
     clearError();
     // Always open in Edit mode so the default action is direct editing.
-    if (spec.previewable) setMode('edit');
+    if (spec.preview) setMode('edit');
     parts.dialog.showModal();
     // Defer focus so showModal's own autofocus doesn't overwrite us.
     requestAnimationFrame(() => {
@@ -1417,9 +1452,16 @@ function bindEditDialog(spec: EditKindSpec): void {
       // blank. blob: URLs have no such limit and still load under
       // the iframe's sandbox (unique opaque origin).
       revokePreviewBlob();
-      const html = buildPreviewHtml(
-        parts.textarea.value, capturedUrlInput.value,
-      );
+      // Markdown kinds render via marked first; HTML kinds pass the
+      // textarea verbatim into buildPreviewHtml. Either way, the
+      // final string flows through the same sanitizer (strips
+      // <script>, strips <meta http-equiv=refresh>, injects
+      // <meta charset=utf-8> and <base target=_blank>).
+      let htmlBody = parts.textarea.value;
+      if (spec.preview === 'markdown') {
+        htmlBody = renderMarkdown(htmlBody);
+      }
+      const html = buildPreviewHtml(htmlBody, capturedUrlInput.value);
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       previewBlobUrl = URL.createObjectURL(blob);
       parts.previewIframe.src = previewBlobUrl;
