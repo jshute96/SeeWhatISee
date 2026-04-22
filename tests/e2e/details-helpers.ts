@@ -6,8 +6,42 @@
 // file that already runs 27 tests.
 
 import fs from 'node:fs';
-import type { BrowserContext, Page, Worker } from '@playwright/test';
+import type { BrowserContext, Locator, Page, Worker } from '@playwright/test';
 import { type CaptureRecord, waitForDownloadPath } from '../fixtures/files';
+
+// ─── Edit-dialog editor helpers ───────────────────────────────────
+//
+// The edit dialogs used to host a plain <textarea> where
+// `.fill()` / `.inputValue()` worked out of the box. Since moving
+// the editor to a CodeJar-wrapped `contenteditable` <div> (with
+// highlight.js tokens rewriting the innerHTML on every input),
+// those textarea-only Playwright APIs no longer apply. Tests set
+// content by writing `textContent` directly — CodeJar's public
+// `toString()` is also just `editor.textContent`, so reading +
+// saving see the exact same bytes we wrote. Reading uses
+// `.textContent()` for the same reason.
+
+/** Read the current source of an edit-dialog editor (contenteditable). */
+export async function getEditorCode(locator: Locator): Promise<string> {
+  return (await locator.textContent()) ?? '';
+}
+
+/**
+ * Replace the source of an edit-dialog editor. Writes `textContent`
+ * directly (so hljs token spans from the previous highlight pass
+ * are discarded) and dispatches a bubbling `keyup` so CodeJar's
+ * input pipeline re-runs — CodeJar listens for `keyup` (not
+ * `input`) to re-highlight + snapshot history. The save handler
+ * reads `jar.toString()` = `editor.textContent` either way, so the
+ * dispatch is for cosmetic consistency (test-time hljs tokens
+ * match what a user would see) rather than save correctness.
+ */
+export async function setEditorCode(locator: Locator, value: string): Promise<void> {
+  await locator.evaluate((el, v) => {
+    el.textContent = v;
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+  }, value);
+}
 
 export const SCREENSHOT_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 export const CONTENTS_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;

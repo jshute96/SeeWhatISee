@@ -15,7 +15,7 @@
 // src/manifest.json, src/capture.html, or swap out icon files,
 // re-run `npm run build`.
 
-import { rm, mkdir, cp } from 'node:fs/promises';
+import { rm, mkdir, cp, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -57,6 +57,62 @@ await cp(
   resolve(root, 'node_modules/marked/lib/marked.umd.js'),
   resolve(dist, 'marked.umd.js'),
 );
+
+// 3e. Copy the highlight.js "common" prebuilt bundle + a light theme
+//     into dist/. capture.html loads them via classic <script>/<link>
+//     tags; the bundle attaches `window.hljs` and includes the common
+//     languages we need (xml for HTML, markdown, plaintext). We ship
+//     @highlightjs/cdn-assets rather than the main `highlight.js`
+//     package because the latter only exposes ESM / CJS entry points
+//     — no prebuilt browser bundle — and capture-page.ts is a classic
+//     script.
+await cp(
+  resolve(root, 'node_modules/@highlightjs/cdn-assets/highlight.min.js'),
+  resolve(dist, 'highlight.min.js'),
+);
+await cp(
+  resolve(root, 'node_modules/@highlightjs/cdn-assets/styles/github.min.css'),
+  resolve(dist, 'highlight-theme.css'),
+);
+
+// 3f. Copy CodeJar into dist/ as a classic script. The upstream
+//     package is ESM-only (`export function CodeJar`); we rewrite the
+//     single top-level export into a `window.CodeJar` assignment so
+//     capture.html can load it via `<script>` (matches the
+//     `marked.umd.js` pattern). CodeJar has no runtime imports, so
+//     the string rewrite is sufficient.
+{
+  const src = await readFile(
+    resolve(root, 'node_modules/codejar/dist/codejar.js'),
+    'utf8',
+  );
+  const wrapped = src.replace(
+    /^export function CodeJar\(/m,
+    'function CodeJar(',
+  ) + '\nwindow.CodeJar = CodeJar;\n';
+  // Fail-fast guards against a future upstream codejar release
+  // reshaping its exports:
+  //   - If the `export function CodeJar` we look for isn't present,
+  //     the output is still valid JS but CodeJar is never assigned
+  //     to `window.CodeJar`, silently breaking capture-page.js.
+  //   - If any *other* top-level `export` slipped past the regex
+  //     (e.g. codejar adds a second named export), a classic-script
+  //     load of the bundle will throw a SyntaxError at parse time.
+  // Both cases fail the build here with a clear message.
+  if (wrapped === src + '\nwindow.CodeJar = CodeJar;\n') {
+    throw new Error(
+      'build.mjs: codejar transform did not match `export function CodeJar`; ' +
+      'upstream likely reshaped the export — update scripts/build.mjs.',
+    );
+  }
+  if (/^\s*export\b/m.test(wrapped)) {
+    throw new Error(
+      'build.mjs: codejar output still contains a top-level `export`; ' +
+      'upstream added a second export — update scripts/build.mjs.',
+    );
+  }
+  await writeFile(resolve(dist, 'codejar.js'), wrapped);
+}
 
 // 4. Run tsc. Watch mode keeps tsc running until the user Ctrl-C's; we
 //    await its exit so signals route through the build script and a spawn

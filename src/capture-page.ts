@@ -1208,13 +1208,13 @@ interface EditKindSpec {
    * forcing the TypeScript union into hyphens. Keep in sync with
    * the matching button ids in `capture.html`. */
   domSlug: string;
-  /** Modal heading + textarea aria-label. Short, user-visible. */
+  /** Modal heading + editor aria-label. Short, user-visible. */
   title: string;
   /** The pencil button inside the details-page row for this kind. */
   openBtn: HTMLButtonElement;
   /** If set, the dialog exposes the Edit / Preview toggle and
    * renders a preview using the named renderer:
-   *   - `'html'`     — parse textarea value as HTML (DOMParser) and
+   *   - `'html'`     — parse editor source as HTML (DOMParser) and
    *                    drop it into a sandboxed iframe.
    *   - `'markdown'` — parse as markdown via `marked`, then reuse
    *                    the same iframe + sanitizer pipeline on the
@@ -1268,7 +1268,20 @@ const editDialogs: HTMLDialogElement[] = [];
 
 interface EditDialogParts {
   dialog: HTMLDialogElement;
-  textarea: HTMLTextAreaElement;
+  /**
+   * The CodeJar-wrapped contenteditable <div> that replaces what used
+   * to be a <textarea>. The DOM id is still `edit-${slug}-textarea`
+   * for backward compatibility with e2e selectors, and the `.value`-
+   * style access is mediated via `getCode` / `setCode` below so
+   * callers don't touch CodeJar's internals directly.
+   */
+  editor: HTMLDivElement;
+  /** Current source as a plain string. Reads from CodeJar so any
+   *  in-flight IME composition / pending input is included. */
+  getCode(): string;
+  /** Replace the editor's contents. Re-runs the highlighter so the
+   *  tokens reflect the new source. */
+  setCode(code: string): void;
   saveBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
   errorEl: HTMLParagraphElement;
@@ -1289,12 +1302,16 @@ interface EditDialogParts {
  * tests can target a specific kind without knowing the full
  * catalog.
  */
-function createEditDialog(domSlug: string, title: string): EditDialogParts {
+function createEditDialog(
+  domSlug: string,
+  title: string,
+  kind: EditableArtifactKind,
+): EditDialogParts {
   const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
   const frag = tpl.content.cloneNode(true) as DocumentFragment;
   const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
   const titleEl = dialog.querySelector('.edit-dialog-title') as HTMLHeadingElement;
-  const textarea = dialog.querySelector('.edit-dialog-textarea') as HTMLTextAreaElement;
+  const editor = dialog.querySelector('.edit-dialog-textarea') as HTMLDivElement;
   const errorEl = dialog.querySelector('.edit-dialog-error') as HTMLParagraphElement;
   const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
   const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
@@ -1307,8 +1324,12 @@ function createEditDialog(domSlug: string, title: string): EditDialogParts {
   titleEl.id = `edit-${domSlug}-title`;
   titleEl.textContent = title;
   dialog.setAttribute('aria-labelledby', titleEl.id);
-  textarea.id = `edit-${domSlug}-textarea`;
-  textarea.setAttribute('aria-label', title);
+  editor.id = `edit-${domSlug}-textarea`;
+  editor.setAttribute('aria-label', title);
+  // `hljs` class lets the highlight.js theme stylesheet paint the
+  // editor's background + default text color. Must be on the root
+  // element CodeJar writes into.
+  editor.classList.add('hljs');
   errorEl.id = `edit-${domSlug}-error`;
   saveBtn.id = `edit-${domSlug}-save`;
   cancelBtn.id = `edit-${domSlug}-cancel`;
@@ -1317,8 +1338,26 @@ function createEditDialog(domSlug: string, title: string): EditDialogParts {
   previewIframe.id = `edit-${domSlug}-preview`;
 
   document.body.appendChild(dialog);
+
+  // Wrap the editor with CodeJar. `spellcheck: false` mirrors the
+  // old textarea attribute; `tab: '\t'` matches textarea behavior
+  // when the user hits Tab (CodeJar swallows it so focus doesn't
+  // move out of the editor). `addClosing: false` suppresses
+  // CodeJar's auto-pair-quotes/brackets default — the old textarea
+  // had no such behavior and auto-pairing inside HTML attributes
+  // ("foo=|bar" typing `"` would insert `""`) is an unwelcome UX
+  // delta.
+  const jar = CodeJar(editor, makeHighlighter(hljsLanguageFor(kind)), {
+    tab: '\t',
+    spellcheck: false,
+    addClosing: false,
+  });
+
   return {
-    dialog, textarea, saveBtn, cancelBtn, errorEl,
+    dialog, editor,
+    getCode: () => jar.toString(),
+    setCode: (code) => jar.updateCode(code),
+    saveBtn, cancelBtn, errorEl,
     modeToggle, editModeBtn, previewModeBtn, previewIframe,
   };
 }
@@ -1387,6 +1426,60 @@ function buildPreviewHtml(htmlBody: string, baseUrl: string): string {
 // in the preview.
 declare const marked: { parse: (src: string) => string };
 
+// `hljs` and `CodeJar` are loaded before this script (`highlight.min.js`
+// and `codejar.js` respectively) and exposed as page-scoped globals.
+// Declared rather than imported for the same reason as `marked`: any
+// `import` turns this file into a module and tsc emits `export {}`,
+// which a classic `<script>` load rejects. Loose typing because we
+// only touch a tiny surface (hljs.highlight + the CodeJar factory /
+// its three return members).
+declare const hljs: {
+  highlight(code: string, opts: { language: string; ignoreIllegals?: boolean }): {
+    value: string;
+  };
+};
+declare const CodeJar: (
+  editor: HTMLElement,
+  highlight: (editor: HTMLElement) => void,
+  opt?: Record<string, unknown>,
+) => {
+  updateCode(code: string): void;
+  toString(): string;
+  destroy(): void;
+};
+
+/**
+ * Map a dialog kind onto the highlight.js language name we pass to
+ * `hljs.highlight`. HTML kinds use `xml` (hljs models HTML as XML),
+ * Markdown uses `markdown`, and anything else falls back to
+ * `plaintext` so the highlighter still runs (CodeJar requires a
+ * callback) without colorizing anything.
+ */
+function hljsLanguageFor(kind: EditableArtifactKind): string {
+  if (kind === 'html' || kind === 'selectionHtml') return 'xml';
+  if (kind === 'selectionMarkdown') return 'markdown';
+  return 'plaintext';
+}
+
+/**
+ * Build the highlight callback CodeJar calls on every input. The
+ * editor element's `textContent` is the current source; we rewrite
+ * its innerHTML to the tokenized output from hljs so the
+ * `<span class="hljs-*">` spans pick up styles from
+ * `highlight-theme.css`. `ignoreIllegals: true` avoids hljs throwing
+ * on partial / malformed input mid-typing; we always want a best-
+ * effort colorization.
+ */
+function makeHighlighter(language: string): (editor: HTMLElement) => void {
+  return (editor: HTMLElement) => {
+    const code = editor.textContent ?? '';
+    editor.innerHTML = hljs.highlight(code, {
+      language,
+      ignoreIllegals: true,
+    }).value;
+  };
+}
+
 /**
  * Render markdown source to an HTML string via `marked`. `marked`
  * does NOT sanitize — raw HTML inside the markdown flows through
@@ -1400,7 +1493,7 @@ function renderMarkdown(md: string): string {
 }
 
 function bindEditDialog(spec: EditKindSpec): void {
-  const parts = createEditDialog(spec.domSlug, spec.title);
+  const parts = createEditDialog(spec.domSlug, spec.title, spec.kind);
   editDialogs.push(parts.dialog);
 
   if (spec.preview) {
@@ -1410,26 +1503,36 @@ function bindEditDialog(spec: EditKindSpec): void {
   }
 
   spec.openBtn.addEventListener('click', () => {
-    parts.textarea.value = captured[spec.kind];
+    parts.setCode(captured[spec.kind]);
     clearError();
     // Always open in Edit mode so the default action is direct editing.
     if (spec.preview) setMode('edit');
     parts.dialog.showModal();
     // Defer focus so showModal's own autofocus doesn't overwrite us.
     requestAnimationFrame(() => {
-      parts.textarea.focus();
+      parts.editor.focus();
       // Place the caret at the start — bodies are often long and
       // the user is most likely to want to search / scroll from the
-      // top rather than land at the end.
-      parts.textarea.setSelectionRange(0, 0);
-      parts.textarea.scrollTop = 0;
+      // top rather than land at the end. `setSelectionRange` doesn't
+      // exist on contenteditable; collapse a Range to the first
+      // offset in the editor instead, then scroll the element to the
+      // top (collapsing alone won't re-scroll it).
+      const range = document.createRange();
+      range.selectNodeContents(parts.editor);
+      range.collapse(true);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      parts.editor.scrollTop = 0;
     });
   });
 
   /**
-   * Switch the dialog between Edit (textarea visible) and Preview
-   * (sandboxed iframe visible, rendering the current textarea
-   * value). Preview is best-effort rendering — browsers are
+   * Switch the dialog between Edit (editor visible) and Preview
+   * (sandboxed iframe visible, rendering the current editor
+   * source). Preview is best-effort rendering — browsers are
    * extremely tolerant of malformed HTML, and the sandbox + no
    * same-origin + no allow-scripts keeps any rendered content from
    * touching the parent page. `<base href>` is injected so relative
@@ -1448,12 +1551,12 @@ function bindEditDialog(spec: EditKindSpec): void {
     parts.previewModeBtn.classList.toggle('selected', isPreview);
     parts.editModeBtn.setAttribute('aria-pressed', String(!isPreview));
     parts.previewModeBtn.setAttribute('aria-pressed', String(isPreview));
-    // Textarea stays in the DOM in both modes so it (a) keeps its
+    // Editor stays in the DOM in both modes so it (a) keeps its
     // user-resized height defining the slot and (b) can't reflow
     // the dialog when hidden. `visibility: hidden` hides it visually
     // but preserves layout; the iframe is positioned absolutely on
     // top via CSS.
-    parts.textarea.style.visibility = isPreview ? 'hidden' : '';
+    parts.editor.style.visibility = isPreview ? 'hidden' : '';
     parts.previewIframe.hidden = !isPreview;
     if (isPreview) {
       // Use a blob: URL rather than `srcdoc`. srcdoc is an HTML
@@ -1463,11 +1566,11 @@ function bindEditDialog(spec: EditKindSpec): void {
       // the iframe's sandbox (unique opaque origin).
       revokePreviewBlob();
       // Markdown kinds render via marked first; HTML kinds pass the
-      // textarea verbatim into buildPreviewHtml. Either way, the
-      // final string flows through the same sanitizer (strips
+      // editor source verbatim into buildPreviewHtml. Either way,
+      // the final string flows through the same sanitizer (strips
       // <script>, strips <meta http-equiv=refresh>, injects
       // <meta charset=utf-8> and <base target=_blank>).
-      let htmlBody = parts.textarea.value;
+      let htmlBody = parts.getCode();
       if (spec.preview === 'markdown') {
         htmlBody = renderMarkdown(htmlBody);
       }
@@ -1505,7 +1608,7 @@ function bindEditDialog(spec: EditKindSpec): void {
   });
 
   async function save(): Promise<void> {
-    const newValue = parts.textarea.value;
+    const newValue = parts.getCode();
     // No-op when unchanged: avoid an SW round-trip (and the cache
     // invalidation side-effect that would re-download on next Copy).
     if (newValue === captured[spec.kind]) {

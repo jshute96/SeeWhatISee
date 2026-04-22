@@ -26,8 +26,10 @@ import {
   configureAndCapture,
   dragRect,
   findCapturedDownload,
+  getEditorCode,
   openDetailsFlow,
   readLatestRecord,
+  setEditorCode,
 } from './details-helpers';
 import { type CaptureRecord, waitForDownloadPath } from '../fixtures/files';
 
@@ -838,11 +840,11 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
   expect(await capturePage.locator('#edit-html-dialog').evaluate(
     (d) => (d as HTMLDialogElement).open,
   )).toBe(true);
-  const prefill = await capturePage.locator('#edit-html-textarea').inputValue();
+  const prefill = await getEditorCode(capturePage.locator('#edit-html-textarea'));
   expect(prefill).toContain('background: #800080');
 
   const EDITED = '<!doctype html><html><body>edited by test 42</body></html>';
-  await capturePage.locator('#edit-html-textarea').fill(EDITED);
+  await setEditorCode(capturePage.locator('#edit-html-textarea'), EDITED);
   await capturePage.locator('#edit-html-save').click();
   await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty(
     'open',
@@ -998,11 +1000,16 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   expect(await capturePage.locator('#edit-selection-html-dialog').evaluate(
     (d) => (d as HTMLDialogElement).open,
   )).toBe(true);
-  const prefill = await capturePage.locator('#edit-selection-html-textarea').inputValue();
+  const prefill = await getEditorCode(
+    capturePage.locator('#edit-selection-html-textarea'),
+  );
   expect(prefill).toContain('hello selection world');
 
   const EDITED = '<p>selection edited by test 99</p>';
-  await capturePage.locator('#edit-selection-html-textarea').fill(EDITED);
+  await setEditorCode(
+    capturePage.locator('#edit-selection-html-textarea'),
+    EDITED,
+  );
   await capturePage.locator('#edit-selection-html-save').click();
   await expect(capturePage.locator('#edit-selection-html-dialog')).toHaveJSProperty(
     'open',
@@ -1063,7 +1070,10 @@ test('details: edit-selection cancel leaves the captured selection untouched', a
   await capturePage.locator('#cap-selection-html').check();
 
   await capturePage.locator('#edit-selection-html-btn').click();
-  await capturePage.locator('#edit-selection-html-textarea').fill('DISCARDED NONSENSE');
+  await setEditorCode(
+    capturePage.locator('#edit-selection-html-textarea'),
+    'DISCARDED NONSENSE',
+  );
   await capturePage.locator('#edit-selection-html-cancel').click();
   await expect(capturePage.locator('#edit-selection-html-dialog')).toHaveJSProperty(
     'open',
@@ -1104,7 +1114,10 @@ test('details: edit-html cancel leaves the captured HTML untouched', async ({
   // body on the SW side must be unchanged — the ensuing HTML save
   // should write the original fixture HTML, not our edits.
   await capturePage.locator('#edit-html').click();
-  await capturePage.locator('#edit-html-textarea').fill('DISCARDED NONSENSE');
+  await setEditorCode(
+    capturePage.locator('#edit-html-textarea'),
+    'DISCARDED NONSENSE',
+  );
   await capturePage.locator('#edit-html-cancel').click();
   expect(await capturePage.locator('#edit-html-dialog').evaluate(
     (d) => (d as HTMLDialogElement).open,
@@ -1175,16 +1188,24 @@ test('details: edit → edit → save keeps isEdited: true across multiple dialo
 
   // First edit cycle: replace body with marker A.
   await capturePage.locator('#edit-html').click();
-  await capturePage.locator('#edit-html-textarea').fill('<html><body>first edit A</body></html>');
+  await setEditorCode(
+    capturePage.locator('#edit-html-textarea'),
+    '<html><body>first edit A</body></html>',
+  );
   await capturePage.locator('#edit-html-save').click();
   await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
 
   // Reopen: the dialog should seed from the edited body, not the
   // original scrape. Replace again with marker B.
   await capturePage.locator('#edit-html').click();
-  const seededFromFirstEdit = await capturePage.locator('#edit-html-textarea').inputValue();
+  const seededFromFirstEdit = await getEditorCode(
+    capturePage.locator('#edit-html-textarea'),
+  );
   expect(seededFromFirstEdit).toContain('first edit A');
-  await capturePage.locator('#edit-html-textarea').fill('<html><body>second edit B</body></html>');
+  await setEditorCode(
+    capturePage.locator('#edit-html-textarea'),
+    '<html><body>second edit B</body></html>',
+  );
   await capturePage.locator('#edit-html-save').click();
   await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
 
@@ -1284,10 +1305,10 @@ for (const c of PREVIEW_CASES) {
     // the marker and a link, so the downstream assertions are
     // shared.
     const MARKER = `preview-marker-${c.slug}-9817`;
-    await capturePage.locator(textareaSel).fill(c.makeInput(MARKER));
+    await setEditorCode(capturePage.locator(textareaSel), c.makeInput(MARKER));
 
     // Flip to Preview. The iframe shows, the toggle's selected state
-    // flips. The textarea stays in the DOM (kept as layout anchor)
+    // flips. The editor stays in the DOM (kept as layout anchor)
     // but is hidden via `visibility: hidden`, so its bounding box
     // persists — the dialog's dimensions can't jump across modes.
     await capturePage.locator(previewBtnSel).click();
@@ -1329,7 +1350,7 @@ for (const c of PREVIEW_CASES) {
     await capturePage.locator(editBtnSel).click();
     await expect(capturePage.locator(textareaSel)).toBeVisible();
     await expect(capturePage.locator(iframeSel)).toBeHidden();
-    expect(await capturePage.locator(textareaSel).inputValue())
+    expect(await getEditorCode(capturePage.locator(textareaSel)))
       .toContain(MARKER);
     expect(await capturePage.locator(iframeSel).getAttribute('src'))
       .toBeNull();
@@ -1366,7 +1387,7 @@ test('details: preview strips <script> and <meta http-equiv=refresh>', async ({
     </body></html>
   `;
   await capturePage.locator('#edit-html').click();
-  await capturePage.locator('#edit-html-textarea').fill(HOSTILE);
+  await setEditorCode(capturePage.locator('#edit-html-textarea'), HOSTILE);
   await capturePage.locator('#edit-html-mode-preview').click();
 
   const iframe = capturePage.frameLocator('#edit-html-preview');
@@ -1404,7 +1425,7 @@ test('details: preview tolerates malformed HTML and still renders content', asyn
   const MARKER = 'malformed-marker-5523';
   const BROKEN = `<p>before<div><h1>${MARKER}</h1></span>after</p><!--oops`;
   await capturePage.locator('#edit-html').click();
-  await capturePage.locator('#edit-html-textarea').fill(BROKEN);
+  await setEditorCode(capturePage.locator('#edit-html-textarea'), BROKEN);
   await capturePage.locator('#edit-html-mode-preview').click();
 
   const iframe = capturePage.frameLocator('#edit-html-preview');
@@ -1469,7 +1490,7 @@ test('details: selection-markdown preview renders markdown syntax as HTML', asyn
     '```',
   ].join('\n');
   await capturePage.locator('#edit-selection-markdown-btn').click();
-  await capturePage.locator('#edit-selection-markdown-textarea').fill(MD);
+  await setEditorCode(capturePage.locator('#edit-selection-markdown-textarea'), MD);
   await capturePage.locator('#edit-selection-markdown-mode-preview').click();
 
   const iframe = capturePage.frameLocator('#edit-selection-markdown-preview');
@@ -1517,7 +1538,7 @@ test('details: selection-markdown preview strips <script> from raw HTML inside m
     '<script>window.top.location = "https://evil.example/"</script>',
   ].join('\n');
   await capturePage.locator('#edit-selection-markdown-btn').click();
-  await capturePage.locator('#edit-selection-markdown-textarea').fill(MD);
+  await setEditorCode(capturePage.locator('#edit-selection-markdown-textarea'), MD);
   await capturePage.locator('#edit-selection-markdown-mode-preview').click();
 
   const iframe = capturePage.frameLocator('#edit-selection-markdown-preview');

@@ -665,8 +665,9 @@ active crop region.
   `onSaved` hook (e.g. HTML's size-readout refresh). Adding a kind
   is one entry + one markup button.
 - Per-kind behavior:
-  - Open: seeds the textarea from the page's `captured[kind]`
-    mirror, clears any prior error, focuses the textarea at the top.
+  - Open: seeds the editor from the page's `captured[kind]` mirror
+    (via CodeJar's `updateCode`), clears any prior error, focuses
+    the editor with a zero-range Selection collapsed to the top.
   - Save: no-op when the body is unchanged; otherwise posts
     `{ action: 'updateArtifact', kind, value }` to the SW and runs
     the per-kind `onSaved` hook on success. Errors surface inline
@@ -699,14 +700,15 @@ active crop region.
   **Selection markdown**. `EDIT_KINDS` marks each via `preview:
   'html' | 'markdown'`; selection-text (plain text) stays
   edit-only.
-- Edit is selected on open; `setMode()` swaps between the textarea
+- Edit is selected on open; `setMode()` swaps between the editor
   and a sandboxed preview iframe positioned absolutely inside
-  `.edit-dialog-body`. The textarea stays in the DOM with
+  `.edit-dialog-body`. The editor stays in the DOM with
   `visibility: hidden` in Preview so its resized height keeps
   defining the slot — dialog dimensions can't jump across modes.
 - Pipeline:
-  - HTML kinds pass the textarea value straight into
-    `buildPreviewHtml()`.
+  - HTML kinds read the editor source via `getCode()` (which calls
+    CodeJar's `toString()`, i.e. the editor element's
+    `textContent`) and pass it straight into `buildPreviewHtml()`.
   - Markdown kind first calls `renderMarkdown()` (which delegates
     to `window.marked.parse()` from the UMD bundle loaded by
     `capture.html`), then feeds the HTML into `buildPreviewHtml()`
@@ -743,6 +745,38 @@ active crop region.
   (not ESM) because `capture-page.ts` compiles to a non-module
   script — `import` would force a module-worker rewrite of how
   the extension page is wired up.
+
+#### Syntax highlighting in the edit dialogs
+
+- Each dialog hosts a `<div contenteditable="plaintext-only">`
+  (not a `<textarea>`) wrapped by **CodeJar**. CodeJar rewrites
+  `innerHTML` on every input via a highlighter callback so the
+  content is painted by `<span class="hljs-*">` tokens from
+  **highlight.js**.
+- Language per kind (`hljsLanguageFor`):
+  - `html`, `selectionHtml` → `xml` (hljs models HTML as XML).
+  - `selectionMarkdown` → `markdown`.
+  - `selectionText` (and any future plain-text kind) → `plaintext`
+    — the callback still runs so CodeJar has a consistent
+    render path, but no tokens are produced.
+- `hljs.highlight(code, { language, ignoreIllegals: true })` — the
+  `ignoreIllegals` flag keeps partial / malformed input from
+  throwing mid-typing.
+- Source-of-truth read / write:
+  - Read: `jar.toString()` → `editor.textContent`. Tests read the
+    same way via `getEditorCode` in `details-helpers.ts`.
+  - Write: `jar.updateCode(code)` clears and re-highlights.
+- Theme: `github.min.css` (light) renamed to
+  `dist/highlight-theme.css` by `scripts/build.mjs`. The editor
+  element carries the `hljs` class so the theme's
+  background / default-color rules apply.
+- Asset plumbing: `scripts/build.mjs` copies
+  `@highlightjs/cdn-assets/highlight.min.js` (the "common" bundle
+  that includes xml + markdown + plaintext) and the theme into
+  `dist/`, and transforms `node_modules/codejar/dist/codejar.js`
+  by rewriting its sole top-level `export function CodeJar` into
+  `function CodeJar(…)` + `window.CodeJar = CodeJar;` so it loads
+  as a classic script alongside `marked.umd.js`.
 
 ### `isEdited` sidecar flag
 

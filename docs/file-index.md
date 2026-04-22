@@ -106,7 +106,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `scripts/build.mjs` | Cleans `dist/`, copies icons, manifest, `capture.html`, offscreen assets, and `marked.umd.js`, then runs `tsc` |
+| `scripts/build.mjs` | Cleans `dist/`, copies icons/manifest/HTML + `marked`, `highlight.js` + theme, and a classic-wrapped `codejar.js`, then runs `tsc` |
 | `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
@@ -126,7 +126,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the details flow and `handleActionClick` dispatch — save combos, tab positioning, copy/edit caching, scrape-failure UX |
 | `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing overlay — boxes/lines/Redact/Crop/Undo/Clear, drag-to-crop, edit-flag semantics on log.json |
-| `tests/e2e/details-helpers.ts` | Shared helpers for the two details specs — flow open, capture submit, overlay drag, on-disk record lookup |
+| `tests/e2e/details-helpers.ts` | Shared helpers for the two details specs — flow open, capture submit, overlay drag, on-disk record lookup, CodeJar editor read/write |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureBoth` (PNG + HTML + record) |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |

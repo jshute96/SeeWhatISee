@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <title>SeeWhatISee: Capture screenshot</title>
+<!--
+  highlight.js theme. Styles the <span class="hljs-*"> tokens produced
+  by `hljs.highlight(...).value` inside the edit-dialog editor. We
+  ship a small light theme (github.min.css) renamed to
+  highlight-theme.css by build.mjs so it matches the rest of the
+  page's light background.
+-->
+<link rel="stylesheet" href="highlight-theme.css">
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -148,7 +156,7 @@
   /*
    * The HTML edit dialog reuses a modal <dialog> element. We hide it
    * in CSS rather than via an attribute so toggling via JS doesn't
-   * need to fight the native display. The textarea is full-width with
+   * need to fight the native display. The editor is full-width with
    * a capped max-height so it never pushes the action row off-screen
    * — it scrolls internally on long bodies instead.
    */
@@ -202,7 +210,20 @@
     color: #fff;
     cursor: default;
   }
-  .edit-dialog textarea {
+  /*
+   * The editor is a `contenteditable` <div> (not a <textarea>) because
+   * CodeJar rewrites its own inner HTML with highlight.js-produced
+   * <span class="hljs-*"> tokens on every input. The styles below
+   * mirror the old textarea dimensions so the dialog slot keeps the
+   * same intrinsic size across mode switches. `white-space: pre-wrap`
+   * preserves user-entered newlines + indentation the way a textarea
+   * would; `overflow: auto` + `resize: vertical` keep the
+   * user-resizable feel. `caret-color` is explicit because the hljs
+   * theme can override the inherited text color on child spans, which
+   * in some browsers also dims the caret.
+   */
+  .edit-dialog .edit-dialog-textarea {
+    display: block;
     width: 100%;
     min-height: 320px;
     max-height: 60vh;
@@ -214,12 +235,27 @@
     border-radius: 4px;
     box-sizing: border-box;
     resize: vertical;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    outline: none;
+    /* Use the theme's text color for the caret so they match. */
+    caret-color: currentColor;
+    /*
+     * The github.min.css theme sets its own `background` / `color` on
+     * `.hljs`, which CodeJar adds to the editor element. Leave those
+     * to the theme — we only override layout-affecting properties
+     * here so the editor keeps its dialog-slot geometry.
+     */
+  }
+  .edit-dialog .edit-dialog-textarea:focus-visible {
+    border-color: #555;
   }
   /*
-   * Body slot holds the textarea + iframe. `position: relative`
+   * Body slot holds the editor + iframe. `position: relative`
    * anchors the iframe's `inset: 0` overlay to exactly the
-   * textarea's rect, so flipping modes can't shift dialog
-   * dimensions by even a pixel. The textarea keeps defining the
+   * editor's rect, so flipping modes can't shift dialog
+   * dimensions by even a pixel. The editor keeps defining the
    * slot's intrinsic size; the iframe paints on top.
    */
   .edit-dialog-body {
@@ -417,7 +453,7 @@
         </button>
         <!--
           Edit the captured HTML before save. Opens a modal dialog
-          with a textarea prefilled with the current HTML. Follows the
+          with an editor prefilled with the current HTML. Follows the
           same disabled-hides-the-button convention as copy-btn so the
           row stays tidy. Disabled (and hidden) when the HTML scrape
           failed — there's nothing to edit in that case.
@@ -577,8 +613,8 @@
     capture-page.ts's `createEditDialog`, which fills in the
     per-kind `id`s, title text, and aria labels. Keeping the markup
     here (rather than building nodes by hand in JS) lets CSS
-    selectors like `.edit-dialog textarea` apply uniformly to every
-    instance. New kinds don't need any new markup.
+    selectors like `.edit-dialog .edit-dialog-textarea` apply
+    uniformly to every instance. New kinds don't need any new markup.
 
     The per-instance ids follow a `edit-${kind}-${role}` convention
     (e.g. `edit-html-dialog`, `edit-selection-textarea`) so the e2e
@@ -604,10 +640,10 @@
         </div>
       </div>
       <!--
-        Body slot. The textarea is always in the DOM so the user's
+        Body slot. The editor is always in the DOM so the user's
         resize stays sticky and the slot height stays constant across
         mode switches. In Preview mode, capture-page.ts sets
-        `visibility: hidden` on the textarea (to keep its layout
+        `visibility: hidden` on the editor (to keep its layout
         footprint) and reveals the iframe, which is positioned
         absolutely on top via `.edit-dialog-body { position: relative }`
         + `.edit-dialog-preview { inset: 0 }`. The iframe uses a blob:
@@ -618,7 +654,26 @@
         normal new tab.
       -->
       <div class="edit-dialog-body">
-        <textarea class="edit-dialog-textarea" spellcheck="false"></textarea>
+        <!--
+          CodeJar-driven editor. capture-page.ts wraps this element
+          with `CodeJar(el, highlight)`; the chosen highlighter
+          depends on the kind (xml for html/selectionHtml, markdown
+          for selectionMarkdown, a no-op for plain-text kinds). The
+          element is `contenteditable="plaintext-only"` so the user
+          can only enter plain text — CodeJar rewrites the innerHTML
+          on input using highlight.js tokens, and plaintext-only
+          prevents the browser's native rich-text paste from
+          injecting formatting the highlighter would then have to
+          strip. `aria-multiline="true"` makes screen readers treat
+          it as a textarea-like control. role="textbox" keeps the
+          semantics close to the old <textarea> so existing aria
+          wiring still applies.
+        -->
+        <div class="edit-dialog-textarea"
+             contenteditable="plaintext-only"
+             spellcheck="false"
+             role="textbox"
+             aria-multiline="true"></div>
         <iframe class="edit-dialog-preview" hidden
                 sandbox="allow-popups allow-popups-to-escape-sandbox"
                 referrerpolicy="no-referrer"
@@ -649,6 +704,22 @@
     anything beyond what the sandboxed iframe already permits.
   -->
   <script src="marked.umd.js"></script>
+  <!--
+    highlight.js ships the prebuilt "common" bundle (xml, markdown,
+    plaintext, and many more) as a classic script that attaches to
+    `window.hljs`. Loaded before capture-page.js so CodeJar's
+    highlighter callback can call `hljs.highlight(code, {language})`
+    synchronously on every input.
+  -->
+  <script src="highlight.min.js"></script>
+  <!--
+    CodeJar is ESM-only upstream; build.mjs rewrites its single
+    `export function CodeJar` into a `window.CodeJar` assignment so
+    we can load it here as a classic script (same pattern as
+    `marked.umd.js`). Must precede capture-page.js so the global is
+    in place before `bindEditDialog` instantiates editors.
+  -->
+  <script src="codejar.js"></script>
   <script src="capture-page.js"></script>
 </body>
 </html>
