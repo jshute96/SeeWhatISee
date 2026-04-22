@@ -7,7 +7,8 @@
 //     URL-only, selection) and the associated prompt / URL / flag
 //     assertions.
 //   - Tab positioning + opener focus return on close.
-//   - Default click action routing (setDefaultClickActionId).
+//   - Default click action routing (setDefaultWithSelectionId /
+//     setDefaultWithoutSelectionId).
 //   - Copy-filename buttons, including the drawing→cache
 //     invalidation interplay (the drawing tests themselves moved
 //     out, but the cache-invalidation scenarios that happen to
@@ -354,9 +355,9 @@ test('default click action set to capture-now: handleActionClick takes a direct 
     await chrome.storage.local.clear();
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
   });
 
   const openerPage = await extensionContext.newPage();
@@ -408,9 +409,9 @@ test('default click action set to capture-with-details: handleActionClick opens 
     await chrome.storage.local.clear();
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-with-details');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-with-details');
   });
 
   const openerPage = await extensionContext.newPage();
@@ -447,41 +448,59 @@ test('default click action set to capture-with-details: handleActionClick opens 
   await sw2.evaluate(async () => {
     await (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultClickActionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
   });
 
   await openerPage.close();
 });
 
-test('setDefaultClickActionId updates the toolbar tooltip to match', async ({
+test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
   const titles = await sw.evaluate(async () => {
     const api = (
       self as unknown as {
-        SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+        SeeWhatISee: {
+          setDefaultWithSelectionId: (id: string) => Promise<void>;
+          setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+        };
       }
     ).SeeWhatISee;
-    await api.setDefaultClickActionId('capture-now');
+    // Pin the with-selection default so the middle tooltip line
+    // stays stable regardless of the starting storage state.
+    await api.setDefaultWithSelectionId('capture-selection-html');
+    await api.setDefaultWithoutSelectionId('capture-now');
     const a = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('capture-now-2s');
+    await api.setDefaultWithoutSelectionId('capture-now-2s');
     const b = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('save-page-contents');
+    await api.setDefaultWithoutSelectionId('save-page-contents');
     const c = await chrome.action.getTitle({});
-    await api.setDefaultClickActionId('capture-with-details');
+    await api.setDefaultWithoutSelectionId('capture-with-details');
     const d = await chrome.action.getTitle({});
     // Restore default so the rest of the suite is unaffected.
-    await api.setDefaultClickActionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-now');
     return { a, b, c, d };
   });
 
-  expect(titles.a).toBe('SeeWhatISee — Capture visible tab\nDouble-click for capture with details');
-  expect(titles.b).toBe('SeeWhatISee — Capture visible tab in 2s\nDouble-click for capture with details');
-  expect(titles.c).toBe('SeeWhatISee — Save HTML contents\nDouble-click for capture with details');
-  expect(titles.d).toBe('SeeWhatISee — Capture with details\nDouble-click for screenshot');
+  // Tooltip layout (bracketed by blank lines above and below the
+  // action block — see `getDefaultActionTooltip`):
+  //
+  //   SeeWhatISee
+  //   <blank>
+  //   Click: <…>
+  //   Double-click: <…>
+  //   With selection: <…>
+  //   <blank trailing line>
+  const withSelLine = 'With selection: Capture as HTML';
+  const expected = (click: string, dbl: string) =>
+    ['SeeWhatISee', '', `Click: ${click}`, `Double-click: ${dbl}`, withSelLine, ''].join('\n');
+  expect(titles.a).toBe(expected('Take screenshot', 'Capture with details'));
+  expect(titles.b).toBe(expected('Take screenshot in 2s', 'Capture with details'));
+  expect(titles.c).toBe(expected('Save HTML contents', 'Capture with details'));
+  expect(titles.d).toBe(expected('Capture with details', 'Take screenshot'));
 });
 
 // ─── Copy-filename buttons on the capture page ────────────────────
@@ -1296,6 +1315,443 @@ test('details: html scrape failure still opens the page with HTML/selection disa
   expect(record.prompt).toBe('scrape failed but I can still use this');
 
   await openerPage.close();
+});
+
+// ─── Selection-aware click dispatch ──────────────────────────────
+//
+// These tests cover the toolbar-click behavior when the active page
+// has a text selection. Matrix:
+//
+//   - `with-sel` default × selection present × single / double-click,
+//     verifying both what runs and what *doesn't* (ignore-selection
+//     must not probe; double-click on selection always opens details).
+//   - `copyLastSelectionFilename` menu action.
+//   - Stale storage: a `capture-selection-*` id stashed in the
+//     without-selection slot should fall back (the setter normally
+//     rejects it, but storage migrations or manual edits could leak
+//     one in).
+//
+// Shared setup pattern: each test clears `chrome.storage.local`,
+// pins the two click defaults it cares about, seeds a selection on
+// the opener page via `seedSelection`, and then drives
+// `handleActionClick` from the SW. Assertions read the in-memory
+// log (`chrome.storage.local.get('captureLog')`) rather than
+// log.json — no need for the download-spy setup that the details
+// flow uses, since we only care about what was recorded.
+
+type ClickApi = {
+  handleActionClick: () => Promise<void>;
+  setDefaultWithSelectionId: (id: string) => Promise<void>;
+  setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+};
+
+async function pinClickDefaults(
+  sw: Worker,
+  withId: string,
+  withoutId: string,
+): Promise<void> {
+  await sw.evaluate(
+    async ({ withId, withoutId }: { withId: string; withoutId: string }) => {
+      await chrome.storage.local.clear();
+      const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
+      await api.setDefaultWithSelectionId(withId);
+      await api.setDefaultWithoutSelectionId(withoutId);
+    },
+    { withId, withoutId },
+  );
+}
+
+async function runSingleClick(sw: Worker): Promise<void> {
+  await sw.evaluate(async () => {
+    const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
+    await api.handleActionClick();
+  });
+}
+
+// Fire two clicks tight enough that the second lands before the
+// 250ms `DOUBLE_CLICK_MS` timer expires. The first call's promise
+// never resolves once the timer is cleared (that's the production
+// reality too — a real double-click leaks a pending promise inside
+// the SW), so we fire-and-forget it and only await the second.
+async function runDoubleClick(sw: Worker): Promise<void> {
+  await sw.evaluate(async () => {
+    const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
+    void api.handleActionClick().catch(() => {});
+    // Micro-pause so the first call registers its timer before the
+    // second clears it. Same-worker single-threaded — the `await`
+    // is defensive against any future microtask shuffle.
+    await new Promise((r) => setTimeout(r, 20));
+    await api.handleActionClick();
+  });
+}
+
+type LogRecord = {
+  screenshot?: { filename: string };
+  contents?: { filename: string };
+  selection?: { filename: string; format: string };
+};
+
+async function latestLogRecord(sw: Worker): Promise<LogRecord | undefined> {
+  const stored = await sw.evaluate(() => chrome.storage.local.get('captureLog'));
+  const log = (stored.captureLog ?? []) as LogRecord[];
+  return log[log.length - 1];
+}
+
+async function selectionRecordOnlyCheck(sw: Worker, expectFormat: string): Promise<void> {
+  const r = await latestLogRecord(sw);
+  expect(r, 'a capture record landed').toBeDefined();
+  expect(r!.selection?.format).toBe(expectFormat);
+  expect(r!.screenshot).toBeUndefined();
+  expect(r!.contents).toBeUndefined();
+}
+
+for (const { id, format, ext } of [
+  { id: 'capture-selection-html', format: 'html', ext: 'html' },
+  { id: 'capture-selection-text', format: 'text', ext: 'txt' },
+  { id: 'capture-selection-markdown', format: 'markdown', ext: 'md' },
+] as const) {
+  test(`click with selection: with-sel=${id} saves selection as .${ext}`, async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    await pinClickDefaults(sw, id, 'capture-with-details');
+
+    const openerPage = await extensionContext.newPage();
+    await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+    await openerPage.bringToFront();
+    await seedSelection(openerPage);
+
+    await runSingleClick(sw);
+
+    const r = await latestLogRecord(sw);
+    expect(r?.selection?.filename, 'selection file written').toMatch(
+      new RegExp(`^selection-\\d{8}-\\d{6}-\\d{3}\\.${ext}$`),
+    );
+    expect(r?.selection?.format).toBe(format);
+    expect(r?.screenshot).toBeUndefined();
+    expect(r?.contents).toBeUndefined();
+
+    await openerPage.close();
+  });
+}
+
+test('click with selection: with-sel=capture-with-details opens details in selectionOnly mode', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, 'capture-with-details', 'capture-now');
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+
+  await runSingleClick(sw);
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  // selectionOnly: screenshot + html unchecked, Save selection
+  // master checked. Any format row may be the default-checked one
+  // (loadData picks the first with content); HTML is the reliable
+  // one against our seeded selection, but any checked format works.
+  await expect(capturePage.locator('#cap-screenshot')).not.toBeChecked();
+  await expect(capturePage.locator('#cap-html')).not.toBeChecked();
+  await expect(capturePage.locator('#cap-selection')).toBeChecked();
+
+  // Close the details tab without saving so nothing leaks into the
+  // log / file system.
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('click with selection: with-sel=ignore-selection runs the without-selection default', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  // ignore-selection + capture-now should take a screenshot even
+  // though a selection is present — the probe is skipped entirely.
+  await pinClickDefaults(sw, 'ignore-selection', 'capture-now');
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  // If the probe *did* run and kicked us into a with-selection
+  // branch, we'd either open a details page or save a selection
+  // file. Guard against the details path opening.
+  let detailsOpened = false;
+  const onPage = (p: Page): void => {
+    if (p.url().endsWith('/capture.html')) detailsOpened = true;
+  };
+  extensionContext.on('page', onPage);
+
+  await runSingleClick(sw);
+
+  await new Promise((r) => setTimeout(r, 150));
+  extensionContext.off('page', onPage);
+  expect(detailsOpened, 'no details page opens in ignore-selection mode').toBe(false);
+
+  const r = await latestLogRecord(sw);
+  expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+  expect(r?.selection, 'selection NOT saved in ignore-selection mode').toBeUndefined();
+
+  await openerPage.close();
+});
+
+test('double-click with selection: always opens details (even when without-sel=capture-with-details)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Without-sel = capture-with-details → classic alternate is
+  // capture-now (screenshot). With a selection present and
+  // with-sel != ignore-selection, the new rule overrides that
+  // alternate and routes double-click to details. This test
+  // regression-guards the override.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, 'capture-selection-html', 'capture-with-details');
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+
+  await runDoubleClick(sw);
+
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  // Double-click opens plain details (NOT selectionOnly), so the
+  // usual defaults apply: screenshot checked, html unchecked,
+  // selection pre-checked because the SW saw our selection.
+  await expect(capturePage.locator('#cap-screenshot')).toBeChecked();
+  await expect(capturePage.locator('#cap-selection')).toBeChecked();
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('double-click with selection: ignore-selection keeps the classic alternate (screenshot)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // ignore-selection + without-sel=capture-with-details → classic
+  // double-click alternate is capture-now. The "selection present"
+  // override must NOT trigger when the user has opted out via
+  // ignore-selection, so a selection on the page shouldn't flip
+  // the dispatch to details.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, 'ignore-selection', 'capture-with-details');
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  let detailsOpened = false;
+  const onPage = (p: Page): void => {
+    if (p.url().endsWith('/capture.html')) detailsOpened = true;
+  };
+  extensionContext.on('page', onPage);
+
+  await runDoubleClick(sw);
+
+  await new Promise((r) => setTimeout(r, 150));
+  extensionContext.off('page', onPage);
+  expect(detailsOpened, 'details must NOT open in ignore-selection double-click').toBe(false);
+
+  const r = await latestLogRecord(sw);
+  expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+
+  await openerPage.close();
+});
+
+test('getDefaultWithoutSelectionId: stale capture-selection-* storage value falls back', async ({
+  getServiceWorker,
+}) => {
+  // The setter rejects `capture-selection-*` baseIds, but a stale
+  // value could leak in from a storage migration or manual edit.
+  // The getter must refuse to hand it back — it'd error on every
+  // click without a selection.
+  const sw = await getServiceWorker();
+  const id = await sw.evaluate(async () => {
+    await chrome.storage.local.clear();
+    // Bypass the setter to simulate a corrupt value.
+    await chrome.storage.local.set({
+      defaultClickWithoutSelection: 'capture-selection-html',
+    });
+    return await (
+      self as unknown as {
+        SeeWhatISee: { getDefaultWithoutSelectionId: () => Promise<string> };
+      }
+    ).SeeWhatISee.getDefaultWithoutSelectionId();
+  });
+  expect(id).toBe('capture-with-details');
+});
+
+test('copyLastSelectionFilename: throws when no capture in the log', async ({
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const err = await sw.evaluate(async () => {
+    await chrome.storage.local.clear();
+    try {
+      await (
+        self as unknown as {
+          SeeWhatISee: { copyLastSelectionFilename: () => Promise<void> };
+        }
+      ).SeeWhatISee.copyLastSelectionFilename();
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  });
+  expect(err).toBe('No captures in the log to copy from');
+});
+
+test('copyLastSelectionFilename: throws when latest record has no selection', async ({
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const err = await sw.evaluate(async () => {
+    await chrome.storage.local.clear();
+    // Seed a screenshot-only record — the latest has no selection.
+    await chrome.storage.local.set({
+      captureLog: [
+        {
+          timestamp: '2026-04-21T12:00:00.000Z',
+          url: 'https://example.test/',
+          screenshot: { filename: 'screenshot-20260421-120000-000.png' },
+        },
+      ],
+    });
+    try {
+      await (
+        self as unknown as {
+          SeeWhatISee: { copyLastSelectionFilename: () => Promise<void> };
+        }
+      ).SeeWhatISee.copyLastSelectionFilename();
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  });
+  expect(err).toBe('Latest capture has no selection to copy');
+});
+
+test('copyLastSelectionFilename: forwards the selection filename to the offscreen copy target', async ({
+  getServiceWorker,
+}) => {
+  // Intercept the three chrome.* calls that `copyLastSelectionFilename`
+  // depends on so the test can read the payload handed to the
+  // offscreen document without needing a real capture to have
+  // written log.json (which is what `getCaptureDirectory` normally
+  // looks up via `chrome.downloads.search`), and without needing
+  // the offscreen doc to actually execute `execCommand('copy')`.
+  //
+  // Originals are saved and restored via a finally block so later
+  // tests in the same worker see unpatched chrome.* APIs — the SW
+  // is shared across tests in this single-worker setup.
+  const sw = await getServiceWorker();
+  try {
+    const forwarded = await sw.evaluate(async () => {
+      await chrome.storage.local.clear();
+      await chrome.storage.local.set({
+        captureLog: [
+          {
+            timestamp: '2026-04-21T12:00:00.000Z',
+            url: 'https://example.test/',
+            selection: { filename: 'selection-20260421-120000-000.md', format: 'markdown' },
+          },
+        ],
+      });
+
+      interface Spy {
+        __seeCopyOrigSearch?: typeof chrome.downloads.search;
+        __seeCopyOrigCreate?: typeof chrome.offscreen.createDocument;
+        __seeCopyOrigSend?: typeof chrome.runtime.sendMessage;
+        __seeOffscreenMsg?: unknown;
+      }
+      const g = self as unknown as Spy;
+      g.__seeCopyOrigSearch = chrome.downloads.search.bind(chrome.downloads);
+      g.__seeCopyOrigCreate = chrome.offscreen.createDocument.bind(chrome.offscreen);
+      g.__seeCopyOrigSend = chrome.runtime.sendMessage.bind(chrome.runtime);
+
+      // Fake the download-history lookup: return a single synthetic
+      // log.json entry with byExtensionId = our id, so
+      // `getCaptureDirectory` accepts it and strips to a directory.
+      (chrome.downloads as { search: typeof chrome.downloads.search }).search =
+        (async () => [
+          {
+            id: 0,
+            byExtensionId: chrome.runtime.id,
+            filename: '/tmp/fake-see-dir/log.json',
+          } as chrome.downloads.DownloadItem,
+        ]) as typeof chrome.downloads.search;
+      (chrome.offscreen as { createDocument: typeof chrome.offscreen.createDocument }).createDocument =
+        (async () => {}) as typeof chrome.offscreen.createDocument;
+      (chrome.runtime as { sendMessage: typeof chrome.runtime.sendMessage }).sendMessage =
+        (async (msg: unknown) => {
+          g.__seeOffscreenMsg = msg;
+          // `copyToClipboard` treats an `undefined` response as
+          // "offscreen listener never registered"; return an ok
+          // envelope so the success path runs to completion.
+          return { ok: true };
+        }) as typeof chrome.runtime.sendMessage;
+
+      g.__seeOffscreenMsg = undefined;
+      await (
+        self as unknown as {
+          SeeWhatISee: { copyLastSelectionFilename: () => Promise<void> };
+        }
+      ).SeeWhatISee.copyLastSelectionFilename();
+
+      return g.__seeOffscreenMsg;
+    });
+    const msg = forwarded as { target?: string; text?: string } | undefined;
+    expect(msg?.target).toBe('offscreen-copy');
+    expect(msg?.text).toBe('/tmp/fake-see-dir/selection-20260421-120000-000.md');
+  } finally {
+    // Restore originals so later tests see unpatched APIs.
+    await sw.evaluate(() => {
+      interface Spy {
+        __seeCopyOrigSearch?: typeof chrome.downloads.search;
+        __seeCopyOrigCreate?: typeof chrome.offscreen.createDocument;
+        __seeCopyOrigSend?: typeof chrome.runtime.sendMessage;
+      }
+      const g = self as unknown as Spy;
+      if (g.__seeCopyOrigSearch) {
+        (chrome.downloads as { search: typeof chrome.downloads.search }).search =
+          g.__seeCopyOrigSearch;
+      }
+      if (g.__seeCopyOrigCreate) {
+        (chrome.offscreen as { createDocument: typeof chrome.offscreen.createDocument }).createDocument =
+          g.__seeCopyOrigCreate;
+      }
+      if (g.__seeCopyOrigSend) {
+        (chrome.runtime as { sendMessage: typeof chrome.runtime.sendMessage }).sendMessage =
+          g.__seeCopyOrigSend;
+      }
+    });
+  }
 });
 
 test('details: html scrape failure allows url-only capture (no checkboxes)', async ({

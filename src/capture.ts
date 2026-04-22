@@ -204,7 +204,7 @@ export interface CaptureRecord {
    */
   screenshot?: ScreenshotArtifact;
   /**
-   * Captured HTML artifact. Set on HTML captures — the "Save html
+   * Captured HTML artifact. Set on HTML captures — the "Save HTML
    * contents" menu entry, and the "Capture with details…" path when
    * the user keeps the HTML. Carries the bare filename (no
    * directory) plus an optional `isEdited: true` flag that appears
@@ -399,8 +399,13 @@ export interface SelectionBodies {
  * image-only selection, for example, has non-empty HTML but empty
  * text; picking "Save as text" would error out, but "Save as HTML"
  * or "Save as markdown" still works.
+ *
+ * Exported so background.ts can reuse it as a lightweight "does this
+ * tab have a selection?" probe when dispatching the toolbar click —
+ * the return value is coerced to a boolean and the formatted bodies
+ * are discarded.
  */
-async function scrapeSelection(
+export async function scrapeSelection(
   tabId: number,
   pageUrl: string,
 ): Promise<SelectionBodies | null> {

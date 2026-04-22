@@ -38,10 +38,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `capture-selection-*`) opts out: only the 0s variant is generated,
     no 2s / 5s entries appear anywhere for it.
   - Each generated entry has an id (`<baseId>` for delay 0,
-    `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
-    `baseId` / `group` / `delaySec` fields for routing into the
-    right menu section, and a zero-arg `run()` that forwards the
-    delay to the base action's handler.
+    `<baseId>-<N>s` otherwise), a menu title, a
+    `tooltipFragment` (used by `getDefaultActionTooltip` to build
+    the toolbar icon's hover tooltip), `baseId` / `group` /
+    `delaySec` fields for routing into the right menu section,
+    and a zero-arg `run()` that forwards the delay to the base
+    action's handler.
   - Each base carries a `group: 'primary' | 'more'` that decides
     which section of the action menu surfaces the undelayed variant:
     - `'primary'` — top-level entry + a slot in the "Capture with
@@ -61,7 +63,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `await` keeps the service worker alive for the duration. Any `delayMs` value is also callable
     from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
-  - **`save-page-contents` — "Save html contents".** Uses
+  - **`save-page-contents` — "Save HTML contents".** Uses
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
     saves it as `contents-<timestamp>.html`. The capture is
@@ -93,43 +95,85 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     Downloads both artifacts and writes a record that references
     both.
 
-- **Default click action.** The id of one `CAPTURE_ACTIONS` entry
-  is persisted in `chrome.storage.local` under the
-  `defaultClickAction` key.
+- **Default click action.** Two separate defaults are persisted:
+  one for clicks on a page that has a selection, another for clicks
+  on a page that doesn't.
 
+  - Storage keys: `defaultClickWithSelection` and
+    `defaultClickWithoutSelection` in `chrome.storage.local`.
+  - Fresh installs default to `capture-selection-html` (with
+    selection) and `capture-with-details` (without selection).
   - A click on the toolbar icon fires `chrome.action.onClicked`,
-    which routes through `handleActionClick`. Three cases:
+    which routes through `handleActionClick`. Five cases:
     1. **Viewing the capture page** — if the active tab is a
        `capture.html` page with stashed session data, the click
        sends it a `triggerCapture` message, which programmatically
        clicks the Capture button.
-    2. **Double-click** — a second click within 250 ms runs an
-       alternate action: screenshot when the default is
-       `capture-with-details`, or capture-with-details when
-       the default is anything else.
-    3. **Single click** — waits 250 ms for a potential second
-       click, then runs the default action.
-  - Fresh installs default to `capture-with-details` — the details
-    page with double-click screenshot shortcut.
-  - Every generated variant is defaultable — the "Set default
-    click action" submenu has a row per delay and includes each
-    base that has a variant at that delay. Bases with
-    `supportsDelayed: false` (e.g. `capture-url`,
-    `capture-selection-*`) only show up in the 0s row.
-  - The toolbar icon's hover tooltip is set from the selected
-    action's `tooltip` field via `chrome.action.setTitle`, so the
-    icon always tells the user what a click is about to do.
-    `refreshActionTooltip()` rewrites it whenever the preference
-    changes and on `onInstalled` / `onStartup`.
-  - Every tooltip includes a second line ("Double-click for …")
-    describing the alternate action.
+    2. **Double-click, selection present** — if the with-selection
+       default isn't `ignore-selection`, always open the details
+       page (`startCaptureWithDetails()`), regardless of what the
+       without-selection default would be. Matches the "full
+       dialog for this selection" intent and makes the double-click
+       target predictable whenever there's something selected.
+    3. **Double-click, no selection (or ignore mode)** — runs the
+       classic alternate of the without-selection default:
+       `capture-with-details` → screenshot, everything else →
+       `capture-with-details`. Menu hints track this mapping (we
+       can't predict selection state at menu-render time), so
+       hints remain accurate for the common case.
+    4. **Single click, selection present** — if the with-selection
+       default is one of the `capture-selection-<format>` shortcuts
+       or `capture-with-details`, run it. `ignore-selection` skips
+       the selection probe entirely and falls through to the
+       without-selection default.
+    5. **Single click, no selection** — run the without-selection
+       default.
+  - Selection probe runs `scrapeSelection` on the active tab either
+    inside the 250 ms double-click timer (single-click path) or on
+    the second click itself (double-click path), so it always
+    reflects the tab state at dispatch time (after any tab switch
+    during the window). Probe failures (restricted URL, closed tab)
+    fall through to `false` so the click still runs the
+    without-selection default / classic double-click alternate.
+  - **With-selection choices** (five, all at delay 0):
+    - `capture-selection-html` — save the selection as an HTML
+      fragment (the default on fresh installs).
+    - `capture-selection-text` — save the selection as plain text.
+    - `capture-selection-markdown` — save the selection as markdown
+      (HTML → markdown via the pure `htmlToMarkdown` converter).
+    - `capture-with-details` — open the details page with
+      `selectionOnly: true`, which default-checks **only** the Save
+      selection checkbox; the user can still tick screenshot / HTML
+      before clicking Capture.
+    - `ignore-selection` — sentinel. Skip the probe and use the
+      without-selection default.
+  - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
+    except the three `capture-selection-<format>` shortcuts. They
+    are deliberately excluded — they would just error on every
+    click without a selection.
+  - The toolbar icon's hover tooltip is composed from
+    `tooltipFragment` fields pre-authored on each
+    `CaptureAction` / with-selection choice. Layout:
+    - `SeeWhatISee`
+    - blank
+    - `Click: <click.tooltipFragment>`
+    - `Double-click: <doubleClick.tooltipFragment>`
+    - `With selection: <withChoice.tooltipFragment>` (omitted for
+      `ignore-selection`)
+    - trailing blank (separates our content from Chrome's appended
+      "Wants access to this site" line)
+    - When an error is pending, `ERROR: <message>` slots between
+      the app title and the action block, bracketed by its own
+      blanks.
+  - `refreshActionTooltip()` rewrites the title whenever either
+    preference changes and on `onInstalled` / `onStartup`.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
   `contexts: ['action']`. Top level (6 entries):
 
   - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
-    (Take screenshot, Save html contents, Capture with details...),
+    (Take screenshot, Save HTML contents, Capture with details...),
     each running its action immediately when clicked. "Take
     screenshot" is functionally identical to a plain left-click
     when `capture-now` is the default — listed for discoverability.
@@ -139,18 +183,31 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `capture-both`). Separator-grouped by delay. In-submenu
     separators don't count against the top-level cap, so the visual
     grouping is free. More-group actions that don't opt in
-    (capture-url and the three capture-selection-{html,text,markdown}
-    — all `supportsDelayed: false` anyway) are only reachable via
-    "Set default click action" if at all.
-  - **Set default click action ▸** — submenu of normal items, one
-    per `CAPTURE_ACTIONS` entry: five undelayed items, a separator,
-    five 2s-delay items, a separator, then five 5s-delay items.
-    The selected item gets a `✓ ` title prefix; picking one
-    persists its id as `defaultClickAction` and refreshes the
-    tooltip.
+    (`capture-url` and the three
+    `capture-selection-{html,text,markdown}` — all
+    `supportsDelayed: false` anyway) are only reachable via "Set
+    default click action" if at all.
+  - **Set default click action ▸** — submenu with two sections,
+    each introduced by a disabled-item subheading:
+    - **`── When text is selected ──`** header (`enabled: false`),
+      then the five with-selection choices (three
+      `capture-selection-<format>` shortcuts,
+      `capture-with-details`, `ignore-selection`).
+    - Separator.
+    - **`── When no text is selected ──`** header (`enabled: false`),
+      then every `CAPTURE_ACTIONS` entry *except* the
+      `capture-selection-<format>` shortcuts, grouped by delay
+      (0s, 2s, 5s) with separators between delay groups.
+    - The selected item in each section gets a `✓ ` title prefix.
+      Picking one persists its id under the matching storage key
+      (`defaultClickWithSelection` /
+      `defaultClickWithoutSelection`) and refreshes the tooltip.
     - Uses normal items instead of `type: 'radio'` because Chrome's
       radio mutual-exclusion only covers a contiguous run — the
       separator would cause two items to appear selected.
+    - Uses `enabled: false` normal items for the subheadings
+      because `chrome.contextMenus` has no "label" / "group
+      header" type.
 
   - **More ▸** — submenu home for the more-group capture actions
     and for infrequent utilities that would otherwise crowd out
@@ -198,9 +255,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
         — bindable as the default click action at 0s but with no
         2s/5s variants (a delay doesn't help: the selection already
         exists when the user triggers the action).
-    - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
-      most recent capture's screenshot or HTML file's *absolute on-disk
-      path* to the clipboard.
+    - **Copy last screenshot filename** / **Copy last HTML filename** /
+      **Copy last selection filename** — copy the most recent capture's
+      screenshot, HTML, or selection file's *absolute on-disk path* to
+      the clipboard. The selection entry is format-agnostic — a capture
+      only ever writes one selection file (HTML / text / markdown), so
+      a single entry covers all three cases.
       - Path is built by `joinCapturePath(getCaptureDirectory(), filename)`
         — same directory-resolution helper that powers
         **Snapshots directory**. The separator (`/` vs `\`) reuses
@@ -270,7 +330,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `runWithErrorReporting` in `background.ts`.
 
   - On failure: swaps the toolbar icon to a pre-rendered error
-    variant and appends `Last error: …` to the tooltip.
+    variant and slots an `ERROR: …` line under the app title in
+    the tooltip.
   - On later success: restores both.
   - See [`chrome-extension.md`](chrome-extension.md) for the
     design rationale (why not badge text, why not
@@ -748,8 +809,11 @@ permission gaps).
 2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
    is reachable from tests and the devtools console.
 3. Add a new entry to the `BASE_CAPTURE_ACTIONS` array in
-   `src/background.ts` with a base id, base title, base tooltip,
-   a `group: 'primary' | 'more'`, and a `run(delayMs)` that calls
+   `src/background.ts` with a base id, base title, a
+   `baseTooltipFragment` (sentence-case, no trailing "…" —
+   slotted into the toolbar tooltip's `Click: …` /
+   `Double-click: …` lines), a `group: 'primary' | 'more'`, and
+   a `run(delayMs)` that calls
    your new function. The flat `CAPTURE_ACTIONS` array is generated
    from `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load,
    so the new base automatically gains immediate + 2s + 5s variants

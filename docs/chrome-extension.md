@@ -183,9 +183,11 @@ Two-channel error surface routed through one helper.
   solid red rounded-rect badge and a white `!` centered inside it,
   painted in the bottom-right corner. The base icons are restored
   explicitly on next success.
-- **`chrome.action.setTitle`** appends `Last error: <message>` as
-  an extra line on the toolbar tooltip so a user can hover the icon
-  and read what happened without digging into devtools.
+- **`chrome.action.setTitle`** slots an `ERROR: <message>` line
+  directly under the app title on the tooltip (above the blank that
+  already brackets the action block, so it lands where the eye goes
+  first) so a user can hover the icon and read what happened
+  without digging into devtools.
 
 Both calls are wrapped in `runWithErrorReporting(fn)`:
 
@@ -262,14 +264,23 @@ showed the global title. We don't use per-tab titles.
 
 ### Our tooltip strategy
 
-- **Default tooltip.** `refreshActionTooltip()` reads the current
-  default click action's `tooltip` field and calls `setTitle`.
-  Runs on preference change, `onInstalled`, and `onStartup`.
-- **Double-click hint.** Every action's tooltip includes a second
-  line (via embedded `\n`) describing the double-click alternate
-  action.
-- **Error tooltip.** `reportCaptureError()` appends a
-  `Last error: <message>` line. See the error-reporting
+- **Default tooltip.** `refreshActionTooltip()` calls
+  `getDefaultActionTooltip()`, which composes the tooltip from
+  pre-authored `tooltipFragment` fields on the click / double-click
+  `CaptureAction` and the with-selection `WITH_SELECTION_CHOICES`
+  entry. Runs on preference change, `onInstalled`, and `onStartup`.
+- **Layout.** Four lines, bracketed by blanks:
+  `SeeWhatISee` / blank / `Click: …` / `Double-click: …` /
+  `With selection: …` / trailing blank. The trailing blank
+  separates our content from Chrome's appended "Wants access to
+  this site" permission line.
+- **With-selection omission.** The `With selection: …` line is
+  dropped entirely for the `ignore-selection` choice, since the
+  click then behaves identically with or without a selection.
+- **Error tooltip.** `reportCaptureError()` passes the error
+  message into `getDefaultActionTooltip(message)`, which slots
+  `ERROR: <message>` between the app title and the action block
+  (bracketed by its own blank lines). See the error-reporting
   section above.
 
 ### Abandoned: capture-page tooltip override
@@ -288,7 +299,7 @@ active. Approaches tried:
   worked for the initial display, but required an `onActivated`
   listener to restore the default tooltip on tab switch. Problems:
   - Fired on *every* tab switch, not just away from capture tabs.
-  - Erased "Last error:" tooltip messages.
+  - Erased "ERROR:" tooltip messages.
   - Didn't survive switching away and back to the capture tab.
 
 If revisited, the delayed-set-from-page approach was the most
@@ -342,7 +353,9 @@ promising — the main issue was the `onActivated` restore logic.
     checked in each.
   - The "Set default click action" submenu avoids radio items for
     this reason — it uses normal items with a `✓ ` title prefix
-    on the selected entry, updated by `setDefaultClickActionId`.
+    on the selected entry, updated by
+    `setDefaultWithSelectionId` / `setDefaultWithoutSelectionId`
+    (one per section).
 - **Click / double-click hints on run entries.** Top-level entries
   and the "Capture with delay" submenu entries append a
   `  -  (Click)` or `  -  (Double-click)` hint to whichever item
@@ -358,9 +371,11 @@ promising — the main issue was the `onActivated` restore logic.
   - The "Set default click action" submenu is unchanged — its ✓
     already covers "this is the click action", and stacking another
     `(Click)` on the same row is noise.
-  - Hints are refreshed by `setDefaultClickActionId` alongside the ✓
-    prefix updates, so the menu stays in sync with the stored
-    preference.
+  - Hints track the without-selection default only — the
+    with-selection default only kicks in when a selection exists
+    on the active tab, which we can't reliably predict at
+    menu-render time. Refresh happens inside
+    `setDefaultWithoutSelectionId` alongside the ✓ prefix updates.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.
@@ -394,7 +409,8 @@ promising — the main issue was the `onActivated` restore logic.
     parent, and the "More" submenu parent (which hosts the two
     more-group capture actions "Capture URL" and "Capture screenshot
     and HTML", plus "Copy last screenshot filename", "Copy last HTML
-    filename", "Snapshots directory", and "Clear log history"). This
+    filename", "Copy last selection filename", "Snapshots directory",
+    and "Clear log history"). This
     is **at the cap** — any further top-level addition will drop an
     existing entry. Nest new utilities under "More" (or add new
     capture actions with `group: 'more'` so they land there

@@ -5,7 +5,8 @@
 // in runWithErrorReporting so failures surface as:
 //   - a swapped toolbar icon (small red `!` painted on the base
 //     camera, via chrome.action.setIcon)
-//   - a second "Last error: ..." line appended to the toolbar tooltip
+//   - an "ERROR: ..." line slotted under the app title, with a blank
+//     line separating it from the per-action lines that follow
 //
 // and successes restore the base icon + default tooltip. We exercise
 // the helpers directly from the service worker rather than trying to
@@ -23,18 +24,43 @@
 
 import { test, expect } from '../fixtures/extension';
 
-// Base tooltip for the `capture-now` default click action. The
-// background script derives the toolbar title from whichever
-// CAPTURE_ACTIONS entry the user has picked as the default; the
-// tests here pin that selection to `capture-now` in beforeEach so
-// the expected baseline is stable.
-const DEFAULT_TITLE = 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details';
+// Default tooltip on the `capture-now` click action. The background
+// script derives the toolbar title from whichever CAPTURE_ACTIONS
+// entry the user has picked as the default; the tests here pin that
+// selection to `capture-now` in beforeEach (with
+// `capture-selection-html` as the with-selection default) so the
+// expected baseline is stable. Layout:
+//
+//   SeeWhatISee
+//   <blank>
+//   Click: Take screenshot
+//   Double-click: Capture with details
+//   With selection: Capture as HTML
+//   <blank trailing line>
+//
+// The blanks bracket the action block so it has breathing room from
+// the header above and from Chrome's appended "Wants access to this
+// site" permission line below.
+const ACTION_LINES = [
+  'Click: Take screenshot',
+  'Double-click: Capture with details',
+  'With selection: Capture as HTML',
+];
+const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');
+
+// Tooltip shown while an error is pending: the `ERROR: <msg>` line
+// is bracketed by blanks of its own, between the app title and the
+// action block.
+function titleWithError(message: string): string {
+  return ['SeeWhatISee', '', `ERROR: ${message}`, '', ...ACTION_LINES, ''].join('\n');
+}
 
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;
   clearCaptureError: () => Promise<void>;
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
-  setDefaultClickActionId: (id: string) => Promise<void>;
+  setDefaultWithSelectionId: (id: string) => Promise<void>;
+  setDefaultWithoutSelectionId: (id: string) => Promise<void>;
 }
 
 // Per-test harness that hooks chrome.action.setIcon in the service
@@ -80,9 +106,16 @@ test.beforeEach(async ({ getServiceWorker }) => {
   const sw = await getServiceWorker();
   await sw.evaluate(async () => {
     const api = (self as unknown as {
-      SeeWhatISee: { setDefaultClickActionId: (id: string) => Promise<void> };
+      SeeWhatISee: {
+        setDefaultWithSelectionId: (id: string) => Promise<void>;
+        setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+      };
     }).SeeWhatISee;
-    await api.setDefaultClickActionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-now');
+    // Pin the with-selection default too so the tooltip's
+    // "With selection: …" line stays stable regardless of the
+    // starting storage state.
+    await api.setDefaultWithSelectionId('capture-selection-html');
   });
   await installSetIconSpy(sw);
 });
@@ -97,7 +130,7 @@ test('reportCaptureError swaps to the error icon and sets the tooltip', async ({
     return chrome.action.getTitle({});
   });
 
-  expect(title).toBe(`${DEFAULT_TITLE}\nLast error: No active tab found to capture`);
+  expect(title).toBe(titleWithError('No active tab found to capture'));
 
   const calls = await getSetIconCalls(sw);
   expect(calls).toHaveLength(1);
@@ -144,7 +177,7 @@ test('runWithErrorReporting surfaces a rejection as an error state', async ({
     return chrome.action.getTitle({});
   });
 
-  expect(title).toBe(`${DEFAULT_TITLE}\nLast error: simulated failure`);
+  expect(title).toBe(titleWithError('simulated failure'));
   const calls = await getSetIconCalls(sw);
   expect(calls).toHaveLength(1);
   expect(calls[0].path?.[128]).toBe('icons/icon-error-128.png');
@@ -185,5 +218,5 @@ test('repeat failures always reflect the most recent error', async ({ getService
   });
 
   // Tooltip always reflects the *most recent* error — the last call wins.
-  expect(title).toBe(`${DEFAULT_TITLE}\nLast error: third`);
+  expect(title).toBe(titleWithError('third'));
 });

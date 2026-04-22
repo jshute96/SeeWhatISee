@@ -73,6 +73,16 @@ interface DetailsData {
    * scrape failed.
    */
   selectionError?: string;
+  /**
+   * True when the details flow was opened via the with-selection
+   * click default ("Capture with details" on a page with a
+   * selection). In that case the page opens with *only* Save
+   * selection checked (screenshot + html unchecked) to match the
+   * "I'm here for the selection" intent — the user can still tick
+   * the other boxes before clicking Capture. Ignored when no
+   * selection was captured (nothing to default-check).
+   */
+  selectionOnly?: boolean;
 }
 
 /**
@@ -1088,6 +1098,15 @@ async function loadData(): Promise<void> {
         selectionBox.disabled = false;
         selectionBox.checked = true;
         selectionFormatsEl.hidden = false;
+        // Selection-only mode: opened via the with-selection click
+        // default ("Capture with details" on a page with a
+        // selection). Uncheck screenshot + html so Capture writes
+        // just the selection by default. The user can still tick
+        // them back on before clicking Capture.
+        if (response.selectionOnly) {
+          screenshotBox.checked = false;
+          htmlBox.checked = false;
+        }
       } else {
         // Every format is empty (typically a whitespace-only
         // selection). Leave the format rows hidden and surface a
