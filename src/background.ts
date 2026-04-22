@@ -454,7 +454,7 @@ function isDefaultableDelay(delaySec: number): boolean {
 //     error with `No selection content`).
 const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
 const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
-const DEFAULT_WITH_SELECTION_ID = 'capture-selection-html';
+const DEFAULT_WITH_SELECTION_ID = 'capture-selection-markdown';
 const DEFAULT_WITHOUT_SELECTION_ID = 'capture-with-details';
 // Sentinel id used in place of a CAPTURE_ACTIONS id when the user
 // wants a page selection to *not* steer the click default. Never
@@ -475,6 +475,28 @@ const SELECTION_BASE_IDS: ReadonlySet<string> = new Set([
 
 function isSelectionBaseId(baseId: string): boolean {
   return SELECTION_BASE_IDS.has(baseId);
+}
+
+/**
+ * Map the user's with-selection click default to the
+ * `SelectionFormat` the details page should pre-check. When the
+ * default names a specific format (`capture-selection-<fmt>`) it's
+ * mapped directly; any other default (e.g. `capture-with-details`,
+ * `ignore-selection`) falls through to `'markdown'` — matching the
+ * fresh-install default so the details page lands on a single
+ * predictable format whenever the user hasn't explicitly picked one.
+ * The page still falls back to the first non-empty format if the
+ * chosen one happens to have no content (e.g. image-only selection).
+ */
+function detailsDefaultSelectionFormat(withSelectionId: string): SelectionFormat {
+  switch (withSelectionId) {
+    case 'capture-selection-html':
+      return 'html';
+    case 'capture-selection-text':
+      return 'text';
+    default:
+      return 'markdown';
+  }
 }
 
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
@@ -908,10 +930,7 @@ async function handleActionClick(): Promise<void> {
       void runWithErrorReporting(async () => {
         if (useWith) {
           if (withId === 'capture-with-details') {
-            // Selection-only details: the details page opens with
-            // Save selection checked and screenshot/html unchecked,
-            // matching the "I'm here for the selection" intent.
-            await startCaptureWithDetails(0, { selectionOnly: true });
+            await startCaptureWithDetails();
             return;
           }
           const action = findCaptureAction(withId);
@@ -1263,13 +1282,6 @@ interface DetailsSession {
   // it when the details tab closes. Optional: the active-tab
   // lookup can in principle return no id (chrome:// pages, races).
   openerTabId?: number;
-  // True when the details page should open with *only* Save
-  // selection checked (screenshot/html unchecked). Set by
-  // `handleActionClick` when the with-selection click default is
-  // `capture-with-details` and the active tab had a selection.
-  // The page reads this via `getDetailsData` and overrides its
-  // normal checkbox defaults.
-  selectionOnly?: boolean;
   // Per-artifact download tracking.
   //
   // The page's Copy-filename buttons materialize the file on demand
@@ -1319,17 +1331,7 @@ function detailsStorageKey(tabId: number): string {
   return `${DETAILS_STORAGE_PREFIX}${tabId}`;
 }
 
-interface StartDetailsOptions {
-  /** When true, open the details page with only Save selection
-   * checked (screenshot + html unchecked). Used by the with-selection
-   * click-default path where `capture-with-details` is chosen. */
-  selectionOnly?: boolean;
-}
-
-async function startCaptureWithDetails(
-  delayMs = 0,
-  options: StartDetailsOptions = {},
-): Promise<void> {
+async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   // Capture both artifacts *before* opening the new tab so we
   // snapshot the user's current page (not the empty capture.html
   // tab). captureBothToMemory queries the active tab itself, after
@@ -1370,7 +1372,6 @@ async function startCaptureWithDetails(
   const session: DetailsSession = {
     capture: data,
     openerTabId: active?.id,
-    selectionOnly: options.selectionOnly,
   };
   await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: session });
 }
@@ -1877,6 +1878,15 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
       // `htmlError` / `selectionError` propagate any scrape failure
       // from `captureBothToMemory` so the page can grey out the
       // corresponding rows and show an error icon with the reason.
+      //
+      // `defaultSelectionFormat` is the format the details page
+      // should pre-check when the selection has content, derived
+      // from the user's with-selection click default. When that
+      // default names a specific format the page lands on it;
+      // otherwise it falls through to markdown (matching the
+      // fresh-install default). The page still picks a different
+      // format if the chosen one has no content.
+      const withId = await getDefaultWithSelectionId();
       sendResponse({
         screenshotDataUrl: session.capture.screenshotDataUrl,
         html: session.capture.html,
@@ -1884,11 +1894,7 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         url: session.capture.url,
         htmlError: session.capture.htmlError,
         selectionError: session.capture.selectionError,
-        // `selectionOnly` is forwarded unconditionally — the page
-        // ignores it when no selection was captured (nothing to
-        // default-check). When true, the page opens with screenshot
-        // + html unchecked so Capture writes only the selection.
-        selectionOnly: !!session.selectionOnly,
+        defaultSelectionFormat: detailsDefaultSelectionFormat(withId),
       });
     })();
     return true;

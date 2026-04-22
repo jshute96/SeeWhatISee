@@ -977,10 +977,12 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   // The Save-selection-as-HTML row was enabled by loadData (the SW
   // saw our seeded selection and the HTML format always has content
   // when the selection is non-empty), so the pencil button is
-  // clickable rather than stuck in its disabled default state. It's
-  // also the default-checked radio — matching the old "Save
-  // selection" default which always used the HTML serialization.
+  // clickable rather than stuck in its disabled default state.
+  // Pick HTML explicitly — this test exercises the HTML edit /
+  // save flow, so we don't rely on which format loadData picked as
+  // the initial default.
   await expect(capturePage.locator('#edit-selection-html-btn')).toBeEnabled();
+  await capturePage.locator('#cap-selection-html').check();
   await expect(capturePage.locator('#cap-selection-html')).toBeChecked();
 
   // Step 1: Copy the selection HTML before editing — SW writes the
@@ -1054,6 +1056,11 @@ test('details: edit-selection cancel leaves the captured selection untouched', a
     'purple.html',
     seedSelection,
   );
+
+  // The edit flow under test targets the HTML selection body;
+  // pick that format explicitly so we don't depend on which format
+  // loadData chose as the initial default.
+  await capturePage.locator('#cap-selection-html').check();
 
   await capturePage.locator('#edit-selection-html-btn').click();
   await capturePage.locator('#edit-selection-html-textarea').fill('DISCARDED NONSENSE');
@@ -1760,7 +1767,7 @@ for (const { id, format, ext } of [
   });
 }
 
-test('click with selection: with-sel=capture-with-details opens details in selectionOnly mode', async ({
+test('click with selection: with-sel=capture-with-details opens details with selection pre-checked', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1782,10 +1789,10 @@ test('click with selection: with-sel=capture-with-details opens details in selec
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // selectionOnly: screenshot + html unchecked, Save selection
-  // master checked. Any format row may be the default-checked one
-  // (loadData picks the first with content); HTML is the reliable
-  // one against our seeded selection, but any checked format works.
+  // With a selection present, the details page opens focused on
+  // capturing it: Save selection master checked, screenshot
+  // unchecked. HTML is unchecked by default regardless of
+  // selection state.
   await expect(capturePage.locator('#cap-screenshot')).not.toBeChecked();
   await expect(capturePage.locator('#cap-html')).not.toBeChecked();
   await expect(capturePage.locator('#cap-selection')).toBeChecked();
@@ -1861,15 +1868,56 @@ test('double-click with selection: always opens details (even when without-sel=c
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // Double-click opens plain details (NOT selectionOnly), so the
-  // usual defaults apply: screenshot checked, html unchecked,
-  // selection pre-checked because the SW saw our selection.
-  await expect(capturePage.locator('#cap-screenshot')).toBeChecked();
+  // When a selection is present, the details page opens focused
+  // on capturing it: Save selection master checked, screenshot
+  // unchecked. The user can still tick screenshot back on before
+  // clicking Capture.
+  await expect(capturePage.locator('#cap-screenshot')).not.toBeChecked();
   await expect(capturePage.locator('#cap-selection')).toBeChecked();
 
   await capturePage.close();
   await openerPage.close();
 });
+
+// Details-page initial format radio tracks the with-selection
+// click default. Double-click + selection reliably opens the
+// details page regardless of what the click default is, so we use
+// it as the vehicle here. `capture-with-details` is included to
+// cover the fallthrough: any with-sel default that isn't a
+// `capture-selection-<fmt>` shortcut lands on markdown.
+for (const { withSel, expectRadio } of [
+  { withSel: 'capture-selection-html', expectRadio: 'cap-selection-html' },
+  { withSel: 'capture-selection-text', expectRadio: 'cap-selection-text' },
+  { withSel: 'capture-selection-markdown', expectRadio: 'cap-selection-markdown' },
+  { withSel: 'capture-with-details', expectRadio: 'cap-selection-markdown' },
+] as const) {
+  test(`details: initial format radio from with-sel=${withSel} is #${expectRadio}`, async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    await pinClickDefaults(sw, withSel, 'capture-now');
+
+    const openerPage = await extensionContext.newPage();
+    await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+    await openerPage.bringToFront();
+    await seedSelection(openerPage);
+
+    const capturePagePromise = extensionContext.waitForEvent('page', {
+      predicate: (p) => p.url().endsWith('/capture.html'),
+      timeout: 5000,
+    });
+    await runDoubleClick(sw);
+    const capturePage = await capturePagePromise;
+    await capturePage.waitForLoadState('domcontentloaded');
+
+    await expect(capturePage.locator(`#${expectRadio}`)).toBeChecked();
+
+    await capturePage.close();
+    await openerPage.close();
+  });
+}
 
 test('double-click with selection: ignore-selection keeps the classic alternate (screenshot)', async ({
   extensionContext,

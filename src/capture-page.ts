@@ -74,15 +74,16 @@ interface DetailsData {
    */
   selectionError?: string;
   /**
-   * True when the details flow was opened via the with-selection
-   * click default ("Capture with details" on a page with a
-   * selection). In that case the page opens with *only* Save
-   * selection checked (screenshot + html unchecked) to match the
-   * "I'm here for the selection" intent — the user can still tick
-   * the other boxes before clicking Capture. Ignored when no
-   * selection was captured (nothing to default-check).
+   * Format the details page should pre-check when the selection
+   * has content. Derived by the SW from the user's with-selection
+   * click default: a `capture-selection-<fmt>` default maps to its
+   * format, anything else falls through to `'markdown'` (the
+   * fresh-install default). `loadData()` still picks a different
+   * format if the chosen one has no content — e.g. an image-only
+   * selection has HTML content but the markdown / text bodies
+   * trim to empty, so the radio lands on HTML instead.
    */
-  selectionOnly?: boolean;
+  defaultSelectionFormat?: SelectionFormat;
 }
 
 /**
@@ -1067,6 +1068,11 @@ async function loadData(): Promise<void> {
       // non-empty) but every format trims to empty, so the group
       // collapses to the "no usable selection" case.
       let anyFormatHasContent = false;
+      // Track which formats have non-empty content so we can pick
+      // the initial radio in one pass below — the SW-provided
+      // default wins when it's saveable, otherwise we fall back to
+      // the first non-empty format.
+      const contentfulFormats: SelectionFormat[] = [];
       for (const format of SELECTION_FORMATS) {
         const body = response.selections[format];
         const r = selectionRows[format];
@@ -1075,10 +1081,7 @@ async function loadData(): Promise<void> {
           r.radio.disabled = false;
           r.copyBtn.disabled = false;
           r.editBtn.disabled = false;
-          if (defaultSelectionFormat === null) {
-            r.radio.checked = true;
-            defaultSelectionFormat = format;
-          }
+          contentfulFormats.push(format);
           anyFormatHasContent = true;
         } else {
           // Selection *was* captured, but this specific format came
@@ -1091,22 +1094,29 @@ async function loadData(): Promise<void> {
         }
       }
       if (anyFormatHasContent) {
+        // Pick the initial radio. Prefer the user's configured
+        // with-selection default (from the click-default setting),
+        // falling back to the first format with content. The
+        // chosen format also becomes the "sticky default" that the
+        // master checkbox restores when unchecked + re-checked.
+        const preferred = response.defaultSelectionFormat ?? null;
+        const initialFormat =
+          preferred && contentfulFormats.includes(preferred)
+            ? preferred
+            : contentfulFormats[0]!;
+        selectionRows[initialFormat].radio.checked = true;
+        defaultSelectionFormat = initialFormat;
         // At least one format is saveable — enable the master,
         // default-check it, and reveal the format rows. A user
         // who bothered to select text almost certainly wants it
-        // in the record.
+        // in the record. Also uncheck screenshot: when a selection
+        // exists, the details page opens focused on capturing it,
+        // not the whole page. The user can still tick screenshot
+        // back on before clicking Capture.
         selectionBox.disabled = false;
         selectionBox.checked = true;
         selectionFormatsEl.hidden = false;
-        // Selection-only mode: opened via the with-selection click
-        // default ("Capture with details" on a page with a
-        // selection). Uncheck screenshot + html so Capture writes
-        // just the selection by default. The user can still tick
-        // them back on before clicking Capture.
-        if (response.selectionOnly) {
-          screenshotBox.checked = false;
-          htmlBox.checked = false;
-        }
+        screenshotBox.checked = false;
       } else {
         // Every format is empty (typically a whitespace-only
         // selection). Leave the format rows hidden and surface a

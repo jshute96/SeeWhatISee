@@ -101,7 +101,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   - Storage keys: `defaultClickWithSelection` and
     `defaultClickWithoutSelection` in `chrome.storage.local`.
-  - Fresh installs default to `capture-selection-html` (with
+  - Fresh installs default to `capture-selection-markdown` (with
     selection) and `capture-with-details` (without selection).
   - A click on the toolbar icon fires `chrome.action.onClicked`,
     which routes through `handleActionClick`. Five cases:
@@ -137,16 +137,35 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     without-selection default / classic double-click alternate.
   - **With-selection choices** (five, all at delay 0):
     - `capture-selection-html` — save the selection as an HTML
-      fragment (the default on fresh installs).
+      fragment.
     - `capture-selection-text` — save the selection as plain text.
     - `capture-selection-markdown` — save the selection as markdown
       (HTML → markdown via the pure `htmlToMarkdown` converter).
-    - `capture-with-details` — open the details page with
-      `selectionOnly: true`, which default-checks **only** the Save
-      selection checkbox; the user can still tick screenshot / HTML
-      before clicking Capture.
+      Default on fresh installs.
+    - `capture-with-details` — open the details page. When a
+      selection is present the page default-checks **only** the
+      Save selection checkbox (screenshot unchecked); the user can
+      still tick screenshot back on before clicking Capture.
     - `ignore-selection` — sentinel. Skip the probe and use the
       without-selection default.
+  - **Details-page defaults under a selection.** Whenever the
+    details page opens on a capture whose selection has content,
+    `loadData()` default-checks the Save selection master and
+    unchecks the screenshot checkbox — regardless of how the
+    details page was opened (single click, double-click, context
+    menu, More submenu). The format radio is pre-selected based on
+    the user's with-selection click default:
+    - A `capture-selection-<fmt>` default maps to its format.
+    - Any other default (`capture-with-details`,
+      `ignore-selection`) falls through to markdown — matching the
+      fresh-install default so the page lands on a single
+      predictable format whenever the user hasn't explicitly
+      picked one.
+    - If the chosen format has no content (e.g. image-only
+      selection → empty markdown / text), the page falls back to
+      the first non-empty format instead.
+    - The SW computes this via `detailsDefaultSelectionFormat` and
+      forwards it on `getDetailsData.defaultSelectionFormat`.
   - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
     except the three `capture-selection-<format>` shortcuts. They
     are deliberately excluded — they would just error on every
@@ -559,7 +578,18 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       implies "save the selection").
     - Unchecking the master clears all three radios.
     - Re-checking the master restores the last-picked format (or
-      the default — first non-empty format — on the first check).
+      the initial default on the first check — see below).
+  - Initial default under a selection:
+    - Screenshot checkbox unchecks automatically — the page opens
+      focused on capturing the selection, not the whole tab.
+    - Save selection master auto-checks; the radio lands on the
+      SW-reported `defaultSelectionFormat`.
+    - That format is derived from the with-selection click default
+      (`capture-selection-<fmt>` → its format, anything else →
+      markdown).
+    - If the chosen format has no content (e.g. image-only
+      selection), the page falls back to the first non-empty
+      format.
   - Each radio enables independently based on the presence of
     non-empty content in that format (an image-only selection
     enables HTML but leaves text / markdown disabled with a
