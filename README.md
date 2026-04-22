@@ -29,7 +29,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
     - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
-    - **Copy last screenshot, HMTL, or selection filename** — Copies filename to clipboard.
+    - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
