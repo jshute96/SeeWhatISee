@@ -484,19 +484,22 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
     return { a, b, c, d };
   });
 
-  const WITH_SEL_LINE = 'With selection: capture selection as html';
-  expect(titles.a).toBe(
-    `SeeWhatISee — Capture visible tab\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
-  );
-  expect(titles.b).toBe(
-    `SeeWhatISee — Capture visible tab in 2s\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
-  );
-  expect(titles.c).toBe(
-    `SeeWhatISee — Save HTML contents\n${WITH_SEL_LINE}\nDouble-click for capture with details`,
-  );
-  expect(titles.d).toBe(
-    `SeeWhatISee — Capture with details\n${WITH_SEL_LINE}\nDouble-click for screenshot`,
-  );
+  // Tooltip layout (bracketed by blank lines above and below the
+  // action block — see `getDefaultActionTooltip`):
+  //
+  //   SeeWhatISee
+  //   <blank>
+  //   Click: <…>
+  //   Double-click: <…>
+  //   With selection: <…>
+  //   <blank trailing line>
+  const withSelLine = 'With selection: Capture as HTML';
+  const expected = (click: string, dbl: string) =>
+    ['SeeWhatISee', '', `Click: ${click}`, `Double-click: ${dbl}`, withSelLine, ''].join('\n');
+  expect(titles.a).toBe(expected('Take screenshot', 'Capture with details'));
+  expect(titles.b).toBe(expected('Take screenshot in 2s', 'Capture with details'));
+  expect(titles.c).toBe(expected('Save HTML contents', 'Capture with details'));
+  expect(titles.d).toBe(expected('Capture with details', 'Take screenshot'));
 });
 
 // ─── Copy-filename buttons on the capture page ────────────────────

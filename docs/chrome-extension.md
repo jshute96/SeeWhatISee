@@ -183,9 +183,11 @@ Two-channel error surface routed through one helper.
   solid red rounded-rect badge and a white `!` centered inside it,
   painted in the bottom-right corner. The base icons are restored
   explicitly on next success.
-- **`chrome.action.setTitle`** appends `Last error: <message>` as
-  an extra line on the toolbar tooltip so a user can hover the icon
-  and read what happened without digging into devtools.
+- **`chrome.action.setTitle`** slots an `ERROR: <message>` line
+  directly under the app title on the tooltip (above the blank that
+  already brackets the action block, so it lands where the eye goes
+  first) so a user can hover the icon and read what happened
+  without digging into devtools.
 
 Both calls are wrapped in `runWithErrorReporting(fn)`:
 
@@ -268,9 +270,9 @@ showed the global title. We don't use per-tab titles.
 - **Double-click hint.** Every action's tooltip includes a second
   line (via embedded `\n`) describing the double-click alternate
   action.
-- **Error tooltip.** `reportCaptureError()` appends a
-  `Last error: <message>` line. See the error-reporting
-  section above.
+- **Error tooltip.** `reportCaptureError()` slots an
+  `ERROR: <message>` line under the app title (with a blank line
+  under it). See the error-reporting section above.
 
 ### Abandoned: capture-page tooltip override
 
@@ -288,7 +290,7 @@ active. Approaches tried:
   worked for the initial display, but required an `onActivated`
   listener to restore the default tooltip on tab switch. Problems:
   - Fired on *every* tab switch, not just away from capture tabs.
-  - Erased "Last error:" tooltip messages.
+  - Erased "ERROR:" tooltip messages.
   - Didn't survive switching away and back to the capture tab.
 
 If revisited, the delayed-set-from-page approach was the most
@@ -398,7 +400,8 @@ promising — the main issue was the `onActivated` restore logic.
     parent, and the "More" submenu parent (which hosts the two
     more-group capture actions "Capture URL" and "Capture screenshot
     and HTML", plus "Copy last screenshot filename", "Copy last HTML
-    filename", "Snapshots directory", and "Clear log history"). This
+    filename", "Copy last selection filename", "Snapshots directory",
+    and "Clear log history"). This
     is **at the cap** — any further top-level addition will drop an
     existing entry. Nest new utilities under "More" (or add new
     capture actions with `group: 'more'` so they land there

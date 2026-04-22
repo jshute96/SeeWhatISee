@@ -61,7 +61,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `await` keeps the service worker alive for the duration. Any `delayMs` value is also callable
     from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
-  - **`save-page-contents` — "Save html contents".** Uses
+  - **`save-page-contents` — "Save HTML contents".** Uses
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
     saves it as `contents-<timestamp>.html`. The capture is
@@ -107,23 +107,32 @@ design live in [`chrome-extension.md`](chrome-extension.md).
        `capture.html` page with stashed session data, the click
        sends it a `triggerCapture` message, which programmatically
        clicks the Capture button.
-    2. **Double-click** — a second click within 250 ms runs an
-       alternate action, derived from the without-selection default
-       only (screenshot when the default is `capture-with-details`,
-       otherwise `capture-with-details`). Menu hints stay in sync
-       regardless of selection state.
-    3. **Single click, selection present** — if the with-selection
+    2. **Double-click, selection present** — if the with-selection
+       default isn't `ignore-selection`, always open the details
+       page (`startCaptureWithDetails()`), regardless of what the
+       without-selection default would be. Matches the "full
+       dialog for this selection" intent and makes the double-click
+       target predictable whenever there's something selected.
+    3. **Double-click, no selection (or ignore mode)** — runs the
+       classic alternate of the without-selection default:
+       `capture-with-details` → screenshot, everything else →
+       `capture-with-details`. Menu hints track this mapping (we
+       can't predict selection state at menu-render time), so
+       hints remain accurate for the common case.
+    4. **Single click, selection present** — if the with-selection
        default is one of the `capture-selection-<format>` shortcuts
        or `capture-with-details`, run it. `ignore-selection` skips
        the selection probe entirely and falls through to the
        without-selection default.
-    4. **Single click, no selection** — run the without-selection
+    5. **Single click, no selection** — run the without-selection
        default.
-  - Selection probe runs `scrapeSelection` on the active tab inside
-    the 250 ms double-click timer, so it reflects the tab state at
-    dispatch time (after any tab switch during the window). Probe
-    failures (restricted URL, closed tab) fall through to
-    `false` so the click still runs the without-selection default.
+  - Selection probe runs `scrapeSelection` on the active tab either
+    inside the 250 ms double-click timer (single-click path) or on
+    the second click itself (double-click path), so it always
+    reflects the tab state at dispatch time (after any tab switch
+    during the window). Probe failures (restricted URL, closed tab)
+    fall through to `false` so the click still runs the
+    without-selection default / classic double-click alternate.
   - **With-selection choices** (five, all at delay 0):
     - `capture-selection-html` — save the selection as an HTML
       fragment (the default on fresh installs).
@@ -143,8 +152,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - The toolbar icon's hover tooltip is built dynamically from both
     defaults in three lines:
     - First line: the without-selection default's main description.
-    - `With selection: <action>` — the with-selection default.
     - `Double-click for <action>` — the alternate for double-click.
+    - `With selection: <action>` — the with-selection default.
   - `refreshActionTooltip()` rewrites it whenever either preference
     changes and on `onInstalled` / `onStartup`.
 
@@ -153,7 +162,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `contexts: ['action']`. Top level (6 entries):
 
   - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
-    (Take screenshot, Save html contents, Capture with details...),
+    (Take screenshot, Save HTML contents, Capture with details...),
     each running its action immediately when clicked. "Take
     screenshot" is functionally identical to a plain left-click
     when `capture-now` is the default — listed for discoverability.
@@ -169,12 +178,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     default click action" if at all.
   - **Set default click action ▸** — submenu with two sections,
     each introduced by a disabled-item subheading:
-    - **— When text is selected —** header (`enabled: false`),
+    - **`── When text is selected ──`** header (`enabled: false`),
       then the five with-selection choices (three
       `capture-selection-<format>` shortcuts,
       `capture-with-details`, `ignore-selection`).
     - Separator.
-    - **— When no text is selected —** header (`enabled: false`),
+    - **`── When no text is selected ──`** header (`enabled: false`),
       then every `CAPTURE_ACTIONS` entry *except* the
       `capture-selection-<format>` shortcuts, grouped by delay
       (0s, 2s, 5s) with separators between delay groups.
@@ -235,9 +244,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
         — bindable as the default click action at 0s but with no
         2s/5s variants (a delay doesn't help: the selection already
         exists when the user triggers the action).
-    - **Copy last screenshot filename** / **Copy last HTML filename** — copy the
-      most recent capture's screenshot or HTML file's *absolute on-disk
-      path* to the clipboard.
+    - **Copy last screenshot filename** / **Copy last HTML filename** /
+      **Copy last selection filename** — copy the most recent capture's
+      screenshot, HTML, or selection file's *absolute on-disk path* to
+      the clipboard. The selection entry is format-agnostic — a capture
+      only ever writes one selection file (HTML / text / markdown), so
+      a single entry covers all three cases.
       - Path is built by `joinCapturePath(getCaptureDirectory(), filename)`
         — same directory-resolution helper that powers
         **Snapshots directory**. The separator (`/` vs `\`) reuses
@@ -307,7 +319,8 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `runWithErrorReporting` in `background.ts`.
 
   - On failure: swaps the toolbar icon to a pre-rendered error
-    variant and appends `Last error: …` to the tooltip.
+    variant and slots an `ERROR: …` line under the app title in
+    the tooltip.
   - On later success: restores both.
   - See [`chrome-extension.md`](chrome-extension.md) for the
     design rationale (why not badge text, why not

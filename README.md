@@ -25,13 +25,13 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Two sections, one per
     selection state:
-    - **— When text is selected —** — *Capture selection as HTML*
+    - **`── When text is selected ──`** — *Capture selection as HTML*
       (default), *Capture selection as text*, *Capture selection as
       markdown*, *Capture with details…* (opens the details page
       with only the Save selection checkbox pre-ticked), or
       *Ignore selection* (fall through to the other default).
-    - **— When no text is selected —** — Any of the other capture
-      actions (*Take screenshot*, *Save html contents*, *Capture
+    - **`── When no text is selected ──`** — Any of the other capture
+      actions (*Take screenshot*, *Save HTML contents*, *Capture
       with details…*, *Capture URL*, *Capture screenshot and HTML*)
       at delays 0s, 2s, or 5s.
     - If you choose another default single-click action, double-click will open *Capture with details*.
@@ -41,6 +41,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
+    - **Copy last selection filename** — Copies filename to clipboard (HTML, text, or markdown — whichever format the last capture wrote).
     - **Snapshots directory** — Opens the on-disk capture directory
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.

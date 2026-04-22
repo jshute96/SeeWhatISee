@@ -70,14 +70,11 @@ async function reportCaptureError(err: unknown): Promise<void> {
     console.warn('[SeeWhatISee] failed to set error icon:', iconErr);
   }
   try {
-    // Base tooltip is whichever CAPTURE_ACTIONS entry the user has
-    // picked as the default click action (falls back to capture-with-details).
-    // Final line shows the error. Chrome's toolbar tooltip honors
-    // embedded newlines on macOS / Windows / most Linux DEs.
-    const baseTitle = await getDefaultActionTooltip();
-    await chrome.action.setTitle({
-      title: `${baseTitle}\nLast error: ${message}`,
-    });
+    // `getDefaultActionTooltip` does the layout (slots ERROR under
+    // the app title, brackets the action block with blanks). Chrome's
+    // toolbar tooltip honors embedded newlines on macOS / Windows /
+    // most Linux DEs.
+    await chrome.action.setTitle({ title: await getDefaultActionTooltip(message) });
   } catch (titleErr) {
     console.warn('[SeeWhatISee] failed to set error tooltip:', titleErr);
   }
@@ -102,7 +99,8 @@ async function clearCaptureError(): Promise<void> {
  * Run a capture-like action with unified error reporting. A
  * successful run clears any lingering error state (restores the
  * normal icon + default tooltip); a failure swaps in the error
- * icon variant and appends a `Last error: …` line to the tooltip.
+ * icon variant and slots an `ERROR: …` line under the app title in
+ * the tooltip.
  * Used by every user-initiated capture path (toolbar click,
  * context-menu entries).
  */
@@ -198,8 +196,15 @@ interface BaseCaptureAction {
   baseId: string;
   /** Short label for the undelayed variant, e.g. "Take screenshot". */
   baseTitle: string;
-  /** Tooltip for the undelayed variant. */
-  baseTooltip: string;
+  /**
+   * Short form of the title that slots into a tooltip line
+   * (`Click: <fragment>` etc.). Authored sentence-case, with no
+   * trailing "..." / ellipsis — capitalization is preserved on
+   * acronyms (HTML / URL). The delayed derivation below just
+   * appends ` in Ns` so the fragment text itself never has to be
+   * transformed at render time.
+   */
+  baseTooltipFragment: string;
   /** Menu placement for the undelayed variant (see `ActionGroup`). */
   group: ActionGroup;
   /** When `false`, only the 0s variant is generated — no 2s / 5s
@@ -223,9 +228,12 @@ interface CaptureAction {
   id: string;
   /** Short label shown in the context menu. */
   title: string;
-  /** Tooltip shown on the toolbar icon when this action is the
-   * current default. */
-  tooltip: string;
+  /**
+   * Sentence-fragment form for tooltip lines — the base fragment
+   * plus ` in Ns` for delayed variants. Satisfies `TooltipAction`
+   * so the action object drops straight into `buildActionTooltip`.
+   */
+  tooltipFragment: string;
   /** Which base action this came from (for grouping / rendering). */
   baseId: string;
   /** Inherited from the base action — controls which menu section
@@ -294,28 +302,28 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-now',
     baseTitle: 'Take screenshot',
-    baseTooltip: 'SeeWhatISee — Capture visible tab\nDouble-click for capture with details',
+    baseTooltipFragment: 'Take screenshot',
     group: 'primary',
     run: (delayMs) => captureVisible(delayMs),
   },
   {
     baseId: 'save-page-contents',
-    baseTitle: 'Save html contents',
-    baseTooltip: 'SeeWhatISee — Save HTML contents\nDouble-click for capture with details',
+    baseTitle: 'Save HTML contents',
+    baseTooltipFragment: 'Save HTML contents',
     group: 'primary',
     run: (delayMs) => savePageContents(delayMs),
   },
   {
     baseId: 'capture-with-details',
     baseTitle: 'Capture with details...',
-    baseTooltip: 'SeeWhatISee — Capture with details\nDouble-click for screenshot',
+    baseTooltipFragment: 'Capture with details',
     group: 'primary',
     run: (delayMs) => startCaptureWithDetails(delayMs),
   },
   {
     baseId: 'capture-url',
     baseTitle: 'Capture URL',
-    baseTooltip: 'SeeWhatISee — Capture URL only\nDouble-click for capture with details',
+    baseTooltipFragment: 'Capture URL',
     group: 'more',
     // A URL capture is a trivially cheap log write, so the only
     // thing a delay could change is the URL itself (user navigates
@@ -328,7 +336,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-both',
     baseTitle: 'Capture screenshot and HTML',
-    baseTooltip: 'SeeWhatISee — Capture screenshot + HTML\nDouble-click for capture with details',
+    baseTooltipFragment: 'Capture screenshot and HTML',
     group: 'more',
     // Promote delayed variants up into the Capture-with-delay
     // submenu (next to plain screenshot / HTML / details). The
@@ -348,7 +356,14 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-selection-html',
     baseTitle: 'Capture selection as HTML',
-    baseTooltip: 'SeeWhatISee — Capture selected text as HTML\nDouble-click for capture with details',
+    // The three `capture-selection-*` fragments deliberately elide
+    // the word "selection" — these actions only ever surface in the
+    // toolbar tooltip's `With selection: …` line (they're filtered
+    // out of the without-selection default pool by `isSelectionBaseId`,
+    // and not bindable as a click target elsewhere), and the prefix
+    // already carries that context. Keeping the word would produce
+    // `With selection: capture selection as html`, repeating itself.
+    baseTooltipFragment: 'Capture as HTML',
     group: 'more',
     // The selection already exists when the user triggers the
     // action; waiting doesn't help. Still bindable as the default
@@ -359,7 +374,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-selection-text',
     baseTitle: 'Capture selection as text',
-    baseTooltip: 'SeeWhatISee — Capture selected text as plain text\nDouble-click for capture with details',
+    baseTooltipFragment: 'Capture as text',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('text', delayMs),
@@ -367,7 +382,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'capture-selection-markdown',
     baseTitle: 'Capture selection as markdown',
-    baseTooltip: 'SeeWhatISee — Capture selected text as markdown\nDouble-click for capture with details',
+    baseTooltipFragment: 'Capture as markdown',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('markdown', delayMs),
@@ -394,11 +409,11 @@ function delayedTitle(baseTitle: string, delaySec: number): string {
   return `${baseTitle} in ${delaySec}s`;
 }
 
-function delayedTooltip(baseTooltip: string, delaySec: number): string {
-  if (delaySec === 0) return baseTooltip;
-  const [firstLine, ...rest] = baseTooltip.split('\n');
-  const delayed = `${firstLine} in ${delaySec}s`;
-  return rest.length > 0 ? `${delayed}\n${rest.join('\n')}` : delayed;
+// Tooltip fragments don't carry the "..." dialog convention, so the
+// delayed form is a plain suffix. Mirrors `delayedTitle` but without
+// the ellipsis shuffle.
+function delayedTooltipFragment(baseFragment: string, delaySec: number): string {
+  return delaySec === 0 ? baseFragment : `${baseFragment} in ${delaySec}s`;
 }
 
 const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) => {
@@ -407,7 +422,7 @@ const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) => 
   return delays.map((delaySec) => ({
     id: delayedId(base.baseId, delaySec),
     title: delayedTitle(base.baseTitle, delaySec),
-    tooltip: delayedTooltip(base.baseTooltip, delaySec),
+    tooltipFragment: delayedTooltipFragment(base.baseTooltipFragment, delaySec),
     baseId: base.baseId,
     group: base.group,
     showInDelayedSubmenu,
@@ -441,6 +456,12 @@ const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
 const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
 const DEFAULT_WITH_SELECTION_ID = 'capture-selection-html';
 const DEFAULT_WITHOUT_SELECTION_ID = 'capture-with-details';
+// Sentinel id used in place of a CAPTURE_ACTIONS id when the user
+// wants a page selection to *not* steer the click default. Never
+// appears in CAPTURE_ACTIONS; `handleActionClick` treats it as "fall
+// through to the without-selection default", and in the tooltip the
+// corresponding `With selection:` line is omitted entirely.
+const IGNORE_SELECTION_ID = 'ignore-selection';
 
 // Every `capture-selection-<format>` baseId — the union we filter out
 // of the without-selection default pool. Kept in one place so adding
@@ -455,11 +476,7 @@ const SELECTION_BASE_IDS: ReadonlySet<string> = new Set([
 function isSelectionBaseId(baseId: string): boolean {
   return SELECTION_BASE_IDS.has(baseId);
 }
-// Sentinel used in place of a CAPTURE_ACTIONS id when the user wants
-// a page selection to *not* steer the click default. Never appears in
-// CAPTURE_ACTIONS; `handleActionClick` treats it as "fall through to
-// the without-selection default".
-const IGNORE_SELECTION_ID = 'ignore-selection';
+
 const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 const DELAYED_PARENT_ID = 'delayed-capture-parent';
 const MORE_PARENT_ID = 'more-parent';
@@ -476,27 +493,51 @@ const DEFAULT_CLICK_WITHOUT_SEL_PREFIX = 'set-default-without-sel-';
 const WITH_SEL_HEADER_ID = 'default-with-sel-header';
 const WITHOUT_SEL_HEADER_ID = 'default-without-sel-header';
 
-// Selectable defaults for the "when there is a selection" row.
-// `ignore-selection` is a sentinel; the rest reuse CAPTURE_ACTIONS ids
-// so the click path can route through `findCaptureAction`. Three of
-// them are the per-format selection shortcuts (HTML / text / markdown)
-// — a single capture can only write one selection file, so the user
-// picks the format here rather than at click time.
-interface WithSelectionChoice {
-  id: string;
-  title: string;
-}
-const WITH_SELECTION_CHOICES: WithSelectionChoice[] = [
-  { id: 'capture-selection-html', title: 'Capture selection as HTML' },
-  { id: 'capture-selection-text', title: 'Capture selection as text' },
-  { id: 'capture-selection-markdown', title: 'Capture selection as markdown' },
-  { id: 'capture-with-details', title: 'Capture with details...' },
-  { id: IGNORE_SELECTION_ID, title: 'Ignore selection (use default below)' },
-];
-
 function findCaptureAction(id: string | undefined): CaptureAction | undefined {
   return CAPTURE_ACTIONS.find((a) => a.id === id);
 }
+
+// Selectable defaults for the "when there is a selection" section of
+// the default-click submenu. The four action-backed entries are
+// derived from CAPTURE_ACTIONS so their titles + tooltip fragments
+// stay in lockstep with the menu entries — editing a fragment on the
+// base action picks up here too, and the selection-specific fragments
+// (`capture as html`, etc.) are the ones that flow into the tooltip's
+// `With selection: …` line. The `ignore-selection` sentinel is
+// authored in place; it has no CAPTURE_ACTIONS entry because it maps
+// to "fall through to the without-selection default" rather than a
+// real action.
+interface WithSelectionChoice {
+  id: string;
+  title: string;
+  /** Fragment for the tooltip's `With selection:` line, or `null`
+   *  to omit the line. */
+  tooltipFragment: string | null;
+}
+
+const WITH_SELECTION_CHOICE_ACTION_IDS = [
+  'capture-selection-html',
+  'capture-selection-text',
+  'capture-selection-markdown',
+  'capture-with-details',
+] as const;
+
+const WITH_SELECTION_CHOICES: WithSelectionChoice[] = [
+  ...WITH_SELECTION_CHOICE_ACTION_IDS.map((id) => {
+    const action = findCaptureAction(id);
+    if (!action) throw new Error(`with-selection choice missing action: ${id}`);
+    return {
+      id: action.id,
+      title: action.title,
+      tooltipFragment: action.tooltipFragment,
+    };
+  }),
+  {
+    id: IGNORE_SELECTION_ID,
+    title: 'Ignore selection (use default below)',
+    tooltipFragment: null,
+  },
+];
 
 function findWithSelectionChoice(id: string | undefined): WithSelectionChoice | undefined {
   return WITH_SELECTION_CHOICES.find((c) => c.id === id);
@@ -530,35 +571,56 @@ async function getDefaultWithoutSelectionAction(): Promise<CaptureAction> {
   return findCaptureAction(id) ?? CAPTURE_ACTIONS[0]!;
 }
 
-function withSelectionSummary(id: string): string {
-  const choice = findWithSelectionChoice(id);
-  if (!choice) return 'capture selection';
-  if (choice.id === IGNORE_SELECTION_ID) return 'ignore (use default)';
-  // Tooltip is lowercase, sentence-fragment style to match the
-  // existing "Double-click for …" line.
-  return choice.title.replace(/\.\.\.$/, '').toLowerCase();
-}
-
 /**
  * Build the toolbar icon tooltip from the two current defaults.
  *
- * Layout is three lines:
- *   1. The without-selection action's main description (first line of
- *      its baked-in tooltip).
- *   2. A `With selection: …` line describing the with-selection
- *      default.
- *   3. The without-selection action's `Double-click for …` line,
- *      taken verbatim from its baked-in tooltip — the double-click
- *      branch in `handleActionClick` derives its target from the
- *      without-selection default, so this stays accurate.
+ * Every fragment is authored on the action / with-selection choice
+ * itself (see `baseTooltipFragment` on `BASE_CAPTURE_ACTIONS` and
+ * `tooltipFragment` on `WITH_SELECTION_CHOICES`), so this function
+ * does no string manipulation — it just reads storage state and
+ * concatenates the pre-built pieces. Layout is:
+ *
+ *   SeeWhatISee
+ *   <blank>                        (only when errorMessage !== undefined)
+ *   ERROR: <errorMessage>          (only when errorMessage !== undefined)
+ *   <blank>
+ *   Click: <click.tooltipFragment>
+ *   Double-click: <doubleClick.tooltipFragment>
+ *   With selection: <withChoice.tooltipFragment>
+ *   <blank>
+ *
+ * The blanks give each block breathing room — bracketing the ERROR
+ * line when present, bracketing the action block always, and
+ * separating the trailing action line from whatever Chrome appends
+ * below (the "Wants access to this site" permission line, for
+ * example).
+ *
+ * The `With selection:` line is omitted for the `ignore-selection`
+ * choice (its fragment is `null`), since the click then behaves
+ * identically with or without a selection and the extra line would
+ * just be noise.
  */
-async function getDefaultActionTooltip(): Promise<string> {
-  const withoutAction = await getDefaultWithoutSelectionAction();
+async function getDefaultActionTooltip(errorMessage?: string): Promise<string> {
+  const click = await getDefaultWithoutSelectionAction();
   const withId = await getDefaultWithSelectionId();
-  const [mainLine, ...rest] = withoutAction.tooltip.split('\n');
-  const dblLine = rest.join('\n');
-  const withLine = `With selection: ${withSelectionSummary(withId)}`;
-  return dblLine ? `${mainLine}\n${withLine}\n${dblLine}` : `${mainLine}\n${withLine}`;
+  const doubleClick =
+    findCaptureAction(doubleClickActionId(click.id)) ?? CAPTURE_ACTIONS[0]!;
+  const withChoice = findWithSelectionChoice(withId);
+  const lines: string[] = ['SeeWhatISee'];
+  if (errorMessage !== undefined) lines.push('', `ERROR: ${errorMessage}`);
+  lines.push(
+    '',
+    `Click: ${click.tooltipFragment}`,
+    `Double-click: ${doubleClick.tooltipFragment}`,
+  );
+  if (withChoice && withChoice.tooltipFragment !== null) {
+    lines.push(`With selection: ${withChoice.tooltipFragment}`);
+  }
+  // Trailing empty entry → one trailing `\n` after `join('\n')`,
+  // which Chrome's tooltip renderer shows as one blank line below
+  // the action block.
+  lines.push('');
+  return lines.join('\n');
 }
 
 const DEFAULT_SELECTED_PREFIX = '✓ ';
@@ -724,7 +786,7 @@ async function refreshActionTooltip(): Promise<void> {
 // strategy (active tab in the last-focused window).
 //
 // runWithErrorReporting downgrades rejection to console.warn +
-// user-visible icon swap + tooltip "Last error:" line, so
+// user-visible icon swap + tooltip "ERROR:" line, so
 // user-actionable failures like "No active tab found to capture"
 // don't get promoted onto the chrome://extensions Errors page.
 //
@@ -779,17 +841,33 @@ async function handleActionClick(): Promise<void> {
   }
 
   const withoutId = await getDefaultWithoutSelectionId();
+  const withId = await getDefaultWithSelectionId();
 
-  // Double-click: run the alternate action. Derived from the
-  // without-selection default for consistency with the menu hints,
-  // which assume the user is about to click without a selection (we
-  // can't predict selection state at menu-render time). A user who
-  // wants capture-with-details via double-click on a selection gets
-  // the same dialog, just without the selection-only pre-checked
-  // state — close enough, and keeps the double-click target stable.
+  // Double-click: run the alternate action.
+  //
+  // With a selection present AND the user hasn't opted out via
+  // `ignore-selection`, always route to the details page — regardless
+  // of what the single-click default would be. That's the "give me
+  // the full dialog for this selection" intent, and it's the same
+  // target we'd already pick for every click default except
+  // `capture-with-details` itself. Probing on the second click (not
+  // once up-front) keeps the behavior in sync with the tab state at
+  // dispatch time, the same rationale that drives the probe inside
+  // the first-click timer below.
+  //
+  // Without a selection (or with `ignore-selection`), fall back to
+  // the classic alternate: `capture-with-details` becomes
+  // `capture-now`, everything else becomes `capture-with-details`.
+  // The menu hints track this without-selection mapping (we can't
+  // predict selection state at menu-render time), so choosing the
+  // same mapping here keeps the hints honest for the common case.
   if (pendingClickTimer !== undefined) {
     clearTimeout(pendingClickTimer);
     pendingClickTimer = undefined;
+    if (withId !== IGNORE_SELECTION_ID && (await activeTabHasSelection())) {
+      await runWithErrorReporting(() => startCaptureWithDetails());
+      return;
+    }
     if (withoutId === DEFAULT_WITHOUT_SELECTION_ID) {
       await runWithErrorReporting(() => captureVisible());
     } else {
@@ -803,7 +881,6 @@ async function handleActionClick(): Promise<void> {
   // window, the capture targets whatever tab is visible when the
   // timer fires — captureVisibleTab can only capture what's on
   // screen, and re-activating the original tab would be surprising.
-  const withId = await getDefaultWithSelectionId();
   await new Promise<void>((resolve) => {
     pendingClickTimer = setTimeout(async () => {
       pendingClickTimer = undefined;
@@ -846,51 +923,53 @@ chrome.action.onClicked.addListener(handleActionClick);
 // Right-click context menu on the toolbar action. Structure:
 //
 //   Take screenshot
-//   Save html contents
+//   Save HTML contents
 //   Capture with details...
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Take screenshot in 2s
-//       • Save html contents in 2s
+//       • Save HTML contents in 2s
 //       • Capture with details in 2s...
 //       • Capture screenshot and HTML in 2s
 //       ─────────
 //       • Take screenshot in 5s
-//       • Save html contents in 5s
+//       • Save HTML contents in 5s
 //       • Capture with details in 5s...
 //       • Capture screenshot and HTML in 5s
 //   Set default click action  ▸     (submenu; ✓ on selected in each section)
-//       — When text is selected —          (disabled header)
+//         ──  When text is selected  ──      (disabled header)
 //       ✓ Capture selection as HTML
 //         Capture selection as text
 //         Capture selection as markdown
 //         Capture with details...
 //         Ignore selection (use default below)
 //       ─────────
-//       — When no text is selected —       (disabled header)
+//         ──  When no text is selected  ──   (disabled header)
 //       ✓ Take screenshot
-//         Save html contents
+//         Save HTML contents
 //         Capture with details...
 //         Capture URL                      (no delayed variants)
 //         Capture screenshot and HTML
 //       ─────────
 //         Take screenshot in 2s
-//         Save html contents in 2s
+//         Save HTML contents in 2s
 //         Capture with details in 2s...
 //         Capture screenshot and HTML in 2s
 //       ─────────
 //         Take screenshot in 5s
-//         Save html contents in 5s
+//         Save HTML contents in 5s
 //         Capture with details in 5s...
 //         Capture screenshot and HTML in 5s
 //   More  ▸                         (submenu)
 //       • Capture URL
 //       • Capture screenshot and HTML
+//       ─────────
 //       • Capture selection as HTML      (saves the selected HTML fragment)
 //       • Capture selection as text      (saves selection.toString())
 //       • Capture selection as markdown  (saves HTML → markdown)
 //       ─────────
 //       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
-//       • Copy last HTML filename     (greyed unless latest record has HTML)
+//       • Copy last HTML filename         (greyed unless latest record has HTML)
+//       • Copy last selection filename    (greyed unless latest record has a selection)
 //       ─────────
 //       • Snapshots directory
 //       ─────────
@@ -931,10 +1010,14 @@ const CLEAR_LOG_MENU_ID = 'clear-log';
 const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
 // Ids for the "Copy last …" entries at the top of the More submenu.
 // Their enabled state mirrors whether the most recent capture record
-// carries the matching field (`screenshot` / `contents`); see
-// `refreshCopyMenuState`.
+// carries the matching field (`screenshot` / `contents` / `selection`);
+// see `refreshCopyMenuState`. A single `Copy last selection filename`
+// entry covers all three serialization formats — a capture only ever
+// writes one selection file, so there's no ambiguity about which one
+// the user means.
 const COPY_LAST_SCREENSHOT_MENU_ID = 'copy-last-screenshot';
 const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
+const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 
 /**
  * Read the most recent capture record from chrome.storage.local. Used
@@ -973,6 +1056,13 @@ async function refreshCopyMenuState(): Promise<void> {
   try {
     await chrome.contextMenus.update(COPY_LAST_HTML_MENU_ID, {
       enabled: !!r?.contents,
+    });
+  } catch {
+    /* menu not installed yet */
+  }
+  try {
+    await chrome.contextMenus.update(COPY_LAST_SELECTION_MENU_ID, {
+      enabled: !!r?.selection,
     });
   } catch {
     /* menu not installed yet */
@@ -1087,7 +1177,7 @@ function joinCapturePath(dir: string, name: string): string {
 // if they Clear log history (or it gets cleared) between the
 // `refreshCopyMenuState` storage callback firing and Chrome rendering
 // the new enabled state. Splitting the two messages keeps the
-// "Last error: …" tooltip line legible in either case.
+// "ERROR: …" tooltip line legible in either case.
 async function copyLastScreenshotFilename(): Promise<void> {
   const r = await getLatestCaptureRecord();
   if (!r) throw new Error('No captures in the log to copy from');
@@ -1102,6 +1192,14 @@ async function copyLastHtmlFilename(): Promise<void> {
   if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
   const dir = await getCaptureDirectory();
   await copyToClipboard(joinCapturePath(dir, r.contents.filename));
+}
+
+async function copyLastSelectionFilename(): Promise<void> {
+  const r = await getLatestCaptureRecord();
+  if (!r) throw new Error('No captures in the log to copy from');
+  if (!r.selection) throw new Error('Latest capture has no selection to copy');
+  const dir = await getCaptureDirectory();
+  await copyToClipboard(joinCapturePath(dir, r.selection.filename));
 }
 
 /**
@@ -2014,14 +2112,16 @@ async function installContextMenu(): Promise<void> {
   // Two sections, each with a grayed-out header (normal item with
   // `enabled: false` — contextMenus has no "label" item type):
   //
-  //   — When text is selected —         (header)
-  //     ✓ Capture selection
+  //     ──  When text is selected  ──      (header)
+  //     ✓ Capture selection as HTML
+  //       Capture selection as text
+  //       Capture selection as markdown
   //       Capture with details...
   //       Ignore selection (use default below)
   //   ─────────
-  //   — When no text is selected —      (header)
+  //     ──  When no text is selected  ──   (header)
   //     ✓ Take screenshot
-  //       Save html contents
+  //       Save HTML contents
   //       Capture with details...
   //       Capture URL
   //       Capture screenshot and HTML
@@ -2044,7 +2144,7 @@ async function installContextMenu(): Promise<void> {
   chrome.contextMenus.create({
     id: WITH_SEL_HEADER_ID,
     parentId: DEFAULT_CLICK_PARENT_ID,
-    title: '— When text is selected —',
+    title: '   ──  When text is selected  ──',
     enabled: false,
     contexts: ['action'],
   });
@@ -2062,7 +2162,7 @@ async function installContextMenu(): Promise<void> {
   chrome.contextMenus.create({
     id: WITHOUT_SEL_HEADER_ID,
     parentId: DEFAULT_CLICK_PARENT_ID,
-    title: '— When no text is selected —',
+    title: '   ──  When no text is selected  ──',
     enabled: false,
     contexts: ['action'],
   });
@@ -2104,7 +2204,18 @@ async function installContextMenu(): Promise<void> {
   // onClicked dispatcher's `findCaptureAction(id)` branch handles them
   // without a special case, and `setDefaultWithoutSelectionId`'s
   // hint-refresh loop can update their titles too.
+  //
+  // A separator is dropped between the non-selection entries
+  // (`capture-url`, `capture-both`) and the `capture-selection-*`
+  // format shortcuts — the two groups are semantically distinct
+  // (work on any page vs. only when text is selected) and the
+  // divider makes that visible at a glance.
+  let moreSelectionSeparatorInserted = false;
   for (const action of captureActionsWithDelay(0, 'more')) {
+    if (isSelectionBaseId(action.baseId) && !moreSelectionSeparatorInserted) {
+      createSeparator(`${MORE_PARENT_ID}-sep-selection`, MORE_PARENT_ID);
+      moreSelectionSeparatorInserted = true;
+    }
     chrome.contextMenus.create({
       id: action.id,
       parentId: MORE_PARENT_ID,
@@ -2128,6 +2239,13 @@ async function installContextMenu(): Promise<void> {
     id: COPY_LAST_HTML_MENU_ID,
     parentId: MORE_PARENT_ID,
     title: 'Copy last HTML filename',
+    enabled: false,
+    contexts: ['action'],
+  });
+  chrome.contextMenus.create({
+    id: COPY_LAST_SELECTION_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Copy last selection filename',
     enabled: false,
     contexts: ['action'],
   });
@@ -2255,6 +2373,10 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     await runWithErrorReporting(() => copyLastHtmlFilename());
     return;
   }
+  if (id === COPY_LAST_SELECTION_MENU_ID) {
+    await runWithErrorReporting(() => copyLastSelectionFilename());
+    return;
+  }
 
   // Fallthrough: a click on a menu item we don't recognize.
   // Shouldn't happen in the current menu, but if a future
@@ -2290,6 +2412,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   openSnapshotsDirectory,
   copyLastScreenshotFilename,
   copyLastHtmlFilename,
+  copyLastSelectionFilename,
   reportCaptureError,
   clearCaptureError,
   runWithErrorReporting,

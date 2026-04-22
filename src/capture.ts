@@ -204,7 +204,7 @@ export interface CaptureRecord {
    */
   screenshot?: ScreenshotArtifact;
   /**
-   * Captured HTML artifact. Set on HTML captures — the "Save html
+   * Captured HTML artifact. Set on HTML captures — the "Save HTML
    * contents" menu entry, and the "Capture with details…" path when
    * the user keeps the HTML. Carries the bare filename (no
    * directory) plus an optional `isEdited: true` flag that appears
