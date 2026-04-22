@@ -1202,6 +1202,10 @@ interface EditKindSpec {
   title: string;
   /** The pencil button inside the details-page row for this kind. */
   openBtn: HTMLButtonElement;
+  /** Whether the dialog should expose the Edit / Preview toggle.
+   * Only HTML-bearing kinds render a meaningful preview; text and
+   * markdown kinds stay edit-only. */
+  previewable?: boolean;
   /** Optional post-save hook — e.g. refresh the HTML-size readout. */
   onSaved?: (value: string) => void;
 }
@@ -1210,8 +1214,9 @@ const EDIT_KINDS: EditKindSpec[] = [
   {
     kind: 'html',
     domSlug: 'html',
-    title: 'Edit page contents HTML',
+    title: 'Page contents HTML',
     openBtn: editHtmlBtn,
+    previewable: true,
     onSaved: (v) => {
       htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
     },
@@ -1219,8 +1224,9 @@ const EDIT_KINDS: EditKindSpec[] = [
   {
     kind: 'selectionHtml',
     domSlug: 'selection-html',
-    title: 'Edit selection HTML',
+    title: 'Selection HTML',
     openBtn: selectionRows.html.editBtn,
+    previewable: true,
   },
   {
     kind: 'selectionText',
@@ -1247,6 +1253,10 @@ interface EditDialogParts {
   saveBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
   errorEl: HTMLParagraphElement;
+  modeToggle: HTMLDivElement;
+  editModeBtn: HTMLButtonElement;
+  previewModeBtn: HTMLButtonElement;
+  previewIframe: HTMLIFrameElement;
 }
 
 /**
@@ -1269,6 +1279,10 @@ function createEditDialog(domSlug: string, title: string): EditDialogParts {
   const errorEl = dialog.querySelector('.edit-dialog-error') as HTMLParagraphElement;
   const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
   const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
+  const modeToggle = dialog.querySelector('.edit-dialog-mode-toggle') as HTMLDivElement;
+  const editModeBtn = dialog.querySelector('.edit-dialog-mode-edit') as HTMLButtonElement;
+  const previewModeBtn = dialog.querySelector('.edit-dialog-mode-preview') as HTMLButtonElement;
+  const previewIframe = dialog.querySelector('.edit-dialog-preview') as HTMLIFrameElement;
 
   dialog.id = `edit-${domSlug}-dialog`;
   titleEl.id = `edit-${domSlug}-title`;
@@ -1279,18 +1293,82 @@ function createEditDialog(domSlug: string, title: string): EditDialogParts {
   errorEl.id = `edit-${domSlug}-error`;
   saveBtn.id = `edit-${domSlug}-save`;
   cancelBtn.id = `edit-${domSlug}-cancel`;
+  editModeBtn.id = `edit-${domSlug}-mode-edit`;
+  previewModeBtn.id = `edit-${domSlug}-mode-preview`;
+  previewIframe.id = `edit-${domSlug}-preview`;
 
   document.body.appendChild(dialog);
-  return { dialog, textarea, saveBtn, cancelBtn, errorEl };
+  return {
+    dialog, textarea, saveBtn, cancelBtn, errorEl,
+    modeToggle, editModeBtn, previewModeBtn, previewIframe,
+  };
+}
+
+/**
+ * Build the HTML document for previewing a captured HTML body in a
+ * sandboxed iframe. Parses the HTML via DOMParser (`text/html` mode
+ * is extremely forgiving — malformed input still yields a document),
+ * strips any existing `<base>` (would shadow ours), and injects a
+ * fresh one with the captured page's URL + `target="_blank"` so
+ * relative links resolve and clicks open in a new tab instead of
+ * replacing the preview iframe. Scripts survive parsing but won't
+ * execute because the iframe's sandbox denies `allow-scripts`.
+ * Returned string is loaded via a `blob:` URL (not `srcdoc`) because
+ * srcdoc has a browser attribute-size limit that silently truncates
+ * large captures to blank.
+ */
+function buildPreviewHtml(htmlBody: string, baseUrl: string): string {
+  const doc = new DOMParser().parseFromString(htmlBody, 'text/html');
+  // Defense-in-depth: sandbox already denies `allow-scripts`, so
+  // inline <script> can't run — but stripping makes the previewed
+  // source match what renders and removes the execution vector
+  // entirely. Also drop `<meta http-equiv="refresh">`: without JS
+  // it's the one remaining way for captured HTML to hijack the
+  // preview (auto-navigate the iframe to an attacker URL).
+  doc.querySelectorAll('script').forEach((s) => s.remove());
+  doc.querySelectorAll('meta[http-equiv]').forEach((m) => {
+    if ((m.getAttribute('http-equiv') ?? '').toLowerCase() === 'refresh') {
+      m.remove();
+    }
+  });
+  doc.querySelectorAll('base').forEach((b) => b.remove());
+  const base = doc.createElement('base');
+  if (baseUrl) base.setAttribute('href', baseUrl);
+  base.setAttribute('target', '_blank');
+  // First child of <head> so it wins over anything later in the
+  // document (e.g. a rogue <base> buried in the body).
+  doc.head.insertBefore(base, doc.head.firstChild);
+  // Force UTF-8 so non-ASCII captures (em dashes, curly quotes,
+  // emoji, CJK) don't render as mojibake. Chrome falls back to
+  // Windows-1252 on blob: documents lacking an explicit charset,
+  // turning e.g. "—" (UTF-8 E2 80 94) into "â€”". Inject a
+  // <meta charset> at the very top of <head> (before <base> so
+  // the charset is locked in before any URL parsing).
+  const existingCharsets = doc.head.querySelectorAll(
+    'meta[charset], meta[http-equiv="Content-Type" i]',
+  );
+  existingCharsets.forEach((m) => m.remove());
+  const meta = doc.createElement('meta');
+  meta.setAttribute('charset', 'utf-8');
+  doc.head.insertBefore(meta, doc.head.firstChild);
+  return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 }
 
 function bindEditDialog(spec: EditKindSpec): void {
   const parts = createEditDialog(spec.domSlug, spec.title);
   editDialogs.push(parts.dialog);
 
+  if (spec.previewable) {
+    parts.modeToggle.hidden = false;
+    parts.editModeBtn.addEventListener('click', () => setMode('edit'));
+    parts.previewModeBtn.addEventListener('click', () => setMode('preview'));
+  }
+
   spec.openBtn.addEventListener('click', () => {
     parts.textarea.value = captured[spec.kind];
     clearError();
+    // Always open in Edit mode so the default action is direct editing.
+    if (spec.previewable) setMode('edit');
     parts.dialog.showModal();
     // Defer focus so showModal's own autofocus doesn't overwrite us.
     requestAnimationFrame(() => {
@@ -1301,6 +1379,69 @@ function bindEditDialog(spec: EditKindSpec): void {
       parts.textarea.setSelectionRange(0, 0);
       parts.textarea.scrollTop = 0;
     });
+  });
+
+  /**
+   * Switch the dialog between Edit (textarea visible) and Preview
+   * (sandboxed iframe visible, rendering the current textarea
+   * value). Preview is best-effort rendering — browsers are
+   * extremely tolerant of malformed HTML, and the sandbox + no
+   * same-origin + no allow-scripts keeps any rendered content from
+   * touching the parent page. `<base href>` is injected so relative
+   * URLs resolve against the captured page; `<base target="_blank">`
+   * plus `allow-popups` in the sandbox list opens link clicks as a
+   * normal new tab instead of replacing the preview iframe.
+   */
+  // Blob URL currently bound to `previewIframe.src`. We revoke it
+  // whenever we replace it (mode switch, dialog close) to release
+  // the (potentially multi-MB) HTML body from memory.
+  let previewBlobUrl: string | null = null;
+
+  function setMode(mode: 'edit' | 'preview'): void {
+    const isPreview = mode === 'preview';
+    parts.editModeBtn.classList.toggle('selected', !isPreview);
+    parts.previewModeBtn.classList.toggle('selected', isPreview);
+    parts.editModeBtn.setAttribute('aria-pressed', String(!isPreview));
+    parts.previewModeBtn.setAttribute('aria-pressed', String(isPreview));
+    // Textarea stays in the DOM in both modes so it (a) keeps its
+    // user-resized height defining the slot and (b) can't reflow
+    // the dialog when hidden. `visibility: hidden` hides it visually
+    // but preserves layout; the iframe is positioned absolutely on
+    // top via CSS.
+    parts.textarea.style.visibility = isPreview ? 'hidden' : '';
+    parts.previewIframe.hidden = !isPreview;
+    if (isPreview) {
+      // Use a blob: URL rather than `srcdoc`. srcdoc is an HTML
+      // attribute and hits a browser-dependent size limit that
+      // silently drops large captured HTML, leaving the preview
+      // blank. blob: URLs have no such limit and still load under
+      // the iframe's sandbox (unique opaque origin).
+      revokePreviewBlob();
+      const html = buildPreviewHtml(
+        parts.textarea.value, capturedUrlInput.value,
+      );
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      previewBlobUrl = URL.createObjectURL(blob);
+      parts.previewIframe.src = previewBlobUrl;
+    } else {
+      revokePreviewBlob();
+      parts.previewIframe.removeAttribute('src');
+    }
+  }
+
+  function revokePreviewBlob(): void {
+    if (previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+      previewBlobUrl = null;
+    }
+  }
+
+  // Release the blob when the dialog closes (via Save, Cancel, or
+  // Escape) so we don't leak the captured HTML to memory until the
+  // user reopens the dialog.
+  parts.dialog.addEventListener('close', () => {
+    revokePreviewBlob();
+    parts.previewIframe.removeAttribute('src');
   });
 
   parts.cancelBtn.addEventListener('click', () => {

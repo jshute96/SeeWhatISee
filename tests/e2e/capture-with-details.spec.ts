@@ -1197,6 +1197,219 @@ test('details: edit → edit → save keeps isEdited: true across multiple dialo
   await openerPage.close();
 });
 
+// Both HTML-bearing Edit dialogs (page contents + selection HTML)
+// expose the Edit/Preview toggle. The preview wiring is identical,
+// so we run the same matrix of assertions for each kind — opening
+// via the kind-specific pencil button and asserting against the
+// kind-specific DOM ids. The selection variant needs a seeded
+// selection so its row (and pencil) come out enabled.
+interface PreviewCase {
+  kind: 'html' | 'selection-html';
+  openBtnId: string;
+  slug: string;
+  /** Optional opener hook to inject a live selection. */
+  beforeCapture?: (page: Page) => Promise<void>;
+}
+
+const PREVIEW_CASES: PreviewCase[] = [
+  { kind: 'html', openBtnId: '#edit-html', slug: 'html' },
+  {
+    kind: 'selection-html',
+    openBtnId: '#edit-selection-html-btn',
+    slug: 'selection-html',
+    beforeCapture: seedSelection,
+  },
+];
+
+for (const c of PREVIEW_CASES) {
+  test(`details: ${c.kind} edit dialog preview mode renders the current textarea via a sandboxed iframe`, async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const { openerPage, capturePage } = await openDetailsFlow(
+      extensionContext,
+      fixtureServer,
+      getServiceWorker,
+      'purple.html',
+      c.beforeCapture,
+    );
+
+    const editBtnSel = `#edit-${c.slug}-mode-edit`;
+    const previewBtnSel = `#edit-${c.slug}-mode-preview`;
+    const textareaSel = `#edit-${c.slug}-textarea`;
+    const iframeSel = `#edit-${c.slug}-preview`;
+
+    await capturePage.locator(c.openBtnId).click();
+
+    // Edit is selected by default; Preview is not. The iframe is
+    // hidden, the textarea visible.
+    await expect(capturePage.locator(editBtnSel)).toHaveClass(/selected/);
+    await expect(capturePage.locator(previewBtnSel)).not.toHaveClass(/selected/);
+    await expect(capturePage.locator(textareaSel)).toBeVisible();
+    await expect(capturePage.locator(iframeSel)).toBeHidden();
+
+    // Replace the body with a unique marker so we can check it
+    // renders via the preview iframe.
+    const MARKER = `preview-marker-${c.slug}-9817`;
+    await capturePage.locator(textareaSel).fill(
+      `<html><body><h1>${MARKER}</h1><a href="foo.html">link</a></body></html>`,
+    );
+
+    // Flip to Preview. The iframe shows, the toggle's selected state
+    // flips. The textarea stays in the DOM (kept as layout anchor)
+    // but is hidden via `visibility: hidden`, so its bounding box
+    // persists — the dialog's dimensions can't jump across modes.
+    await capturePage.locator(previewBtnSel).click();
+    await expect(capturePage.locator(previewBtnSel)).toHaveClass(/selected/);
+    await expect(capturePage.locator(editBtnSel)).not.toHaveClass(/selected/);
+    await expect(capturePage.locator(iframeSel)).toBeVisible();
+    expect(await capturePage.locator(textareaSel).evaluate(
+      (el) => getComputedStyle(el).visibility,
+    )).toBe('hidden');
+
+    // The iframe uses a blob: URL (srcdoc has an attribute size limit
+    // that truncates large captures), with sandbox tokens that allow
+    // popups but deny scripts / same-origin / forms / top navigation.
+    const src = await capturePage.locator(iframeSel).getAttribute('src');
+    expect(src).toMatch(/^blob:/);
+    const sandboxTokens = await capturePage.locator(iframeSel)
+      .getAttribute('sandbox');
+    expect(sandboxTokens).toBe('allow-popups allow-popups-to-escape-sandbox');
+
+    // The rendered iframe actually shows the marker content, the
+    // injected <base> is in <head> with href + target=_blank, and a
+    // forced <meta charset="utf-8"> is in place so non-ASCII content
+    // doesn't mojibake under the blob's default charset.
+    const iframe = capturePage.frameLocator(iframeSel);
+    await expect(iframe.locator('h1')).toHaveText(MARKER);
+    await expect(iframe.locator('head meta[charset="utf-8"]')).toHaveCount(1);
+    const baseAttrs = await iframe.locator('head > base').first().evaluate(
+      (el) => ({
+        href: el.getAttribute('href') ?? '',
+        target: el.getAttribute('target') ?? '',
+      }),
+    );
+    expect(baseAttrs.target).toBe('_blank');
+    expect(baseAttrs.href).toMatch(/^http:\/\//);
+
+    // Flip back to Edit: textarea is visible again, edits are
+    // preserved, iframe's src is dropped so we're not retaining the
+    // blob.
+    await capturePage.locator(editBtnSel).click();
+    await expect(capturePage.locator(textareaSel)).toBeVisible();
+    await expect(capturePage.locator(iframeSel)).toBeHidden();
+    expect(await capturePage.locator(textareaSel).inputValue())
+      .toContain(MARKER);
+    expect(await capturePage.locator(iframeSel).getAttribute('src'))
+      .toBeNull();
+
+    await openerPage.close();
+  });
+}
+
+test('details: preview strips <script> and <meta http-equiv=refresh>', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Input with two known hijack vectors: inline script (neutralized
+  // by the iframe sandbox anyway, but we strip for defense in depth)
+  // and a meta refresh that would otherwise navigate the iframe to
+  // an attacker URL without any script needed.
+  const MARKER = 'safe-marker-8842';
+  const HOSTILE = `
+    <html><head>
+      <meta http-equiv="refresh" content="0; url=https://evil.example/">
+      <meta http-equiv="REFRESH" content="1">
+      <meta http-equiv="Content-Type" content="text/html">
+    </head><body>
+      <h1>${MARKER}</h1>
+      <script>document.body.innerHTML = 'pwned'</script>
+      <script src="https://evil.example/beacon.js"></script>
+    </body></html>
+  `;
+  await capturePage.locator('#edit-html').click();
+  await capturePage.locator('#edit-html-textarea').fill(HOSTILE);
+  await capturePage.locator('#edit-html-mode-preview').click();
+
+  const iframe = capturePage.frameLocator('#edit-html-preview');
+  // Marker content still renders.
+  await expect(iframe.locator('h1')).toHaveText(MARKER);
+  // Both <script> tags removed (inline + src).
+  await expect(iframe.locator('script')).toHaveCount(0);
+  // Both <meta http-equiv=refresh> tags removed (case-insensitive
+  // match covers the uppercase variant). The benign Content-Type
+  // meta is also stripped because `buildPreviewHtml` removes any
+  // Content-Type-style meta before injecting its own charset — so
+  // the only http-equiv meta left is ours (if any). In practice
+  // there is none, since we inject `<meta charset>` not http-equiv.
+  await expect(iframe.locator('meta[http-equiv="refresh" i]')).toHaveCount(0);
+
+  await openerPage.close();
+});
+
+test('details: preview tolerates malformed HTML and still renders content', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Deliberately broken input: unclosed tags, mismatched close tags,
+  // stray `<span>` close, a truncated comment, and a mismatched
+  // quote. DOMParser's `text/html` mode + the browser's tolerant
+  // parser recover to something sensible; the preview should still
+  // display the marker text instead of going blank.
+  const MARKER = 'malformed-marker-5523';
+  const BROKEN = `<p>before<div><h1>${MARKER}</h1></span>after</p><!--oops`;
+  await capturePage.locator('#edit-html').click();
+  await capturePage.locator('#edit-html-textarea').fill(BROKEN);
+  await capturePage.locator('#edit-html-mode-preview').click();
+
+  const iframe = capturePage.frameLocator('#edit-html-preview');
+  // H1 still rendered.
+  await expect(iframe.locator('h1')).toHaveText(MARKER);
+  // Neighboring text nodes survived the recovery.
+  await expect(iframe.locator('body')).toContainText('before');
+  await expect(iframe.locator('body')).toContainText('after');
+
+  await openerPage.close();
+});
+
+test('details: non-HTML edit dialogs (selection text) have no Preview toggle', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // The toggle is rendered hidden by default in the template and
+  // only revealed by `setMode(..)` for previewable kinds, so it's
+  // enough to assert the selection-text dialog's toggle stays
+  // hidden — no need to open the dialog or seed a selection.
+  const toggle = capturePage.locator(
+    '#edit-selection-text-dialog .edit-dialog-mode-toggle',
+  );
+  await expect(toggle).toBeHidden();
+
+  await openerPage.close();
+});
+
 // ─── Graceful handling of failed HTML / selection scrape ──────────
 //
 // `chrome.scripting.executeScript` fails on restricted URLs

@@ -662,6 +662,41 @@ active crop region.
   the format the user picks on the Save-selection-as-… radio
   ends up in `log.json`.
 
+#### Preview mode (HTML-bearing dialogs)
+
+- HTML and Selection HTML dialogs expose an Edit / Preview
+  segmented toggle next to the title. `EDIT_KINDS` marks the two
+  via `previewable: true`; the other kinds stay edit-only.
+- Edit is selected on open; `setMode()` swaps between the textarea
+  and a sandboxed preview iframe positioned absolutely inside
+  `.edit-dialog-body`. The textarea stays in the DOM with
+  `visibility: hidden` in Preview so its resized height keeps
+  defining the slot — dialog dimensions can't jump across modes.
+- `buildPreviewHtml()` assembles the previewed document:
+  - Parses the textarea value via `DOMParser('text/html')` (tolerant
+    parser — malformed HTML still yields a full document).
+  - Removes `<script>` tags (defense-in-depth; sandbox already
+    denies `allow-scripts`) and `<meta http-equiv="refresh">` tags
+    (the one remaining vector by which captured HTML could hijack
+    the preview iframe to an attacker URL without JS).
+  - Strips any existing `<meta charset>` / `Content-Type meta` and
+    injects `<meta charset="utf-8">` as the first child of `<head>`
+    so non-ASCII captures don't render as mojibake (Chrome falls
+    back to Windows-1252 for blob: HTML with no declared charset).
+  - Strips any existing `<base>` and injects one with the captured
+    page's URL + `target="_blank"` so relative URLs resolve and
+    link clicks open in a new tab instead of replacing the preview.
+- The assembled HTML is loaded as a `blob:` URL (`text/html;charset=utf-8`),
+  not `srcdoc`, because `srcdoc` is an HTML attribute with a
+  browser-dependent size limit that silently truncates large
+  captures to blank. The blob is revoked on every mode flip and on
+  the dialog's `close` event.
+- Iframe sandbox: `allow-popups allow-popups-to-escape-sandbox`
+  only. Scripts, forms, same-origin, and top navigation are all
+  denied; link clicks via `target="_blank"` open a normal new tab
+  that escapes the sandbox so it behaves like a regular browser
+  tab.
+
 ### `isEdited` sidecar flag
 
 - Emitted inside `contents` / `selection` artifact objects in
