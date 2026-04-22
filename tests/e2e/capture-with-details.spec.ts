@@ -7,7 +7,8 @@
 //     URL-only, selection) and the associated prompt / URL / flag
 //     assertions.
 //   - Tab positioning + opener focus return on close.
-//   - Default click action routing (setDefaultClickActionId).
+//   - Default click action routing (setDefaultWithSelectionId /
+//     setDefaultWithoutSelectionId).
 //   - Copy-filename buttons, including the drawing→cache
 //     invalidation interplay (the drawing tests themselves moved
 //     out, but the cache-invalidation scenarios that happen to

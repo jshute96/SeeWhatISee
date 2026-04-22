@@ -16,40 +16,41 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 - Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
-  - If you've made a text selection on the page, the click instead runs the *with-selection* default (Capture selection as HTML by default). You can change both defaults under **Set default click action ▸** (see below).
+  - If there's text selected on the page, the click instead copies the selected text.
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
   - **Capture with details…** Opens a review page (see below).
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
-  - **Set default click action ▸** — Two sections, one per
-    selection state:
-    - **`── When text is selected ──`** — *Capture selection as HTML*
-      (default), *Capture selection as text*, *Capture selection as
-      markdown*, *Capture with details…* (opens the details page
-      with only the Save selection checkbox pre-ticked), or
-      *Ignore selection* (fall through to the other default).
-    - **`── When no text is selected ──`** — Any of the other capture
-      actions (*Take screenshot*, *Save HTML contents*, *Capture
-      with details…*, *Capture URL*, *Capture screenshot and HTML*)
-      at delays 0s, 2s, or 5s.
-    - If you choose another default single-click action, double-click will open *Capture with details*.
+  - **Set default click action ▸** — Choose which action to apply
+    when clicking the icon, with or without text selected.
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
     - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
-    - **Copy last screenshot filename** — Copies filename to clipboard.
-    - **Copy last HTML filename** — Copies filename to clipboard.
-    - **Copy last selection filename** — Copies filename to clipboard (HTML, text, or markdown — whichever format the last capture wrote).
+    - **Copy last screenshot, HMTL, or selection filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
 
+#### Capturing selected text
+
+When text is selected on the page, clicking the icon saves the selection (by default).
+
+The selection can be saved in three formats:
+- **as HTML**: Saves the exact HTML extracted from the page. This can be noisy and difficult to read.
+- **as text**: Saves a plain text version of the selection.
+- **as markdown**: Converts the selection HTML to markdown.
+  - This uses a lightweight conversion that includes headings, bullets, links, tables, and some simple formatting.
+  - The markdown format preserves the content and structure, in a format friendly for both humans and agents to read.
+
+On the **Capture with details** page, you can also view or edit the selection content.
+
 #### Capturing with details
 
-Use this to draw highlights on the page and/or add a prompt telling
+This page allows full control of what's captured.  You can add highlights on the page and add a prompt telling
 the agent what you want to do.
 
 Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submit.

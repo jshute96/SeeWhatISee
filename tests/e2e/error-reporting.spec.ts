@@ -24,15 +24,12 @@
 
 import { test, expect } from '../fixtures/extension';
 
-// Base tooltip for the `capture-now` default click action. The
-// background script derives the toolbar title from whichever
-// CAPTURE_ACTIONS entry the user has picked as the default; the
-// tests here pin that selection to `capture-now` in beforeEach so
-// the expected baseline is stable. The "With selection:" line
-// reflects the default with-selection action (`capture-selection`
-// on a fresh install).
-// Default tooltip on the `capture-now` click action (pinned in
-// beforeEach so the baseline is stable). Layout:
+// Default tooltip on the `capture-now` click action. The background
+// script derives the toolbar title from whichever CAPTURE_ACTIONS
+// entry the user has picked as the default; the tests here pin that
+// selection to `capture-now` in beforeEach (with
+// `capture-selection-html` as the with-selection default) so the
+// expected baseline is stable. Layout:
 //
 //   SeeWhatISee
 //   <blank>

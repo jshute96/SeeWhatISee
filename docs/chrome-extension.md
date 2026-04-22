@@ -264,15 +264,24 @@ showed the global title. We don't use per-tab titles.
 
 ### Our tooltip strategy
 
-- **Default tooltip.** `refreshActionTooltip()` reads the current
-  default click action's `tooltip` field and calls `setTitle`.
-  Runs on preference change, `onInstalled`, and `onStartup`.
-- **Double-click hint.** Every action's tooltip includes a second
-  line (via embedded `\n`) describing the double-click alternate
-  action.
-- **Error tooltip.** `reportCaptureError()` slots an
-  `ERROR: <message>` line under the app title (with a blank line
-  under it). See the error-reporting section above.
+- **Default tooltip.** `refreshActionTooltip()` calls
+  `getDefaultActionTooltip()`, which composes the tooltip from
+  pre-authored `tooltipFragment` fields on the click / double-click
+  `CaptureAction` and the with-selection `WITH_SELECTION_CHOICES`
+  entry. Runs on preference change, `onInstalled`, and `onStartup`.
+- **Layout.** Four lines, bracketed by blanks:
+  `SeeWhatISee` / blank / `Click: …` / `Double-click: …` /
+  `With selection: …` / trailing blank. The trailing blank
+  separates our content from Chrome's appended "Wants access to
+  this site" permission line.
+- **With-selection omission.** The `With selection: …` line is
+  dropped entirely for the `ignore-selection` choice, since the
+  click then behaves identically with or without a selection.
+- **Error tooltip.** `reportCaptureError()` passes the error
+  message into `getDefaultActionTooltip(message)`, which slots
+  `ERROR: <message>` between the app title and the action block
+  (bracketed by its own blank lines). See the error-reporting
+  section above.
 
 ### Abandoned: capture-page tooltip override
 

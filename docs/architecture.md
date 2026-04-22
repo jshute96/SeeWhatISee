@@ -38,10 +38,12 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `capture-selection-*`) opts out: only the 0s variant is generated,
     no 2s / 5s entries appear anywhere for it.
   - Each generated entry has an id (`<baseId>` for delay 0,
-    `<baseId>-<N>s` otherwise), a menu title, an icon tooltip,
-    `baseId` / `group` / `delaySec` fields for routing into the
-    right menu section, and a zero-arg `run()` that forwards the
-    delay to the base action's handler.
+    `<baseId>-<N>s` otherwise), a menu title, a
+    `tooltipFragment` (used by `getDefaultActionTooltip` to build
+    the toolbar icon's hover tooltip), `baseId` / `group` /
+    `delaySec` fields for routing into the right menu section,
+    and a zero-arg `run()` that forwards the delay to the base
+    action's handler.
   - Each base carries a `group: 'primary' | 'more'` that decides
     which section of the action menu surfaces the undelayed variant:
     - `'primary'` — top-level entry + a slot in the "Capture with
@@ -102,7 +104,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   - Fresh installs default to `capture-selection-html` (with
     selection) and `capture-with-details` (without selection).
   - A click on the toolbar icon fires `chrome.action.onClicked`,
-    which routes through `handleActionClick`. Four cases:
+    which routes through `handleActionClick`. Five cases:
     1. **Viewing the capture page** — if the active tab is a
        `capture.html` page with stashed session data, the click
        sends it a `triggerCapture` message, which programmatically
@@ -149,13 +151,22 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     except the three `capture-selection-<format>` shortcuts. They
     are deliberately excluded — they would just error on every
     click without a selection.
-  - The toolbar icon's hover tooltip is built dynamically from both
-    defaults in three lines:
-    - First line: the without-selection default's main description.
-    - `Double-click for <action>` — the alternate for double-click.
-    - `With selection: <action>` — the with-selection default.
-  - `refreshActionTooltip()` rewrites it whenever either preference
-    changes and on `onInstalled` / `onStartup`.
+  - The toolbar icon's hover tooltip is composed from
+    `tooltipFragment` fields pre-authored on each
+    `CaptureAction` / with-selection choice. Layout:
+    - `SeeWhatISee`
+    - blank
+    - `Click: <click.tooltipFragment>`
+    - `Double-click: <doubleClick.tooltipFragment>`
+    - `With selection: <withChoice.tooltipFragment>` (omitted for
+      `ignore-selection`)
+    - trailing blank (separates our content from Chrome's appended
+      "Wants access to this site" line)
+    - When an error is pending, `ERROR: <message>` slots between
+      the app title and the action block, bracketed by its own
+      blanks.
+  - `refreshActionTooltip()` rewrites the title whenever either
+    preference changes and on `onInstalled` / `onStartup`.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
@@ -798,8 +809,11 @@ permission gaps).
 2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
    is reachable from tests and the devtools console.
 3. Add a new entry to the `BASE_CAPTURE_ACTIONS` array in
-   `src/background.ts` with a base id, base title, base tooltip,
-   a `group: 'primary' | 'more'`, and a `run(delayMs)` that calls
+   `src/background.ts` with a base id, base title, a
+   `baseTooltipFragment` (sentence-case, no trailing "…" —
+   slotted into the toolbar tooltip's `Click: …` /
+   `Double-click: …` lines), a `group: 'primary' | 'more'`, and
+   a `run(delayMs)` that calls
    your new function. The flat `CAPTURE_ACTIONS` array is generated
    from `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load,
    so the new base automatically gains immediate + 2s + 5s variants

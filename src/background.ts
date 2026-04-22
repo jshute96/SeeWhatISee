@@ -155,10 +155,10 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 // A base can opt out of delayed variants via
 // `supportsDelayed: false`; it then produces only the 0s variant.
 // Used for modes where a delay doesn't pay for itself — e.g.
-// `capture-selection` (the user already made the selection before
-// clicking) or `capture-url` (the click's intent is "record *this*
-// URL"; a delayed version would just record a *different* URL if
-// the user navigated).
+// the `capture-selection-*` shortcuts (the user already made the
+// selection before clicking) or `capture-url` (the click's intent
+// is "record *this* URL"; a delayed version would just record a
+// *different* URL if the user navigated).
 //
 // Each base also carries a `group: 'primary' | 'more'` that decides
 // which section of the action menu surfaces its undelayed variant
@@ -603,8 +603,13 @@ async function getDefaultWithoutSelectionAction(): Promise<CaptureAction> {
 async function getDefaultActionTooltip(errorMessage?: string): Promise<string> {
   const click = await getDefaultWithoutSelectionAction();
   const withId = await getDefaultWithSelectionId();
-  const doubleClick =
-    findCaptureAction(doubleClickActionId(click.id)) ?? CAPTURE_ACTIONS[0]!;
+  // `doubleClickActionId` only ever returns `capture-now` or
+  // `capture-with-details` — both static CAPTURE_ACTIONS entries —
+  // so the `!` is a static-lookup assertion, not a fallback. The
+  // old `?? CAPTURE_ACTIONS[0]` default was wrong anyway (would
+  // have rendered "Take screenshot" for a `capture-now` click
+  // default — the opposite of the intended alternate).
+  const doubleClick = findCaptureAction(doubleClickActionId(click.id))!;
   const withChoice = findWithSelectionChoice(withId);
   const lines: string[] = ['SeeWhatISee'];
   if (errorMessage !== undefined) lines.push('', `ERROR: ${errorMessage}`);
@@ -645,14 +650,21 @@ const HINT_SEPARATOR = '  -  ';
 const CLICK_HINT = `${HINT_SEPARATOR}(𝘊𝘭𝘪𝘤𝘬)`;
 const DOUBLE_CLICK_HINT = `${HINT_SEPARATOR}(𝘋𝘰𝘶𝘣𝘭𝘦-𝘤𝘭𝘪𝘤𝘬)`;
 
-// The double-click target is derived from the without-selection click
-// default: if details is the default, double-click takes a screenshot;
-// otherwise double-click opens capture-with-details. Mirrors the
-// branch in handleActionClick so menu hints always match runtime
-// behavior. The with-selection default does *not* influence this —
-// keeping the hint stable across selection state avoids a menu that
-// re-flows between opens depending on whether the user has selected
-// something.
+// The double-click hint's target is derived from the without-selection
+// click default: if details is the default, double-click takes a
+// screenshot; otherwise double-click opens capture-with-details.
+// Mirrors the no-selection branch in handleActionClick so menu hints
+// are accurate for the common case.
+//
+// Hints don't reflect the with-selection-present override (see
+// handleActionClick: double-click on a page with a selection, with
+// `withId !== ignore-selection`, always opens details). That's
+// deliberate — we can't reliably predict selection state at
+// menu-render time, and a hint that flips between opens depending
+// on selection would read as churn. Net effect: the only case where
+// hint drifts from runtime is "without-sel default is
+// capture-with-details AND there's a selection" (hint says Take
+// screenshot; actual double-click opens details).
 function doubleClickActionId(withoutSelectionId: string): string {
   return withoutSelectionId === DEFAULT_WITHOUT_SELECTION_ID
     ? 'capture-now'
@@ -909,7 +921,13 @@ async function handleActionClick(): Promise<void> {
           }
           // Fall through — unrecognized with-selection id behaves
           // like ignore-selection. Shouldn't happen in practice
-          // (the setter rejects unknown ids).
+          // (the setter rejects unknown ids), so a live warning
+          // here would surface a storage-migration regression or
+          // a stale value left over from a previous build.
+          console.warn(
+            '[SeeWhatISee] unknown with-selection default id, falling through:',
+            withId,
+          );
         }
         const action = findCaptureAction(withoutId) ?? CAPTURE_ACTIONS[0]!;
         await action.run();
