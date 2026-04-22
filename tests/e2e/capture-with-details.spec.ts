@@ -347,7 +347,7 @@ test('captureBothToMemory(delayMs) sleeps before snapshotting', async ({
   await page.close();
 });
 
-test('default click action set to capture-now: handleActionClick takes a direct screenshot', async ({
+test('default click action set to capture-screenshot: handleActionClick takes a direct screenshot', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -359,14 +359,14 @@ test('default click action set to capture-now: handleActionClick takes a direct 
       self as unknown as {
         SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-screenshot');
   });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
   await openerPage.bringToFront();
 
-  // If a capture.html tab opens, the test should fail — capture-now
+  // If a capture.html tab opens, the test should fail — capture-screenshot
   // should dispatch directly, not open the details flow.
   let detailsOpened = false;
   const onPage = (p: Page) => {
@@ -452,7 +452,7 @@ test('default click action set to capture-with-details: handleActionClick opens 
       self as unknown as {
         SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
       }
-    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-now');
+    ).SeeWhatISee.setDefaultWithoutSelectionId('capture-screenshot');
   });
 
   await openerPage.close();
@@ -474,16 +474,16 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
     // Pin the with-selection default so the middle tooltip line
     // stays stable regardless of the starting storage state.
     await api.setDefaultWithSelectionId('capture-selection-html');
-    await api.setDefaultWithoutSelectionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-screenshot');
     const a = await chrome.action.getTitle({});
-    await api.setDefaultWithoutSelectionId('capture-now-2s');
+    await api.setDefaultWithoutSelectionId('capture-screenshot-2s');
     const b = await chrome.action.getTitle({});
-    await api.setDefaultWithoutSelectionId('save-page-contents');
+    await api.setDefaultWithoutSelectionId('capture-page-contents');
     const c = await chrome.action.getTitle({});
     await api.setDefaultWithoutSelectionId('capture-with-details');
     const d = await chrome.action.getTitle({});
     // Restore default so the rest of the suite is unaffected.
-    await api.setDefaultWithoutSelectionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-screenshot');
     return { a, b, c, d };
   });
 
@@ -1794,7 +1794,7 @@ test('click with selection: with-sel=capture-with-details opens details with sel
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  await pinClickDefaults(sw, 'capture-with-details', 'capture-now');
+  await pinClickDefaults(sw, 'capture-with-details', 'capture-screenshot');
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -1830,9 +1830,9 @@ test('click with selection: with-sel=ignore-selection runs the without-selection
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  // ignore-selection + capture-now should take a screenshot even
+  // ignore-selection + capture-screenshot should take a screenshot even
   // though a selection is present — the probe is skipped entirely.
-  await pinClickDefaults(sw, 'ignore-selection', 'capture-now');
+  await pinClickDefaults(sw, 'ignore-selection', 'capture-screenshot');
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -1867,7 +1867,7 @@ test('double-click with selection: always opens details (even when without-sel=c
   getServiceWorker,
 }) => {
   // Without-sel = capture-with-details → classic alternate is
-  // capture-now (screenshot). With a selection present and
+  // capture-screenshot (screenshot). With a selection present and
   // with-sel != ignore-selection, the new rule overrides that
   // alternate and routes double-click to details. This test
   // regression-guards the override.
@@ -1918,7 +1918,7 @@ for (const { withSel, expectRadio } of [
     getServiceWorker,
   }) => {
     const sw = await getServiceWorker();
-    await pinClickDefaults(sw, withSel, 'capture-now');
+    await pinClickDefaults(sw, withSel, 'capture-screenshot');
 
     const openerPage = await extensionContext.newPage();
     await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -1946,7 +1946,7 @@ test('double-click with selection: ignore-selection keeps the classic alternate 
   getServiceWorker,
 }) => {
   // ignore-selection + without-sel=capture-with-details → classic
-  // double-click alternate is capture-now. The "selection present"
+  // double-click alternate is capture-screenshot. The "selection present"
   // override must NOT trigger when the user has opted out via
   // ignore-selection, so a selection on the page shouldn't flip
   // the dispatch to details.
@@ -1997,6 +1997,44 @@ test('getDefaultWithoutSelectionId: stale capture-selection-* storage value fall
     ).SeeWhatISee.getDefaultWithoutSelectionId();
   });
   expect(id).toBe('capture-with-details');
+});
+
+test('getDefaultWithoutSelectionId: migrates legacy capture-now / save-page-contents ids', async ({
+  getServiceWorker,
+}) => {
+  // Two base ids were renamed (`capture-now` → `capture-screenshot`,
+  // `save-page-contents` → `capture-page-contents`). A user who had
+  // customized the without-selection default via the pre-rename UI
+  // would have one of these values in storage — the getter must
+  // rewrite it in place so the next menu render / click uses the
+  // current id, and `findCaptureAction` doesn't silently fall back
+  // to the fresh-install default. Delay suffixes must survive the
+  // rewrite too.
+  const sw = await getServiceWorker();
+  const cases = [
+    { legacy: 'capture-now', current: 'capture-screenshot' },
+    { legacy: 'capture-now-2s', current: 'capture-screenshot-2s' },
+    { legacy: 'capture-now-5s', current: 'capture-screenshot-5s' },
+    { legacy: 'save-page-contents', current: 'capture-page-contents' },
+    { legacy: 'save-page-contents-2s', current: 'capture-page-contents-2s' },
+  ];
+  for (const { legacy, current } of cases) {
+    const result = await sw.evaluate(async (stored: string) => {
+      await chrome.storage.local.clear();
+      await chrome.storage.local.set({ defaultClickWithoutSelection: stored });
+      const id = await (
+        self as unknown as {
+          SeeWhatISee: { getDefaultWithoutSelectionId: () => Promise<string> };
+        }
+      ).SeeWhatISee.getDefaultWithoutSelectionId();
+      const persisted = (
+        await chrome.storage.local.get('defaultClickWithoutSelection')
+      ).defaultClickWithoutSelection;
+      return { id, persisted };
+    }, legacy);
+    expect(result.id, `getter returns new id for ${legacy}`).toBe(current);
+    expect(result.persisted, `storage rewritten for ${legacy}`).toBe(current);
+  }
 });
 
 test('copyLastSelectionFilename: throws when no capture in the log', async ({

@@ -92,7 +92,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
-| `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default/More submenus, details-flow, error surface |
+| `src/background.ts` | MV3 service worker — `CAPTURE_ACTIONS` dispatch, action menu + Delay/Set-default/More submenus, keyboard commands, details-flow, error surface |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter used by the selection capture paths |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay) |

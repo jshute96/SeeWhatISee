@@ -24,10 +24,10 @@
 
 import { test, expect } from '../fixtures/extension';
 
-// Default tooltip on the `capture-now` click action. The background
+// Default tooltip on the `capture-screenshot` click action. The background
 // script derives the toolbar title from whichever CAPTURE_ACTIONS
 // entry the user has picked as the default; the tests here pin that
-// selection to `capture-now` in beforeEach (with
+// selection to `capture-screenshot` in beforeEach (with
 // `capture-selection-html` as the with-selection default) so the
 // expected baseline is stable. Layout:
 //
@@ -98,7 +98,7 @@ async function getSetIconCalls(
 }
 
 test.beforeEach(async ({ getServiceWorker }) => {
-  // Pin the stored default click action to `capture-now` so
+  // Pin the stored default click action to `capture-screenshot` so
   // `clearCaptureError()`'s dynamic tooltip resolves to the
   // expected baseline, then reset the icon-swap spy. Lives in the
   // service worker so we don't have to bridge chrome.* APIs across
@@ -111,7 +111,7 @@ test.beforeEach(async ({ getServiceWorker }) => {
         setDefaultWithoutSelectionId: (id: string) => Promise<void>;
       };
     }).SeeWhatISee;
-    await api.setDefaultWithoutSelectionId('capture-now');
+    await api.setDefaultWithoutSelectionId('capture-screenshot');
     // Pin the with-selection default too so the tooltip's
     // "With selection: …" line stays stable regardless of the
     // starting storage state.

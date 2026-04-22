@@ -34,6 +34,8 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
+- **Keyboard shortcuts** can be configured on `chrome://extensions/shortcuts`.
+  There's a link to this page on the **Set default** menu.
 
 #### Capturing selected text
 

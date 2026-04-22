@@ -55,7 +55,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 
   The three `primary` bases are:
 
-  - **`capture-now` — "Take screenshot".** Calls
+  - **`capture-screenshot` — "Take screenshot".** Calls
     `captureVisible(delayMs)`. Immediate PNG of the visible tab.
     The delayed variants show a countdown badge on the toolbar
     icon ("5", "4", "3", …) before capturing, so the user can
@@ -63,7 +63,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `await` keeps the service worker alive for the duration. Any `delayMs` value is also callable
     from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
-  - **`save-page-contents` — "Save HTML contents".** Uses
+  - **`capture-page-contents` — "Save HTML contents".** Uses
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
     saves it as `contents-<timestamp>.html`. The capture is
@@ -195,7 +195,7 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     (Take screenshot, Save HTML contents, Capture with details...),
     each running its action immediately when clicked. "Take
     screenshot" is functionally identical to a plain left-click
-    when `capture-now` is the default — listed for discoverability.
+    when `capture-screenshot` is the default — listed for discoverability.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
     of every base with `showInDelayedSubmenu` (primary-group by
     default, plus any more-group base that opts in — e.g.
@@ -206,8 +206,21 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     `capture-selection-{html,text,markdown}` — all
     `supportsDelayed: false` anyway) are only reachable via "Set
     default click action" if at all.
-  - **Set default click action ▸** — submenu with two sections,
-    each introduced by a disabled-item subheading:
+  - **Set default click action ▸** — submenu with a hotkey row and
+    two sections:
+    - First row: **`Set hotkeys (Default <shortcut>)`** (or
+      `Set hotkeys (Default not set)` when unbound). The
+      parenthesized part reflects the `_execute_action` command
+      shortcut — the hotkey equivalent of clicking the toolbar
+      icon.
+    - Clicking the row opens `chrome://extensions/shortcuts`
+      in a new tab so the user can bind / rebind keys (there's
+      no API to edit shortcuts programmatically).
+    - Refreshed on menu install and on every user interaction
+      via `refreshMenusIfHotkeysChanged`, so a key edit shows
+      up on the *next* click — Chrome fires no event when the
+      user changes a binding.
+    - Separator.
     - **`── When text is selected ──`** header (`enabled: false`),
       then the five with-selection choices (three
       `capture-selection-<format>` shortcuts,
@@ -333,6 +346,37 @@ design live in [`chrome-extension.md`](chrome-extension.md).
     build- or runtime-time error. See
     [chrome-extension.md → Context menus on the toolbar action](chrome-extension.md#context-menus-on-the-toolbar-action)
     for the full story, including the 8e100d1 regression this caused.
+
+- **Keyboard commands.** The manifest's `commands` block exposes
+  nine extension-command entries: Chrome's reserved
+  `_execute_action` (fires `chrome.action.onClicked` — the
+  toolbar-click equivalent), plus one per base action
+  (`00-capture-screenshot`, `01-capture-page-contents`,
+  `02-capture-with-details`, `03-capture-url`, `04-capture-both`,
+  `10-capture-selection-html`, `11-capture-selection-text`,
+  `12-capture-selection-markdown`).
+
+  - The two-digit `NN-` prefix is a display-order hack, not part of
+    the action id. `chrome://extensions/shortcuts` lists commands in
+    raw string-sort order on the *command name*; without the
+    prefix, the shortcuts page would scramble the menu order into
+    an arbitrary alphabetical layout. The `chrome.commands.onCommand`
+    listener strips the prefix via `COMMAND_PREFIX_PATTERN` before
+    dispatching.
+  - Stripped names match their delay-0 `CAPTURE_ACTIONS` ids, so
+    the dispatch is a direct `findCaptureAction(stripped)` lookup —
+    no separate mapping table.
+  - No `suggested_key` is declared on any entry; Chrome caps
+    suggested defaults at four per extension and a fresh-install
+    default risks colliding with Chrome / other extensions. Users
+    bind keys themselves at `chrome://extensions/shortcuts`.
+  - Selection-format hotkeys are global: they fire the action
+    directly, and the action itself throws
+    `No selection {format} content` when nothing is selected —
+    surfaced via the standard icon/tooltip error channel.
+  - Command dispatch routes through `runWithErrorReporting`, so a
+    restricted-URL scrape or an absent active tab surfaces on the
+    toolbar icon the same way a toolbar click would.
 
 - **Active-tab resolution.** `captureVisible` always re-queries
   the active tab in the last-focused window *after* any delay,
@@ -953,5 +997,14 @@ permission gaps).
      would push it past 6 and silently drop an entry; add the base
      as `'more'` instead, or fold the undelayed primary slots into
      a submenu of their own (e.g. "Capture now") first.
-4. Add a Playwright test that drives the new function via
+4. If the action should be bindable as a keyboard shortcut (i.e.
+   it's a non-selection base), add a matching entry under `commands`
+   in `src/manifest.json`. The command name is `NN-<baseId>` where
+   `NN` is the next two-digit ordering prefix — pick a number that
+   slots the entry into the desired position on
+   `chrome://extensions/shortcuts`; the listener in `background.ts`
+   strips the prefix before dispatching via `findCaptureAction`.
+   Omit `suggested_key` so the extension doesn't ship a default
+   binding.
+5. Add a Playwright test that drives the new function via
    `serviceWorker.evaluate`.

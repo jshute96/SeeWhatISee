@@ -22,5 +22,34 @@
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "description": "Activate SeeWhatISee (same as clicking the toolbar icon)"
+    },
+    "00-capture-screenshot": {
+      "description": "Take screenshot"
+    },
+    "01-capture-page-contents": {
+      "description": "Save HTML contents"
+    },
+    "02-capture-with-details": {
+      "description": "Capture with details…"
+    },
+    "03-capture-url": {
+      "description": "Capture URL"
+    },
+    "04-capture-both": {
+      "description": "Capture screenshot and HTML"
+    },
+    "10-capture-selection-html": {
+      "description": "Capture selection as HTML"
+    },
+    "11-capture-selection-text": {
+      "description": "Capture selection as text"
+    },
+    "12-capture-selection-markdown": {
+      "description": "Capture selection as markdown"
+    }
   }
 }
