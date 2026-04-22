@@ -134,7 +134,7 @@ part of the Claude Code plugin; the Gemini tree is copied into
 | Script | Source | Target | Emits | Flags |
 |--------|--------|--------|-------|-------|
 | `plugin/scripts/get-latest.sh`          | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
-| `plugin/scripts/watch.sh`               | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--help` |
+| `plugin/scripts/watch.sh`               | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
 | `.gemini/scripts/copy-last-snapshot.sh` | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
 | `.gemini/scripts/watch-and-copy.sh`     | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
 

@@ -134,6 +134,30 @@ function simulateCapture(dir: string, index: number): {
   return { timestamp, screenshot };
 }
 
+/**
+ * Simulate a capture that also has a `selection` artifact. Writes the
+ * selection file with the provided contents and appends a log.json
+ * record that references it. Used to exercise the `--print_selection`
+ * mode of watch.sh.
+ */
+function simulateCaptureWithSelection(
+  dir: string, index: number, selectionBody: string,
+): { timestamp: string; screenshot: string; selection: string } {
+  const ms = String(index).padStart(3, '0');
+  const screenshot = `screenshot-20260409-120000-${ms}.png`;
+  const selection = `selection-20260409-120000-${ms}.html`;
+  const timestamp = `2026-04-09T12:00:00.${ms}Z`;
+  fs.writeFileSync(path.join(dir, selection), selectionBody);
+  const record = {
+    timestamp,
+    screenshot: { filename: screenshot },
+    selection: { filename: selection },
+    url: `http://example.com/page${index}`,
+  };
+  fs.appendFileSync(path.join(dir, 'log.json'), JSON.stringify(record) + '\n');
+  return { timestamp, screenshot, selection };
+}
+
 // ---- Temp dir management ---------------------------------------------------
 
 let tmpDir: string;
@@ -165,6 +189,7 @@ test.describe('watch.sh', () => {
     expect(r.stdout).toContain('--loop');
     expect(r.stdout).toContain('--after');
     expect(r.stdout).toContain('--stop');
+    expect(r.stdout).toContain('--print_selection');
   });
 
   test('creates the watch directory if it does not exist', async () => {
@@ -432,6 +457,77 @@ test.describe('watch.sh', () => {
     await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
 
     watch.kill();
+  });
+
+  test('--print_selection appends selection file contents after records that have one', () => {
+    // Mix of records: record 0 has no selection (from beforeEach),
+    // record 1 has a selection, record 2 has none. --after record 0
+    // should emit records 1 and 2; the flag should expand record 1's
+    // selection inline and leave record 2 alone.
+    const selBody = '<p>hello selection</p>\nmore text\n';
+    const r1 = simulateCaptureWithSelection(tmpDir, 1, selBody);
+    const r2Info = simulateCapture(tmpDir, 2);
+    const r0 = fakeRecord(0);
+
+    const r = runWatch([
+      '--after', r0.timestamp, '--print_selection', '--directory', tmpDir,
+    ]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('2 pending captures');
+
+    // Record 1's JSON line is followed by a blank line, "Selection:",
+    // the selection file's contents, and another blank line before
+    // record 2's JSON line.
+    const block =
+      `"selection":{"filename":"${tmpDir}/${r1.selection}"},` +
+      `"url":"http://example.com/page1"}\n` +
+      `\n` +
+      `Selection:\n` +
+      selBody +
+      `\n`;
+    expect(r.stdout).toContain(block);
+    // Record 2 has no selection, so no "Selection:" block should follow it.
+    const r2Line =
+      `{"timestamp":"${r2Info.timestamp}","screenshot":` +
+      `{"filename":"${tmpDir}/${r2Info.screenshot}"},` +
+      `"url":"http://example.com/page2"}\n\n`;
+    expect(r.stdout.endsWith(r2Line)).toBe(true);
+  });
+
+  test('--print_selection is a no-op for records without a selection', () => {
+    // Record 0 from beforeEach, record 1 with no selection. --after r0
+    // with --print_selection should emit r1 exactly like a plain run.
+    simulateCapture(tmpDir, 1);
+    const r0 = fakeRecord(0);
+
+    const withFlag = runWatch([
+      '--after', r0.timestamp, '--print_selection', '--directory', tmpDir,
+    ]);
+    const withoutFlag = runWatch([
+      '--after', r0.timestamp, '--directory', tmpDir,
+    ]);
+    expect(withFlag.exitCode).toBe(0);
+    expect(withoutFlag.exitCode).toBe(0);
+    expect(withFlag.stdout).toBe(withoutFlag.stdout);
+    expect(withFlag.stdout).not.toContain('Selection:');
+  });
+
+  test('--print_selection works in live watch mode', async () => {
+    const watch = startWatch(['--print_selection', '--directory', tmpDir]);
+    // Wait >1s so the simulated capture's mtime beats the seed file's.
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const selBody = '<p>live watch selection</p>\n';
+    const cap = simulateCaptureWithSelection(tmpDir, 1, selBody);
+
+    const exitCode = await waitForExit(watch.proc, 5_000);
+    expect(exitCode).toBe(0);
+
+    const out = watch.output();
+    expect(out).toContain(`${tmpDir}/${cap.screenshot}`);
+    expect(out).toContain(`${tmpDir}/${cap.selection}`);
+    expect(out).toContain('Selection:');
+    expect(out).toContain(selBody);
   });
 
   test('--after with nonexistent timestamp warns and watches', async () => {

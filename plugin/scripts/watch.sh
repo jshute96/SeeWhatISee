@@ -9,6 +9,9 @@
 #   watching. TIMESTAMP is the `timestamp` field (ISO 8601) from a
 #   previous capture, which uniquely identifies it.
 # --stop: kill any existing watcher on this directory and exit.
+# --print_selection: if a record has a selection, also print the
+#   contents of the selection file after the JSON line (format:
+#   "Selection:", blank line, file contents, blank line).
 #
 # If --directory is not given, looks for a .SeeWhatISee config file
 # (in . then $HOME) with a directory=<path> setting.
@@ -25,6 +28,7 @@ DIR=""
 LOOP=false
 STOP=false
 AFTER=""
+PRINT_SELECTION=false
 
 # ---- Argument parsing -------------------------------------------------------
 
@@ -41,6 +45,8 @@ Options:
                     them immediately. TIMESTAMP is the `timestamp` field from a
                     previous capture (e.g. 2026-04-08T23:45:18.224Z).
   --stop            Stop any existing watcher on this directory and exit.
+  --print_selection If a record has a selection, also print the selection
+                    file's contents after the JSON line.
   --help            Show this help and exit.
 EOF
 }
@@ -52,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --stop)      STOP=true; shift ;;
     --directory) DIR="$2"; shift 2 ;;
     --after)     AFTER="$2"; shift 2 ;;
+    --print_selection) PRINT_SELECTION=true; shift ;;
     *)           echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
@@ -143,6 +150,29 @@ mtime() {
   stat -c %Y "$FILE" 2>/dev/null || stat -f %m "$FILE"
 }
 
+# Print a single log.json record (read from stdin) with absolutized
+# paths, followed by a blank line. When --print_selection is set and
+# the record has a selection, also append "Selection:" + blank line +
+# the selection file's contents + blank line.
+print_record() {
+  local line
+  line=$(cat | absolutize_paths)
+  printf '%s\n' "$line"
+  if $PRINT_SELECTION; then
+    # After absolutize_paths, selection.filename is an absolute path.
+    # The regex stops at the first `"` after `"filename":"`, which is
+    # the correct end of the filename value.
+    local sel_file
+    sel_file=$(printf '%s' "$line" \
+      | sed -n 's|.*"selection":{"filename":"\([^"]*\)".*|\1|p')
+    if [[ -n "$sel_file" && -f "$sel_file" ]]; then
+      printf '\nSelection:\n'
+      cat "$sel_file"
+    fi
+  fi
+  printf '\n'
+}
+
 # Emit the last line of log.json if the mtime has advanced since
 # the last emission. Returns 0 if it actually printed, 1 if it skipped
 # (used to debounce rapid polls that land in the same mtime second).
@@ -157,8 +187,7 @@ emit() {
   # change — just skip the emit here. There's no new capture, and a
   # blank line would confuse callers.
   [[ -s "$FILE" ]] || return 1
-  tail -1 "$FILE" | absolutize_paths
-  printf '\n'
+  tail -1 "$FILE" | print_record
 }
 
 # ---- --after: check log.json for pending captures ---------------------------
@@ -184,12 +213,13 @@ if [[ -n "$AFTER" ]]; then
       [[ $remaining -lt 0 ]] && remaining=0
       if [[ $remaining -gt 0 ]]; then
         # There are captures after the --after line. Emit them.
-        pending=$(tail -n "$remaining" "$FILE" | absolutize_paths)
-        count=$(echo "$pending" | wc -l)
+        count=$remaining
         label="captures"
         [[ "$count" -eq 1 ]] && label="capture"
         echo "$count pending $label:" >&2
-        echo "$pending"
+        while IFS= read -r record; do
+          printf '%s\n' "$record" | print_record
+        done < <(tail -n "$remaining" "$FILE")
         # We've caught up. If not looping, we're done.
         if ! $LOOP; then
           exit 0
