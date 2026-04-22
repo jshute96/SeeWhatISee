@@ -44,8 +44,11 @@ resolve_dir() {
 
 # Pipe JSON through this to replace bare filenames with absolute paths.
 # Only rewrites values that don't already start with /.
+#
+# `screenshot`, `contents`, and `selection` are all artifact
+# objects with `filename` as a nested field.
 absolutize_paths() {
-  sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$DIR/\\1\"|" \
-      -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$DIR/\\1\"|" \
-      -e "s|\"selection\": *\"\\([^/][^\"]*\\)\"|\"selection\": \"$DIR/\\1\"|"
+  sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$DIR/\\1\"|" \
+      -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$DIR/\\1\"|" \
+      -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$DIR/\\1\"|"
 }

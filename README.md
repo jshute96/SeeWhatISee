@@ -6,6 +6,8 @@ This is a Chrome extension for taking screenshots and saving HTML snapshots, opt
 
 You can share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
 
+When you select text in the page, that text is saved, as your choice of HTML, text, or agent-friendly markdown.
+
 The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skills read them automatically from there.
 
 ## Usage
@@ -14,7 +16,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 - Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
-  - If you've made a text selection on the page, the click instead runs the *with-selection* default (Capture selection by default). You can change both defaults under **Set default click action ▸** (see below).
+  - If you've made a text selection on the page, the click instead runs the *with-selection* default (Capture selection as HTML by default). You can change both defaults under **Set default click action ▸** (see below).
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
@@ -23,10 +25,11 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Two sections, one per
     selection state:
-    - **— When text is selected —** — *Capture selection* (default),
-      *Capture with details…* (opens the details page with only the
-      Save selection checkbox pre-ticked), or *Ignore selection*
-      (fall through to the other default).
+    - **— When text is selected —** — *Capture selection as HTML*
+      (default), *Capture selection as text*, *Capture selection as
+      markdown*, *Capture with details…* (opens the details page
+      with only the Save selection checkbox pre-ticked), or
+      *Ignore selection* (fall through to the other default).
     - **— When no text is selected —** — Any of the other capture
       actions (*Take screenshot*, *Save html contents*, *Capture
       with details…*, *Capture URL*, *Capture screenshot and HTML*)
@@ -35,7 +38,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **More ▸**
     - **Capture URL** — Record just the current tab's URL, without a screenshot.
     - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
-    - **Capture selection** — Saves the HTML of the currently selected text.
+    - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot filename** — Copies filename to clipboard.
     - **Copy last HTML filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
@@ -53,13 +56,19 @@ Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submi
 On this page, you can:
 
 - See the page URL and HTML size.
-- Pick whether to save the screenshot, HTML snapshot, and/or currently selected text.
-  - With none of these checked, you can still capture the URL.
+- Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
+  - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
+  - With nothing checked, you can still capture the URL.
 - Copy saved filenames to the clipboard with the copy icon.
+- View or edit the captured HTML or selection before saving with the pencil icon.
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.
+  - **Redact** turns the most recent red box into an opaque black box that hides whatever was underneath.
+  - **Cropping** the saved PNG to include only a selected region.
+    - **Crop button** crops to the most recent red box.
+    - **Drag borders** of the image or crop region to create or resize the crop.
   - **Undo** or **Clear** to roll back edits.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
@@ -148,25 +157,57 @@ Alternative: Copy these files into the same directories in your `.gemini` direct
 
 ## Output files
 
-Each capture writes two files into that directory:
+Everything the extension writes lands under
+`~/Downloads/SeeWhatISee/`. A capture produces one or more capture
+files plus an updated `log.json` sidecar.
 
-- `screenshot-<timestamp>.png` or `contents-<timestamp>.html` — the
-  captured content itself, one per capture.
-- `log.json` — newline-delimited JSON (one record per line),
-  grep-friendly history of recent captures. Each record contains:
-  - `timestamp`
-  - `url`
-  - `screenshot` — PNG filename, when a screenshot was saved.
-  - `contents` — HTML filename, when HTML was saved.
-  - `selection` — HTML filename, when the selection was saved.
-  - `prompt` — user prompt from the "Capture with details…" flow.
-  - `highlights: true` — when the saved PNG includes user-drawn highlights.
+### Capture files
 
-The log is capped at the 100 most recent entries (FIFO eviction). The
-authoritative log lives in extension storage and `log.json` is a
-snapshot rewritten on every capture. If deleted, it will be restored
-from Chrome storage. Scripts use `tail -1 log.json` to get the
-latest record.
+Each capture writes one or more of these, by filename prefix:
+
+- `screenshot-<timestamp>.png` — the captured PNG.
+- `contents-<timestamp>.html` — the captured full-page HTML.
+- `selection-<timestamp>.{html,txt,md}` — the captured text selection. Exactly one file per capture — the extension reflects the format the user picked (HTML fragment, plain text, or markdown).
+
+A single Capture may include any subset of these (or
+none — a URL-only record is valid). Filenames are pinned at capture
+time so multiple saves within one run overwrite in place.
+
+### `log.json`
+
+Newline-delimited JSON (one record per line), grep-friendly history
+of recent captures.
+
+- Capped at the **100 most recent** entries (FIFO eviction).
+- The authoritative log lives in Chrome extension storage; `log.json`
+  is a snapshot rewritten on every capture. If deleted, it's restored
+  from extension storage on the next capture.
+- Scripts use `tail -1 log.json` to get the latest record.
+
+### `log.json` record schema
+
+Every record has `timestamp` and `url`. The remaining fields are optional, and only
+present when that action was included.
+
+- `timestamp` — ISO 8601 UTC timestamp of the capture.
+- `screenshot` — present when a PNG screenshot was saved.
+    - `filename` — filename of the PNG.
+    - `hasHighlights` — `true` if the user added highlights.
+    - `hasRedactions` — `true` if the user blacked out at least one region.
+    - `isCropped` — `true` if the image was cropped to a user-selected region.
+- `contents` — present when the full-page HTML was saved.
+    - `filename` — filename of the HTML snapshot.
+    - `isEdited` — `true` if the user edited the HTML content before saving.
+- `selection` — present when the text selection was saved.
+    - `filename` — filename of the selection file (`.html`, `.txt`, or `.md`).
+    - `format` — one of `"html"`, `"text"`, `"markdown"`.
+    - `isEdited` — `true` if the user edited the captured body before saving.
+- `prompt` — user-entered prompt from the "Capture with details…"
+  flow, giving instructions for agents on what to do with this capture.
+- `url` — URL of the captured tab, or `""` if unavailable.
+
+`filename` fields have file basenames in `log.json` in the `Downloads` folder.
+The scripts that extract these records to pass to agents expand `filename` to hold absolute paths.
 
 ## Development setup
 
@@ -185,8 +226,11 @@ npm run watch        # rebuild on TS changes
 ## Testing
 
 ```bash
-npm test             # run Playwright e2e tests
-npm run test:headed  # same, with a visible browser
+npm test             # validate skill templates, then run Playwright e2e tests
+npm run test:skills  # validate skill templates only (fast, no build)
+npm run test:e2e     # run Playwright e2e tests only
+npm run test:headed  # same as test:e2e, with a visible browser
+npm run test:unit    # run the HTML→markdown converter unit tests
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by
@@ -213,11 +257,9 @@ claude --plugin-dir ~/dev/SeeWhatISee/plugin
 ## Watching for screenshots from CLI
 
 ```bash
-scripts/watch.sh                # wait for the next capture, print it, exit
-scripts/watch.sh --loop         # keep printing captures until ^C
-scripts/watch.sh --after FILE   # emit any captures newer than FILE, then watch
-scripts/watch.sh --stop         # stop a running watcher
-scripts/watch.sh --help         # full usage
+scripts/get-latest.sh     # print the latest capture record
+scripts/watch.sh          # wait for the next capture, print it, exit
+scripts/watch.sh --loop   # keep printing captures until ^C
 ```
 
 ## Layout

@@ -11,14 +11,16 @@ SRC_DIR="$REAL_HOME/Downloads/SeeWhatISee"
 LOG_JSON="$SRC_DIR/log.json"
 
 # Resolve $TARGET_DIR — the Gemini tmp dir we copy capture files into.
-# Gemini CLI restricts file reads to a workspace-named tmp dir;
-# ${WORKSPACE,,} lowercases it (Gemini lowercases the workspace name
-# it resolves to on its side too). Honors $TARGET_DIR from the
-# environment when set, for tests.
+# Gemini CLI restricts file reads to a workspace-named tmp dir.
+# Honors $TARGET_DIR from the environment when set, for tests.
 resolve_target_dir() {
   if [ -z "${TARGET_DIR:-}" ]; then
     WORKSPACE="$(basename "$(pwd)")"
-    TARGET_DIR="$HOME/.gemini/tmp/${WORKSPACE,,}"
+    # Replace . with -, matching Gemini workspace dir selection.
+    WORKSPACE="${WORKSPACE//./-}"
+    # Lowercase the name, matching Gemini workspace dir selection.
+    WORKSPACE="${WORKSPACE,,}"
+    TARGET_DIR="$HOME/.gemini/tmp/$WORKSPACE"
   fi
   TARGET_DIR="$TARGET_DIR/SeeWhatISee"
   mkdir -p "$TARGET_DIR"
@@ -41,15 +43,19 @@ mtime_log() {
 emit_record() {
   local line="$1"
   local contents screenshot selection
-  contents=$(echo "$line" | grep -oP '"contents":\s*"\K[^"]+' || true)
-  screenshot=$(echo "$line" | grep -oP '"screenshot":\s*"\K[^"]+' || true)
-  selection=$(echo "$line" | grep -oP '"selection":\s*"\K[^"]+' || true)
+  # `screenshot`, `contents`, and `selection` are all artifact
+  # objects with `filename` as a nested field.
+  # The grep reaches into the nested `filename` key to pick out the basename,
+  # and the sed below rewrites that to an absolute path under $TARGET_DIR.
+  contents=$(echo "$line" | grep -oP '"contents":\s*\{"filename":\s*"\K[^"]+' || true)
+  screenshot=$(echo "$line" | grep -oP '"screenshot":\s*\{"filename":\s*"\K[^"]+' || true)
+  selection=$(echo "$line" | grep -oP '"selection":\s*\{"filename":\s*"\K[^"]+' || true)
   [ -n "$contents" ] && [ -f "$SRC_DIR/$contents" ] && cp "$SRC_DIR/$contents" "$TARGET_DIR/"
   [ -n "$screenshot" ] && [ -f "$SRC_DIR/$screenshot" ] && cp "$SRC_DIR/$screenshot" "$TARGET_DIR/"
   [ -n "$selection" ] && [ -f "$SRC_DIR/$selection" ] && cp "$SRC_DIR/$selection" "$TARGET_DIR/"
 
   echo "$line" | \
-    sed -e "s|\"screenshot\": *\"\\([^/][^\"]*\\)\"|\"screenshot\": \"$TARGET_DIR/\\1\"|" \
-        -e "s|\"contents\": *\"\\([^/][^\"]*\\)\"|\"contents\": \"$TARGET_DIR/\\1\"|" \
-        -e "s|\"selection\": *\"\\([^/][^\"]*\\)\"|\"selection\": \"$TARGET_DIR/\\1\"|"
+    sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$TARGET_DIR/\\1\"|" \
+        -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$TARGET_DIR/\\1\"|" \
+        -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$TARGET_DIR/\\1\"|"
 }

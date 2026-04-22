@@ -313,6 +313,20 @@ promising — the main issue was the `onActivated` restore logic.
   the 6-item cap, so we don't use any there. Inside submenus
   they're free and we use them to group "Capture with delay" by
   delay and "Set default click action" by delay.
+  - **ChromeOS workaround.** ChromeOS sometimes fails to render
+    native `type: 'separator'` items in the extension action menu.
+    `installContextMenu` in `background.ts` detects the platform
+    via `chrome.runtime.getPlatformInfo()` and falls back to a
+    disabled normal item titled with a fixed-length run of U+2500
+    box-drawing chars (`────…`) on ChromeOS to preserve visual
+    grouping.
+    - **A11y trade-off.** `chrome.contextMenus` has no API to mark
+      an item non-focusable or aria-hidden, so the fake separator
+      is still reachable via keyboard navigation and screen readers
+      announce it as a dimmed row of dashes. Native separators skip
+      focus. We accept this because the native path is already
+      broken on ChromeOS — invisible grouping is worse than a
+      focusable dash row.
 - **No per-item tooltip.** There's no `description` or similar
   field on a menu entry. The `title` is the only user-visible text.
   If you want a tooltip, put the extra context in a source comment
@@ -429,13 +443,57 @@ This section is split by topic:
 
 The screenshot preview is layered with an SVG overlay that lets
 the user draw red markup on the regions they want the agent to
-focus on.
+focus on, convert drawn rectangles into opaque redactions, and
+convert a drawn rectangle into the active crop region.
 
 - **Left-click-drag** — draws a 3px-bordered red rectangle.
 - **Right-click-drag** — draws a 3px red line. The browser
   context menu is suppressed on the overlay.
-- **Undo / Clear** — single edit stack; both buttons disable when
-  empty.
+- **Redact button** — converts the most recent unconverted red
+  rectangle into an opaque black box in the preview and the
+  saved PNG. Enabled whenever any unconverted red rectangle
+  exists; each click consumes one, walking back through the
+  stack on repeated clicks.
+- **Crop button** — converts the top-of-stack red rectangle into
+  the active crop region. Everything outside the region dims in
+  the preview; on save the canvas is cropped to just that region.
+  Disabled unless the top of the stack is currently an
+  un-converted red rectangle, so a crop always applies to the box
+  the user just drew (rather than silently reaching further back).
+- **Drag-to-crop / resize-crop.** The four edges and four corners
+  of the effective crop rectangle are draggable handles. With no
+  active crop, the effective rectangle is the whole image — so
+  dragging an image edge inward creates a crop from scratch. With
+  an active crop, the handles sit on the crop's own edges.
+  - Hit-testing is a `HANDLE_PX` band (10 CSS px) around each
+    edge. Corners take precedence over plain edges; the `cursor`
+    CSS flips to `ns-resize` / `ew-resize` / `nwse-resize` /
+    `nesw-resize` on hover so the affordance is discoverable
+    without reading the tooltip.
+  - Small white grip squares at the four corners make the handles
+    visible even before the user hovers — otherwise the hit
+    regions are invisible.
+  - Each completed drag commits a **new** `'crop'` edit on the
+    stack, not an in-place mutation of the previous one. Undo
+    peels back one resize at a time; earlier crops stay in the
+    stack (hidden behind the newer one for rendering) and
+    re-emerge as Undo walks backward.
+  - The proposed bounds are clamped on three axes:
+    - Inside the image: 0 ≤ x, x+w ≤ 100 (and the same for y).
+    - `MIN_CROP_PCT` floor (3%) on width and height.
+    - Dragged-edge-only: a drag past the opposite edge clamps
+      the dragged edge at `MIN_CROP_PCT` away from the opposite
+      one. The opposite edge never moves.
+    - Why not flip / push? A flipped crop is surprising on a
+      resize tool and never useful. Pushing the opposite edge
+      out to preserve the minimum used to produce n/w vs. s/e
+      asymmetry, so that's avoided too.
+  - A sub-`CLICK_THRESHOLD_PX` drag is discarded, so a stray
+    click on a handle doesn't add a no-op entry to the stack.
+- **Undo / Clear** — single edit-history stack covering draws
+  *and* conversions. Undo reverses the most recent action, which
+  means popping a conversion restores the red rectangle it came
+  from. Both buttons disable when the stack is empty.
 - **Resize-stable coordinates** — edits are stored as percentages
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
@@ -443,30 +501,92 @@ focus on.
   between mousedown and mouseup counts as a stray click and is
   discarded, so neither button can produce a degenerate
   zero-size rectangle or zero-length line.
+- **Tooltips** — every button has a `title` attribute describing
+  what it does (e.g. "Turn the last drawn box into a black
+  redaction"). Kept short so the hover reads at a glance; the
+  disabled-state rationale is conveyed by the button itself being
+  grayed out, not spelled out in the tooltip.
+- **Crop rendering** — the preview paints a single dim "picture
+  frame" around the active crop via an SVG `<path>` with
+  `fill-rule="evenodd"` (outer = full image, inner = crop),
+  plus a thin dashed white border on the crop edges.
+  - **Single path, not four strips.**
+    - Four adjacent dim strips partially-cover the pixel row
+      straddling the crop's top/bottom edge from *two* rects
+      in series instead of one solid fill.
+    - Alpha-over-alpha composites brighter than a single fill
+      (≈14% brighter at 0.55 alpha), so those shared edges
+      showed up as faint guide lines spanning the full image.
+    - Vertical edges didn't show the artifact because the
+      strip's inner edge borders un-dim content — smooth ramp,
+      not a brighter spike.
+  - **Dashed border is per-side.**
+    - Each crop edge is its own `<line>`; a side flush with
+      the image boundary is *omitted*.
+    - A dash right at the image edge is cosmetic noise, and
+      drawing one there while omitting it on the other axis
+      (the case a full-width-but-not-full-height crop
+      produces) read as an asymmetric guide line past the crop.
+  - Prior crops are hidden by the most recent one.
+- **Full-image crop collapses to "no crop".**
+  - A crop with bounds `(0, 0, 100, 100)` is treated as no
+    crop everywhere: `activeCrop()` returns `undefined`, no
+    dim overlay or dashed border, bake-in skipped, and no
+    `isCropped` flag on the saved record.
+  - The edit stays in the stack so Undo can still walk back
+    through it.
+  - Fires when the user drags the crop back out to cover the
+    entire image (all four sides at the boundary) — the saved
+    PNG then matches what they see, an un-marked full-size
+    capture.
 
 ### Highlight bake-in on save
 
-If the user has drawn any highlights *and* is saving the screenshot:
+If the user has any edits *and* is saving the screenshot:
 
 - The page renders the preview image plus the overlay onto a
-  `<canvas>` at the screenshot's *natural* resolution.
-- Stroke widths scale by the display→natural ratio so the markup
-  looks the same in the saved PNG as during editing.
+  `<canvas>`. With no active crop the canvas is the screenshot's
+  *natural* resolution; with an active crop the canvas is sized
+  to just that crop region (so the saved PNG ships a smaller
+  image) and every edit's coordinates are translated into the
+  cropped frame.
+- Red rectangles and lines stroke at 3px scaled by the
+  display→natural ratio so they look the same in the saved PNG
+  as during editing.
+- Redactions paint as solid black fills that cover whatever was
+  underneath — they are the only edit kind that obliterates the
+  original pixels in the bake, which is the whole point.
+- A clip rectangle matching the canvas size keeps any edit that
+  extends past the crop from bleeding onto the saved bytes.
 - The resulting `canvas.toDataURL('image/png')` is sent back to
   the background as a `screenshotOverride` field on the
-  `saveDetails` runtime message, alongside a `highlights: true`
-  flag.
+  `saveDetails` runtime message, alongside three per-kind edit
+  flags (`highlights`, `hasRedactions`, `isCropped`).
+  - `highlights` is `true` iff at least one *un-converted* red
+    rectangle or line survives on the stack. A rectangle the
+    user converted to a redaction / crop no longer counts as a
+    highlight — the bake turned it into something else, so it
+    flips the other flag instead.
+  - `hasRedactions` is `true` iff any redaction rectangle is
+    baked into the PNG.
+  - `isCropped` is `true` iff the saved PNG was cropped to a
+    region.
+  - The three are independent — any combination can be true at
+    once on a single save.
 - The background passes `screenshotOverride` through to
   `ensureScreenshotDownloaded` (the same helper the Copy-filename
   buttons use). On a cache miss it becomes the body of the PNG
   download; on a cache hit (the page already pre-downloaded at
   this `editVersion`) it's dropped because the on-disk file already
-  matches. `recordDetailedCapture` then writes the sidecar with
-  `hasHighlights: true`.
-- The resulting sidecar record gets `highlights: true` so the
-  see-what-i-see skills know to focus on the marked regions.
+  matches. `recordDetailedCapture` then writes the sidecar with the
+  screenshot artifact carrying whichever of `hasHighlights: true`
+  / `hasRedactions: true` / `isCropped: true` are set for this
+  save.
+- The see-what-i-see skills read `screenshot.hasHighlights === true`
+  as the signal to focus on the marked regions.
 - If there are no edits, or the screenshot isn't being saved, no
-  override is sent and the record never gets the `highlights` field.
+  override is sent and the record's screenshot object stays bare
+  (just `filename`, no edit flags).
 
 ### Image fit-to-viewport
 

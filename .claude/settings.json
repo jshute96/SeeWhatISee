@@ -5,7 +5,11 @@
   "permissions": {
     "allow": [
       "Bash(plugin/scripts/watch.sh:*)",
-      "Bash(plugin/scripts/get-latest.sh:*)"
+      "Bash(plugin/scripts/get-latest.sh:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run test:skills:*)",
+      "Bash(npm run test:e2e:*)"
     ]
   },
   "enabledPlugins": {

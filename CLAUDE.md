@@ -16,6 +16,8 @@ repository. See `README.md` for setup instructions and available commands.
   - When adding a new feature, you can add new sections in the relevant design doc rather than appending to an existing one.
 - **Commit Preparation**:
   - Ensure `README.md` is updated if setup, commands, or user-visible features change.
+    - `README.md` is most user-facing documentation. Keep it concise and focus on briefly listing what users can do, without a lot of technical details.
+  - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
   - Include all significant changes in the commit message.
 
 ## Development Conventions
@@ -30,8 +32,8 @@ is needed, keep it concise (bullet points, not paragraphs) and confirm with the
 user before elaborating further. Default to action over planning.
 
 ## Git & Commits
+- Do not commit or push changes without getting user instructions to do so.
 - When committing, include ALL relevant changed files — check `git status` before committing to avoid missing files like TODO.md, documentation, or new files.
-- Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
 
 ## Code Changes
 - Use the file index to help find relevant files.
@@ -42,11 +44,30 @@ user before elaborating further. Default to action over planning.
 
 ## Keep the skill/command files in sync
 
-These skill and command files describe the same `log.json` outputs and the
-same steps to take for each. Keep the instructions consistent across these
-files, including formatting, so diffs only show intentional differences.
+The Claude skills and Gemini commands describe the same `log.json` outputs
+and the same steps to take for each. To keep them consistent, they are
+**generated from shared templates** in `src/skills_templates/` — never edit the
+generated files directly.
 
-- `plugin/skills/see-what-i-see/SKILL.md`
-- `plugin/skills/see-what-i-see-watch/SKILL.md`
-- `.gemini/commands/see-what-i-see.toml`
-- `.gemini/commands/see-what-i-see-watch.toml`
+- Templates live in `src/skills_templates/` (one file per generated target, plus
+  shared blocks like `json-record.template.md` and `process.template.md`
+  which are embedded via `[[filename]]` placeholders).
+- The generator is `src/skills_templates/generate-skills.py`:
+  - `src/skills_templates/generate-skills.py` — validate that each target matches the
+    template output (exits non-zero if any differ). Also wired up as
+    `npm run test:skills` and runs as part of `npm test`, so `npm test` will
+    fail if the generated files have drifted from the templates.
+  - `src/skills_templates/generate-skills.py --diff` — same validation, but also
+    prints a unified diff for each mismatching file.
+  - `src/skills_templates/generate-skills.py --update` — regenerate the target files
+    from the templates.
+- Generated targets (do not edit these directly):
+  - `plugin/skills/see-what-i-see/SKILL.md`
+  - `plugin/skills/see-what-i-see-watch/SKILL.md`
+  - `plugin/skills/see-what-i-see-stop/SKILL.md`
+  - `plugin/skills/see-what-i-see-help/SKILL.md`
+  - `.gemini/commands/see-what-i-see.toml`
+  - `.gemini/commands/see-what-i-see-watch.toml`
+- When updating behavior shared across skills (e.g. the JSON record shape or
+  the processing rules), edit the relevant template in `src/skills_templates/` and
+  re-run the generator so every target picks up the change.

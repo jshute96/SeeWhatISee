@@ -31,7 +31,7 @@ import { test, expect } from '../fixtures/extension';
 // reflects the default with-selection action (`capture-selection`
 // on a fresh install).
 const DEFAULT_TITLE =
-  'SeeWhatISee — Capture visible tab\nWith selection: capture selection\nDouble-click for capture with details';
+  'SeeWhatISee — Capture visible tab\nWith selection: capture selection as html\nDouble-click for capture with details';
 
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;
@@ -93,7 +93,7 @@ test.beforeEach(async ({ getServiceWorker }) => {
     // Pin the with-selection default too so the tooltip's
     // "With selection: …" line stays stable regardless of the
     // starting storage state.
-    await api.setDefaultWithSelectionId('capture-selection');
+    await api.setDefaultWithSelectionId('capture-selection-html');
   });
   await installSetIconSpy(sw);
 });

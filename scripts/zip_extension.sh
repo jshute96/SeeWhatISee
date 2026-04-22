@@ -10,7 +10,7 @@ TARGET="/tmp/SeeWhatISee.zip"
 
 npm run build
 
-rm "$TARGET"
+rm -f "$TARGET"
 cd dist && zip -r "$TARGET" .
 
 echo
