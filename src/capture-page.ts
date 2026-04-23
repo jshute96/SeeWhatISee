@@ -311,6 +311,7 @@ document.addEventListener('keydown', (e) => {
     l: 'html', t: 'text', m: 'markdown',
   };
   if (key === 's') {
+    if (screenshotBox.disabled) return;
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
   } else if (key === 'h') {
