@@ -567,16 +567,25 @@ design live in [`chrome-extension.md`](chrome-extension.md).
   `chrome.storage.session` keyed by the new tab's id, in a
   `DetailsSession` wrapper.
 
-### Graceful handling of failed HTML / selection scrape
+### Graceful handling of failed screenshot / HTML / selection scrape
 
 - `captureBothToMemory` catches failures from
-  `chrome.scripting.executeScript` and returns an `InMemoryCapture`
-  with `htmlError` / `selectionError` set instead of throwing.
+  `chrome.scripting.executeScript` and from
+  `chrome.tabs.captureVisibleTab` and returns an `InMemoryCapture`
+  with `htmlError` / `selectionError` / `screenshotError` set
+  instead of throwing.
 - Common trigger: restricted URLs (chrome://, the Web Store) where
-  extensions can't inject scripts. The screenshot itself still
-  succeeds via `chrome.tabs.captureVisibleTab`.
+  extensions can't inject scripts. On the Web Store
+  `captureVisibleTab` is also blocked, so `screenshotError` fires
+  there; on generic `chrome://` pages the screenshot still
+  succeeds.
 - Impact on the details flow:
   - The details page still opens with the screenshot preview.
+    When `screenshotError` is set the preview image will be
+    broken (empty data URL) but the rest of the page still
+    renders; Save screenshot and its Copy button are
+    disabled + unchecked and the row carries an error icon
+    explaining why.
   - Save HTML and the master Save-selection checkbox are
     disabled + unchecked; their Copy and Edit buttons are hidden
     (the shared `.copy-btn:disabled` rule covers both).
@@ -602,9 +611,9 @@ design live in [`chrome-extension.md`](chrome-extension.md).
 - Impact on the More-menu shortcuts:
   - `capture-url` (URL-only) deliberately ignores `htmlError` —
     it doesn't need HTML anyway.
-  - `capture-both` (screenshot + HTML) re-throws `htmlError` so
-    the toolbar icon / tooltip surfaces the reason via the
-    standard error-reporting channel.
+  - `capture-both` (screenshot + HTML) re-throws `screenshotError`
+    or `htmlError` so the toolbar icon / tooltip surfaces the
+    reason via the standard error-reporting channel.
 
 ### What the page shows
 

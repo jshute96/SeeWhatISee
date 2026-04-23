@@ -277,13 +277,16 @@ async function captureUrlOnly(delayMs = 0): Promise<void> {
  * writes them, and records a sidecar entry referencing both.
  *
  * Unlike the details flow (which gracefully falls back to a
- * screenshot-only UI), this shortcut *requires* HTML by definition,
- * so we surface an `htmlError` as a thrown error — the action's
- * error-reporting channel then swaps the icon / tooltip so the user
- * sees why nothing landed.
+ * screenshot-only UI), this shortcut *requires* both artifacts by
+ * definition, so we surface a `screenshotError` or `htmlError` as a
+ * thrown error — the action's error-reporting channel then swaps the
+ * icon / tooltip so the user sees why nothing landed.
  */
 async function captureBoth(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
+  if (data.screenshotError) {
+    throw new Error(data.screenshotError);
+  }
   if (data.htmlError) {
     throw new Error(data.htmlError);
   }
@@ -2154,6 +2157,7 @@ chrome.runtime.onMessage.addListener((msg: DetailsMessage, sender, sendResponse)
         url: session.capture.url,
         htmlError: session.capture.htmlError,
         selectionError: session.capture.selectionError,
+        screenshotError: session.capture.screenshotError,
         defaultSelectionFormat: detailsDefaultSelectionFormat(withId),
       });
     })();

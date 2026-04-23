@@ -436,13 +436,17 @@
 
   <div class="controls">
     <div class="checkboxes">
-      <div class="checkbox-row">
+      <div class="checkbox-row" id="row-screenshot">
         <label><input type="checkbox" id="cap-screenshot" checked> Save <u>s</u>creenshot</label>
         <button type="button" class="copy-btn" id="copy-screenshot-name"
                 title="Copy PNG filename"
                 aria-label="Copy screenshot filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
+        <span class="error-icon" id="error-screenshot" title="" role="img"
+              aria-label="Screenshot capture error">
+          <svg aria-hidden="true"><use href="#error-icon"></use></svg>
+        </span>
       </div>
       <div class="checkbox-row" id="row-html">
         <label><input type="checkbox" id="cap-html"> Save <u>H</u>TML</label>

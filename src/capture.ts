@@ -600,6 +600,13 @@ export interface InMemoryCapture {
    * existed" leaves both `selection` and `selectionError` unset.
    */
   selectionError?: string;
+  /**
+   * Reason screenshot could not be captured (e.g. restricted URL
+   * like the Web Store where extensions aren't allowed to capture).
+   * Set only when captureVisibleTab failed — the details page reads
+   * this to flag the screenshot row/preview with an error icon.
+   */
+  screenshotError?: string;
 }
 
 /**
@@ -628,9 +635,16 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
-  const screenshotDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, {
-    format: 'png',
-  });
+  let screenshotDataUrl = '';
+  let screenshotError: string | undefined;
+  try {
+    screenshotDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, {
+      format: 'png',
+    });
+  } catch (err) {
+    console.warn('[SeeWhatISee] captureVisibleTab failed:', err);
+    screenshotError = err instanceof Error ? err.message : String(err);
+  }
 
   // Grab the HTML and the selection in a single scripting round-trip.
   // Two separate `executeScript` calls would double the IPC cost and
@@ -714,6 +728,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   }
   if (htmlError !== undefined) capture.htmlError = htmlError;
   if (selectionError !== undefined) capture.selectionError = selectionError;
+  if (screenshotError !== undefined) capture.screenshotError = screenshotError;
   return capture;
 }
 
