@@ -274,6 +274,13 @@ design live in [`chrome-extension.md`](chrome-extension.md).
       - Saved HTML stays byte-identical to the scrape — only the
         markdown output gets URL rewriting. Saved text comes from
         `selection.toString()` and carries no URLs.
+      - The markdown / text converters skip elements the page itself
+        marks invisible — the HTML5 `hidden` attribute and inline
+        `style="display: none"`. Catches the common "snackbar /
+        toast template embedded in the live HTML" pattern that
+        `Selection.toString()` already filters out via layout.
+        CSS-class-driven hiding (`.sr-only`, stylesheet rules)
+        still leaks through; we don't run a layout / CSS engine.
       - File lands at `selection-<timestamp>.{html,txt,md}`; the
         record is `{ filename, format, isEdited?: true }` with
         `format` ∈ `{"html","text","markdown"}` so downstream

@@ -69,6 +69,45 @@ interface TextNode {
 }
 type Node = ElementNode | TextNode;
 
+/**
+ * Detect inline-style hidden elements that the user wouldn't see on
+ * the page. We don't run a layout / CSS engine, so this only catches
+ * the cheap signals: the HTML5 `hidden` attribute and an inline
+ * `style="display: none"` declaration. CSS-class-driven hiding (e.g.
+ * a `.sr-only` rule in a stylesheet) still leaks through — there's no
+ * fix for that without a real DOM.
+ *
+ * Motivation: pages stash invisible chrome inside the live HTML
+ * (toast templates, snackbar messages, screen-reader-only flyouts).
+ * The text snapshot sidesteps these because `Selection.toString()`
+ * already respects layout, but the markdown / text converters parse
+ * raw HTML and would otherwise emit the hidden text alongside the
+ * visible content.
+ */
+function isHiddenElement(node: ElementNode): boolean {
+  if ('hidden' in node.attrs) return true;
+  const style = node.attrs['style'];
+  if (!style) return false;
+  // Walk the inline declarations rather than substring-matching, so
+  // `background: url('display:none.png')` and friends don't trigger
+  // a false positive. We only care about a literal `display: none`
+  // (with optional `!important`) at declaration scope.
+  for (const decl of style.split(';')) {
+    const colonIdx = decl.indexOf(':');
+    if (colonIdx < 0) continue;
+    const prop = decl.slice(0, colonIdx).trim().toLowerCase();
+    if (prop !== 'display') continue;
+    const val = decl.slice(colonIdx + 1).trim().toLowerCase();
+    // Accept anything starting with `none` followed by a non-identifier
+    // char (or end-of-string). Catches `none`, `none !important`,
+    // `none!important` (no space — legal CSS, real in the wild), and
+    // `none/* comment */`. Avoids matching e.g. a hypothetical
+    // `none-foo` keyword.
+    if (/^none($|[^a-z0-9_-])/.test(val)) return true;
+  }
+  return false;
+}
+
 // ─── HTML entity decoding ─────────────────────────────────────────
 //
 // Only the few named entities a browser-serialized fragment reliably
@@ -366,6 +405,7 @@ function emitText(nodes: Node[]): string {
       out += node.value;
       continue;
     }
+    if (isHiddenElement(node)) continue;
     const tag = node.tag;
     if (tag === 'br') {
       out += '\n';
@@ -392,6 +432,11 @@ function emitNodes(nodes: Node[], ctx: EmitContext): string {
   let out = '';
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]!;
+    // Skip elements the page itself keeps invisible (`hidden` attr or
+    // inline `display: none`). The rest of the emitter doesn't need to
+    // know — dropping the node here means its children, block-boundary
+    // padding, and tr-run merging all just see it as absent.
+    if (node.type === 'element' && isHiddenElement(node)) continue;
     // Drop whitespace-only text nodes that sit between block-level
     // siblings in pretty-printed HTML. If we kept them they'd leak
     // through as a stray " " right after the previous block's
@@ -418,7 +463,7 @@ function emitNodes(nodes: Node[], ctx: EmitContext): string {
       while (i < nodes.length) {
         const n = nodes[i]!;
         if (n.type === 'element' && n.tag === 'tr') {
-          run.push(n);
+          if (!isHiddenElement(n)) run.push(n);
           i++;
         } else if (n.type === 'text' && n.value.trim().length === 0) {
           i++;
@@ -760,9 +805,13 @@ function emitTable(node: ElementNode, ctx: EmitContext): string {
   const collectRows = (n: ElementNode): void => {
     for (const child of n.children) {
       if (child.type !== 'element') continue;
+      if (isHiddenElement(child)) continue;
       if (child.tag === 'tr') {
         const cells = child.children.filter(
-          (c): c is ElementNode => c.type === 'element' && (c.tag === 'td' || c.tag === 'th'),
+          (c): c is ElementNode =>
+            c.type === 'element' &&
+            (c.tag === 'td' || c.tag === 'th') &&
+            !isHiddenElement(c),
         );
         rows.push(cells);
       } else if (child.tag === 'thead' || child.tag === 'tbody' || child.tag === 'tfoot') {

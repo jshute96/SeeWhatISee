@@ -299,6 +299,119 @@ test('table with unaligned row widths pads trailing empty cells', () => {
   );
 });
 
+test('drops elements with the hidden attribute', () => {
+  // Pages frequently stash never-shown chrome (snackbar templates,
+  // skeleton placeholders) behind the HTML5 `hidden` attribute. The
+  // user doesn't see them on screen, so neither should the markdown.
+  assert.equal(
+    norm(htmlToMarkdown('<p>before</p><div hidden>secret</div><p>after</p>')),
+    'before\n\nafter',
+  );
+  assert.equal(
+    norm(htmlToText('<p>before</p><div hidden>secret</div><p>after</p>')),
+    'before\nafter',
+  );
+});
+
+test('drops elements with inline display:none', () => {
+  // Real-world case: Google's `<g-snackbar style="display:none">…</g-snackbar>`
+  // — visible in the HTML source but invisible to the user. We don't
+  // run a layout engine, but inline `display:none` is the cheap signal
+  // that catches the most common patterns.
+  assert.equal(
+    norm(htmlToMarkdown(
+      '<p>before</p><div style="display:none">secret</div><p>after</p>',
+    )),
+    'before\n\nafter',
+  );
+  assert.equal(
+    norm(htmlToMarkdown(
+      '<p>a</p><span style="color:red; display: none !important">x</span><p>b</p>',
+    )),
+    'a\n\nb',
+  );
+  // Browsers accept `!important` with no space; real-world inline styles
+  // do show up in this form.
+  assert.equal(
+    norm(htmlToMarkdown(
+      '<p>a</p><span style="display:none!important">x</span><p>b</p>',
+    )),
+    'a\n\nb',
+  );
+});
+
+test('display:none subtree drops its visible-looking children too', () => {
+  // Locks the contract that hiding propagates: a hidden parent erases
+  // everything underneath it, not just its own immediate text.
+  const out = norm(htmlToMarkdown(
+    '<p>before</p>' +
+    '<div hidden><p>inner para</p><span>inner span</span></div>' +
+    '<p>after</p>',
+  ));
+  assert.equal(out, 'before\n\nafter');
+});
+
+test('inline display:none nested inside a parent is also dropped', () => {
+  const out = norm(htmlToMarkdown(
+    '<p>visible <span style="display:none">hidden</span> tail</p>',
+  ));
+  assert.equal(out, 'visible tail');
+});
+
+test('display:none false-positive guard: substring inside a value does not hide', () => {
+  // The check walks declaration-by-declaration, so a substring like
+  // `display:none.png` inside a `background` URL doesn't trip it.
+  const out = norm(htmlToMarkdown(
+    '<p style="background: url(\'display:none.png\')">visible</p>',
+  ));
+  assert.equal(out, 'visible');
+});
+
+test('non-display style declarations are not hidden', () => {
+  const out = norm(htmlToMarkdown(
+    '<p style="visibility: hidden">still rendered</p>',
+  ));
+  // visibility:hidden takes layout space and we intentionally don't
+  // try to chase it — the converter only recognizes `display:none`
+  // and the `hidden` attribute.
+  assert.equal(out, 'still rendered');
+});
+
+test('hidden table rows are skipped from the rendered table', () => {
+  const out = norm(htmlToMarkdown(
+    '<table>' +
+    '<tr><th>A</th><th>B</th></tr>' +
+    '<tr hidden><td>x</td><td>y</td></tr>' +
+    '<tr><td>1</td><td>2</td></tr>' +
+    '</table>',
+  ));
+  assert.equal(out, '| A | B |\n| --- | --- |\n| 1 | 2 |');
+});
+
+test('hidden cells inside a visible row are dropped', () => {
+  const out = norm(htmlToMarkdown(
+    '<table>' +
+    '<tr><th>A</th><th>B</th></tr>' +
+    '<tr><td>1</td><td hidden>secret</td><td>3</td></tr>' +
+    '</table>',
+  ));
+  // Width comes from the (now 2-cell) row count; the hidden cell is
+  // erased rather than blanked, so the surviving cells slide left.
+  assert.equal(out, '| A | B |\n| --- | --- |\n| 1 | 3 |');
+});
+
+test('hidden stray <tr> rows are dropped from a synthesized table', () => {
+  const out = norm(htmlToMarkdown(
+    '<tr><td>a</td><td>b</td></tr>' +
+    '<tr style="display:none"><td>x</td><td>y</td></tr>' +
+    '<tr><td>c</td><td>d</td></tr>',
+  ));
+  assert.equal(
+    out,
+    '|  |  |\n| --- | --- |\n| a | b |\n| c | d |',
+  );
+});
+
 test('drops script and style contents', () => {
   const out = norm(htmlToMarkdown(
     '<p>before</p><script>alert(1)</script><style>.x{}</style><p>after</p>',
