@@ -28,9 +28,24 @@ design live in [`chrome-extension.md`](chrome-extension.md).
                                 +---------------------------+
 ```
 
+**Service worker layout.** `src/background.ts` is a thin entrypoint
+that wires Chrome event listeners. The substantive logic lives in
+`src/background/`:
+
+- `error-reporting.ts` — icon/tooltip error surface (`runWithErrorReporting`).
+- `capture-actions.ts` — the `CAPTURE_ACTIONS` table + `captureUrlOnly` / `captureBoth` shortcuts.
+- `default-action.ts` — default-click preferences, `handleActionClick` dispatcher, `getDefaultActionTooltip` builder.
+- `context-menu.ts` — `installContextMenu`, menu title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard).
+- `capture-details.ts` — the "Capture with details…" per-tab session + `ensure*Downloaded` artifact cache.
+
+The sections below keep referring to these by file for locator
+accuracy; "background.ts" in older wording generally means "the
+service worker" now, and the specific symbol lives in one of the
+sub-modules above.
+
 - **Capture actions.** A single `CAPTURE_ACTIONS` array in
-  `src/background.ts` is the source of truth for every user-visible
-  way to grab content.
+  `src/background/capture-actions.ts` is the source of truth for
+  every user-visible way to grab content.
 
   - Generated at module load from `BASE_CAPTURE_ACTIONS ×
     CAPTURE_DELAYS_SEC` (0, 2, 5 seconds). A base with
@@ -985,7 +1000,7 @@ permission gaps).
 2. Register it on `self.SeeWhatISee` in `src/background.ts` so it
    is reachable from tests and the devtools console.
 3. Add a new entry to the `BASE_CAPTURE_ACTIONS` array in
-   `src/background.ts` with a base id, base title, a
+   `src/background/capture-actions.ts` with a base id, base title, a
    `baseTooltipFragment` (sentence-case, no trailing "…" —
    slotted into the toolbar tooltip's `Click: …` /
    `Double-click: …` lines), a `group: 'primary' | 'more'`, and

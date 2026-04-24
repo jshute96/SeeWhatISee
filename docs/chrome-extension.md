@@ -46,10 +46,10 @@ The background script is an MV3 service worker. That means:
   We handle this on two paths:
 
   1. Every user-initiated click flows through
-     `runWithErrorReporting` in `background.ts`, which catches the
-     rejection and surfaces it on the icon + tooltip.
-  2. A targeted `unhandledrejection` handler at the top of
-     `background.ts` catches the user-friendly messages
+     `runWithErrorReporting` in `background/error-reporting.ts`,
+     which catches the rejection and surfaces it on the icon + tooltip.
+  2. A targeted `unhandledrejection` handler installed by
+     `background/error-reporting.ts` catches the user-friendly messages
      (`No active tab found to capture`, `Failed to retrieve page
      contents`) from bare `self.SeeWhatISee.captureVisible()` calls
      in the SW devtools console — that path doesn't go through
@@ -326,7 +326,7 @@ promising — the main issue was the `onActivated` restore logic.
   delay and "Set default click action" by delay.
   - **ChromeOS workaround.** ChromeOS sometimes fails to render
     native `type: 'separator'` items in the extension action menu.
-    `installContextMenu` in `background.ts` detects the platform
+    `installContextMenu` in `background/context-menu.ts` detects the platform
     via `chrome.runtime.getPlatformInfo()` and falls back to a
     disabled normal item titled with a fixed-length run of U+2500
     box-drawing chars (`────…`) on ChromeOS to preserve visual
@@ -396,7 +396,7 @@ promising — the main issue was the `onActivated` restore logic.
     `chrome.contextMenus.create()` sets `chrome.runtime.lastError`
     to *"You cannot add more than 6 …"* on the offending call and
     the item simply doesn't register. Because the loop in
-    `background.ts` doesn't pass a `create()` callback, we never
+    `background/context-menu.ts` doesn't pass a `create()` callback, we never
     read `lastError` and the failure is invisible until someone
     notices the menu entry is gone. This has already bitten us
     once: commit 8e100d1 added "Capture with details..." as a 7th
