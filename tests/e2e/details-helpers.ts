@@ -1,9 +1,10 @@
-// Shared helpers for the "Capture with details…" E2E specs.
-//
-// Split out of `capture-with-details.spec.ts` so a second spec
-// (`capture-drawing.spec.ts`) can reuse the flow without either
-// duplicating ~120 lines of plumbing or forcing changes through a
-// file that already runs 27 tests.
+// Shared helpers for the details-flow E2E specs:
+// `capture-with-details`, `capture-details-copy`,
+// `capture-details-edit`, `capture-drawing`, and
+// `toolbar-dispatch`. Covers flow open, capture submit, CodeJar
+// editor read/write, overlay drag, clipboard / download spies, and
+// selection seeding — the plumbing every consumer would otherwise
+// duplicate.
 
 import fs from 'node:fs';
 import type { BrowserContext, Locator, Page, Worker } from '@playwright/test';
@@ -224,4 +225,96 @@ export async function dragRect(
   await capturePage.mouse.move((x1 + x2) / 2, (y1 + y2) / 2);
   await capturePage.mouse.move(x2, y2);
   await capturePage.mouse.up();
+}
+
+// ─── Clipboard + download spies (copy-button / edit-dialog tests) ─
+
+// Spy on `navigator.clipboard.writeText` from the capture page. The
+// spy installs a per-page array of all text writes so the test can
+// inspect them without needing clipboard-read permission (which
+// additionally requires user activation to actually read back).
+export async function installClipboardSpy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface SpyState { __seeClip?: string[] }
+    const g = self as unknown as SpyState;
+    g.__seeClip = [];
+    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = async (text: string) => {
+      g.__seeClip!.push(text);
+      return orig(text);
+    };
+  });
+}
+
+export async function readClipboardSpy(page: Page): Promise<string[]> {
+  return await page.evaluate(
+    () => (self as unknown as { __seeClip?: string[] }).__seeClip ?? [],
+  );
+}
+
+// Wait until the clipboard spy has recorded `n` writes. Copy click
+// handlers are async (SW round-trip + wait-for-download-complete),
+// so a Playwright `.click()` resolves before the write lands.
+export async function waitForClipboardWrites(page: Page, n: number): Promise<void> {
+  await page.waitForFunction(
+    (count) =>
+      ((self as unknown as { __seeClip?: string[] }).__seeClip?.length ?? 0) >= count,
+    n,
+    { timeout: 5000 },
+  );
+}
+
+// Count the screenshot / HTML downloads recorded in the SW spy
+// (installed by `openDetailsFlow`). Used to assert the per-tab cache
+// short-circuits — i.e. after the first Copy on each kind, neither a
+// repeat Copy nor the eventual Capture should add another entry.
+export async function countDownloadsBySuffix(sw: Worker, suffix: string): Promise<number> {
+  return await sw.evaluate((sfx) => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    const list = (self as unknown as SpyState).__seeDl ?? [];
+    return list.filter((d) => d.name.endsWith(sfx)).length;
+  }, suffix);
+}
+
+// Return *all* downloads whose requested filename matches a bare
+// basename prefix (e.g. `'contents-'` or `'selection-'`), in the
+// order they were initiated. Each entry includes the chrome
+// downloadId so the caller can resolve the on-disk path and read
+// the bytes back. Used by the edit-dialog tests to verify that a
+// post-edit Copy requests the *same* pinned filename as the
+// pre-edit Copy (i.e. production overwrites in place) while also
+// proving the bytes on disk differ.
+export async function findAllCapturedDownloads(
+  sw: Worker,
+  basenamePrefix: string,
+): Promise<{ id: number; name: string }[]> {
+  return await sw.evaluate((prefix) => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    const list = (self as unknown as SpyState).__seeDl ?? [];
+    // `name` is the full `SeeWhatISee/<basename>` path we passed to
+    // `chrome.downloads.download`. Match the bare basename prefix
+    // so callers don't have to care about the directory segment.
+    return list.filter((d) => {
+      const base = d.name.split('/').pop() ?? d.name;
+      return base.startsWith(prefix);
+    });
+  }, basenamePrefix);
+}
+
+// Inject a <span> into the current page body and select its contents
+// so the SW's scripting call sees a non-empty `window.getSelection`.
+// Shared between the edit-selection tests and the toolbar-dispatch
+// tests that care about click-with-a-selection routing.
+export async function seedSelection(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const span = document.createElement('span');
+    span.id = 'sel-seed';
+    span.textContent = 'hello selection world';
+    document.body.appendChild(span);
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const sel = window.getSelection();
+    sel!.removeAllRanges();
+    sel!.addRange(range);
+  });
 }
