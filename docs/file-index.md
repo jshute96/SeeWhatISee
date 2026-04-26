@@ -132,9 +132,10 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the details-flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
 | `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape-failure UX |
+| `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
 | `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing overlay — boxes/lines/Redact/Crop/Undo/Clear, drag-to-crop, edit-flag semantics on log.json |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
-| `tests/e2e/details-helpers.ts` | Shared helpers for the details-flow specs — flow open, capture submit, editor read/write, clipboard + download spies |
+| `tests/e2e/details-helpers.ts` | Shared helpers for the details-flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureBoth` (PNG + HTML + record) |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
@@ -156,3 +157,6 @@ One-line descriptions of every source file, grouped by directory.
 | `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, details flow, Playwright patterns) |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
+| `images/copy-icon.png` | Inline icon image referenced from the README's details-page bullet for the Copy button |
+| `images/edit-icon.png` | Inline icon image referenced from the README's details-page bullet for the Edit button |
+| `images/download-icon.png` | Inline icon image referenced from the README's details-page bullet for the Save-as button |

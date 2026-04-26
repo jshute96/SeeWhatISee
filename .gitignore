@@ -8,6 +8,7 @@
 # claude scratch files
 .claude/projects/
 .claude/worktrees/
+.claude/*.lock
 
 .gemini/settings.json
 .gemini/policies/

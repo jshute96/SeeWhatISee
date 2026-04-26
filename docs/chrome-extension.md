@@ -443,6 +443,34 @@ This section is split by topic:
   still writes a log record with just the URL (and any prompt),
   so the user can hand an agent a URL + prompt without attaching
   any captured page content.
+- **Per-row icon buttons** — each Save row carries a small icon
+  strip next to its checkbox / radio:
+  - **Copy** — pre-materializes the artifact under its pinned
+    capture filename and writes the absolute path to the clipboard.
+  - **Edit** — opens a modal editor for the captured body (HTML /
+    selection formats); Save updates the SW's authoritative copy.
+  - **Save as…** — opens a native save dialog seeded with a
+    generic default filename (`screenshot.png`, `contents.html`,
+    `selection.{html,txt,md}`).
+    - Writes the *current edited* body: the screenshot bake includes
+      any highlights / redactions / crop; HTML and selection bodies
+      come from the in-page `captured[kind]` mirror the Edit dialogs
+      keep in sync.
+    - Disabled (and hidden) for any row whose body is unavailable —
+      failed scrape, or a per-format selection that trimmed empty.
+    - Implementation: `chrome.downloads.download({ saveAs: true })`
+      called directly from the extension page — no SW round-trip.
+    - Selection / HTML bodies route through a `blob:` URL whose
+      revocation is deferred ~30 s (the API resolves on download
+      *start*, not finish, so a synchronous revoke can truncate
+      large bodies).
+    - `USER_CANCELED` rejections are silenced — the user dismissing
+      the save dialog isn't a failure.
+  - **Edit-dialog Download** — each Edit dialog also has a
+    "Download" button right of the Edit / Preview toggle, which
+    saves the *current editor source* (un-Saved edits included).
+    Useful for exporting an experimental edit without committing it
+    back to the SW.
 - **Prompt textarea** — auto-growing, capped at 200px. `rows="1"`
   initially; on each `input` event we set `style.height = 'auto'`
   then `style.height = scrollHeight + 'px'`. Once `scrollHeight`

@@ -64,21 +64,94 @@
     gap: 24px;
     margin-bottom: 16px;
   }
+  /*
+   * Single grid for every Save row (screenshot / HTML / selection
+   * master + the three format rows) so the per-row icon buttons
+   * line up in fixed vertical columns regardless of which buttons
+   * exist on a given row. Columns: [label] [copy] [download] [edit]
+   * [error].
+   *
+   * `.checkbox-row` and `.selection-formats` use `display: contents`
+   * so their direct children flow into the parent grid as if
+   * unwrapped — this is what lets the format rows (nested inside
+   * `.selection-formats`) share the *same* column tracks as the
+   * top-level rows so every Copy / Save / Edit icon stacks vertically.
+   *
+   * Items rely on `grid-auto-flow: row` (default, sparse): each row's
+   * children are emitted in source order in increasing column order
+   * (copy → download → edit), so the cursor never has to backtrack —
+   * if it did, the auto-placement algorithm would push the
+   * "earlier-column" item onto a fresh grid row. Reordering the icons
+   * in DOM also requires keeping that invariant.
+   *
+   * `.has-error` rows always have copy / download / edit `disabled`
+   * (and hidden via `.copy-btn:disabled { display: none }`), which is
+   * what frees column 2 for the error icon to share — see the
+   * `.error-icon` rule below.
+   */
   .checkboxes {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .checkbox-row {
-    display: flex;
+    display: grid;
+    /*
+     * Icon columns sit flush (no column-gap between them) — the
+     * 22px button is wider than its 14px icon, so adjacent icons
+     * already have visible breathing room from the per-button
+     * padding. The label column gets explicit `padding-right` and
+     * the error-icon column an explicit `margin-left` below so the
+     * icon strip doesn't bleed into them.
+     */
+    grid-template-columns: max-content 22px 22px 22px max-content;
+    column-gap: 0;
+    row-gap: 2px;
     align-items: center;
-    gap: 4px;
   }
+  .checkbox-row,
+  .selection-formats {
+    display: contents;
+  }
+  /*
+   * `[hidden]` is normally `display: none`, but our `display:
+   * contents` rule above has equal specificity and would win on
+   * source order alone. The attribute selector below outranks it
+   * (one extra attribute selector), so the format-row block stays
+   * hidden until loadData() reveals it. `display: none` on the
+   * wrapper hides the entire subtree even though the wrapper itself
+   * has no box.
+   */
+  .selection-formats[hidden] {
+    display: none;
+  }
+  .checkbox-row > label { grid-column: 1; padding-right: 6px; }
+  .checkbox-row > .col-copy { grid-column: 2; }
+  .checkbox-row > .col-download { grid-column: 3; }
+  .checkbox-row > .col-edit { grid-column: 4; }
+  /*
+   * Error icon shares column 2 with the Copy button. A row only ever
+   * shows one or the other: when `has-error` is set, the row's
+   * Copy/Edit/Download buttons are all disabled (and hidden via
+   * `.copy-btn:disabled { display: none }`), so column 2 is free
+   * for the error indicator. Putting the error in the leftmost icon
+   * column keeps the indicator tight against the label rather than
+   * stranded out past empty button slots.
+   */
+  /*
+   * The icon column is 22px wide (sized to the Copy button), but the
+   * error glyph is only 16px — `justify-self: center` parks it in
+   * the middle of the column so it lines up under the centered icon
+   * glyphs in the rows above instead of hugging the column's left
+   * edge.
+   */
+  .checkbox-row > .error-icon { grid-column: 2; justify-self: center; }
   /*
    * Indent the three "as HTML / text / markdown" rows so they read
    * as children of the master "Save selection:" checkbox above.
+   * The indent lives on the label only (not the row, which has no
+   * box thanks to `display: contents`) so the row's icons still
+   * land in the shared columns 2–4 instead of shifting right with
+   * the label.
    */
-  .selection-formats {
+  #row-selection-html > label,
+  #row-selection-text > label,
+  #row-selection-markdown > label {
     padding-left: 22px;
   }
   .checkboxes label {
@@ -194,6 +267,15 @@
     border-radius: 4px;
     overflow: hidden;
   }
+  /*
+   * Explicit `display` rules override the user-agent `[hidden]`
+   * default of `display: none`, so the toggle would always render
+   * — including on dialogs that have no preview mode (the text
+   * dialog). Re-assert `none` for the hidden state.
+   */
+  .edit-dialog-mode-toggle[hidden] {
+    display: none;
+  }
   .edit-dialog-mode-toggle button {
     padding: 4px 12px;
     font-size: 13px;
@@ -209,6 +291,33 @@
     background: #555;
     color: #fff;
     cursor: default;
+  }
+  /*
+   * In-dialog "Download this file" button. Sits in the titlebar to
+   * the right of the Edit/Preview toggle (when present) and is
+   * always shown — even on dialogs without a preview mode. Styled
+   * to match the segmented Edit/Preview control's visual weight
+   * (same padding / font / border) so they read as siblings rather
+   * than as the small icon-only buttons used on the main page.
+   */
+  .edit-dialog-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    font-size: 13px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    color: #222;
+    cursor: pointer;
+  }
+  .edit-dialog-download:hover {
+    background: #eee;
+  }
+  .edit-dialog-download svg {
+    width: 14px;
+    height: 14px;
   }
   /*
    * The editor is a `contenteditable` <div> (not a <textarea>) because
@@ -419,6 +528,20 @@
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
+      <!-- Download glyph — arrow into a tray. Shown on the per-row
+           "Save as…" buttons that open a native save dialog with the
+           current edited body. -->
+      <symbol id="download-icon" viewBox="0 0 24 24">
+        <path d="M12 4v11"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M7 11l5 5 5-5"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M5 20h14"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
     </defs>
   </svg>
 
@@ -438,10 +561,15 @@
     <div class="checkboxes">
       <div class="checkbox-row" id="row-screenshot">
         <label><input type="checkbox" id="cap-screenshot" checked> Save <u>s</u>creenshot</label>
-        <button type="button" class="copy-btn" id="copy-screenshot-name"
+        <button type="button" class="copy-btn col-copy" id="copy-screenshot-name"
                 title="Copy PNG filename"
                 aria-label="Copy screenshot filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
+        <button type="button" class="copy-btn col-download" id="download-screenshot-btn"
+                title="Save screenshot"
+                aria-label="Save screenshot">
+          <svg aria-hidden="true"><use href="#download-icon"></use></svg>
         </button>
         <span class="error-icon" id="error-screenshot" title="" role="img"
               aria-label="Screenshot capture error">
@@ -450,7 +578,7 @@
       </div>
       <div class="checkbox-row" id="row-html">
         <label><input type="checkbox" id="cap-html"> Save <u>H</u>TML</label>
-        <button type="button" class="copy-btn" id="copy-html-name"
+        <button type="button" class="copy-btn col-copy" id="copy-html-name"
                 title="Copy HTML filename"
                 aria-label="Copy HTML filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
@@ -462,7 +590,12 @@
           row stays tidy. Disabled (and hidden) when the HTML scrape
           failed — there's nothing to edit in that case.
         -->
-        <button type="button" class="copy-btn" id="edit-html"
+        <button type="button" class="copy-btn col-download" id="download-html-btn"
+                title="Save HTML"
+                aria-label="Save HTML">
+          <svg aria-hidden="true"><use href="#download-icon"></use></svg>
+        </button>
+        <button type="button" class="copy-btn col-edit" id="edit-html"
                 title="Edit page contents HTML"
                 aria-label="Edit page contents HTML">
           <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
@@ -519,12 +652,17 @@
           <label><input type="radio" name="cap-selection-format" value="html"
                         id="cap-selection-html" disabled>
             as HTM<u>L</u></label>
-          <button type="button" class="copy-btn" id="copy-selection-html-name"
+          <button type="button" class="copy-btn col-copy" id="copy-selection-html-name"
                   title="Copy selection HTML filename"
                   aria-label="Copy selection HTML filename" disabled>
             <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
           </button>
-          <button type="button" class="copy-btn" id="edit-selection-html-btn"
+          <button type="button" class="copy-btn col-download" id="download-selection-html-btn"
+                  title="Save selection HTML"
+                  aria-label="Save selection HTML" disabled>
+            <svg aria-hidden="true"><use href="#download-icon"></use></svg>
+          </button>
+          <button type="button" class="copy-btn col-edit" id="edit-selection-html-btn"
                   title="Edit selection HTML"
                   aria-label="Edit selection HTML" disabled>
             <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
@@ -538,12 +676,17 @@
           <label><input type="radio" name="cap-selection-format" value="text"
                         id="cap-selection-text" disabled>
             as <u>t</u>ext</label>
-          <button type="button" class="copy-btn" id="copy-selection-text-name"
+          <button type="button" class="copy-btn col-copy" id="copy-selection-text-name"
                   title="Copy selection text filename"
                   aria-label="Copy selection text filename" disabled>
             <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
           </button>
-          <button type="button" class="copy-btn" id="edit-selection-text-btn"
+          <button type="button" class="copy-btn col-download" id="download-selection-text-btn"
+                  title="Save selection text"
+                  aria-label="Save selection text" disabled>
+            <svg aria-hidden="true"><use href="#download-icon"></use></svg>
+          </button>
+          <button type="button" class="copy-btn col-edit" id="edit-selection-text-btn"
                   title="Edit selection text"
                   aria-label="Edit selection text" disabled>
             <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
@@ -557,12 +700,17 @@
           <label><input type="radio" name="cap-selection-format" value="markdown"
                         id="cap-selection-markdown" disabled>
             as <u>m</u>arkdown</label>
-          <button type="button" class="copy-btn" id="copy-selection-markdown-name"
+          <button type="button" class="copy-btn col-copy" id="copy-selection-markdown-name"
                   title="Copy selection markdown filename"
                   aria-label="Copy selection markdown filename" disabled>
             <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
           </button>
-          <button type="button" class="copy-btn" id="edit-selection-markdown-btn"
+          <button type="button" class="copy-btn col-download" id="download-selection-markdown-btn"
+                  title="Save selection markdown"
+                  aria-label="Save selection markdown" disabled>
+            <svg aria-hidden="true"><use href="#download-icon"></use></svg>
+          </button>
+          <button type="button" class="copy-btn col-edit" id="edit-selection-markdown-btn"
                   title="Edit selection markdown"
                   aria-label="Edit selection markdown" disabled>
             <svg aria-hidden="true"><use href="#edit-icon"></use></svg>
@@ -574,7 +722,7 @@
         </div>
       </div>
     </div>
-    <button id="capture">Capture</button>
+    <button id="capture"><u>C</u>apture</button>
     <div class="prompt">
       <label for="prompt-text">Prompt:</label>
       <textarea id="prompt-text" rows="1"></textarea>
@@ -642,6 +790,19 @@
           <button type="button" class="edit-dialog-mode-preview"
                   aria-pressed="false">Preview</button>
         </div>
+        <!--
+          Save the in-dialog (un-committed) editor body to a user-
+          chosen path via chrome.downloads.download({ saveAs: true }).
+          Mirrors the per-row Save-as button on the main page, but
+          writes whatever is currently typed in the dialog rather
+          than the committed `captured[kind]` body — so the user can
+          export an experimental edit without first clicking Save.
+        -->
+        <button type="button" class="edit-dialog-download"
+                title="Download this file">
+          <svg aria-hidden="true"><use href="#download-icon"></use></svg>
+          Download
+        </button>
       </div>
       <!--
         Body slot. The editor is always in the DOM so the user's
@@ -691,7 +852,8 @@
       <p class="edit-dialog-error dialog-error" role="alert" hidden></p>
       <div class="dialog-actions">
         <button type="button" class="edit-dialog-cancel">Cancel</button>
-        <button type="button" class="edit-dialog-save">Save</button>
+        <button type="button" class="edit-dialog-save"
+                title="Commit these changes">Save</button>
       </div>
     </dialog>
   </template>

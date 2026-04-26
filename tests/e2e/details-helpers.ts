@@ -301,6 +301,95 @@ export async function findAllCapturedDownloads(
   }, basenamePrefix);
 }
 
+// ─── Page-side download spy (Save-as buttons) ────────────────────
+//
+// The per-row "Save…" buttons and the in-dialog "Download" button
+// call `chrome.downloads.download({ saveAs: true })` directly from
+// the capture page (no SW round-trip). That call would normally pop
+// a native OS save dialog, which Playwright can't drive. The spy
+// below replaces `chrome.downloads.download` on the capture page
+// with a stub that:
+//
+//   - records the requested `filename`, `saveAs` flag, and `url`;
+//   - fetches the URL itself so the test can inspect the bytes
+//     before the page-side `finally` revokes the blob;
+//   - returns a synthetic id without ever invoking the real
+//     chrome API, so no dialog appears and nothing lands in the
+//     downloads dir.
+//
+// Independent from the SW-side download spy installed by
+// `openDetailsFlow`: SW-side calls (Copy buttons, Capture submit)
+// still go through the real `chrome.downloads.download` and get
+// recorded under `__seeDl` on the SW.
+export interface PageDownloadEntry {
+  filename: string;
+  saveAs: boolean;
+  url: string;
+  /** Fetched body. For PNG data URLs the UTF-8 decode is lossy — only
+   *  compare bytes for known text formats (HTML / txt / md). */
+  bytes: string;
+  /** Content-Type from the fetched response. */
+  mime: string;
+}
+
+export async function installPageDownloadSpy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface PageDl {
+      filename: string;
+      saveAs: boolean;
+      url: string;
+      bytes: string;
+      mime: string;
+    }
+    interface SpyState { __seePgDl?: PageDl[] }
+    const g = self as unknown as SpyState;
+    g.__seePgDl = [];
+    (chrome.downloads as { download: typeof chrome.downloads.download }).download =
+      (async (opts: chrome.downloads.DownloadOptions): Promise<number> => {
+        const url = opts.url ?? '';
+        let bytes = '';
+        let mime = '';
+        if (url) {
+          try {
+            const res = await fetch(url);
+            mime = res.headers.get('content-type') ?? '';
+            bytes = await res.text();
+          } catch {
+            // Blob URL might already be revoked in pathological cases —
+            // record what we have and let the test inspect.
+          }
+        }
+        g.__seePgDl!.push({
+          filename: opts.filename ?? '',
+          saveAs: opts.saveAs === true,
+          url,
+          bytes,
+          mime,
+        });
+        // Synthetic id: production callers only use the return value
+        // for nothing (they `await` the call but discard the id), so
+        // any number works. Negative so a chrome.downloads.search
+        // (which rejects negative ids) would error visibly.
+        return -100000 - g.__seePgDl!.length;
+      }) as typeof chrome.downloads.download;
+  });
+}
+
+export async function readPageDownloads(page: Page): Promise<PageDownloadEntry[]> {
+  return await page.evaluate(
+    () => (self as unknown as { __seePgDl?: PageDownloadEntry[] }).__seePgDl ?? [],
+  );
+}
+
+export async function waitForPageDownloads(page: Page, n: number): Promise<void> {
+  await page.waitForFunction(
+    (count) =>
+      ((self as unknown as { __seePgDl?: unknown[] }).__seePgDl?.length ?? 0) >= count,
+    n,
+    { timeout: 5000 },
+  );
+}
+
 // Inject a <span> into the current page body and select its contents
 // so the SW's scripting call sees a non-empty `window.getSelection`.
 // Shared between the edit-selection tests and the toolbar-dispatch

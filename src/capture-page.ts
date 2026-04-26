@@ -124,6 +124,8 @@ const screenshotErrorIcon = document.getElementById('error-screenshot') as HTMLS
 const htmlRow = document.getElementById('row-html') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
 const editHtmlBtn = document.getElementById('edit-html') as HTMLButtonElement;
+const downloadScreenshotBtn = document.getElementById('download-screenshot-btn') as HTMLButtonElement;
+const downloadHtmlBtn = document.getElementById('download-html-btn') as HTMLButtonElement;
 
 // Master "Save selection:" checkbox + its row and shared error
 // icon. The checkbox drives the "save selection at all?" decision;
@@ -153,6 +155,7 @@ interface SelectionRow {
   radio: HTMLInputElement;
   copyBtn: HTMLButtonElement;
   editBtn: HTMLButtonElement;
+  downloadBtn: HTMLButtonElement;
   errorIcon: HTMLSpanElement;
 }
 const selectionRows: Record<SelectionFormat, SelectionRow> = SELECTION_FORMATS.reduce(
@@ -163,6 +166,7 @@ const selectionRows: Record<SelectionFormat, SelectionRow> = SELECTION_FORMATS.r
       radio: document.getElementById(`cap-selection-${format}`) as HTMLInputElement,
       copyBtn: document.getElementById(`copy-selection-${format}-name`) as HTMLButtonElement,
       editBtn: document.getElementById(`edit-selection-${format}-btn`) as HTMLButtonElement,
+      downloadBtn: document.getElementById(`download-selection-${format}-btn`) as HTMLButtonElement,
       errorIcon: document.getElementById(`error-selection-${format}`) as HTMLSpanElement,
     };
     return acc;
@@ -268,8 +272,6 @@ const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const redactBtn = document.getElementById('redact') as HTMLButtonElement;
 const cropBtn = document.getElementById('crop') as HTMLButtonElement;
 
-promptInput.focus();
-
 // Auto-grow the prompt textarea to fit its content, capped by CSS
 // max-height. After resizing we re-fit the image because its top has
 // shifted down by the same amount the textarea grew.
@@ -300,17 +302,24 @@ document.addEventListener('keydown', (e) => {
   if (anyEditDialogOpen()) return;
   if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
-  // Alt+S / Alt+H toggle the screenshot / HTML checkboxes. Alt+N
-  // toggles the master "Save selection" checkbox. Alt+L / Alt+T /
-  // Alt+M pick one of the three format radios (and auto-check the
-  // master via the change listener wired in
-  // wireSelectionControls). Each is a no-op when its control is
-  // disabled so the hotkey matches what's on screen. The label
-  // underlines in capture.html mirror these keys.
+  // Alt+C clicks the Capture button. Alt+S / Alt+H toggle the
+  // screenshot / HTML checkboxes. Alt+N toggles the master "Save
+  // selection" checkbox. Alt+L / Alt+T / Alt+M pick one of the three
+  // format radios (and auto-check the master via the change listener
+  // wired in wireSelectionControls). Each is a no-op when its
+  // control is disabled so the hotkey matches what's on screen. The
+  // label underlines in capture.html mirror these keys.
   const selectionFormat: Partial<Record<string, SelectionFormat>> = {
     l: 'html', t: 'text', m: 'markdown',
   };
-  if (key === 's') {
+  if (key === 'c') {
+    // Alt+C submits the form, mirroring Enter in the prompt textarea
+    // and a click on the Capture button. No-op while the button is
+    // disabled (in-flight save) so a double-press can't re-submit.
+    if (captureBtn.disabled) return;
+    e.preventDefault();
+    captureBtn.click();
+  } else if (key === 's') {
     if (screenshotBox.disabled) return;
     e.preventDefault();
     screenshotBox.checked = !screenshotBox.checked;
@@ -1037,6 +1046,7 @@ async function loadData(): Promise<void> {
       screenshotBox.checked = false;
       screenshotBox.disabled = true;
       copyScreenshotBtn.disabled = true;
+      downloadScreenshotBtn.disabled = true;
       screenshotRow.classList.add('has-error');
       screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
     }
@@ -1057,6 +1067,7 @@ async function loadData(): Promise<void> {
       htmlBox.disabled = true;
       copyHtmlBtn.disabled = true;
       editHtmlBtn.disabled = true;
+      downloadHtmlBtn.disabled = true;
       htmlRow.classList.add('has-error');
       htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
       htmlSizeEl.textContent = '—';
@@ -1099,6 +1110,7 @@ async function loadData(): Promise<void> {
           r.radio.disabled = false;
           r.copyBtn.disabled = false;
           r.editBtn.disabled = false;
+          r.downloadBtn.disabled = false;
           contentfulFormats.push(format);
           anyFormatHasContent = true;
         } else {
@@ -1163,6 +1175,10 @@ async function loadData(): Promise<void> {
     // response or a thrown message call — so the user never stares
     // at a blank page with no recourse.
     document.body.style.visibility = 'visible';
+    // Focus must happen after `visibility: visible` — focus calls
+    // are silently ignored on `visibility: hidden` elements, so an
+    // earlier `.focus()` (e.g. at module-init time) wouldn't stick.
+    promptInput.focus();
   }
 }
 
@@ -1193,6 +1209,124 @@ for (const format of SELECTION_FORMATS) {
   selectionRows[format].copyBtn.addEventListener('click', () => {
     void copyArtifactPath(SELECTION_WIRE_KIND[format]);
   });
+}
+
+// ─── Download (Save as…) buttons ──────────────────────────────────
+//
+// Each row's download button opens a native save dialog seeded with a
+// generic default filename (`screenshot.png`, `contents.html`,
+// `selection.{html,txt,md}`) under the user's default download
+// directory. The bytes written reflect the *current* edited state:
+//   - Screenshot: the highlighted/cropped PNG via `renderHighlightedPng`
+//     when there are bake-able edits, else the original capture.
+//   - HTML / selection: the `captured[kind]` mirror, which the Edit
+//     dialogs keep in sync with the SW after each save.
+// `chrome.downloads.download({ saveAs: true })` is callable directly
+// from this extension page (no SW round-trip needed). It rejects with
+// `USER_CANCELED` when the user dismisses the dialog — silenced.
+
+downloadScreenshotBtn.addEventListener('click', () => {
+  void downloadAs('screenshot');
+});
+downloadHtmlBtn.addEventListener('click', () => {
+  void downloadAs('html');
+});
+for (const format of SELECTION_FORMATS) {
+  selectionRows[format].downloadBtn.addEventListener('click', () => {
+    void downloadAs(SELECTION_WIRE_KIND[format]);
+  });
+}
+
+const SELECTION_DOWNLOAD_MIME: Record<SelectionFormat, string> = {
+  html: 'text/html',
+  text: 'text/plain',
+  markdown: 'text/markdown',
+};
+const SELECTION_DOWNLOAD_EXT: Record<SelectionFormat, string> = {
+  html: 'html',
+  text: 'txt',
+  markdown: 'md',
+};
+
+async function downloadAs(
+  kind: 'screenshot' | EditableArtifactKind,
+): Promise<void> {
+  if (kind === 'screenshot') {
+    const url = hasBakeableEdits() ? renderHighlightedPng() : previewImg.src;
+    // Screenshot is a data: URL — nothing to revoke. The other kinds
+    // use blob URLs (built from the editable body) and route through
+    // `downloadEditableAs`, which handles its own revocation.
+    await runSaveAsDialog(url, 'screenshot.png', null);
+    return;
+  }
+  await downloadEditableAs(kind, captured[kind]);
+}
+
+/**
+ * Save the given editable-kind body to a user-chosen path via the
+ * native save dialog. The body parameter is split out so the
+ * in-dialog download button can hand the *current editor source*
+ * (uncommitted), while the per-row Save-as button hands
+ * `captured[kind]` (the SW-committed mirror).
+ */
+async function downloadEditableAs(
+  kind: EditableArtifactKind,
+  body: string,
+): Promise<void> {
+  let mime: string;
+  let filename: string;
+  if (kind === 'html') {
+    mime = 'text/html';
+    filename = 'contents.html';
+  } else {
+    // One of the three selection kinds. Reverse-map the editable kind
+    // back to a SelectionFormat so we can pick the matching MIME and
+    // extension. The selection-radio rows already enforce that the
+    // body is non-empty before enabling this button.
+    const format = (Object.keys(SELECTION_WIRE_KIND) as SelectionFormat[])
+      .find((f) => SELECTION_WIRE_KIND[f] === kind)!;
+    mime = SELECTION_DOWNLOAD_MIME[format];
+    filename = `selection.${SELECTION_DOWNLOAD_EXT[format]}`;
+  }
+  const withNewline = body.endsWith('\n') ? body : `${body}\n`;
+  const blobUrl = URL.createObjectURL(
+    new Blob([withNewline], { type: `${mime};charset=utf-8` }),
+  );
+  await runSaveAsDialog(blobUrl, filename, blobUrl);
+}
+
+/**
+ * Open the native save dialog seeded with `defaultName`, downloading
+ * `url`. When `blobUrlToRevoke` is set we revoke it after a delay
+ * rather than synchronously: `chrome.downloads.download` resolves on
+ * the download having *started*, not finished — for large bodies the
+ * browser may still be reading the blob when the await returns.
+ * Revoking it then would risk truncating the saved file. 30 s is
+ * comfortably longer than any plausible read for a save-as payload
+ * and the page typically closes long before then anyway.
+ */
+const BLOB_REVOKE_DELAY_MS = 30_000;
+async function runSaveAsDialog(
+  url: string,
+  defaultName: string,
+  blobUrlToRevoke: string | null,
+): Promise<void> {
+  try {
+    await chrome.downloads.download({ url, filename: defaultName, saveAs: true });
+  } catch (err) {
+    // USER_CANCELED is the expected outcome when the user dismisses
+    // the save dialog — log other errors so unexpected failures are
+    // visible in the SW devtools without crashing the page.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/USER_CANCELED/i.test(msg)) {
+      console.warn('[SeeWhatISee] save-as failed:', err);
+    }
+  } finally {
+    if (blobUrlToRevoke) {
+      const u = blobUrlToRevoke;
+      setTimeout(() => URL.revokeObjectURL(u), BLOB_REVOKE_DELAY_MS);
+    }
+  }
 }
 
 // ─── Edit dialogs (catalog-driven) ────────────────────────────────
@@ -1307,6 +1441,14 @@ interface EditDialogParts {
   editModeBtn: HTMLButtonElement;
   previewModeBtn: HTMLButtonElement;
   previewIframe: HTMLIFrameElement;
+  /**
+   * In-dialog "Download this file" button (right of the
+   * Edit / Preview toggle). Saves whatever is currently in the
+   * editor — including un-committed changes — via the same
+   * `chrome.downloads.download({ saveAs: true })` path the per-row
+   * Save-as buttons use.
+   */
+  dialogDownloadBtn: HTMLButtonElement;
 }
 
 /**
@@ -1337,6 +1479,7 @@ function createEditDialog(
   const editModeBtn = dialog.querySelector('.edit-dialog-mode-edit') as HTMLButtonElement;
   const previewModeBtn = dialog.querySelector('.edit-dialog-mode-preview') as HTMLButtonElement;
   const previewIframe = dialog.querySelector('.edit-dialog-preview') as HTMLIFrameElement;
+  const dialogDownloadBtn = dialog.querySelector('.edit-dialog-download') as HTMLButtonElement;
 
   dialog.id = `edit-${domSlug}-dialog`;
   titleEl.id = `edit-${domSlug}-title`;
@@ -1354,6 +1497,7 @@ function createEditDialog(
   editModeBtn.id = `edit-${domSlug}-mode-edit`;
   previewModeBtn.id = `edit-${domSlug}-mode-preview`;
   previewIframe.id = `edit-${domSlug}-preview`;
+  dialogDownloadBtn.id = `edit-${domSlug}-download`;
 
   document.body.appendChild(dialog);
 
@@ -1377,6 +1521,7 @@ function createEditDialog(
     setCode: (code) => jar.updateCode(code),
     saveBtn, cancelBtn, errorEl,
     modeToggle, editModeBtn, previewModeBtn, previewIframe,
+    dialogDownloadBtn,
   };
 }
 
@@ -1623,6 +1768,13 @@ function bindEditDialog(spec: EditKindSpec): void {
 
   parts.saveBtn.addEventListener('click', () => {
     void save();
+  });
+
+  parts.dialogDownloadBtn.addEventListener('click', () => {
+    // Use the editor's current source — including any un-Saved edits
+    // — so the user can export an experiment without first committing
+    // it back to the SW.
+    void downloadEditableAs(spec.kind, parts.getCode());
   });
 
   async function save(): Promise<void> {

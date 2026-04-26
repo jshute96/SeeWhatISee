@@ -52,10 +52,9 @@ On the **Capture with details** page, you can also view or edit the selection co
 
 #### Capturing with details
 
-This page allows full control of what's captured.  You can add highlights on the page and add a prompt telling
-the agent what you want to do.
+This page allows full control of what's captured.  You can add highlights on the page and **add a prompt telling the agent what you want to do**.
 
-Click *Capture*, the toolbar icon, or press *Enter* in the prompt field to submit.
+Click **Capture**, the toolbar icon (![icon](src/icons/icon-16.png)), or press *Enter* in the prompt field to submit.
 
 On this page, you can:
 
@@ -63,8 +62,9 @@ On this page, you can:
 - Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
   - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
   - With nothing checked, you can still capture the URL.
-- Copy saved filenames to the clipboard with the copy icon.
-- View or edit the captured HTML or selection before saving with the pencil icon.
+- Copy saved filenames to the clipboard with the copy icon (![icon](docs/images/copy-icon.png)).
+- View or edit the captured HTML or selection before saving with the pencil icon (![icon](docs/images/edit-icon.png)).
+- **Save individual artifacts** to a custom location with the download icon (![icon](docs/images/download-icon.png)).
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
