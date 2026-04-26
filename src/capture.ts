@@ -1,4 +1,5 @@
 import { htmlToMarkdown } from './markdown.js';
+import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-state.js';
 
 // Capture functions. Each one corresponds to a user-visible action
 // (toolbar click, right-click context menu entries, future variations)
@@ -411,28 +412,21 @@ export async function scrapeSelection(
 ): Promise<SelectionBodies | null> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0) return null;
-      const container = document.createElement('div');
-      for (let i = 0; i < sel.rangeCount; i++) {
-        container.appendChild(sel.getRangeAt(i).cloneContents());
-      }
-      const html = container.innerHTML;
-      if (html.length === 0) return null;
-      // `sel.toString()` gives us the native "what the user sees"
-      // text representation — respects line breaks across block
-      // elements, skips `display: none`, etc. Better than walking
-      // the cloned container ourselves and closer to innerText
-      // semantics than textContent would be.
-      return { html, text: sel.toString() };
-    },
+    func: scrapePageStateInPage,
+    args: [false],
   });
-  const scraped = results[0]?.result as
-    | { html: string; text: string }
-    | null
-    | undefined;
-  if (!scraped) return null;
+  const scraped = results[0]?.result as PageScrapeResult | undefined;
+  if (!scraped || !scraped.selection) {
+    // Only log when the user *had* a range but we couldn't recover
+    // anything from it — the "no selection at all" case
+    // (`rangeCount === 0`) is the common, benign result of every
+    // toolbar click on a page with nothing selected and would
+    // otherwise spam the SW console.
+    if (scraped && (scraped.diag.rangeCount as number) > 0) {
+      console.log('[SeeWhatISee] selection scrape empty:', scraped.diag);
+    }
+    return null;
+  }
   return {
     // HTML stays byte-identical to what the page serialized — a
     // user opening the file in a browser (via a saved page, a
@@ -441,9 +435,9 @@ export async function scrapeSelection(
     // has to stand alone: pass `pageUrl` so `htmlToMarkdown`
     // resolves relative `<a href>` / `<img src>` to absolute URLs
     // in its output.
-    html: scraped.html,
-    text: scraped.text,
-    markdown: htmlToMarkdown(scraped.html, pageUrl),
+    html: scraped.selection.html,
+    text: scraped.selection.text,
+    markdown: htmlToMarkdown(scraped.selection.html, pageUrl),
   };
 }
 
@@ -646,15 +640,10 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotError = err instanceof Error ? err.message : String(err);
   }
 
-  // Grab the HTML and the selection in a single scripting round-trip.
-  // Two separate `executeScript` calls would double the IPC cost and
-  // widen the window during which the tab could be torn down between
-  // the two reads. Running both in one `func` also means the two
-  // snapshots observe the same DOM state. Selection logic mirrors
-  // `scrapeSelection` (executeScript `func`s must be self-contained —
-  // they're stringified into the page context and can't call SW-side
-  // helpers). The markdown rendering runs in the SW after the scrape
-  // returns — see `htmlToMarkdown` below.
+  // Grab the HTML and the selection in a single scripting round-trip
+  // via the shared `scrapePageStateInPage` worker — see its doc
+  // comment for the selection branch breakdown and the rationale for
+  // bundling HTML and selection together.
   //
   // Scraping can fail on restricted URLs (chrome://, the Web Store,
   // etc.) where extensions aren't allowed to inject scripts. We catch
@@ -670,32 +659,21 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: active.id! },
-      func: () => {
-        const pageHtml = document.documentElement.outerHTML;
-        const sel = window.getSelection();
-        let selInfo: { html: string; text: string } | null = null;
-        if (sel && sel.rangeCount > 0) {
-          const container = document.createElement('div');
-          for (let i = 0; i < sel.rangeCount; i++) {
-            container.appendChild(sel.getRangeAt(i).cloneContents());
-          }
-          const inner = container.innerHTML;
-          if (inner.length > 0) {
-            selInfo = { html: inner, text: sel.toString() };
-          }
-        }
-        return { html: pageHtml, selection: selInfo };
-      },
+      func: scrapePageStateInPage,
+      args: [true],
     });
-    const scraped = results[0]?.result as
-      | { html: string; selection: { html: string; text: string } | null }
-      | undefined;
+    const scraped = results[0]?.result as PageScrapeResult | undefined;
     if (!scraped || !scraped.html) {
       htmlError = 'Failed to retrieve page contents';
       selectionError = htmlError;
     } else {
       html = scraped.html;
       selectionRaw = scraped.selection;
+      // See `scrapeSelection` for the gating rationale — only log
+      // when there *was* a range but we couldn't recover from it.
+      if (selectionRaw === null && (scraped.diag.rangeCount as number) > 0) {
+        console.log('[SeeWhatISee] selection scrape empty:', scraped.diag);
+      }
     }
   } catch (err) {
     htmlError = err instanceof Error ? err.message : String(err);

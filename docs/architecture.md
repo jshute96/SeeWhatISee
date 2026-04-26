@@ -305,6 +305,25 @@ sub-modules above.
         but text / markdown may be empty — in which case the
         action throws `No selection {format} content` and surfaces
         via the icon/tooltip channel.
+      - **CodeMirror-style viewers (e.g. GitHub's blob `?plain=1`).**
+        - CM6 renders visible text on layout/measure DOM nodes
+          whose `cloneContents()` returns an empty fragment even
+          though `Selection.toString()` returns the full visible
+          text. Focus is parked on a hidden
+          `<textarea id="read-only-cursor-text-area">`.
+        - Fallback: the scrape accepts the selection as long as
+          *either* `cloneContents()` or `toString()` is non-empty.
+          Text saves work; HTML / markdown rows stay disabled (no
+          real HTML to convert).
+        - Diagnostic: when the scrape returns null, both call sites
+          log `[SeeWhatISee] selection scrape empty: {diag}` to the
+          SW console with `rangeCount` / `clonedHtmlLen` /
+          `selStrLen` / `anchorTag` / `activeTag` so the next
+          failure mode is diagnosable without instrumentation.
+        - Page-side worker lives in its own module
+          (`src/scrape-page-state.ts`) so it has zero imports —
+          required because `executeScript` serializes `func` via
+          `Function.toString()` and re-parses it in the page world.
       - Each is a `BASE_CAPTURE_ACTION` with `supportsDelayed: false`
         — bindable as the default click action at 0s but with no
         2s/5s variants (a delay doesn't help: the selection already
