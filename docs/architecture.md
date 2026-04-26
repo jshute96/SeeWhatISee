@@ -154,9 +154,17 @@ sub-modules above.
     - `capture-selection-html` — save the selection as an HTML
       fragment.
     - `capture-selection-text` — save the selection as plain text.
-    - `capture-selection-markdown` — save the selection as markdown
-      (HTML → markdown via the pure `htmlToMarkdown` converter).
-      Default on fresh installs.
+    - `capture-selection-markdown` — save the selection as markdown.
+      Default on fresh installs. `selectionMarkdownBody` either
+      short-circuits to the verbatim selection text (when the
+      selection is itself markdown source — e.g. a `.md` file viewed
+      in GitHub `?plain=1` or a CodeMirror editor, where running
+      `htmlToMarkdown` over span-only HTML would collapse the file
+      onto a single line) or runs the cloned HTML through
+      `htmlToMarkdown`, with the page URL as the base URL so
+      relative `<a>` / `<img>` refs resolve. See
+      `looksLikeMarkdownSource` in `src/markdown.ts` for the
+      detection rule.
     - `capture-with-details` — open the details page. When a
       selection is present the page default-checks **only** the
       Save selection checkbox (screenshot unchecked); the user can

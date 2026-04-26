@@ -1,4 +1,4 @@
-import { htmlToMarkdown } from './markdown.js';
+import { selectionMarkdownBody } from './markdown.js';
 import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-state.js';
 
 // Capture functions. Each one corresponds to a user-visible action
@@ -370,12 +370,15 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
  *   - `text`     — `window.getSelection().toString()`, which matches
  *                  what the user visually sees selected (respects
  *                  line breaks in block elements).
- *   - `markdown` — `htmlToMarkdown(html, pageUrl)`, computed in the
- *                  SW after the scrape returns so the converter is a
- *                  pure function unit-testable without a DOM. Passing
- *                  the page URL lets the converter resolve relative
- *                  `<a href>` / `<img src>` refs to absolute URLs so
- *                  the saved markdown stays useful standalone.
+ *   - `markdown` — produced by `selectionMarkdownBody(html, text,
+ *                  pageUrl)` in the SW after the scrape returns
+ *                  (keeps the converter a pure function,
+ *                  unit-testable without a DOM). Either short-
+ *                  circuits to the verbatim text (when the
+ *                  selection is itself markdown source) or runs
+ *                  `htmlToMarkdown(html, pageUrl)`. See
+ *                  `looksLikeMarkdownSource` in `src/markdown.ts`
+ *                  for the detection rule.
  */
 export interface SelectionBodies {
   html: string;
@@ -390,10 +393,10 @@ export interface SelectionBodies {
  * cloned fragment is empty).
  *
  * The page side produces `html` + `text`; the SW side renders
- * `markdown` from the HTML via the pure `htmlToMarkdown` converter.
- * Running the converter in the SW (rather than inlining it into the
- * `func`) keeps the page-context footprint small and lets the
- * converter live in its own unit-tested module.
+ * `markdown` via `selectionMarkdownBody`. Running the converter in
+ * the SW (rather than inlining it into the `func`) keeps the
+ * page-context footprint small and lets the converter live in its
+ * own unit-tested module.
  *
  * Empty `text` / `markdown` stay as empty strings — the UI greys out
  * those format options rather than failing the whole scrape. An
@@ -432,12 +435,12 @@ export async function scrapeSelection(
     // user opening the file in a browser (via a saved page, a
     // pipe into viewer, etc.) is the authoritative read and no
     // rewriting is safe to do universally. Markdown, by contrast,
-    // has to stand alone: pass `pageUrl` so `htmlToMarkdown`
-    // resolves relative `<a href>` / `<img src>` to absolute URLs
-    // in its output.
+    // has to stand alone: pass `pageUrl` so `selectionMarkdownBody`
+    // can resolve relative `<a href>` / `<img src>` to absolute URLs
+    // when it falls through to `htmlToMarkdown`.
     html: scraped.selection.html,
     text: scraped.selection.text,
-    markdown: htmlToMarkdown(scraped.selection.html, pageUrl),
+    markdown: selectionMarkdownBody(scraped.selection.html, scraped.selection.text, pageUrl),
   };
 }
 
@@ -695,12 +698,14 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   };
   if (selectionRaw !== null) {
     // HTML stays byte-identical to the scrape (see `scrapeSelection`
-    // for why); markdown gets the page URL so its relative hrefs /
-    // srcs resolve to absolute.
+    // for why); markdown goes through `selectionMarkdownBody` which
+    // either passes through markdown-source text verbatim or runs
+    // `htmlToMarkdown` with `pageUrl` so relative hrefs / srcs
+    // resolve to absolute.
     capture.selections = {
       html: selectionRaw.html,
       text: selectionRaw.text,
-      markdown: htmlToMarkdown(selectionRaw.html, active.url ?? ''),
+      markdown: selectionMarkdownBody(selectionRaw.html, selectionRaw.text, active.url ?? ''),
     };
     capture.selectionFilenames = selectionFilenamesFor(ts);
   }

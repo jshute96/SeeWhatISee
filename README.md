@@ -47,6 +47,7 @@ The selection can be saved in three formats:
 - **as markdown**: Converts the selection HTML to markdown.
   - This uses a lightweight conversion that includes headings, bullets, links, tables, and some simple formatting.
   - The markdown format preserves the content and structure, in a format friendly for both humans and agents to read.
+  - When the selection is *already* markdown source, the original markdown is preserved without reformatting.
 
 On the **Capture with details** page, you can also view or edit the selection content.
 

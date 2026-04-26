@@ -18,11 +18,19 @@
 //     visible silently disappears.
 //
 // Exports:
-//   - `htmlToMarkdown(html)` — entry point. Never throws on
+//   - `htmlToMarkdown(html, baseUrl?)` — entry point. Never throws on
 //     malformed input; it treats bad markup as best-effort text.
 //   - `htmlToText(html)`    — text-only fallback. Used on platforms
 //     where the scrape can't produce a reliable `selection.toString()`
 //     (and as a test-friendly companion to the markdown converter).
+//   - `looksLikeMarkdownSource(html, text)` — heuristic detector for
+//     "this selection is itself markdown source" (e.g. a `.md` file
+//     viewed in GitHub `?plain=1` or a CodeMirror editor). Used by
+//     `selectionMarkdownBody` to decide whether to short-circuit.
+//   - `selectionMarkdownBody(html, text, baseUrl?)` — picks between
+//     verbatim text (when the detector fires) and the
+//     `htmlToMarkdown` conversion path. The single entry point used
+//     by `src/capture.ts` for building the `markdown` selection body.
 
 /**
  * Void / self-closing HTML elements that never carry children. The
@@ -384,6 +392,182 @@ export function htmlToMarkdown(html: string, baseUrl?: string): string {
   // line between blocks" so block elements separated by phantom
   // inline wrappers still produce clean output.
   return out.replace(/\n{3,}/g, '\n\n') + (out.length > 0 ? '\n' : '');
+}
+
+/**
+ * Block-level tags that `htmlToMarkdown` keys off of when synthesising
+ * markdown structure. If a selection's cloned HTML contains *none* of
+ * these, the converter has nothing to turn into headings / paragraphs /
+ * lists / code blocks and will collapse the whole fragment onto one
+ * line — which is the failure mode `looksLikeMarkdownSource` is built
+ * to short-circuit.
+ */
+const MARKDOWN_BLOCK_SOURCE_TAGS = new Set([
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'p', 'ul', 'ol', 'li', 'blockquote', 'pre', 'table', 'hr',
+]);
+
+/**
+ * Heuristic: was the user's selection *already* markdown source (e.g.
+ * highlighted from GitHub's `?plain=1` blob view, a CodeMirror editor
+ * showing a `.md` file, or a fenced code block on a docs site)?
+ *
+ * Two signals must both hold:
+ *
+ *  1. **The HTML carries no semantic block structure** — none of
+ *     `MARKDOWN_BLOCK_SOURCE_TAGS` appears anywhere in the parse
+ *     tree. Editor / source views build their visible lines out of
+ *     `<span>` runs or `<div>`-per-line. `<div>` is intentionally
+ *     kept out of the block-source set: a div-per-line editor still
+ *     mangles under `htmlToMarkdown` (each line becomes its own
+ *     paragraph with double-newline spacing, original indentation
+ *     lost), so we *want* the short-circuit to fire on those.
+ *     Empty HTML trivially satisfies this — the CodeMirror-style
+ *     path where `cloneContents()` returns nothing but
+ *     `Selection.toString()` has the visible text.
+ *
+ *  2. **The text shows ≥ 1 markdown signal**, where a signal is
+ *     any of:
+ *       * a line-leading markdown token (heading `# `, bullet
+ *         `- `/`* `/`+ `, numbered `\d+. `, blockquote `> `, fence
+ *         ```` ``` ````) at the start of a line, possibly preceded by
+ *         up to 3 spaces (CommonMark caps structural indent at 3),
+ *       * a pipe-table line that starts and ends with `|` (catches
+ *         both data rows like `| A | B |` and the `| --- | --- |`
+ *         separator),
+ *       * or an inline marker anywhere in the text (backtick code,
+ *         `**bold**`, single-`*` italic with non-word neighbours,
+ *         `[link](url)`, `![img](url)`, reference-style
+ *         `[…][word-id]`). The underscore-flavoured emphasis forms
+ *         (`__bold__`, `_italic_`) are intentionally omitted because
+ *         Python identifiers like `__init__` and `_name` are valid
+ *         CommonMark emphasis by the spec, indistinguishable by
+ *         regex. Reference-style links require at least one
+ *         non-digit char in the id to skip 2D index access shapes
+ *         like `arr[i][1]`.
+ *
+ * Threshold is intentionally low: signal #1 already does most of the
+ * discrimination work — rendered pages almost always carry *some*
+ * block tag in any non-trivial selection — so once we're in the
+ * "no block tags at all" branch a single inline marker (or a single
+ * line-leading `#`/`-`/etc.) is enough to prefer the verbatim text.
+ * Selections can be short — one sentence with an inline `code` span
+ * or a `[link](url)` should still be recognised.
+ *
+ * Returning `true` means the caller should pass the text through
+ * unchanged as the markdown body instead of running it through the
+ * HTML→markdown converter (which would lose all of the source's line
+ * structure).
+ */
+export function looksLikeMarkdownSource(html: string, text: string): boolean {
+  // Empty / whitespace-only text can't carry any signal we'd recover.
+  // (Whitespace HTML with empty text falls out here too.)
+  if (!text.trim()) return false;
+
+  // Signal #1 — abort if any markdown-output block tag is present.
+  // We walk the parse tree rather than substring-matching so
+  // `<p title="foo">` style attributes can't false-positive and
+  // commented-out `<p>` markup is correctly ignored. Empty HTML is
+  // an empty node list and trivially has none.
+  if (containsAnyTag(parseHtml(html), MARKDOWN_BLOCK_SOURCE_TAGS)) return false;
+
+  // Signal #2 — count markdown signals in the text.
+  const lines = text.split('\n');
+
+  // Line-leading markdown tokens. The leading-whitespace allowance is
+  // bounded (`{0,3}` spaces or one tab) so a deeply-indented prose
+  // line doesn't claim to be a heading; CommonMark itself caps
+  // structural indent at 3 spaces. We intentionally do NOT treat a
+  // deeply-indented line (≥ 4 spaces) as its own signal: it's the
+  // shape that Python / JS / YAML source bodies have, and the
+  // single-signal threshold below would false-positive on any
+  // multi-line code selection viewed in an editor. Real bullet
+  // continuations come paired with their `- ` opener line, which
+  // trips this regex on its own.
+  const lineLeading = /^( {0,3}|\t)(#{1,6} |[-*+] |\d+\. |> |```)/;
+  // Pipe-table line: starts and ends with `|` (after optional
+  // whitespace). Strong signal — code rarely has lines bracketed by
+  // `|` at both ends (in-line `|` for booleans / shell pipes sits
+  // mid-line, not at line edges). Catches both data rows and the
+  // `| --- | --- |` separator that would otherwise produce no
+  // markdown signal at all (the detector doesn't have a "table"
+  // concept beyond this line shape).
+  const pipeTableLine = /^\s*\|.*\|\s*$/;
+  // Inline markers anywhere in the text.
+  const inlineLink = /\[[^\]\n]+\]\([^)\n]+\)/;
+  // Reference-style link: `[label][id]`. Require the second bracket
+  // to contain at least one non-digit, non-whitespace char (or be
+  // empty for the shortcut form `[label][]`) so digit-only 2D index
+  // accesses like `arr[i][1]` / `cells[0][1]` don't false-positive.
+  // **Limitation**: alphabetic 2D index accesses (`arr[i][j]`,
+  // `cells[r][c]`) DO still match. We accept that — short-circuiting
+  // such a code-source selection to verbatim text produces output
+  // identical to what `htmlToMarkdown` would emit (no HTML tags to
+  // convert), so the misclassification is benign. We can't
+  // distinguish `[abc]` as a ref id from `[abc]` as a JS access
+  // without semantic context.
+  const inlineRefLink = /\[[^\]\n]+\]\[(?:[^\]\n]*[^\]\n\d\s][^\]\n]*|)\]/;
+  const inlineImg = /!\[[^\]\n]*\]\([^)\n]+\)/;
+  const inlineCode = /`[^`\n]+`/;
+  // Emphasis: only the asterisk forms. The underscore forms
+  // (`__bold__`, `_italic_`) are intentionally omitted because
+  // Python identifiers (`__init__`, `__name__`) are *literally*
+  // valid CommonMark emphasis by the spec — space-or-punct on both
+  // sides, no intraword constraint at the outer boundary — so no
+  // regex can distinguish them from the real markdown form. The
+  // user is plausibly viewing Python source in the same editor-style
+  // HTML this heuristic is built for, so we drop the form rather
+  // than risk false-positives. Real markdown almost always uses
+  // `**` / `*` anyway, and our own `htmlToMarkdown` only ever emits
+  // those (so the round-trip property stays intact).
+  const inlineBold = /\*\*\S(?:[^*\n]*\S)?\*\*/;
+  // Single-`*` italic: opens and closes on a non-space char with
+  // non-word boundaries on both sides, so prose mentioning a single
+  // `*` (or `arr * factor`) doesn't trip.
+  const inlineItalic = /(?:^|[^*\w])\*\S[^*\n]*\S\*(?:[^*\w]|$)/;
+
+  for (const line of lines) {
+    if (lineLeading.test(line) || pipeTableLine.test(line)) return true;
+  }
+  for (const re of [inlineLink, inlineRefLink, inlineImg, inlineCode, inlineBold, inlineItalic]) {
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * Walk a parsed-HTML node tree and return `true` if any element node
+ * has a tag in `tags`. Used by `looksLikeMarkdownSource` to detect
+ * whether the selection's HTML carries any of the block tags
+ * `htmlToMarkdown` would actually convert from.
+ */
+function containsAnyTag(nodes: Node[], tags: Set<string>): boolean {
+  for (const node of nodes) {
+    if (node.type !== 'element') continue;
+    if (tags.has(node.tag)) return true;
+    if (containsAnyTag(node.children, tags)) return true;
+  }
+  return false;
+}
+
+/**
+ * Build the markdown body for a selection. When the cloned HTML lacks
+ * structural block tags but the text reads as markdown source, return
+ * the text verbatim (with a single trailing newline) so the source's
+ * line structure isn't lost; otherwise run the HTML through
+ * `htmlToMarkdown` with the supplied `baseUrl` so relative links
+ * resolve.
+ *
+ * Shared between the per-format selection scrape (`scrapeSelection`)
+ * and the in-memory bundled capture (`captureBothToMemory`) in
+ * `src/capture.ts` so both paths agree on the detection rule.
+ */
+export function selectionMarkdownBody(html: string, text: string, baseUrl?: string): string {
+  if (looksLikeMarkdownSource(html, text)) {
+    const trimmed = text.replace(/\s+$/, '');
+    return trimmed.length > 0 ? trimmed + '\n' : '';
+  }
+  return htmlToMarkdown(html, baseUrl);
 }
 
 /**

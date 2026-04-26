@@ -100,7 +100,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/capture-details.ts` | "Capture with details…" flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
-| `src/markdown.ts` | Pure HTML → markdown + HTML → text converter used by the selection capture paths |
+| `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection for selection capture |
 | `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay) |
 | `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, highlight overlay (rects/lines/Redact/Crop/drag-to-crop), bake-in, fit-to-viewport |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |

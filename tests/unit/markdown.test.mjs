@@ -10,7 +10,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { htmlToMarkdown, htmlToText } from '../../dist/markdown.js';
+import {
+  htmlToMarkdown as _htmlToMarkdown,
+  htmlToText,
+  looksLikeMarkdownSource,
+  selectionMarkdownBody,
+} from '../../dist/markdown.js';
 
 // Small helper: normalize trailing whitespace so we can write the
 // expected strings without worrying about the converter's canonical
@@ -19,17 +24,69 @@ function norm(s) {
   return s.replace(/\s+$/, '');
 }
 
+// Wrapper around `htmlToMarkdown` that also asserts the round-trip
+// invariant: the converter's output should itself be detected as
+// markdown source (i.e. `looksLikeMarkdownSource('', output) ===
+// true`). This double-binds the converter and the detector — drift
+// in either direction breaks the test.
+//
+// Calling shapes:
+//   htmlToMarkdown(html)
+//   htmlToMarkdown(html, baseUrl)
+//   htmlToMarkdown(html, opts)                 // no baseUrl
+//   htmlToMarkdown(html, baseUrl, opts)
+//
+// `opts` may carry `expectLooksLikeMarkdown: false` for inputs where
+// the output is genuinely plain text or single-line and isn't
+// expected to trip the detector (entity-decode tests, a tiny
+// `<h1>Title</h1>` snippet, etc.). Default is `true`.
+function htmlToMarkdown(html, baseUrlOrOpts, maybeOpts) {
+  let baseUrl;
+  let opts;
+  if (typeof baseUrlOrOpts === 'string' || baseUrlOrOpts === undefined) {
+    baseUrl = baseUrlOrOpts;
+    opts = maybeOpts;
+  } else {
+    baseUrl = undefined;
+    opts = baseUrlOrOpts;
+  }
+  const md = _htmlToMarkdown(html, baseUrl);
+  const expect = (opts && 'expectLooksLikeMarkdown' in opts)
+    ? opts.expectLooksLikeMarkdown
+    : true;
+  const actual = looksLikeMarkdownSource('', md);
+  if (actual !== expect) {
+    assert.fail(
+      `looksLikeMarkdownSource round-trip mismatch:\n` +
+      `  input    = ${JSON.stringify(html)}\n` +
+      `  baseUrl  = ${JSON.stringify(baseUrl)}\n` +
+      `  output   = ${JSON.stringify(md)}\n` +
+      `  expected = ${expect}\n` +
+      `  actual   = ${actual}\n` +
+      `  hint: pass { expectLooksLikeMarkdown: false } if the output is plain / single-line.`,
+    );
+  }
+  return md;
+}
+
+// `PLAIN` opts a single `htmlToMarkdown` call out of the round-trip
+// assertion. Use it for outputs that genuinely have no markdown
+// signal \u2014 `hello world`, `a\n\nb`, `~~gone~~` (the detector
+// doesn't recognise strikethrough), an empty string \u2014 so the
+// wrapper doesn't expect detection where none is possible.
+const PLAIN = { expectLooksLikeMarkdown: false };
+
 test('plain text passes through', () => {
-  assert.equal(norm(htmlToMarkdown('hello world')), 'hello world');
+  assert.equal(norm(htmlToMarkdown('hello world', PLAIN)), 'hello world');
   assert.equal(norm(htmlToText('hello world')), 'hello world');
 });
 
 test('decodes common HTML entities', () => {
   assert.equal(
-    norm(htmlToMarkdown('a &amp; b &lt; c &gt; d &quot;e&quot; &#39;f&#39;')),
+    norm(htmlToMarkdown('a &amp; b &lt; c &gt; d &quot;e&quot; &#39;f&#39;', PLAIN)),
     `a & b < c > d "e" 'f'`,
   );
-  assert.equal(norm(htmlToMarkdown('&#x2014;')), '\u2014');
+  assert.equal(norm(htmlToMarkdown('&#x2014;', PLAIN)), '\u2014');
 });
 
 test('headings become hashes', () => {
@@ -39,7 +96,7 @@ test('headings become hashes', () => {
 });
 
 test('paragraphs separated by blank lines', () => {
-  const out = norm(htmlToMarkdown('<p>One</p><p>Two</p>'));
+  const out = norm(htmlToMarkdown('<p>One</p><p>Two</p>', PLAIN));
   assert.equal(out, 'One\n\nTwo');
 });
 
@@ -48,7 +105,9 @@ test('bold / italic / strikethrough', () => {
   assert.equal(norm(htmlToMarkdown('<strong>also</strong>')), '**also**');
   assert.equal(norm(htmlToMarkdown('<i>it</i>')), '*it*');
   assert.equal(norm(htmlToMarkdown('<em>em</em>')), '*em*');
-  assert.equal(norm(htmlToMarkdown('<del>gone</del>')), '~~gone~~');
+  // Strikethrough output `~~gone~~` carries no detector signal — the
+  // detector deliberately doesn't recognise `~~`, so opt out.
+  assert.equal(norm(htmlToMarkdown('<del>gone</del>', PLAIN)), '~~gone~~');
 });
 
 test('literal asterisk next to <i> stays distinguishable', () => {
@@ -75,12 +134,12 @@ test('inline code containing backticks widens the fence', () => {
 });
 
 test('br becomes hard line break', () => {
-  assert.equal(norm(htmlToMarkdown('line one<br>line two')),
+  assert.equal(norm(htmlToMarkdown('line one<br>line two', PLAIN)),
     'line one  \nline two');
 });
 
 test('hr becomes a thematic break', () => {
-  assert.equal(norm(htmlToMarkdown('<p>a</p><hr><p>b</p>')),
+  assert.equal(norm(htmlToMarkdown('<p>a</p><hr><p>b</p>', PLAIN)),
     'a\n\n---\n\nb');
 });
 
@@ -173,9 +232,10 @@ test('links and images', () => {
 test('empty-text anchors are dropped', () => {
   // No text = decorative chrome (permalink icons, font-icon
   // buttons, skip-to-content links). Dropping is friendlier than
-  // emitting an autolink the reader didn't ask for.
-  assert.equal(norm(htmlToMarkdown('<a href="https://x.example"></a>')), '');
-  assert.equal(norm(htmlToMarkdown('<a href="#usage"></a>')), '');
+  // emitting an autolink the reader didn't ask for. Output is `''`,
+  // which the detector returns false on.
+  assert.equal(norm(htmlToMarkdown('<a href="https://x.example"></a>', PLAIN)), '');
+  assert.equal(norm(htmlToMarkdown('<a href="#usage"></a>', PLAIN)), '');
 });
 
 test('github-style heading permalink anchor is dropped', () => {
@@ -304,7 +364,7 @@ test('drops elements with the hidden attribute', () => {
   // skeleton placeholders) behind the HTML5 `hidden` attribute. The
   // user doesn't see them on screen, so neither should the markdown.
   assert.equal(
-    norm(htmlToMarkdown('<p>before</p><div hidden>secret</div><p>after</p>')),
+    norm(htmlToMarkdown('<p>before</p><div hidden>secret</div><p>after</p>', PLAIN)),
     'before\n\nafter',
   );
   assert.equal(
@@ -321,12 +381,14 @@ test('drops elements with inline display:none', () => {
   assert.equal(
     norm(htmlToMarkdown(
       '<p>before</p><div style="display:none">secret</div><p>after</p>',
+      PLAIN,
     )),
     'before\n\nafter',
   );
   assert.equal(
     norm(htmlToMarkdown(
       '<p>a</p><span style="color:red; display: none !important">x</span><p>b</p>',
+      PLAIN,
     )),
     'a\n\nb',
   );
@@ -335,6 +397,7 @@ test('drops elements with inline display:none', () => {
   assert.equal(
     norm(htmlToMarkdown(
       '<p>a</p><span style="display:none!important">x</span><p>b</p>',
+      PLAIN,
     )),
     'a\n\nb',
   );
@@ -347,6 +410,7 @@ test('display:none subtree drops its visible-looking children too', () => {
     '<p>before</p>' +
     '<div hidden><p>inner para</p><span>inner span</span></div>' +
     '<p>after</p>',
+    PLAIN,
   ));
   assert.equal(out, 'before\n\nafter');
 });
@@ -354,6 +418,7 @@ test('display:none subtree drops its visible-looking children too', () => {
 test('inline display:none nested inside a parent is also dropped', () => {
   const out = norm(htmlToMarkdown(
     '<p>visible <span style="display:none">hidden</span> tail</p>',
+    PLAIN,
   ));
   assert.equal(out, 'visible tail');
 });
@@ -363,6 +428,7 @@ test('display:none false-positive guard: substring inside a value does not hide'
   // `display:none.png` inside a `background` URL doesn't trip it.
   const out = norm(htmlToMarkdown(
     '<p style="background: url(\'display:none.png\')">visible</p>',
+    PLAIN,
   ));
   assert.equal(out, 'visible');
 });
@@ -370,6 +436,7 @@ test('display:none false-positive guard: substring inside a value does not hide'
 test('non-display style declarations are not hidden', () => {
   const out = norm(htmlToMarkdown(
     '<p style="visibility: hidden">still rendered</p>',
+    PLAIN,
   ));
   // visibility:hidden takes layout space and we intentionally don't
   // try to chase it — the converter only recognizes `display:none`
@@ -415,6 +482,7 @@ test('hidden stray <tr> rows are dropped from a synthesized table', () => {
 test('drops script and style contents', () => {
   const out = norm(htmlToMarkdown(
     '<p>before</p><script>alert(1)</script><style>.x{}</style><p>after</p>',
+    PLAIN,
   ));
   assert.equal(out, 'before\n\nafter');
 });
@@ -427,13 +495,13 @@ test('div / span unwrap to their text', () => {
 });
 
 test('ignores comments', () => {
-  const out = norm(htmlToMarkdown('hello<!-- hidden -->world'));
+  const out = norm(htmlToMarkdown('hello<!-- hidden -->world', PLAIN));
   assert.equal(out, 'helloworld');
 });
 
 test('ignores comments between block siblings', () => {
   assert.equal(
-    norm(htmlToMarkdown('<p>a</p><!-- gap --><p>b</p>')),
+    norm(htmlToMarkdown('<p>a</p><!-- gap --><p>b</p>', PLAIN)),
     'a\n\nb',
   );
 });
@@ -458,11 +526,11 @@ test('ignores comments that wrap <li>-looking content', () => {
 test('unclosed comment eats the rest of the input', () => {
   // Defensive: a truncated selection ending mid-comment shouldn't
   // surface as raw `<!--` in the output.
-  assert.equal(norm(htmlToMarkdown('<p>a</p><!-- never closed')), 'a');
+  assert.equal(norm(htmlToMarkdown('<p>a</p><!-- never closed', PLAIN)), 'a');
 });
 
 test('collapses whitespace in inline runs', () => {
-  const out = norm(htmlToMarkdown('<p>  extra    space\n\nbetween\t  words  </p>'));
+  const out = norm(htmlToMarkdown('<p>  extra    space\n\nbetween\t  words  </p>', PLAIN));
   assert.equal(out, 'extra space between words');
 });
 
@@ -474,12 +542,12 @@ test('preformatted preserves whitespace', () => {
 });
 
 test('tolerates mismatched close tag', () => {
-  const out = norm(htmlToMarkdown('<p>open without</p></div>'));
+  const out = norm(htmlToMarkdown('<p>open without</p></div>', PLAIN));
   assert.equal(out, 'open without');
 });
 
 test('tolerates unclosed tag', () => {
-  const out = norm(htmlToMarkdown('<p>never closed'));
+  const out = norm(htmlToMarkdown('<p>never closed', PLAIN));
   assert.equal(out, 'never closed');
 });
 
@@ -616,8 +684,268 @@ test('text extractor keeps image alt', () => {
 });
 
 test('empty input returns empty output', () => {
-  assert.equal(htmlToMarkdown(''), '');
+  assert.equal(htmlToMarkdown('', PLAIN), '');
   assert.equal(htmlToText(''), '');
-  assert.equal(htmlToMarkdown('   '), '');
+  assert.equal(htmlToMarkdown('   ', PLAIN), '');
   assert.equal(htmlToText('   '), '');
+});
+
+// ─── looksLikeMarkdownSource ──────────────────────────────────────
+//
+// Heuristic detector for "the user selected something that's already
+// markdown source" — see `looksLikeMarkdownSource` in src/markdown.ts
+// for the rule. The cases below cover the GitHub-blob and CodeMirror
+// editor patterns that motivated the helper, plus the negative cases
+// it has to reject.
+
+test('detects GitHub-style markdown source: span-only HTML, headings + bullets in text', () => {
+  // `?plain=1` blob view of a `.md` file. Each visible line is a row
+  // of `<span>`s for syntax highlight; no semantic block tags.
+  const html =
+    '<span>#</span><span> Heading</span><span>\n</span>' +
+    '<span>-</span><span> first bullet</span><span>\n</span>' +
+    '<span>-</span><span> second bullet</span>';
+  const text = '# Heading\n- first bullet\n- second bullet';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('detects text-heavy markdown with sparse inline markers', () => {
+  // Two wrapped paragraphs of prose with only a `**bold**`, a `code`,
+  // and a `[link](url)` — any one of those inline markers alone is
+  // enough to trip the detector once signal #1 has cleared.
+  const html = '<span>(several spans of prose)</span>';
+  const text =
+    'This paragraph mentions a **key term** in passing and runs to the\n' +
+    'end of the line as wrapped prose, nothing fancy.\n' +
+    '\n' +
+    'A second paragraph drops a `snippet` and a [link](https://example.com)\n' +
+    'across more wrapped text, again no special structure to it.';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('detects multi-line bullet selection', () => {
+  // The bullet line-leading marker is the signal; the continuation
+  // indent on line 2 is intentionally NOT counted as a separate
+  // signal (see comment in `looksLikeMarkdownSource` — would
+  // false-positive on Python / JS source bodies).
+  const html = '<span>- top item</span><span>\n  more text on the next line</span>';
+  const text = '- top item\n  more text on the next line';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('CM6/GitHub-blob path: empty HTML, multi-line markdown text', () => {
+  // After commit e105761, CodeMirror-style selections come back with
+  // `html === ''` but `text` populated. Empty HTML trivially satisfies
+  // signal #1; the text carries the markdown signals.
+  const html = '';
+  const text =
+    '## A subsection\n' +
+    '\n' +
+    'Some prose with a `code` span and a [link](https://x.test).\n' +
+    '\n' +
+    '- bullet one\n' +
+    '- bullet two';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('CM6/GitHub-blob path: empty HTML with plain prose text → false', () => {
+  // Same selection shape, but the underlying file is just text — no
+  // markdown markers anywhere. Detector correctly declines so we don't
+  // pretend a `.txt` paste is markdown.
+  const html = '';
+  const text =
+    'just some prose without any special markup whatsoever\n' +
+    'wrapped across two lines for good measure';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('rendered prose paragraph mentioning "# hi" → false', () => {
+  // The literal `# hi` appears inside a `<p>`, so signal #1 fails
+  // (the HTML carries a block tag the converter can use).
+  const html = '<p>I was thinking about # hi as a heading marker</p>';
+  const text = 'I was thinking about # hi as a heading marker';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('real list selection with <ul><li> → false', () => {
+  // The converter handles this case fine via its `<ul>`/`<li>`
+  // emitters; we want it to take that path, not short-circuit.
+  const html = '<ul><li>one</li><li>two</li></ul>';
+  const text = 'one\ntwo';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('plain-text multi-line selection with no markdown markers → false', () => {
+  const html = '<span>line one</span><span>\n</span><span>line two</span>';
+  const text = 'line one\nline two';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('single-line selection starting with "# " → true', () => {
+  // A one-line selection that looks like a markdown heading in
+  // editor-style HTML is detected. Selections can be short — a
+  // single line with one markdown signal is enough.
+  const html = '<span># Heading on one line</span>';
+  const text = '# Heading on one line';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('single-line selection with one inline backtick → true', () => {
+  // The motivating case: a selection like `Click \`Submit\` to
+  // continue` from an editor view should be preserved verbatim
+  // rather than re-converted via htmlToMarkdown.
+  const html = '<span>Click `Submit` to continue</span>';
+  const text = 'Click `Submit` to continue';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('pipe-table line counts as a markdown signal', () => {
+  // A line bracketed by `|` at both ends is a strong markdown table
+  // shape. Code rarely has lines that start AND end with `|` —
+  // boolean OR / shell pipes sit mid-line.
+  const html = '<span>| A | B |</span>';
+  const text = '| A | B |';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+test('mid-line pipe (boolean OR / shell pipe) is not a table signal', () => {
+  // `if (a | b) {` does NOT start or end with `|`, so the
+  // pipe-table regex correctly skips it.
+  const html = '<span>if (a | b) {</span>';
+  const text = 'if (a | b) {';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('empty / whitespace text returns false', () => {
+  assert.equal(looksLikeMarkdownSource('', ''), false);
+  assert.equal(looksLikeMarkdownSource('', '   \n  '), false);
+  assert.equal(looksLikeMarkdownSource('<span></span>', ''), false);
+});
+
+test('false-positive guard: Python source viewed in editor is not detected', () => {
+  // A user reading Python source in a CodeMirror-style editor view
+  // selects a multi-line method body. The selection has indented
+  // lines (`    self.x = x`) and contains `__init__` / `__name__`
+  // dunders, both of which earlier iterations of this heuristic
+  // counted as signals. Now: indent isn't a signal at all, and the
+  // underscore-flavoured emphasis forms are dropped from the inline
+  // regex. Result: zero markdown signals → not detected, even though
+  // signal #1 (no block tags) clears.
+  const html =
+    '<span>def __init__(self, x):</span><span>\n    self.x = x</span><span>\n' +
+    'if __name__ == "__main__":</span>';
+  const text =
+    'def __init__(self, x):\n' +
+    '    self.x = x\n' +
+    'if __name__ == "__main__":';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('false-positive guard: digit-only 2D index access not a ref-style link', () => {
+  // `arr[i][1]` shape would match a naive `[…][…]` pattern. Real
+  // markdown reference links rarely use a pure-numeric id without
+  // any letters — a digit-only or whitespace-only second bracket
+  // is filtered out. NOTE: alphabetic 2D index access (`arr[i][j]`,
+  // `cells[r][c]`) DOES still match the inline-ref-link regex; see
+  // `looksLikeMarkdownSource` for why that's acceptable in practice
+  // (short-circuit output equals htmlToMarkdown output for code).
+  const html = '<span>arr[i][1]</span><span>\n</span><span>cells[0][1]</span>';
+  const text = 'arr[i][1]\ncells[0][1]';
+  assert.equal(looksLikeMarkdownSource(html, text), false);
+});
+
+test('positive: real reference-style link still matches', () => {
+  // Sanity check that the tightened `inlineRefLink` regex still
+  // matches the actual `[label][id]` form when the id is a real
+  // word, alongside one other signal (line-leading bullet) to clear
+  // the threshold.
+  const html = '<span>- See [the docs][docs] for more</span><span>\nmore prose</span>';
+  const text = '- See [the docs][docs] for more\nmore prose';
+  assert.equal(looksLikeMarkdownSource(html, text), true);
+});
+
+// ─── selectionMarkdownBody ────────────────────────────────────────
+
+test('selectionMarkdownBody passes markdown source through verbatim', () => {
+  const html = '<span># H</span><span>\n- a\n- b</span>';
+  const text = '# H\n- a\n- b';
+  // Trailing whitespace (if any) is normalised to a single `\n`,
+  // matching `htmlToMarkdown`'s post-condition; the rest of the text
+  // is preserved as-is.
+  assert.equal(selectionMarkdownBody(html, text), '# H\n- a\n- b\n');
+});
+
+test('selectionMarkdownBody runs htmlToMarkdown when HTML has block tags', () => {
+  const html = '<h1>Title</h1><p>Body</p>';
+  const text = 'Title\nBody';
+  assert.equal(
+    selectionMarkdownBody(html, text),
+    htmlToMarkdown(html),
+  );
+});
+
+test('selectionMarkdownBody resolves relative URLs on the htmlToMarkdown path', () => {
+  const html = '<p><a href="next.html">go</a></p>';
+  const text = 'go';
+  assert.equal(
+    norm(selectionMarkdownBody(html, text, 'https://example.com/docs/index.html')),
+    '[go](https://example.com/docs/next.html)',
+  );
+});
+
+test('selectionMarkdownBody: empty HTML + markdown text → text verbatim', () => {
+  // CM6/GitHub-blob path: previously this would have returned
+  // `htmlToMarkdown('')` → `''`, losing the user's selection entirely.
+  const html = '';
+  const text = '## H\n\nbody with `code`';
+  assert.equal(selectionMarkdownBody(html, text), '## H\n\nbody with `code`\n');
+});
+
+// ─── Round-trip invariant — curated cases ────────────────────────
+//
+// The `htmlToMarkdown` wrapper at the top of this file already
+// asserts `looksLikeMarkdownSource('', output) === true` on every
+// call (unless the test passed `PLAIN`). The cases below are an
+// explicit curated set of HTML shapes that exercise structurally
+// distinct markdown outputs, kept as documentation of *what* the
+// round-trip covers — every entry here implicitly asserts the
+// invariant by virtue of calling the wrapper without `PLAIN`.
+
+test('round-trip: htmlToMarkdown output is detected as markdown source', () => {
+  const cases = [
+    // Headings only — exercises the line-leading `# ` signal alone,
+    // no inline markers to lean on.
+    '<h1>Title</h1><h2>Subtitle</h2>',
+    // Headings + paragraphs.
+    '<h1>Title</h1><h2>Subtitle</h2><p>Some body text here.</p>',
+    // List + link.
+    '<ul><li>first <a href="https://x.test">item</a></li><li>second item</li></ul>',
+    // Ordered list — exercises the `\d+. ` line-leading signal.
+    '<ol><li>step one</li><li>step two</li><li>step three</li></ol>',
+    // Inline emphasis + code.
+    '<p>This has <b>bold</b> and <code>code</code> inline.</p>' +
+    '<p>And a second paragraph for line count.</p>',
+    // Blockquote.
+    '<blockquote><p>Quoted text spans</p><p>two paragraphs.</p></blockquote>',
+    // Fenced code block.
+    '<pre><code class="language-js">const x = 1;\nconsole.log(x);</code></pre>',
+    // Pipe table — the `pipeTableLine` detector signal catches both
+    // the data rows and the `| --- | --- |` separator.
+    '<table><thead><tr><th>A</th><th>B</th></tr></thead>' +
+    '<tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+    // Mixed.
+    '<h2>Mixed</h2><ul><li>one</li><li>two</li></ul><p>Tail with <em>italics</em>.</p>',
+  ];
+  // Each call asserts the round-trip via the wrapper's default
+  // `expectLooksLikeMarkdown: true`; no extra assertion needed here.
+  for (const html of cases) htmlToMarkdown(html);
+});
+
+test('round-trip exception: plain-text-only HTML stays plain (not detected)', () => {
+  // Documented exception. The converter passes plain prose through
+  // unchanged; the detector correctly returns false because there
+  // are no markdown signals to find. Pass `PLAIN` so the wrapper
+  // asserts the negative case rather than the default positive.
+  const html = '<p>just some words across</p><p>two paragraphs</p>';
+  htmlToMarkdown(html, PLAIN);
 });
