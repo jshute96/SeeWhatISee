@@ -105,7 +105,13 @@ on each snapshot. For example,
 
 ## Installation
 
-### Chrome extension
+### Chrome extension (from a release zip)
+
+1. Download `SeeWhatISee-extension-vX.Y.Z.zip` from the [Releases page](https://github.com/jshute96/SeeWhatISee/releases) and unzip it.
+2. In Chrome: open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select the unzipped directory.
+
+### Chrome extension (from source)
 
 1. Clone this repo and install dependencies:
    ```bash
@@ -266,6 +272,27 @@ scripts/get-latest.sh     # print the latest capture record
 scripts/watch.sh          # wait for the next capture, print it, exit
 scripts/watch.sh --loop   # keep printing captures until ^C
 ```
+
+## Building a Chrome extension release
+
+Cut a Chrome extension release with `scripts/release-extension.sh`
+(tag `extension-vX.Y.Z`). The `extension-` prefix leaves room for
+separate release tracks for skills and plugins.
+
+1. Bump the version in **both** `package.json` and `src/manifest.json`
+   to the same value, and commit.
+2. From a clean `main`, run:
+   ```bash
+   scripts/release-extension.sh             # draft (default)
+   scripts/release-extension.sh --publish   # publish immediately
+   ```
+
+The script verifies the versions match, the `main` branch is clean, and the
+tag is unused; then builds + zips the extension as
+`/tmp/SeeWhatISee-extension-vX.Y.Z.zip`, creates and pushes an annotated tag,
+and calls `gh release create` with auto-generated notes and the zip
+attached. The default is a draft so you can review and publish from the
+GitHub UI.
 
 ## Layout
 

@@ -1,6 +1,6 @@
 {
   "name": "seewhatisee",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Chrome extension for taking screenshots and handing them to coding agents.",
   "type": "module",
