@@ -3,7 +3,7 @@
   "name": "SeeWhatISee",
   "version": "1.0.0",
   "description": "Share a screenshot with your coding agent in a single click! (For Claude, Gemini, etc.)",
-  "homepage_url": "https://github.com/jshute96/SeeWhatISee",
+  "homepage_url": "https://github.com/jshute96/SeeWhatISee/blob/main/README.md",
   "permissions": ["activeTab", "clipboardWrite", "contextMenus", "downloads", "offscreen", "scripting", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
