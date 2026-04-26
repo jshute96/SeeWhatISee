@@ -555,8 +555,11 @@ function containsAnyTag(nodes: Node[], tags: Set<string>): boolean {
  * structural block tags but the text reads as markdown source, return
  * the text verbatim (with a single trailing newline) so the source's
  * line structure isn't lost; otherwise run the HTML through
- * `htmlToMarkdown` with the supplied `baseUrl` so relative links
- * resolve.
+ * `htmlToMarkdown`. `baseUrl` is used by both paths to resolve
+ * relative `[label](rel)` / `![alt](rel)` / `[id]: rel` refs to
+ * absolute URLs — the HTML path delegates to `htmlToMarkdown`'s
+ * built-in resolution, the verbatim-text path runs
+ * `resolveMarkdownLinks` over the markdown directly.
  *
  * Shared between the per-format selection scrape (`scrapeSelection`)
  * and the in-memory bundled capture (`captureBothToMemory`) in
@@ -564,10 +567,88 @@ function containsAnyTag(nodes: Node[], tags: Set<string>): boolean {
  */
 export function selectionMarkdownBody(html: string, text: string, baseUrl?: string): string {
   if (looksLikeMarkdownSource(html, text)) {
-    const trimmed = text.replace(/\s+$/, '');
+    const resolved = resolveMarkdownLinks(text, baseUrl);
+    const trimmed = resolved.replace(/\s+$/, '');
     return trimmed.length > 0 ? trimmed + '\n' : '';
   }
   return htmlToMarkdown(html, baseUrl);
+}
+
+/**
+ * Resolve relative URLs inside an already-markdown text body against
+ * `baseUrl`. Mirrors what `htmlToMarkdown` does on the HTML side, so
+ * the verbatim-text short-circuit path produces equivalently usable
+ * markdown — relative `[label](rel)` / `![alt](rel)` /
+ * `[id]: rel` refs are rewritten to absolute URLs.
+ *
+ * Fenced code blocks (```` ``` ```` / `~~~`) and indented code
+ * blocks (≥ 4 leading spaces) are skipped: anything that looks like
+ * markdown inside a code block is documentation about markdown, not
+ * a live ref. Inline backtick spans are NOT skipped — handling that
+ * correctly would need a stateful tokenizer; the false-positive risk
+ * is small (real inline-code rarely contains `[…](rel)` shapes).
+ *
+ * Known limitations (each accepted as a small failure surface in
+ * exchange for keeping the implementation regex-based):
+ *
+ *   - **Balanced parens in URLs** (`Wikipedia/Foo_(bar)`) — the URL
+ *     match terminates at the first inner `)`, truncating the URL.
+ *     CommonMark's balance counter isn't expressible as a regex.
+ *   - **Deeply-indented list continuations** (≥ 4 spaces under a
+ *     nested bullet) get caught by the indented-code skip and stay
+ *     unrewritten. Selections of that shape are rare; the failure
+ *     mode is "relative URL stays relative" — same as the original
+ *     bug, not a regression.
+ *   - **Fence character / fence width mismatches** — `inFence` is a
+ *     simple toggle on any ```` ``` ```` / `~~~` line. A `~~~` line
+ *     inside a `` ``` ``-fenced block (or vice versa) flips the
+ *     state mid-block. Only matters when the markdown is itself
+ *     about markdown fences.
+ *
+ * Returns the input unchanged when `baseUrl` is undefined.
+ */
+function resolveMarkdownLinks(text: string, baseUrl: string | undefined): string {
+  if (!baseUrl) return text;
+  const lines = text.split('\n');
+  const fenceRe = /^\s{0,3}(```|~~~)/;
+  // `[label](url)` and `![alt](url)`, with optional CommonMark
+  // title in any of the three accepted forms: `"…"`, `'…'`, or
+  // `(…)`. URL match terminates at the first whitespace or `)` —
+  // **known limitation**: doesn't handle URLs with balanced
+  // parentheses (e.g. `Wikipedia/Foo_(bar)`). CommonMark's
+  // paren-balance rule isn't expressible in a regex; selections
+  // containing such links would have their URL truncated at the
+  // first inner `)`. Real failure surface is small (most URLs
+  // avoid parens), and the resolved verbatim text is no worse than
+  // what `htmlToMarkdown` would emit on the same content.
+  const inlineLinkRe = /(!?\[[^\]\n]*\])\(([^)\s]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?)\)/g;
+  // Reference-link definition: `[id]: url ["title"|'title'|(title)]`
+  // at line start (CommonMark allows up to 3 leading spaces).
+  const refDefRe = /^(\s{0,3}\[[^\]\n]+\]:\s+)(\S+)(.*)$/;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (fenceRe.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    // Indented code block: ≥ 4 leading spaces (or a tab) at the
+    // start of a line is markdown's indented-code shape. Skip.
+    if (/^( {4,}|\t)/.test(line)) continue;
+    let rewritten = line.replace(
+      inlineLinkRe,
+      (_m, label: string, url: string, title: string) =>
+        `${label}(${resolveUrl(url, baseUrl)}${title})`,
+    );
+    rewritten = rewritten.replace(
+      refDefRe,
+      (_m, prefix: string, url: string, rest: string) =>
+        `${prefix}${resolveUrl(url, baseUrl)}${rest}`,
+    );
+    lines[i] = rewritten;
+  }
+  return lines.join('\n');
 }
 
 /**

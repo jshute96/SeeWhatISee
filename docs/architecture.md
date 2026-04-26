@@ -161,8 +161,9 @@ sub-modules above.
       in GitHub `?plain=1` or a CodeMirror editor, where running
       `htmlToMarkdown` over span-only HTML would collapse the file
       onto a single line) or runs the cloned HTML through
-      `htmlToMarkdown`, with the page URL as the base URL so
-      relative `<a>` / `<img>` refs resolve. See
+      `htmlToMarkdown`. Both paths take the page URL as the base
+      URL so relative `[label](rel)` / `![alt](rel)` / `<a href>` /
+      `<img src>` refs resolve to absolute URLs. See
       `looksLikeMarkdownSource` in `src/markdown.ts` for the
       detection rule.
     - `capture-with-details` — open the details page. When a

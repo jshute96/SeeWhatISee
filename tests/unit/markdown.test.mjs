@@ -901,6 +901,199 @@ test('selectionMarkdownBody: empty HTML + markdown text → text verbatim', () =
   assert.equal(selectionMarkdownBody(html, text), '## H\n\nbody with `code`\n');
 });
 
+test('selectionMarkdownBody short-circuit path resolves relative inline links', () => {
+  // The motivating bug: selecting `![icon](src/icons/icon-16.png)`
+  // from GitHub's source view of a `.md` file used to leave the
+  // ref relative — broken once the `.md` file was opened anywhere
+  // outside the original page. Now `selectionMarkdownBody`
+  // resolves it on the verbatim-text path too.
+  const html = '<span>The toolbar icon ![icon](src/icons/icon-16.png) does foo.</span>';
+  const text = 'The toolbar icon ![icon](src/icons/icon-16.png) does foo.';
+  assert.equal(
+    selectionMarkdownBody(
+      html,
+      text,
+      'https://github.com/jshute96/SeeWhatISee/blob/main/README.md',
+    ),
+    'The toolbar icon ![icon](https://github.com/jshute96/SeeWhatISee/blob/main/src/icons/icon-16.png) does foo.\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path resolves relative inline-link URLs', () => {
+  const html = '<span>See [the docs](docs/architecture.md) for more `info`.</span>';
+  const text = 'See [the docs](docs/architecture.md) for more `info`.';
+  assert.equal(
+    selectionMarkdownBody(
+      html,
+      text,
+      'https://github.com/jshute96/SeeWhatISee/blob/main/README.md',
+    ),
+    'See [the docs](https://github.com/jshute96/SeeWhatISee/blob/main/docs/architecture.md) for more `info`.\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path resolves reference-link definitions', () => {
+  // Reference-style definitions (`[id]: url`) that often appear at
+  // the bottom of a markdown file should also pick up the base URL.
+  const html =
+    '<span># Title</span><span>\n</span>' +
+    '<span>See [docs][d].</span><span>\n\n[d]: docs/x.md</span>';
+  const text = '# Title\n\nSee [docs][d].\n\n[d]: docs/x.md';
+  assert.equal(
+    selectionMarkdownBody(
+      html,
+      text,
+      'https://example.com/repo/blob/main/README.md',
+    ),
+    '# Title\n\nSee [docs][d].\n\n[d]: https://example.com/repo/blob/main/docs/x.md\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path leaves fragment-only refs alone', () => {
+  const html = '<span>Jump to [§ Usage](#usage) for details.</span>';
+  const text = 'Jump to [§ Usage](#usage) for details.';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/x.md'),
+    'Jump to [§ Usage](#usage) for details.\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path skips links inside fenced code blocks', () => {
+  // Markdown source often DOCUMENTS markdown — a fenced code block
+  // that shows `[label](rel)` is a literal example, not a live ref.
+  // Rewriting it would change what the documentation says.
+  const html =
+    '<span># Examples</span><span>\n</span>' +
+    '<span>```</span><span>\n</span>' +
+    '<span>Use [link](relative.html) like this</span><span>\n</span>' +
+    '<span>```</span><span>\n</span>' +
+    '<span>And outside: [real](real.html)</span>';
+  const text =
+    '# Examples\n```\nUse [link](relative.html) like this\n```\nAnd outside: [real](real.html)';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/docs/'),
+    '# Examples\n```\nUse [link](relative.html) like this\n```\nAnd outside: [real](https://example.com/docs/real.html)\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path skips indented code blocks', () => {
+  const html =
+    '<span># Examples</span><span>\n\n</span>' +
+    '<span>    Inside: [code](rel.html)</span><span>\n\n</span>' +
+    '<span>Outside: [live](live.html)</span>';
+  const text =
+    '# Examples\n\n    Inside: [code](rel.html)\n\nOutside: [live](live.html)';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/docs/'),
+    '# Examples\n\n    Inside: [code](rel.html)\n\nOutside: [live](https://example.com/docs/live.html)\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path with no baseUrl leaves links alone', () => {
+  const html = '<span>See ![icon](rel.png) and [docs](rel.md).</span>';
+  const text = 'See ![icon](rel.png) and [docs](rel.md).';
+  assert.equal(
+    selectionMarkdownBody(html, text),
+    'See ![icon](rel.png) and [docs](rel.md).\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path leaves absolute URLs alone', () => {
+  const html = '<span>See [docs](https://other.example/x.md).</span>';
+  const text = 'See [docs](https://other.example/x.md).';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/'),
+    'See [docs](https://other.example/x.md).\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path resolves multiple inline links on one line', () => {
+  // Sanity check that the `/g` flag is doing its job — both link
+  // URLs should be rewritten, not just the first.
+  const html = '<span>See [a](rel-a.md) and [b](rel-b.md) for details.</span>';
+  const text = 'See [a](rel-a.md) and [b](rel-b.md) for details.';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/docs/'),
+    'See [a](https://example.com/docs/rel-a.md) and [b](https://example.com/docs/rel-b.md) for details.\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path preserves all three CommonMark title forms', () => {
+  // Inline-link title can be `"…"`, `'…'`, or `(…)` per the spec.
+  // The URL is resolved while the title text is preserved verbatim.
+  const html =
+    '<span>- [a](rel-a "double")</span><span>\n' +
+    '- [b](rel-b \'single\')</span><span>\n' +
+    '- [c](rel-c (paren))</span>';
+  const text =
+    '- [a](rel-a "double")\n' +
+    '- [b](rel-b \'single\')\n' +
+    '- [c](rel-c (paren))';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/docs/'),
+    '- [a](https://example.com/docs/rel-a "double")\n' +
+    '- [b](https://example.com/docs/rel-b \'single\')\n' +
+    '- [c](https://example.com/docs/rel-c (paren))\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path handles tilde-fenced code blocks', () => {
+  // `~~~` is the alternate fence character. The skip should treat
+  // it the same as ```` ``` ````.
+  const html =
+    '<span># Examples</span><span>\n</span>' +
+    '<span>~~~</span><span>\n</span>' +
+    '<span>Use [link](relative.html) like this</span><span>\n</span>' +
+    '<span>~~~</span><span>\n</span>' +
+    '<span>And outside: [real](real.html)</span>';
+  const text =
+    '# Examples\n~~~\nUse [link](relative.html) like this\n~~~\nAnd outside: [real](real.html)';
+  assert.equal(
+    selectionMarkdownBody(html, text, 'https://example.com/docs/'),
+    '# Examples\n~~~\nUse [link](relative.html) like this\n~~~\nAnd outside: [real](https://example.com/docs/real.html)\n',
+  );
+});
+
+test('selectionMarkdownBody short-circuit path: balanced-paren URL is a known limitation', () => {
+  // Locks in the documented limitation: a URL like
+  // `Foo_(bar).md` truncates at the inner `)`. If we ever fix this,
+  // this test will fail and prompt updating the JSDoc disclaimer.
+  const html = '<span>See [Foo](Foo_(bar).md) below.</span>';
+  const text = 'See [Foo](Foo_(bar).md) below.';
+  // The regex captures `Foo_(bar` as the URL, leaves the trailing
+  // `).md)` as literal text after the resolved link.
+  const out = selectionMarkdownBody(html, text, 'https://example.com/docs/');
+  assert.match(
+    out,
+    /\[Foo\]\(https:\/\/example\.com\/docs\/Foo_\(bar\)/,
+  );
+});
+
+test('selectionMarkdownBody short-circuit path: relative / root-absolute / absolute side-by-side', () => {
+  // One assertion exercising all three href shapes that
+  // `resolveUrl` distinguishes — relative resolves against the
+  // base path, `/root` resolves against the base origin, and
+  // `https://…` is left alone.
+  const html =
+    '<span>- [relative](docs/x.md)</span><span>\n' +
+    '- [root-absolute](/about)</span><span>\n' +
+    '- [absolute](https://other.example/y)</span>';
+  const text =
+    '- [relative](docs/x.md)\n' +
+    '- [root-absolute](/about)\n' +
+    '- [absolute](https://other.example/y)';
+  assert.equal(
+    selectionMarkdownBody(
+      html,
+      text,
+      'https://example.com/repo/blob/main/README.md',
+    ),
+    '- [relative](https://example.com/repo/blob/main/docs/x.md)\n' +
+    '- [root-absolute](https://example.com/about)\n' +
+    '- [absolute](https://other.example/y)\n',
+  );
+});
+
 // ─── Round-trip invariant — curated cases ────────────────────────
 //
 // The `htmlToMarkdown` wrapper at the top of this file already
