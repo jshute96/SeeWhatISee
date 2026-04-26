@@ -14,7 +14,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon (![icon](src/icons/icon-16.png)) to take a screenshot, opening the capture details page (see below).
+- Click the extension icon (<img src="src/icons/icon-16.png" alt="icon" align="middle">) to take a screenshot, opening the capture details page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
   - If there's text selected on the page, the click instead copies the selected text.
 - Right-click the icon for more options:
@@ -54,7 +54,7 @@ On the **Capture with details** page, you can also view or edit the selection co
 
 This page allows full control of what's captured.  You can add highlights on the page and **add a prompt telling the agent what you want to do**.
 
-Click **Capture**, the toolbar icon (![icon](src/icons/icon-16.png)), or press *Enter* in the prompt field to submit.
+Click **Capture**, the toolbar icon (<img src="src/icons/icon-16.png" alt="icon" align="middle">), or press *Enter* in the prompt field to submit.
 
 On this page, you can:
 
@@ -62,9 +62,9 @@ On this page, you can:
 - Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
   - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
   - With nothing checked, you can still capture the URL.
-- Copy saved filenames to the clipboard with the copy icon (![icon](docs/images/copy-icon.png)).
-- View or edit the captured HTML or selection before saving with the pencil icon (![icon](docs/images/edit-icon.png)).
-- **Save individual artifacts** to a custom location with the download icon (![icon](docs/images/download-icon.png)).
+- Copy saved filenames to the clipboard with the copy icon (<img src="docs/images/copy-icon.png" alt="icon" align="middle">).
+- View or edit the captured HTML or selection before saving with the pencil icon (<img src="docs/images/edit-icon.png" alt="icon" align="middle">).
+- **Save individual artifacts** to a custom location with the download icon (<img src="docs/images/download-icon.png" alt="icon" align="middle">).
 - Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
