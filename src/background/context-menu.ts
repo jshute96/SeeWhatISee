@@ -15,33 +15,17 @@ import {
   CAPTURE_ACTIONS,
   CAPTURE_DELAYS_SEC,
   captureActionsWithDelay,
-  isDefaultableDelay,
   type CaptureAction,
 } from './capture-actions.js';
 import {
-  WITH_SELECTION_CHOICES,
   getDefaultActionTooltip,
   getDefaultDblWithoutSelectionId,
-  getDefaultWithSelectionId,
   getDefaultWithoutSelectionId,
   isSelectionBaseId,
 } from './default-action.js';
 
-export const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 export const DELAYED_PARENT_ID = 'delayed-capture-parent';
 export const MORE_PARENT_ID = 'more-parent';
-// Child items under "Set default click action" use these prefixes on
-// their ids so the onClicked handler can tell "pick this with-selection
-// default" / "pick this without-selection default" clicks apart from
-// the top-level / Delayed-capture "run this now" entries, which share
-// the CAPTURE_ACTIONS ids verbatim.
-export const DEFAULT_CLICK_WITH_SEL_PREFIX = 'set-default-with-sel-';
-export const DEFAULT_CLICK_WITHOUT_SEL_PREFIX = 'set-default-without-sel-';
-// Grayed-out subheadings that visually split the submenu into its two
-// sections. Built as `enabled: false` normal items because
-// `chrome.contextMenus` has no "label" / "group header" type.
-const WITH_SEL_HEADER_ID = 'default-with-sel-header';
-const WITHOUT_SEL_HEADER_ID = 'default-without-sel-header';
 
 // Id used by the "Clear log history" entry under the More submenu.
 export const CLEAR_LOG_MENU_ID = 'clear-log';
@@ -65,19 +49,6 @@ export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 // prefix is stripped here before dispatch so the rest of the code
 // keeps using bare action ids.
 export const COMMAND_PREFIX_PATTERN = /^\d{2}-/;
-
-const DEFAULT_SELECTED_PREFIX = '✓ ';
-const DEFAULT_UNSELECTED_PREFIX = '    ';
-
-function defaultMenuTitle(title: string, selected: boolean, shortcut?: string): string {
-  const prefix = selected ? DEFAULT_SELECTED_PREFIX : DEFAULT_UNSELECTED_PREFIX;
-  // Rows in "Set default click action" show only the bound keyboard
-  // shortcut (no Click / Double-click italic segment) — those tags
-  // belong on the action rows elsewhere in the menu; here the ✓
-  // prefix is already the "this is the default" signal.
-  const hint = shortcut ? `${HINT_SEPARATOR}(${shortcut})` : '';
-  return prefix + title + hint;
-}
 
 // Hints marking which top-level / "Capture with delay" entries will
 // run on toolbar click vs. double-click.
@@ -146,13 +117,9 @@ let cachedShortcutFingerprint: string | undefined;
  * Re-render every user-visible surface that depends on a keyboard
  * shortcut binding or a click default:
  *
- *   - "Set hotkeys" status row at the top of the `Set default click
- *     action` submenu.
  *   - Every `CAPTURE_ACTIONS` row in the top-level / `Capture with
  *     delay` / `More` menus — hotkey plus `(Click)` / `(Double-click)`
  *     hint as applicable.
- *   - Every ✓-prefixed row inside `Set default click action`, both
- *     sections (with-selection + without-selection).
  *   - The toolbar-icon tooltip (`chrome.action.setTitle`) — its
  *     `Click:` line folds in the `_execute_action` hotkey when bound.
  *
@@ -175,7 +142,6 @@ export async function refreshMenusAndTooltip(
   preloadedCommands?: chrome.commands.Command[],
 ): Promise<void> {
   const defaultId = await getDefaultWithoutSelectionId();
-  const withId = await getDefaultWithSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
   const commands = preloadedCommands ?? (await chrome.commands.getAll());
   const shortcuts = commandsToShortcutMap(commands);
@@ -189,39 +155,6 @@ export async function refreshMenusAndTooltip(
       try {
         await chrome.contextMenus.update(a.id, {
           title: actionMenuTitle(a, defaultId, dblId, shortcuts),
-        });
-      } catch {
-        /* menu not installed yet */
-      }
-    }),
-  );
-
-  // Without-selection ✓ rows in the "Set default click action"
-  // submenu. The `save-selection-*` bases are filtered out in
-  // the menu install, so we filter them here too to avoid a
-  // no-op update on a never-created id.
-  const withoutDefaultables = CAPTURE_ACTIONS.filter(
-    (a) => isDefaultableDelay(a.delaySec) && !isSelectionBaseId(a.baseId),
-  );
-  await Promise.all(
-    withoutDefaultables.map(async (a) => {
-      try {
-        await chrome.contextMenus.update(DEFAULT_CLICK_WITHOUT_SEL_PREFIX + a.id, {
-          title: defaultMenuTitle(a.title, a.id === defaultId, shortcuts.get(a.id)),
-        });
-      } catch {
-        /* menu not installed yet */
-      }
-    }),
-  );
-
-  // With-selection ✓ rows. `ignore-selection` has no command entry
-  // so its hotkey hint always collapses.
-  await Promise.all(
-    WITH_SELECTION_CHOICES.map(async (c) => {
-      try {
-        await chrome.contextMenus.update(DEFAULT_CLICK_WITH_SEL_PREFIX + c.id, {
-          title: defaultMenuTitle(c.title, c.id === withId, shortcuts.get(c.id)),
         });
       } catch {
         /* menu not installed yet */
@@ -530,34 +463,6 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //       • Save screenshot in 5s
 //       • Save HTML contents in 5s
 //       • Save everything in 5s
-//   Set default click action  ▸     (submenu; ✓ on selected in each section)
-//         ──  When text is selected  ──      (disabled header)
-//       ✓ Capture...
-//         Save default items
-//         Save selection as HTML
-//         Save selection as text
-//         Save selection as markdown
-//         Ignore selection (use default below)
-//       ─────────
-//         ──  When no text is selected  ──   (disabled header)
-//       ✓ Capture...
-//         Save default items
-//         Save screenshot
-//         Save HTML contents
-//         Save URL                         (no delayed variants)
-//         Save everything
-//       ─────────
-//         Capture... in 2s
-//         Save default items in 2s
-//         Save screenshot in 2s
-//         Save HTML contents in 2s
-//         Save everything in 2s
-//       ─────────
-//         Capture... in 5s
-//         Save default items in 5s
-//         Save screenshot in 5s
-//         Save HTML contents in 5s
-//         Save everything in 5s
 //   More  ▸                         (submenu)
 //       • Save default items             (runs Capture-page Save with stored defaults, no dialog)
 //       ─────────
@@ -580,21 +485,20 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
 // items in the action context menu. Overflow fails silently via
 // `chrome.runtime.lastError`, so a careless addition silently drops
-// a previously-working entry. The menu above has 6 top-level
-// entries (3 undelayed + 3 submenu parents) — **at the cap**. Do
-// not add another top-level entry — nest new items under an
-// existing submenu (the `More` submenu is a natural home for
-// infrequent utilities).
+// a previously-working entry. The menu above has 5 top-level
+// entries (3 undelayed + 2 submenu parents). One slot is free; the
+// "Set default click action" submenu used to occupy it but the
+// Options page is now the canonical place to set defaults.
 //
 // In-submenu separators are free (they don't count against the
-// top-level cap) so we use them to group the submenu contents by
-// delay.
+// top-level cap) so we use them to group "Capture with delay" by
+// delay and the "More" submenu into capture-shortcut + utility
+// clusters.
 //
-// Every top-level entry, every "Capture with delay" child, and every
-// "Set default click action" entry is built from the same
-// CAPTURE_ACTIONS array, so ids / titles / run functions can't
-// drift. `handleActionClick` looks up the current default out of
-// the same array.
+// Every top-level entry and every "Capture with delay" child is
+// built from the same CAPTURE_ACTIONS array, so ids / titles / run
+// functions can't drift. `handleActionClick` looks up the current
+// default out of the same array.
 //
 // The registration runs on `chrome.runtime.onInstalled`; Chrome
 // persists the entries across service-worker restarts so we don't
@@ -644,13 +548,12 @@ export async function installContextMenu(): Promise<void> {
     }
   };
 
-  // Read both defaults up front so each submenu child can be
-  // created with the correct title prefix — `removeAll` wipes
-  // Chrome's per-item state along with the entries themselves, so
-  // we can't rely on persisted state. Menu hints (Click /
-  // Double-click) track the without-selection default only.
+  // Read defaults up front so each row's `(Click)` / `(Double-click)`
+  // hint reflects the current state — `removeAll` wipes Chrome's
+  // per-item state along with the entries, so we can't rely on
+  // persisted state. Menu hints track the without-selection
+  // Click / Double-click defaults only.
   const defaultId = await getDefaultWithoutSelectionId();
-  const withId = await getDefaultWithSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
   const commands = await chrome.commands.getAll();
   const shortcuts = commandsToShortcutMap(commands);
@@ -707,64 +610,6 @@ export async function installContextMenu(): Promise<void> {
     }
   }
 
-  // ── "Set default click action" submenu ──────────────────────
-  // See header layout above. Uses normal items with a ✓ prefix on
-  // the selected entry rather than radio items: Chrome's radio
-  // mutual-exclusion only covers a contiguous run, so a separator
-  // would let two items appear selected. The `save-selection-*`
-  // format shortcuts are deliberately not offered in the
-  // without-selection section (they would just error on every
-  // click with no selection on the page).
-  chrome.contextMenus.create({
-    id: DEFAULT_CLICK_PARENT_ID,
-    title: 'Set default click action',
-    contexts: ['action'],
-  });
-
-  chrome.contextMenus.create({
-    id: WITH_SEL_HEADER_ID,
-    parentId: DEFAULT_CLICK_PARENT_ID,
-    title: `${DEFAULT_UNSELECTED_PREFIX}──  When text is selected  ──`,
-    enabled: false,
-    contexts: ['action'],
-  });
-  for (const choice of WITH_SELECTION_CHOICES) {
-    chrome.contextMenus.create({
-      id: DEFAULT_CLICK_WITH_SEL_PREFIX + choice.id,
-      parentId: DEFAULT_CLICK_PARENT_ID,
-      title: defaultMenuTitle(choice.title, choice.id === withId, shortcuts.get(choice.id)),
-      contexts: ['action'],
-    });
-  }
-
-  createSeparator(`${DEFAULT_CLICK_PARENT_ID}-sep-sections`, DEFAULT_CLICK_PARENT_ID);
-
-  chrome.contextMenus.create({
-    id: WITHOUT_SEL_HEADER_ID,
-    parentId: DEFAULT_CLICK_PARENT_ID,
-    title: `${DEFAULT_UNSELECTED_PREFIX}──  When no text is selected  ──`,
-    enabled: false,
-    contexts: ['action'],
-  });
-  for (let i = 0; i < CAPTURE_DELAYS_SEC.length; i++) {
-    const delaySec = CAPTURE_DELAYS_SEC[i]!;
-    if (i > 0) {
-      createSeparator(
-        `${DEFAULT_CLICK_PARENT_ID}-sep-delay-${delaySec}`,
-        DEFAULT_CLICK_PARENT_ID,
-      );
-    }
-    for (const action of captureActionsWithDelay(delaySec)) {
-      if (isSelectionBaseId(action.baseId)) continue;
-      chrome.contextMenus.create({
-        id: DEFAULT_CLICK_WITHOUT_SEL_PREFIX + action.id,
-        parentId: DEFAULT_CLICK_PARENT_ID,
-        title: defaultMenuTitle(action.title, action.id === defaultId, shortcuts.get(action.id)),
-        contexts: ['action'],
-      });
-    }
-  }
-
   // ── "More" submenu ──────────────────────────────────────────
   // Home for:
   //   - capture actions that don't earn a top-level slot (the
@@ -779,11 +624,12 @@ export async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
   // More-group capture actions (delay 0 only — delayed variants are
-  // reachable via "Set default click action"). They use the bare
-  // CAPTURE_ACTIONS id like the primary top-level entries, so the
-  // onClicked dispatcher's `findCaptureAction(id)` branch handles them
-  // without a special case, and `setDefaultWithoutSelectionId`'s
-  // hint-refresh loop can update their titles too.
+  // reachable via the "Capture with delay" submenu when their base
+  // sets `showInDelayedSubmenu`). They use the bare CAPTURE_ACTIONS
+  // id like the primary top-level entries, so the onClicked
+  // dispatcher's `findCaptureAction(id)` branch handles them
+  // without a special case, and `refreshMenusAndTooltip` updates
+  // their titles in the same single sweep.
   //
   // Two separators split the More-group entries into three groups:
   //   1. `save-defaults` (the everyday Save-defaults shortcut), then

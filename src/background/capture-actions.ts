@@ -33,13 +33,13 @@ import { startCaptureWithDetails } from './capture-details.js';
 // which section of the action menu surfaces its undelayed variant
 // — see the `ActionGroup` comment below.
 //
-// The resulting flat `CAPTURE_ACTIONS` array drives four things:
+// The resulting flat `CAPTURE_ACTIONS` array drives three things:
 //   - the top-level menu entries (primary, delay 0)
 //   - the "Capture with delay" submenu children (primary, delay > 0)
 //   - the "More" submenu's capture shortcuts at the top (more, delay 0)
-//   - the "Set default click action" submenu (every base × every delay)
 // and is the lookup table `handleActionClick` uses to run the
-// currently-selected default.
+// currently-selected default. The Options page reads the same list
+// over the SW message wire to render its action tables.
 //
 // Keep the first base action at delay 0 first: that's the default
 // fallback when nothing is stored yet, and its tooltip matches the
@@ -51,11 +51,9 @@ import { startCaptureWithDetails } from './capture-details.js';
  * Which section of the action menu surfaces an undelayed base action:
  *   - `'primary'` — top-level menu entry + a slot in the "Capture
  *     with delay" submenu for each delayed variant.
- *   - `'more'`    — entry at the top of the More submenu; delayed
- *     variants are only reachable via "Set default click action".
- *
- * Every base action also appears in "Set default click action" regardless
- * of group (all defaultable delays × all bases).
+ *   - `'more'`    — entry inside the More submenu. Delayed variants
+ *     are reachable only via the Capture-with-delay submenu when the
+ *     base sets `showInDelayedSubmenu`, and via the Options page.
  */
 export type ActionGroup = 'primary' | 'more';
 
@@ -345,7 +343,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     group: 'more',
     // The selection already exists when the user triggers the
     // action; waiting doesn't help. Still bindable as the default
-    // click action at 0s via "Set default click action".
+    // click action at 0s via the Options page.
     supportsDelayed: false,
     run: (delayMs) => captureSelection('html', delayMs),
   },
@@ -413,8 +411,4 @@ export function captureActionsWithDelay(
   return CAPTURE_ACTIONS.filter(
     (a) => a.delaySec === delaySec && (group === undefined || a.group === group),
   );
-}
-
-export function isDefaultableDelay(delaySec: number): boolean {
-  return (CAPTURE_DELAYS_SEC as readonly number[]).includes(delaySec);
 }

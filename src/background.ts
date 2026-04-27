@@ -46,8 +46,6 @@ import {
   COPY_LAST_HTML_MENU_ID,
   COPY_LAST_SCREENSHOT_MENU_ID,
   COPY_LAST_SELECTION_MENU_ID,
-  DEFAULT_CLICK_WITH_SEL_PREFIX,
-  DEFAULT_CLICK_WITHOUT_SEL_PREFIX,
   SNAPSHOTS_DIR_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
@@ -151,39 +149,10 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   // Fire-and-forget refresh so any hotkey edit the user made since
   // our last render propagates to the menu before the next open.
   // Not awaited: the click itself shouldn't block on a menu-title
-  // sweep, and the `Set default click action` path below triggers
-  // its own full refresh anyway.
+  // sweep.
   void refreshMenusIfHotkeysChanged();
 
   const id = String(info.menuItemId);
-
-  // "Set default click action" submenu: a click just persists the
-  // new preference for whichever section the item lives in. Not
-  // routed through runWithErrorReporting — flipping a setting isn't
-  // a capture, and painting the error icon on a failed storage
-  // write would be misleading.
-  //
-  // On failure the ✓ prefix stays on the old item (the title
-  // updates happen after the storage write), so the menu remains
-  // consistent with the stored value.
-  if (id.startsWith(DEFAULT_CLICK_WITH_SEL_PREFIX)) {
-    const choiceId = id.slice(DEFAULT_CLICK_WITH_SEL_PREFIX.length);
-    try {
-      await setDefaultWithSelectionId(choiceId);
-    } catch (err) {
-      console.warn('[SeeWhatISee] failed to set with-selection default:', err);
-    }
-    return;
-  }
-  if (id.startsWith(DEFAULT_CLICK_WITHOUT_SEL_PREFIX)) {
-    const actionId = id.slice(DEFAULT_CLICK_WITHOUT_SEL_PREFIX.length);
-    try {
-      await setDefaultWithoutSelectionId(actionId);
-    } catch (err) {
-      console.warn('[SeeWhatISee] failed to set without-selection default:', err);
-    }
-    return;
-  }
 
   // Top-level capture entry: run its action.
   const action = findCaptureAction(id);

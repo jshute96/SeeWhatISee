@@ -323,7 +323,10 @@ promising — the main issue was the `onActivated` restore logic.
   At the top level of the action menu, separators count against
   the 6-item cap, so we don't use any there. Inside submenus
   they're free and we use them to group "Capture with delay" by
-  delay and "Set default click action" by delay.
+  delay; inside "More" they split the capture shortcuts into a
+  three-way cluster (`save-defaults` | `save-url` + `save-all` |
+  the three `save-selection-*` shortcuts) and then fence off the
+  copy-last, snapshots-dir, and clear-log utility rows.
   - **ChromeOS workaround.** ChromeOS sometimes fails to render
     native `type: 'separator'` items in the extension action menu.
     `installContextMenu` in `background/context-menu.ts` detects the platform
@@ -350,12 +353,9 @@ promising — the main issue was the `onActivated` restore logic.
   - **Separators break the group.** Inserting a separator between
     two same-parent radios splits them into two *independent*
     mutual-exclusion groups, so the user can end up with one item
-    checked in each.
-  - The "Set default click action" submenu avoids radio items for
-    this reason — it uses normal items with a `✓ ` title prefix
-    on the selected entry, updated by
-    `setDefaultWithSelectionId` / `setDefaultWithoutSelectionId`
-    (one per section).
+    checked in each. (Historically why the retired
+    Set-default-click submenu used `✓ ` title prefixes on normal
+    items rather than radio items — its sections were separated.)
 - **Click / double-click hints on run entries.** Top-level entries
   and the "Capture with delay" submenu entries append a
   `  -  (Click)` or `  -  (Double-click)` hint to whichever item
@@ -368,23 +368,20 @@ promising — the main issue was the `onActivated` restore logic.
     column on one machine (menu rendering uses the platform UI font,
     so widths drift across OSes). An inline dash separator reads
     as intentional on every platform.
-  - The "Set default click action" submenu is unchanged — its ✓
-    already covers "this is the click action", and stacking another
-    `(Click)` on the same row is noise.
   - Hints track the without-selection default only — the
     with-selection default only kicks in when a selection exists
     on the active tab, which we can't reliably predict at
-    menu-render time. Refresh happens inside
-    `setDefaultWithoutSelectionId` alongside the ✓ prefix updates.
+    menu-render time. Setting either default refreshes every menu
+    row's hint via `refreshMenusAndTooltip`.
 - **Submenus via `parentId`.** Any item created with a `parentId`
   becomes a child of the named parent, which Chrome then renders
   with a ▸ indicator automatically. No explicit "submenu" type.
 - **Persisted state doesn't survive `removeAll`.** The install
   handler wipes the menu on every install / update / chrome_update,
-  so initial `checked` values have to be re-read from
-  `chrome.storage.local` and passed back to `create({checked})` on
-  every recreate. The "Set default click action" submenu does this for
-  its current selection.
+  so any initial state derived from storage (e.g. the click /
+  double-click hints on the run-entry titles) has to be re-read
+  from `chrome.storage.local` and passed back into the `create()`
+  calls on every recreate.
 - **Top-level item limit.** Chrome caps each extension at
   `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
   items per context. The constant is read-only — it's reporting a
@@ -403,18 +400,18 @@ promising — the main issue was the `onActivated` restore logic.
     entry, which silently dropped "Clear log history" off the
     menu until the regression was spotted later. Keep the top
     level at 6 or below, or move entries into a submenu.
-  - Our action menu currently has 6 top-level entries — three
+  - Our action menu currently has 5 top-level entries — three
     undelayed primary-group capture actions, the "Capture with
-    delay" submenu parent, the "Set default click action" submenu
-    parent, and the "More" submenu parent (which hosts the two
-    more-group capture actions "Save URL" and "Save screenshot
-    and HTML", plus "Copy last screenshot filename", "Copy last HTML
-    filename", "Copy last selection filename", "Snapshots directory",
-    and "Clear log history"). This
-    is **at the cap** — any further top-level addition will drop an
-    existing entry. Nest new utilities under "More" (or add new
-    capture actions with `group: 'more'` so they land there
-    automatically).
+    delay" submenu parent, and the "More" submenu parent (which
+    hosts the more-group capture actions "Save default items",
+    "Save URL", "Save everything", and the three
+    "Save selection as …" shortcuts, plus "Copy last screenshot
+    filename", "Copy last HTML filename", "Copy last selection
+    filename", "Snapshots directory", and "Clear log history").
+    One slot is free below the cap — the retired Set-default-click
+    submenu used to occupy it. Adding a new top-level entry costs
+    that slot; further additions need to nest under "More" or
+    promote a primary entry into a new submenu.
 
 ## Options page (`options.html`)
 

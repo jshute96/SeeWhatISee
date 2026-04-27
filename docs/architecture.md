@@ -65,10 +65,10 @@ sub-modules above.
     which section of the action menu surfaces the undelayed variant:
     - `'primary'` — top-level entry + a slot in the "Capture with
       delay" submenu for each delayed variant.
-    - `'more'` — top of the "More" submenu; delayed variants are
-      only reachable via "Set default click action".
-    - Every base × delay pair appears in "Set default click action"
-      regardless of group.
+    - `'more'` — entry inside the "More" submenu. Delayed variants
+      are reachable via the Capture-with-delay submenu when the base
+      sets `showInDelayedSubmenu` (e.g. `save-defaults`, `save-all`),
+      and via the Options page in any case.
 
   The three `primary` bases are:
 
@@ -173,7 +173,10 @@ sub-modules above.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
-  `contexts: ['action']`. Top level (6 entries):
+  `contexts: ['action']`. Top level (5 entries; one slot below the
+  6-item `ACTION_MENU_TOP_LEVEL_LIMIT` cap is free since the
+  Set-default-click submenu was retired in favor of the Options
+  page):
 
   - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
     (Capture..., Save screenshot, Save HTML contents), each running
@@ -188,31 +191,8 @@ sub-modules above.
     grouping is free. More-group actions that don't opt in
     (`save-url` and the three
     `save-selection-{html,text,markdown}` — all
-    `supportsDelayed: false` anyway) are only reachable via "Set
-    default click action" if at all.
-  - **Set default click action ▸** — submenu split into two sections.
-    Hotkey editing lives on the Options page; this submenu only sets
-    the click defaults.
-    - **`── When text is selected ──`** header (`enabled: false`),
-      then the five with-selection choices (three
-      `save-selection-<format>` shortcuts,
-      `capture`, `ignore-selection`).
-    - Separator.
-    - **`── When no text is selected ──`** header (`enabled: false`),
-      then every `CAPTURE_ACTIONS` entry *except* the
-      `save-selection-<format>` shortcuts, grouped by delay
-      (0s, 2s, 5s) with separators between delay groups.
-    - The selected item in each section gets a `✓ ` title prefix.
-      Picking one persists its id under the matching storage key
-      (`defaultClickWithSelection` /
-      `defaultClickWithoutSelection`) and refreshes the tooltip.
-    - Uses normal items instead of `type: 'radio'` because Chrome's
-      radio mutual-exclusion only covers a contiguous run — the
-      separator would cause two items to appear selected.
-    - Uses `enabled: false` normal items for the subheadings
-      because `chrome.contextMenus` has no "label" / "group
-      header" type.
-
+    `supportsDelayed: false` anyway) are only reachable via the
+    Options page.
   - **More ▸** — submenu home for the more-group capture actions
     and for infrequent utilities that would otherwise crowd out
     primary capture entries at the top level.
@@ -340,12 +320,13 @@ sub-modules above.
 
   - Chrome enforces `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT
     = 6`. Top-level separators count against it.
-  - The menu currently has 6 top-level entries (3 undelayed + 3
-    submenu parents: Capture with delay, Set default click action,
-    and More) — **at the cap**.
-  - **Do not add another top-level entry** — nest new items under
-    an existing submenu parent (More is the natural home for new
-    infrequent utilities).
+  - The menu currently has 5 top-level entries (3 undelayed + 2
+    submenu parents: Capture with delay, More) — one slot under the
+    cap. The Set-default-click submenu used to occupy the sixth slot
+    but was retired in favor of the Options page.
+  - **Prefer nesting new entries under an existing submenu** (More
+    is the natural home for infrequent utilities); reserve the
+    free slot for genuinely top-level work.
   - Overflow fails silently via `chrome.runtime.lastError`, so a
     careless addition drops a previously-working entry without any
     build- or runtime-time error. See
@@ -1003,26 +984,27 @@ permission gaps).
    your new function. The flat `CAPTURE_ACTIONS` array is generated
    from `BASE_CAPTURE_ACTIONS × CAPTURE_DELAYS_SEC` at module load,
    so the new base automatically gains immediate + 2s + 5s variants
-   in whichever menu sections its `group` unlocks, plus the
-   corresponding "Set default click action" entries. Set
-   `supportsDelayed: false` when delayed variants don't make sense
-   for the mode (only the 0s variant is then generated). No other
-   plumbing.
+   in whichever menu sections its `group` unlocks, plus an
+   Options-page row per delay. Set `supportsDelayed: false` when
+   delayed variants don't make sense for the mode (only the 0s
+   variant is then generated). No other plumbing.
    - **Pick the group deliberately.** `'primary'` promotes the
      undelayed variant to a top-level slot and surfaces delayed
      variants in the "Capture with delay" submenu — right for
      primary capture paths. `'more'` tucks the undelayed variant
-     into the "More" submenu and only exposes delayed variants via
-     "Set default click action" — right for shortcuts / niche
-     modes that shouldn't crowd the top level.
+     into the "More" submenu; delayed variants surface in
+     "Capture with delay" only when `showInDelayedSubmenu: true` is
+     also set. Either way the action is bindable as the click /
+     double-click default via the Options page.
    - **Watch the top-level cap.** Chrome allows at most
      `ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level items per action
-     context menu, and separators count. The menu is currently at
-     6 (3 primary undelayed entries + Capture with delay + Set
-     default + More) — **at the cap**. Any new `'primary'` base
-     would push it past 6 and silently drop an entry; add the base
-     as `'more'` instead, or fold the undelayed primary slots into
-     a submenu of their own (e.g. "Capture now") first.
+     context menu, and separators count. The menu currently has 5
+     (3 primary undelayed entries + Capture with delay + More) —
+     one slot free. A new `'primary'` base consumes that slot; a
+     second new primary would push it past 6 and silently drop an
+     entry, so add the base as `'more'` instead, or fold the
+     undelayed primary slots into a submenu of their own (e.g.
+     "Capture now") first.
 4. If the action should be bindable as a keyboard shortcut (i.e.
    it's a non-selection base), add a matching entry under `commands`
    in `src/manifest.json`. The command name is `NN-<baseId>` where

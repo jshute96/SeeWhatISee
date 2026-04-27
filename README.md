@@ -23,8 +23,6 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **Save HTML contents** of the page.
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
-  - **Set default click action ▸** — Choose which action to apply
-    when clicking the icon, with or without text selected.
   - **More ▸**
     - **Save default items** — Saves the default items the *Capture* page saves, according to current options.
     - **Save URL** — Record just the current tab's URL, without a screenshot.
@@ -35,8 +33,6 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
-- **Keyboard shortcuts** can be configured on `chrome://extensions/shortcuts`.
-  There's a link to this page on the **Set default** menu.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
   and keyboard hotkeys.

@@ -309,12 +309,8 @@ export async function getDefaultActionTooltip(errorMessage?: string): Promise<st
 
 /**
  * Persist a new "when there is no selection" click default and
- * update the toolbar tooltip + "Set default click action" submenu
- * checkmarks / hint labels to match.
- *
- * Updating a not-yet-created menu id throws `No item with id "…"`;
- * we suppress that because these setters are also called from tests
- * before the first menu install.
+ * refresh the toolbar tooltip + every right-click menu row's
+ * `(Click)` / `(Double-click)` hint to match.
  */
 export async function setDefaultWithoutSelectionId(id: string): Promise<void> {
   const action = findCaptureAction(id);
@@ -329,13 +325,7 @@ export async function setDefaultWithoutSelectionId(id: string): Promise<void> {
   await refreshMenusAndTooltip();
 }
 
-/**
- * Persist a new "when there is a selection" click default. Same
- * swallowed-update shape as `setDefaultWithoutSelectionId`, but only
- * the with-selection section's ✓ prefixes need updating — the
- * without-selection hints are derived from the other default and
- * stay put.
- */
+/** Persist a new "when there is a selection" click default. */
 export async function setDefaultWithSelectionId(id: string): Promise<void> {
   if (!findWithSelectionChoice(id)) {
     throw new Error(`Unknown with-selection default id: ${id}`);
