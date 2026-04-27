@@ -24,16 +24,16 @@
 
 import { test, expect } from '../fixtures/extension';
 
-// Default tooltip on the `capture-screenshot` click action. The background
+// Default tooltip on the `save-screenshot` click action. The background
 // script derives the toolbar title from the four stored defaults;
 // the tests here pin them in beforeEach so the expected baseline is
 // stable. Layout:
 //
 //   SeeWhatISee
 //   <blank>
-//   Click: Take screenshot
+//   Click: Save screenshot
 //   Double-click: Capture...
-//   With selection click: Capture as HTML
+//   With selection click: Save as HTML
 //   With selection double-click: Capture...
 //   <blank trailing line>
 //
@@ -41,9 +41,9 @@ import { test, expect } from '../fixtures/extension';
 // the header above and from Chrome's appended "Wants access to this
 // site" permission line below.
 const ACTION_LINES = [
-  'Click: Take screenshot',
+  'Click: Save screenshot',
   'Double-click: Capture...',
-  'With selection click: Capture as HTML',
+  'With selection click: Save as HTML',
   'With selection double-click: Capture...',
 ];
 const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');
@@ -100,7 +100,7 @@ async function getSetIconCalls(
 }
 
 test.beforeEach(async ({ getServiceWorker }) => {
-  // Pin the stored default click action to `capture-screenshot` so
+  // Pin the stored default click action to `save-screenshot` so
   // `clearCaptureError()`'s dynamic tooltip resolves to the
   // expected baseline, then reset the icon-swap spy. Lives in the
   // service worker so we don't have to bridge chrome.* APIs across
@@ -115,12 +115,12 @@ test.beforeEach(async ({ getServiceWorker }) => {
         setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
       };
     }).SeeWhatISee;
-    await api.setDefaultWithoutSelectionId('capture-screenshot');
+    await api.setDefaultWithoutSelectionId('save-screenshot');
     // Pin all three remaining defaults too so every tooltip line
     // stays stable regardless of the starting storage state.
-    await api.setDefaultWithSelectionId('capture-selection-html');
-    await api.setDefaultDblWithoutSelectionId('capture-with-details');
-    await api.setDefaultDblWithSelectionId('capture-with-details');
+    await api.setDefaultWithSelectionId('save-selection-html');
+    await api.setDefaultDblWithoutSelectionId('capture');
+    await api.setDefaultDblWithSelectionId('capture');
   });
   await installSetIconSpy(sw);
 });

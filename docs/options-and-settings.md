@@ -12,21 +12,34 @@ All keys live in `chrome.storage.local`.
 
 | Key | Pool | Fresh-install default |
 |------|------|------------------------|
-| `defaultClickWithSelection` | `WITH_SELECTION_CHOICES` (`capture-with-details`, `capture-selection-{html,text,markdown}`, `ignore-selection`) | `capture-with-details` |
-| `defaultClickWithoutSelection` | every `CAPTURE_ACTIONS` entry except `capture-selection-*` | `capture-with-details` |
-| `defaultDblWithSelection` | same as click-with-sel | `capture-selection-markdown` |
-| `defaultDblWithoutSelection` | same as click-without-sel | `capture-screenshot` |
+| `defaultClickWithSelection` | `WITH_SELECTION_CHOICES` (`capture`, `save-selection-{html,text,markdown}`, `ignore-selection`) | `capture` |
+| `defaultClickWithoutSelection` | every `CAPTURE_ACTIONS` entry except `save-selection-*` | `capture` |
+| `defaultDblWithSelection` | same as click-with-sel | `save-selection-markdown` |
+| `defaultDblWithoutSelection` | same as click-without-sel | `save-screenshot` |
 
 - The "with-selection" pools include `ignore-selection`, a sentinel
   that means "skip the selection probe and fall through to the
   matching without-selection default".
-- The "without-selection" pools exclude `capture-selection-*`
+- The "without-selection" pools exclude `save-selection-*`
   shortcuts because they would just error on every click without a
   selection. The setters reject those ids.
-- Getters apply legacy-id migration (`capture-now` →
-  `capture-screenshot`, `save-page-contents` →
-  `capture-page-contents`) and reject stale `capture-selection-*`
-  values left in storage from older builds.
+- Getters apply legacy-id migration so users keep their saved
+  defaults across the action-id rename:
+  - `capture-with-details` → `capture`
+  - `capture-screenshot` → `save-screenshot`
+  - `capture-page-contents` → `save-page-contents`
+  - `capture-url` → `save-url`
+  - `capture-both` → `save-both`
+  - `capture-selection-{html,text,markdown}` →
+    `save-selection-{html,text,markdown}`
+  - `capture-now` → `save-screenshot` (older legacy id, predates
+    `capture-screenshot`)
+
+  Delay suffixes survive the rewrite (`capture-screenshot-2s` →
+  `save-screenshot-2s`). The without-selection getter additionally
+  rejects stale `save-selection-*` values left in storage from
+  older builds (they would just error on every click without a
+  selection).
 
 ### Capture-page Save defaults
 
@@ -126,9 +139,9 @@ than naming a specific action:
   a pressed Secondary hotkey always fires the same dispatch a Dbl
   click would.
 
-The remaining manifest commands (`11-capture-screenshot` etc.) name
-specific actions and route through `findCaptureAction` — see
-`architecture.md` → "Keyboard commands" for that side.
+The remaining manifest commands (`11-capture`, `12-save-screenshot`,
+etc.) name specific actions and route through `findCaptureAction` —
+see `architecture.md` → "Keyboard commands" for that side.
 
 ## Options page (`options.html`)
 
@@ -148,12 +161,12 @@ Reachable via the toolbar action's right-click → Options or
     `chrome://extensions/shortcuts`.
 - **Default actions with no text selection** — table over every
   non-selection `CAPTURE_ACTIONS` entry. Columns: Click radio,
-  Double-click radio, Action, Hotkey. Delayed entries are bucketed
-  by delay value (`Delayed 2 seconds`, `Delayed 5 seconds`) under
-  static section-row labels.
+  Double-click radio, Action, Hotkey. Rows are bucketed by delay
+  value under static section-row labels (`Capture immediately`,
+  `Capture after 2 second delay`, `Capture after 5 second delay`).
 - **Default actions with text selected** — table over the four
   `WITH_SELECTION_CHOICES` action ids
-  (`capture-with-details`, `capture-selection-{html,text,markdown}`)
+  (`capture`, `save-selection-{html,text,markdown}`)
   plus the `ignore-selection` sentinel. Same column shape.
 - **Default items to save on Capture page** — two side-by-side
   fieldsets that mirror `capture.html`:

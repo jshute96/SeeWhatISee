@@ -197,7 +197,7 @@ export async function refreshMenusAndTooltip(
   );
 
   // Without-selection ✓ rows in the "Set default click action"
-  // submenu. The `capture-selection-*` bases are filtered out in
+  // submenu. The `save-selection-*` bases are filtered out in
   // the menu install, so we filter them here too to avoid a
   // no-op update on a never-created id.
   const withoutDefaultables = CAPTURE_ACTIONS.filter(
@@ -516,49 +516,49 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // Right-click context menu on the toolbar action. Structure:
 //
 //   Capture...
-//   Take screenshot
+//   Save screenshot
 //   Save HTML contents
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Capture... in 2s
-//       • Take screenshot in 2s
+//       • Save screenshot in 2s
 //       • Save HTML contents in 2s
-//       • Capture screenshot and HTML in 2s
+//       • Save screenshot and HTML in 2s
 //       ─────────
 //       • Capture... in 5s
-//       • Take screenshot in 5s
+//       • Save screenshot in 5s
 //       • Save HTML contents in 5s
-//       • Capture screenshot and HTML in 5s
+//       • Save screenshot and HTML in 5s
 //   Set default click action  ▸     (submenu; ✓ on selected in each section)
 //         ──  When text is selected  ──      (disabled header)
 //       ✓ Capture...
-//         Capture selection as HTML
-//         Capture selection as text
-//         Capture selection as markdown
+//         Save selection as HTML
+//         Save selection as text
+//         Save selection as markdown
 //         Ignore selection (use default below)
 //       ─────────
 //         ──  When no text is selected  ──   (disabled header)
 //       ✓ Capture...
-//         Take screenshot
+//         Save screenshot
 //         Save HTML contents
-//         Capture URL                      (no delayed variants)
-//         Capture screenshot and HTML
+//         Save URL                         (no delayed variants)
+//         Save screenshot and HTML
 //       ─────────
 //         Capture... in 2s
-//         Take screenshot in 2s
+//         Save screenshot in 2s
 //         Save HTML contents in 2s
-//         Capture screenshot and HTML in 2s
+//         Save screenshot and HTML in 2s
 //       ─────────
 //         Capture... in 5s
-//         Take screenshot in 5s
+//         Save screenshot in 5s
 //         Save HTML contents in 5s
-//         Capture screenshot and HTML in 5s
+//         Save screenshot and HTML in 5s
 //   More  ▸                         (submenu)
-//       • Capture URL
-//       • Capture screenshot and HTML
+//       • Save URL
+//       • Save screenshot and HTML
 //       ─────────
-//       • Capture selection as HTML      (saves the selected HTML fragment)
-//       • Capture selection as text      (saves selection.toString())
-//       • Capture selection as markdown  (saves HTML → markdown)
+//       • Save selection as HTML         (saves the selected HTML fragment)
+//       • Save selection as text         (saves selection.toString())
+//       • Save selection as markdown     (saves HTML → markdown)
 //       ─────────
 //       • Copy last screenshot filename   (greyed unless latest record has a screenshot)
 //       • Copy last HTML filename         (greyed unless latest record has HTML)
@@ -592,8 +592,8 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // persists the entries across service-worker restarts so we don't
 // have to recreate them on every wakeup.
 //
-// Note: "Take screenshot" is functionally identical to a plain
-// left-click when `capture-screenshot` is the default — listed in the
+// Note: "Save screenshot" is functionally identical to a plain
+// left-click when `save-screenshot` is the default — listed in the
 // menu for discoverability so users don't have to know the toolbar
 // click also captures.
 
@@ -656,8 +656,8 @@ export async function installContextMenu(): Promise<void> {
   // The three undelayed primary capture actions, one per base action.
   // Titles carry a right-side (Click) / (Double-click) / hotkey hint
   // when they match the current defaults or have a bound command —
-  // see actionMenuTitle. More-group base actions (capture-url,
-  // capture-both) live in the More submenu and don't get a top-level
+  // see actionMenuTitle. More-group base actions (save-url,
+  // save-both) live in the More submenu and don't get a top-level
   // slot.
   for (const action of captureActionsWithDelay(0, 'primary')) {
     chrome.contextMenus.create({
@@ -703,7 +703,7 @@ export async function installContextMenu(): Promise<void> {
   // See header layout above. Uses normal items with a ✓ prefix on
   // the selected entry rather than radio items: Chrome's radio
   // mutual-exclusion only covers a contiguous run, so a separator
-  // would let two items appear selected. The `capture-selection-*`
+  // would let two items appear selected. The `save-selection-*`
   // format shortcuts are deliberately not offered in the
   // without-selection section (they would just error on every
   // click with no selection on the page).
@@ -761,8 +761,8 @@ export async function installContextMenu(): Promise<void> {
   // Home for:
   //   - capture actions that don't earn a top-level slot (the
   //     "neither / both files" shortcuts for the Capture page flow —
-  //     equivalent to opening capture-with-details and ticking
-  //     neither or both checkboxes, minus the dialog round-trip)
+  //     equivalent to opening the Capture page and ticking neither
+  //     or both checkboxes, minus the dialog round-trip)
   //   - infrequent utilities that would otherwise compete for a
   //     top-level slot against the primary capture entries
   chrome.contextMenus.create({
@@ -778,10 +778,10 @@ export async function installContextMenu(): Promise<void> {
   // hint-refresh loop can update their titles too.
   //
   // A separator is dropped between the non-selection entries
-  // (`capture-url`, `capture-both`) and the `capture-selection-*`
-  // format shortcuts — the two groups are semantically distinct
-  // (work on any page vs. only when text is selected) and the
-  // divider makes that visible at a glance.
+  // (`save-url`, `save-both`) and the `save-selection-*` format
+  // shortcuts — the two groups are semantically distinct (work on
+  // any page vs. only when text is selected) and the divider makes
+  // that visible at a glance.
   let moreSelectionSeparatorInserted = false;
   for (const action of captureActionsWithDelay(0, 'more')) {
     if (isSelectionBaseId(action.baseId) && !moreSelectionSeparatorInserted) {

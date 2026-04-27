@@ -14,21 +14,21 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon ![icon](src/icons/icon-16.png) to take a screenshot, opening the *Capture* page (see below).
-  - Double-click it to bypass the *Capture* page and take a screenshot immediately.
-  - If there's text selected on the page, the click instead copies the selected text.
+- Click the extension icon ![icon](src/icons/icon-16.png) to open the *Capture* page (see below).
+  - Double-click it to bypass the *Capture* page and save a screenshot immediately.
+  - If there's text selected on the page, double-click instead saves the selected text immediately.
 - Right-click the icon for more options:
-  - Take a screenshot.
-  - Capture the HTML contents of the page.
-  - **Capture…** Opens a review page (see below).
+  - **Capture…** Opens the *Capture* page (see below).
+  - **Save screenshot.**
+  - **Save HTML contents** of the page.
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Choose which action to apply
     when clicking the icon, with or without text selected.
   - **More ▸**
-    - **Capture URL** — Record just the current tab's URL, without a screenshot.
-    - **Capture screenshot and HTML** — Save both the screenshot and the HTML snapshot.
-    - **Capture selection as HTML, text, or markdown** — Saves the currently selected text.
+    - **Save URL** — Record just the current tab's URL, without a screenshot.
+    - **Save screenshot and HTML** — Save both the screenshot and the HTML snapshot.
+    - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.

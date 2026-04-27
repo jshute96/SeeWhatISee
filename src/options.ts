@@ -227,8 +227,8 @@ function renderWithoutTable(data: OptionsData): void {
 
   // Bucket non-selection actions for top-to-bottom rendering:
   //   1. Undelayed primary actions (the everyday picks).
-  //   2. One section per distinct delay value, headed by a static
-  //      "Delayed N seconds" label.
+  //   2. One section per distinct delay value, headed by a
+  //      "Capture after N second delay" label.
   const immediate: OptionsActionRow[] = [];
   const byDelay = new Map<number, OptionsActionRow[]>();
   for (const a of data.actions) {
@@ -243,12 +243,14 @@ function renderWithoutTable(data: OptionsData): void {
   }
 
   if (immediate.length) {
-    tbody.appendChild(sectionRow('Immediate captures', WITHOUT_TABLE_COLS));
+    tbody.appendChild(sectionRow('Capture immediately', WITHOUT_TABLE_COLS));
     for (const a of immediate) appendWithoutRow(tbody, a, data);
   }
 
   for (const [delaySec, rows] of byDelay) {
-    tbody.appendChild(sectionRow(`Delayed ${delaySec} seconds`, WITHOUT_TABLE_COLS));
+    tbody.appendChild(
+      sectionRow(`Capture after ${delaySec} second delay`, WITHOUT_TABLE_COLS),
+    );
     for (const a of rows) appendWithoutRow(tbody, a, data);
   }
 }
@@ -257,9 +259,9 @@ function renderWithTable(data: OptionsData): void {
   const tbody = $('#with-rows');
   tbody.innerHTML = '';
 
-  // `withSelectionChoiceIds` is ordered by the SW (capture-with-details
-  // first, then the three capture-selection-* shortcuts, then the
-  // ignore-selection sentinel last). The sentinel has no
+  // `withSelectionChoiceIds` is ordered by the SW (`capture` first,
+  // then the three `save-selection-*` shortcuts, then the
+  // `ignore-selection` sentinel last). The sentinel has no
   // `CAPTURE_ACTIONS` entry, so we render it with the local
   // `IGNORE_SELECTION_TITLE` label rather than going through the
   // catalog lookup.

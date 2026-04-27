@@ -18,22 +18,22 @@ import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js
 // (with-selection / without-selection) so the toolbar behaves
 // sensibly in both states the user can put a page in:
 //   - With a selection on the page — most users want the selection
-//     captured; the three "Capture selection as …" shortcuts and the
+//     captured; the three "Save selection as …" shortcuts and the
 //     Capture page flow (with the selection-only checkbox set) are
 //     meaningful defaults here. `Ignore selection` is the opt-out:
 //     treat the click as if no selection existed and fall through to
 //     the other default.
 //   - Without a selection — any of the CAPTURE_ACTIONS entries except
-//     the `capture-selection-*` format shortcuts (which would just
+//     the `save-selection-*` format shortcuts (which would just
 //     error with `No selection content`).
 const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
 const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
 const DEFAULT_DBL_WITH_SELECTION_KEY = 'defaultDblWithSelection';
 const DEFAULT_DBL_WITHOUT_SELECTION_KEY = 'defaultDblWithoutSelection';
-const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture-with-details';
-const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture-with-details';
-const DEFAULT_DBL_WITH_SELECTION_ID = 'capture-selection-markdown';
-const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'capture-screenshot';
+const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture';
+const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture';
+const DEFAULT_DBL_WITH_SELECTION_ID = 'save-selection-markdown';
+const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'save-screenshot';
 // Sentinel id used in place of a CAPTURE_ACTIONS id when the user
 // wants a page selection to *not* steer the click default. Never
 // appears in CAPTURE_ACTIONS; `handleActionClick` treats it as "fall
@@ -41,14 +41,14 @@ const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'capture-screenshot';
 // corresponding `With selection:` line is omitted entirely.
 export const IGNORE_SELECTION_ID = 'ignore-selection';
 
-// Every `capture-selection-<format>` baseId — the union we filter out
+// Every `save-selection-<format>` baseId — the union we filter out
 // of the without-selection default pool. Kept in one place so adding
 // a new selection format only adds one entry here (plus the entry in
 // BASE_CAPTURE_ACTIONS).
 const SELECTION_BASE_IDS: ReadonlySet<string> = new Set([
-  'capture-selection-html',
-  'capture-selection-text',
-  'capture-selection-markdown',
+  'save-selection-html',
+  'save-selection-text',
+  'save-selection-markdown',
 ]);
 
 export function isSelectionBaseId(baseId: string): boolean {
@@ -78,13 +78,13 @@ export interface WithSelectionChoice {
 }
 
 // Order is user-visible (Set-default submenu, Options page).
-// `capture-with-details` is listed first to put the most common pick
-// at the top of the section.
+// `capture` is listed first to put the most common pick at the top
+// of the section.
 const WITH_SELECTION_CHOICE_ACTION_IDS = [
-  'capture-with-details',
-  'capture-selection-html',
-  'capture-selection-text',
-  'capture-selection-markdown',
+  'capture',
+  'save-selection-html',
+  'save-selection-text',
+  'save-selection-markdown',
 ] as const;
 
 export const WITH_SELECTION_CHOICES: WithSelectionChoice[] = [
@@ -110,35 +110,48 @@ export function findWithSelectionChoice(id: string | undefined): WithSelectionCh
 
 export async function getDefaultWithSelectionId(): Promise<string> {
   const stored = await chrome.storage.local.get(DEFAULT_CLICK_WITH_SELECTION_KEY);
-  const id = stored[DEFAULT_CLICK_WITH_SELECTION_KEY];
-  return typeof id === 'string' && findWithSelectionChoice(id)
-    ? id
-    : DEFAULT_CLICK_WITH_SELECTION_ID;
+  const rawId = stored[DEFAULT_CLICK_WITH_SELECTION_KEY];
+  if (typeof rawId !== 'string') return DEFAULT_CLICK_WITH_SELECTION_ID;
+  const id = migrateLegacyActionId(rawId);
+  if (id !== rawId) {
+    await chrome.storage.local.set({ [DEFAULT_CLICK_WITH_SELECTION_KEY]: id });
+  }
+  return findWithSelectionChoice(id) ? id : DEFAULT_CLICK_WITH_SELECTION_ID;
 }
 
-// Legacy → current id migration. Two base ids were renamed so the
-// chrome.commands names stay consistent (`capture-*`): `capture-now`
-// → `capture-screenshot`, `save-page-contents` →
-// `capture-page-contents`. A user who had customized the
-// without-selection default would otherwise get silently reset. We
-// rewrite storage lazily on read so the migration is a single map
+// Legacy → current id migration. The action ids were renamed so the
+// labels in the menu and Options page line up with the on-page Save
+// checkboxes: the dialog-opening action is `capture` (label
+// "Capture..."), and every other action is a `save-*` variant whose
+// label matches the artifact verb. A user who had customized any
+// click default before the rename would otherwise get silently reset.
+// We rewrite storage lazily on read so the migration is a single map
 // lookup with no extra onInstalled plumbing.
 //
-// Scope: these legacy ids were only ever valid as the
-// `defaultClickWithoutSelection` storage value. The with-selection
-// slot never accepted them (its pool is the `capture-selection-*`
-// formats + `capture-with-details` + `ignore-selection`), so
-// `getDefaultWithSelectionId` doesn't need the same migration.
+// Migration scope is the full pool — the with-selection slot also
+// stored renamed ids (`capture-with-details`, `capture-selection-*`),
+// so `getDefaultWithSelectionId` / `…Dbl…` apply the same migration.
+//
+// `capture-now` is a much older legacy id (predates the
+// `capture-screenshot` → `save-screenshot` rename); we map it
+// straight to the current name in one step.
 const LEGACY_BASE_ID_MAP: Record<string, string> = {
-  'capture-now': 'capture-screenshot',
-  'save-page-contents': 'capture-page-contents',
+  'capture-now': 'save-screenshot',
+  'capture-with-details': 'capture',
+  'capture-screenshot': 'save-screenshot',
+  'capture-page-contents': 'save-page-contents',
+  'capture-url': 'save-url',
+  'capture-both': 'save-both',
+  'capture-selection-html': 'save-selection-html',
+  'capture-selection-text': 'save-selection-text',
+  'capture-selection-markdown': 'save-selection-markdown',
 };
 
 function migrateLegacyActionId(id: string): string {
   for (const [oldBase, newBase] of Object.entries(LEGACY_BASE_ID_MAP)) {
     if (id === oldBase) return newBase;
     if (id.startsWith(`${oldBase}-`)) {
-      // Preserve the delay suffix: `capture-now-2s` → `capture-screenshot-2s`.
+      // Preserve the delay suffix: `capture-screenshot-2s` → `save-screenshot-2s`.
       return `${newBase}${id.slice(oldBase.length)}`;
     }
   }
@@ -195,10 +208,13 @@ export async function getDefaultDblWithoutSelectionId(): Promise<string> {
 
 export async function getDefaultDblWithSelectionId(): Promise<string> {
   const stored = await chrome.storage.local.get(DEFAULT_DBL_WITH_SELECTION_KEY);
-  const id = stored[DEFAULT_DBL_WITH_SELECTION_KEY];
-  return typeof id === 'string' && findWithSelectionChoice(id)
-    ? id
-    : DEFAULT_DBL_WITH_SELECTION_ID;
+  const rawId = stored[DEFAULT_DBL_WITH_SELECTION_KEY];
+  if (typeof rawId !== 'string') return DEFAULT_DBL_WITH_SELECTION_ID;
+  const id = migrateLegacyActionId(rawId);
+  if (id !== rawId) {
+    await chrome.storage.local.set({ [DEFAULT_DBL_WITH_SELECTION_KEY]: id });
+  }
+  return findWithSelectionChoice(id) ? id : DEFAULT_DBL_WITH_SELECTION_ID;
 }
 
 export async function setDefaultDblWithoutSelectionId(id: string): Promise<void> {
@@ -302,7 +318,7 @@ export async function setDefaultWithoutSelectionId(id: string): Promise<void> {
   const action = findCaptureAction(id);
   if (!action) throw new Error(`Unknown capture action id: ${id}`);
   if (isSelectionBaseId(action.baseId)) {
-    // The `capture-selection-*` shortcuts would just error on every
+    // The `save-selection-*` shortcuts would just error on every
     // click without a selection, so they're deliberately not offered
     // in this slot.
     throw new Error(`${action.baseId} is not a valid without-selection default`);
@@ -328,7 +344,7 @@ export async function setDefaultWithSelectionId(id: string): Promise<void> {
 
 // Toolbar icon click → run whichever capture action is the current
 // default. Default (on fresh install or if storage is wiped) is
-// `capture-with-details`.
+// `capture`.
 //
 // The click counts as a user gesture, which is what makes the `activeTab`
 // permission (declared in manifest.json) kick in for the current tab —
@@ -352,7 +368,7 @@ export async function setDefaultWithSelectionId(id: string): Promise<void> {
 //
 // Double-click detection state. A second click within the window
 // runs an alternate action:
-//   - Default is capture-with-details → double-click takes a screenshot
+//   - Default is `capture` → double-click takes a screenshot
 //   - Any other default → double-click opens Capture page
 let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
 

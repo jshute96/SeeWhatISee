@@ -21,8 +21,8 @@ import { startCaptureWithDetails } from './capture-details.js';
 // A base can opt out of delayed variants via
 // `supportsDelayed: false`; it then produces only the 0s variant.
 // Used for modes where a delay doesn't pay for itself — e.g.
-// the `capture-selection-*` shortcuts (the user already made the
-// selection before clicking) or `capture-url` (the click's intent
+// the `save-selection-*` shortcuts (the user already made the
+// selection before clicking) or `save-url` (the click's intent
 // is "record *this* URL"; a delayed version would just record a
 // *different* URL if the user navigated).
 //
@@ -57,10 +57,10 @@ import { startCaptureWithDetails } from './capture-details.js';
 export type ActionGroup = 'primary' | 'more';
 
 interface BaseCaptureAction {
-  /** Stable base id, e.g. `capture-screenshot`. Delayed variants append
+  /** Stable base id, e.g. `save-screenshot`. Delayed variants append
    * `-<N>s`. */
   baseId: string;
-  /** Short label for the undelayed variant, e.g. "Take screenshot". */
+  /** Short label for the undelayed variant, e.g. "Save screenshot". */
   baseTitle: string;
   /**
    * Short form of the title that slots into a tooltip line
@@ -119,7 +119,7 @@ export interface CaptureAction {
 }
 
 /**
- * "Capture URL" — the Capture-page "neither file checked" path, run
+ * "Save URL" — the Capture-page "neither file checked" path, run
  * without opening the page. Still goes through `captureBothToMemory`
  * so the delay / active-tab-after-delay semantics match every other
  * capture, but the screenshot + HTML payloads are discarded — only
@@ -138,7 +138,7 @@ export async function captureUrlOnly(delayMs = 0): Promise<void> {
 }
 
 /**
- * "Capture screenshot and HTML" — the Capture-page "both files
+ * "Save screenshot and HTML" — the Capture-page "both files
  * checked" path, run without opening the page. Grabs both artifacts,
  * writes them, and records a sidecar entry referencing both.
  *
@@ -167,12 +167,15 @@ export async function captureBoth(delayMs = 0): Promise<void> {
 
 // Array order is user-visible: within each delay row / group, menu
 // entries appear in the order their bases are declared here.
-// `capture-with-details` is the most common pick (its own toolbar
-// action and the default Double-click), so we list it first inside
-// each section for top-of-mind visibility.
+// `capture` (the Capture... dialog) is the most common pick (its own
+// toolbar action and the default Double-click), so we list it first
+// inside each section for top-of-mind visibility. Every other action
+// is a `save-*` variant that writes directly to disk — the naming
+// pairs with the on-page Save checkboxes so the menu labels match
+// the artifact verbs the user sees inside the Capture page.
 const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
-    baseId: 'capture-with-details',
+    baseId: 'capture',
     baseTitle: 'Capture...',
     // Tooltip fragment keeps the trailing "..." so the toolbar tooltip
     // signals "this opens another page" the same way the menu label
@@ -183,23 +186,23 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     run: (delayMs) => startCaptureWithDetails(delayMs),
   },
   {
-    baseId: 'capture-screenshot',
-    baseTitle: 'Take screenshot',
-    baseTooltipFragment: 'Take screenshot',
+    baseId: 'save-screenshot',
+    baseTitle: 'Save screenshot',
+    baseTooltipFragment: 'Save screenshot',
     group: 'primary',
     run: (delayMs) => captureVisible(delayMs),
   },
   {
-    baseId: 'capture-page-contents',
+    baseId: 'save-page-contents',
     baseTitle: 'Save HTML contents',
     baseTooltipFragment: 'Save HTML contents',
     group: 'primary',
     run: (delayMs) => savePageContents(delayMs),
   },
   {
-    baseId: 'capture-url',
-    baseTitle: 'Capture URL',
-    baseTooltipFragment: 'Capture URL',
+    baseId: 'save-url',
+    baseTitle: 'Save URL',
+    baseTooltipFragment: 'Save URL',
     group: 'more',
     // A URL capture is a trivially cheap log write, so the only
     // thing a delay could change is the URL itself (user navigates
@@ -210,12 +213,12 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     run: (delayMs) => captureUrlOnly(delayMs),
   },
   {
-    baseId: 'capture-both',
-    baseTitle: 'Capture screenshot and HTML',
-    baseTooltipFragment: 'Capture screenshot and HTML',
+    baseId: 'save-both',
+    baseTitle: 'Save screenshot and HTML',
+    baseTooltipFragment: 'Save screenshot and HTML',
     group: 'more',
     // Promote delayed variants up into the Capture-with-delay
-    // submenu (next to plain screenshot / HTML / details). The
+    // submenu (next to plain screenshot / HTML / Capture...). The
     // undelayed variant stays in More — this is still a slightly
     // niche combo at 0s — but a delayed screenshot-AND-HTML is
     // useful enough to surface alongside the primary delayed entries.
@@ -226,20 +229,20 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   // produce one selection file, so we expose each serialization
   // format as its own action rather than asking the user to pick
   // mid-capture. `captureSelection` throws if the chosen format's
-  // body is empty (e.g. "Capture selection as text" on an
+  // body is empty (e.g. "Save selection as text" on an
   // image-only selection), and the toolbar error channel surfaces
   // the reason so the user can retry with a different format.
   {
-    baseId: 'capture-selection-html',
-    baseTitle: 'Capture selection as HTML',
-    // The three `capture-selection-*` fragments deliberately elide
+    baseId: 'save-selection-html',
+    baseTitle: 'Save selection as HTML',
+    // The three `save-selection-*` fragments deliberately elide
     // the word "selection" — these actions only ever surface in the
     // toolbar tooltip's `With selection: …` line (they're filtered
     // out of the without-selection default pool by `isSelectionBaseId`,
     // and not bindable as a click target elsewhere), and the prefix
     // already carries that context. Keeping the word would produce
-    // `With selection: capture selection as html`, repeating itself.
-    baseTooltipFragment: 'Capture as HTML',
+    // `With selection: save selection as html`, repeating itself.
+    baseTooltipFragment: 'Save as HTML',
     group: 'more',
     // The selection already exists when the user triggers the
     // action; waiting doesn't help. Still bindable as the default
@@ -248,17 +251,17 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     run: (delayMs) => captureSelection('html', delayMs),
   },
   {
-    baseId: 'capture-selection-text',
-    baseTitle: 'Capture selection as text',
-    baseTooltipFragment: 'Capture as text',
+    baseId: 'save-selection-text',
+    baseTitle: 'Save selection as text',
+    baseTooltipFragment: 'Save as text',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('text', delayMs),
   },
   {
-    baseId: 'capture-selection-markdown',
-    baseTitle: 'Capture selection as markdown',
-    baseTooltipFragment: 'Capture as markdown',
+    baseId: 'save-selection-markdown',
+    baseTitle: 'Save selection as markdown',
+    baseTooltipFragment: 'Save as markdown',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('markdown', delayMs),

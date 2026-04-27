@@ -51,8 +51,8 @@ sub-modules above.
 
   - Generated at module load from `BASE_CAPTURE_ACTIONS ×
     CAPTURE_DELAYS_SEC` (0, 2, 5 seconds). A base with
-    `supportsDelayed: false` (e.g. `capture-url`,
-    `capture-selection-*`) opts out: only the 0s variant is generated,
+    `supportsDelayed: false` (e.g. `save-url`,
+    `save-selection-*`) opts out: only the 0s variant is generated,
     no 2s / 5s entries appear anywhere for it.
   - Each generated entry has an id (`<baseId>` for delay 0,
     `<baseId>-<N>s` otherwise), a menu title, a
@@ -72,7 +72,7 @@ sub-modules above.
 
   The three `primary` bases are:
 
-  - **`capture-screenshot` — "Take screenshot".** Calls
+  - **`save-screenshot` — "Save screenshot".** Calls
     `captureVisible(delayMs)`. Immediate PNG of the visible tab.
     The delayed variants show a countdown badge on the toolbar
     icon ("5", "4", "3", …) before capturing, so the user can
@@ -80,7 +80,7 @@ sub-modules above.
     `await` keeps the service worker alive for the duration. Any `delayMs` value is also callable
     from the devtools console as
     `SeeWhatISee.captureVisible(2000)`.
-  - **`capture-page-contents` — "Save HTML contents".** Uses
+  - **`save-page-contents` — "Save HTML contents".** Uses
     `chrome.scripting.executeScript` to grab
     `document.documentElement.outerHTML` from the active tab and
     saves it as `contents-<timestamp>.html`. The capture is
@@ -89,7 +89,7 @@ sub-modules above.
     permission. Takes the same optional `delayMs` as
     `captureVisible`; also callable as
     `SeeWhatISee.savePageContents(2000)`.
-  - **`capture-with-details` — "Capture...".** Opens the Capture page
+  - **`capture` — "Capture...".** Opens the Capture page
     (`capture.html`) where the user picks which artifacts to save,
     adds an optional prompt, and optionally annotates the
     screenshot. Takes the same `delayMs`, forwarded through
@@ -101,13 +101,13 @@ sub-modules above.
   The two `more` bases are shortcuts for the two fixed checkbox
   combinations in the Capture page flow:
 
-  - **`capture-url` — "Capture URL".** Equivalent to the Capture
+  - **`save-url` — "Save URL".** Equivalent to the Capture
     page with *neither* file checked: the record gets just
     `timestamp` + `url` (no `screenshot`, no `contents`). Goes
     through `captureBothToMemory` + `recordDetailedCapture` so the
     delay / active-tab-after-delay semantics match; the screenshot
     + HTML payloads are discarded.
-  - **`capture-both` — "Capture screenshot and HTML".**
+  - **`save-both` — "Save screenshot and HTML".**
     Equivalent to the Capture page with *both* files checked.
     Downloads both artifacts and writes a record that references
     both.
@@ -123,10 +123,10 @@ sub-modules above.
   [options-and-settings.md](options-and-settings.md).
 
   - **With-selection choices** (five, all at delay 0):
-    - `capture-selection-html` — save the selection as an HTML
+    - `save-selection-html` — save the selection as an HTML
       fragment.
-    - `capture-selection-text` — save the selection as plain text.
-    - `capture-selection-markdown` — save the selection as markdown.
+    - `save-selection-text` — save the selection as plain text.
+    - `save-selection-markdown` — save the selection as markdown.
       Default on fresh installs. `selectionMarkdownBody` either
       short-circuits to the verbatim selection text (when the
       selection is itself markdown source — e.g. a `.md` file viewed
@@ -138,14 +138,14 @@ sub-modules above.
       `<img src>` refs resolve to absolute URLs. See
       `looksLikeMarkdownSource` in `src/markdown.ts` for the
       detection rule.
-    - `capture-with-details` — open the Capture page. The Save
+    - `capture` — open the Capture page. The Save
       checkbox state on first paint comes from
       `capturePageDefaults`, not from this click default — see
       [options-and-settings.md → Capture-page first-paint pre-checks](options-and-settings.md#capture-page-first-paint-pre-checks).
     - `ignore-selection` — sentinel. Skip the probe and use the
       without-selection default.
   - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
-    except the three `capture-selection-<format>` shortcuts. They
+    except the three `save-selection-<format>` shortcuts. They
     are deliberately excluded — they would just error on every
     click without a selection.
   - **Capture-page first-paint pre-checks + toolbar tooltip layout**
@@ -158,18 +158,18 @@ sub-modules above.
   `contexts: ['action']`. Top level (6 entries):
 
   - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
-    (Capture..., Take screenshot, Save HTML contents), each running
-    its action immediately when clicked. "Take screenshot" is
+    (Capture..., Save screenshot, Save HTML contents), each running
+    its action immediately when clicked. "Save screenshot" is
     functionally identical to a plain left-click when
-    `capture-screenshot` is the default — listed for discoverability.
+    `save-screenshot` is the default — listed for discoverability.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
     of every base with `showInDelayedSubmenu` (primary-group by
     default, plus any more-group base that opts in — e.g.
-    `capture-both`). Separator-grouped by delay. In-submenu
+    `save-both`). Separator-grouped by delay. In-submenu
     separators don't count against the top-level cap, so the visual
     grouping is free. More-group actions that don't opt in
-    (`capture-url` and the three
-    `capture-selection-{html,text,markdown}` — all
+    (`save-url` and the three
+    `save-selection-{html,text,markdown}` — all
     `supportsDelayed: false` anyway) are only reachable via "Set
     default click action" if at all.
   - **Set default click action ▸** — submenu split into two sections.
@@ -177,12 +177,12 @@ sub-modules above.
     the click defaults.
     - **`── When text is selected ──`** header (`enabled: false`),
       then the five with-selection choices (three
-      `capture-selection-<format>` shortcuts,
-      `capture-with-details`, `ignore-selection`).
+      `save-selection-<format>` shortcuts,
+      `capture`, `ignore-selection`).
     - Separator.
     - **`── When no text is selected ──`** header (`enabled: false`),
       then every `CAPTURE_ACTIONS` entry *except* the
-      `capture-selection-<format>` shortcuts, grouped by delay
+      `save-selection-<format>` shortcuts, grouped by delay
       (0s, 2s, 5s) with separators between delay groups.
     - The selected item in each section gets a `✓ ` title prefix.
       Picking one persists its id under the matching storage key
@@ -198,21 +198,21 @@ sub-modules above.
   - **More ▸** — submenu home for the more-group capture actions
     and for infrequent utilities that would otherwise crowd out
     primary capture entries at the top level.
-    - **Capture URL** / **Capture screenshot and HTML** — shortcuts
+    - **Save URL** / **Save screenshot and HTML** — shortcuts
       for the "neither" and "both" checkbox combinations of the
       Capture page flow, skipping the dialog round-trip.
-      - *Capture URL* is a `BASE_CAPTURE_ACTION` with
+      - *Save URL* is a `BASE_CAPTURE_ACTION` with
         `supportsDelayed: false` (no delayed variants): the action
         records the URL at click time, so a delay would only let
         the user navigate somewhere else first — a confusing
         interaction that's easy to reproduce intentionally just by
         opening the other page.
-      - *Capture screenshot and HTML* gets delayed variants and
+      - *Save screenshot and HTML* gets delayed variants and
         sets `showInDelayedSubmenu: true` so they surface in the
         main "Capture with delay" submenu next to the primary
         delayed entries; matches the other capture actions'
         active-tab-after-delay semantics.
-    - **Capture selection as HTML / text / markdown** — three
+    - **Save selection as HTML / text / markdown** — three
       format-specific shortcuts that each call
       `captureSelection(format)`. The scrape returns all three
       bodies in one `executeScript` round-trip (HTML fragment +
@@ -595,9 +595,9 @@ sub-modules above.
     guard so a stale page message can't materialize an empty
     file.
 - Impact on the More-menu shortcuts:
-  - `capture-url` (URL-only) deliberately ignores `htmlError` —
+  - `save-url` (URL-only) deliberately ignores `htmlError` —
     it doesn't need HTML anyway.
-  - `capture-both` (screenshot + HTML) re-throws `screenshotError`
+  - `save-both` (screenshot + HTML) re-throws `screenshotError`
     or `htmlError` so the toolbar icon / tooltip surfaces the
     reason via the standard error-reporting channel.
 

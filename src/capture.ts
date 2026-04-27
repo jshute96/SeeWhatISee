@@ -215,7 +215,7 @@ export interface CaptureRecord {
   contents?: Artifact;
   /**
    * Captured selection artifact. Set by either `captureSelection()`
-   * (the More → Capture selection shortcuts — one per format) or
+   * (the More → Save selection shortcuts — one per format) or
    * the Capture page flow when the user picked a selection format to
    * save. Carries the bare filename, the chosen `format` (so
    * downstream consumers can dispatch without parsing the

@@ -19,7 +19,7 @@ The background script is an MV3 service worker. That means:
 - **`await` keeps it alive.** Inside a listener, awaiting a promise
   (including an `await new Promise(r => setTimeout(r, ms))`) holds
   the worker awake for the duration.
-  - This is what makes "Take screenshot in 2s" work: the handler
+  - This is what makes "Save screenshot in 2s" work: the handler
     sleeps on an awaited timer and Chrome doesn't reclaim the worker
     until the handler returns.
   - Don't `setTimeout(() => captureVisible(), 2000)` without
@@ -103,7 +103,7 @@ Not worth it. See the error-reporting section below.
 A real toolbar click grants `activeTab` for *the tab that was
 active when the click happened*.
 
-- The "Take screenshot in 2s" path `await`s a timer, then
+- The "Save screenshot in 2s" path `await`s a timer, then
   re-queries the active tab. If the user switches to a different
   tab during the delay, the captured tab won't be covered by
   `activeTab` anymore — it has to fall back to the host permission.
@@ -407,7 +407,7 @@ promising — the main issue was the `onActivated` restore logic.
     undelayed primary-group capture actions, the "Capture with
     delay" submenu parent, the "Set default click action" submenu
     parent, and the "More" submenu parent (which hosts the two
-    more-group capture actions "Capture URL" and "Capture screenshot
+    more-group capture actions "Save URL" and "Save screenshot
     and HTML", plus "Copy last screenshot filename", "Copy last HTML
     filename", "Copy last selection filename", "Snapshots directory",
     and "Clear log history"). This
