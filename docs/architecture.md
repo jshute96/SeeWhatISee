@@ -34,9 +34,11 @@ that wires Chrome event listeners. The substantive logic lives in
 
 - `error-reporting.ts` — icon/tooltip error surface (`runWithErrorReporting`).
 - `capture-actions.ts` — the `CAPTURE_ACTIONS` table + `captureUrlOnly` / `captureBoth` shortcuts.
-- `default-action.ts` — default-click preferences, `handleActionClick` dispatcher, `getDefaultActionTooltip` builder.
+- `default-action.ts` — Click + Double-click defaults, `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder.
 - `context-menu.ts` — `installContextMenu`, menu title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard).
-- `capture-details.ts` — the "Capture with details…" per-tab session + `ensure*Downloaded` artifact cache.
+- `capture-details.ts` — Capture-page per-tab session + `ensure*Downloaded` artifact cache.
+- `capture-page-defaults.ts` — stored Capture-page Save defaults (`capturePageDefaults`).
+- `options.ts` — Options-page SW wire (`getOptionsData` / `setOptions`).
 
 The sections below keep referring to these by file for locator
 accuracy; "background.ts" in older wording generally means "the
@@ -87,14 +89,14 @@ sub-modules above.
     permission. Takes the same optional `delayMs` as
     `captureVisible`; also callable as
     `SeeWhatISee.savePageContents(2000)`.
-  - **`capture-with-details` — "Capture with details...".** Opens
-    a bundled extension page (`capture.html`) where the user picks
-    which artifacts to save, adds an optional prompt, and
-    optionally annotates the screenshot. Takes the same
-    `delayMs`, forwarded through `captureBothToMemory` so the
-    delay applies to the pre-open screenshot + HTML snapshot.
-    See ["Capture with details flow"](#capture-with-details-flow)
-    below for the full design.
+  - **`capture-with-details` — "Capture...".** Opens the Capture page
+    (`capture.html`) where the user picks which artifacts to save,
+    adds an optional prompt, and optionally annotates the
+    screenshot. Takes the same `delayMs`, forwarded through
+    `captureBothToMemory` so the delay applies to the pre-open
+    screenshot + HTML snapshot. See
+    ["Capture with details flow"](#capture-with-details-flow) below
+    for the full design.
 
   The two `more` bases are shortcuts for the two fixed checkbox
   combinations in the details flow:
@@ -110,46 +112,16 @@ sub-modules above.
     Downloads both artifacts and writes a record that references
     both.
 
-- **Default click action.** Two separate defaults are persisted:
-  one for clicks on a page that has a selection, another for clicks
-  on a page that doesn't.
+- **Default click + double-click actions.** Four independent
+  defaults are persisted in `chrome.storage.local`, one per
+  (Click vs. Double-click) × (selection present vs. not), plus a
+  `capturePageDefaults` object holding the Capture-page Save
+  preferences. The toolbar dispatcher (`handleActionClick`), the
+  toolbar tooltip, and the Capture-page first-paint pre-checks all
+  read these. Full design — storage keys, fresh-install defaults,
+  dispatch paths, tooltip layout — lives in
+  [options-and-settings.md](options-and-settings.md).
 
-  - Storage keys: `defaultClickWithSelection` and
-    `defaultClickWithoutSelection` in `chrome.storage.local`.
-  - Fresh installs default to `capture-selection-markdown` (with
-    selection) and `capture-with-details` (without selection).
-  - A click on the toolbar icon fires `chrome.action.onClicked`,
-    which routes through `handleActionClick`. Five cases:
-    1. **Viewing the capture page** — if the active tab is a
-       `capture.html` page with stashed session data, the click
-       sends it a `triggerCapture` message, which programmatically
-       clicks the Capture button.
-    2. **Double-click, selection present** — if the with-selection
-       default isn't `ignore-selection`, always open the details
-       page (`startCaptureWithDetails()`), regardless of what the
-       without-selection default would be. Matches the "full
-       dialog for this selection" intent and makes the double-click
-       target predictable whenever there's something selected.
-    3. **Double-click, no selection (or ignore mode)** — runs the
-       classic alternate of the without-selection default:
-       `capture-with-details` → screenshot, everything else →
-       `capture-with-details`. Menu hints track this mapping (we
-       can't predict selection state at menu-render time), so
-       hints remain accurate for the common case.
-    4. **Single click, selection present** — if the with-selection
-       default is one of the `capture-selection-<format>` shortcuts
-       or `capture-with-details`, run it. `ignore-selection` skips
-       the selection probe entirely and falls through to the
-       without-selection default.
-    5. **Single click, no selection** — run the without-selection
-       default.
-  - Selection probe runs `scrapeSelection` on the active tab either
-    inside the 250 ms double-click timer (single-click path) or on
-    the second click itself (double-click path), so it always
-    reflects the tab state at dispatch time (after any tab switch
-    during the window). Probe failures (restricted URL, closed tab)
-    fall through to `false` so the click still runs the
-    without-selection default / classic double-click alternate.
   - **With-selection choices** (five, all at delay 0):
     - `capture-selection-html` — save the selection as an HTML
       fragment.
@@ -166,60 +138,30 @@ sub-modules above.
       `<img src>` refs resolve to absolute URLs. See
       `looksLikeMarkdownSource` in `src/markdown.ts` for the
       detection rule.
-    - `capture-with-details` — open the details page. When a
-      selection is present the page default-checks **only** the
-      Save selection checkbox (screenshot unchecked); the user can
-      still tick screenshot back on before clicking Capture.
+    - `capture-with-details` — open the Capture page. The Save
+      checkbox state on first paint comes from
+      `capturePageDefaults`, not from this click default — see
+      [options-and-settings.md → Capture-page first-paint pre-checks](options-and-settings.md#capture-page-first-paint-pre-checks).
     - `ignore-selection` — sentinel. Skip the probe and use the
       without-selection default.
-  - **Details-page defaults under a selection.** Whenever the
-    details page opens on a capture whose selection has content,
-    `loadData()` default-checks the Save selection master and
-    unchecks the screenshot checkbox — regardless of how the
-    details page was opened (single click, double-click, context
-    menu, More submenu). The format radio is pre-selected based on
-    the user's with-selection click default:
-    - A `capture-selection-<fmt>` default maps to its format.
-    - Any other default (`capture-with-details`,
-      `ignore-selection`) falls through to markdown — matching the
-      fresh-install default so the page lands on a single
-      predictable format whenever the user hasn't explicitly
-      picked one.
-    - If the chosen format has no content (e.g. image-only
-      selection → empty markdown / text), the page falls back to
-      the first non-empty format instead.
-    - The SW computes this via `detailsDefaultSelectionFormat` and
-      forwards it on `getDetailsData.defaultSelectionFormat`.
   - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
     except the three `capture-selection-<format>` shortcuts. They
     are deliberately excluded — they would just error on every
     click without a selection.
-  - The toolbar icon's hover tooltip is composed from
-    `tooltipFragment` fields pre-authored on each
-    `CaptureAction` / with-selection choice. Layout:
-    - `SeeWhatISee`
-    - blank
-    - `Click: <click.tooltipFragment>`
-    - `Double-click: <doubleClick.tooltipFragment>`
-    - `With selection: <withChoice.tooltipFragment>` (omitted for
-      `ignore-selection`)
-    - trailing blank (separates our content from Chrome's appended
-      "Wants access to this site" line)
-    - When an error is pending, `ERROR: <message>` slots between
-      the app title and the action block, bracketed by its own
-      blanks.
-  - `refreshActionTooltip()` rewrites the title whenever either
-    preference changes and on `onInstalled` / `onStartup`.
+  - **Capture-page first-paint pre-checks + toolbar tooltip layout**
+    are owned by [options-and-settings.md](options-and-settings.md).
+    `refreshActionTooltip()` rewrites the title whenever any of the
+    four defaults change and on `onInstalled` / `onStartup`.
 
 - **Right-click menu.** The toolbar icon's context menu is
   registered on `chrome.runtime.onInstalled` with
   `contexts: ['action']`. Top level (6 entries):
 
   - The three **undelayed** primary-group `CAPTURE_ACTIONS` items
-    (Take screenshot, Save HTML contents, Capture with details...),
-    each running its action immediately when clicked. "Take
-    screenshot" is functionally identical to a plain left-click
-    when `capture-screenshot` is the default — listed for discoverability.
+    (Capture..., Take screenshot, Save HTML contents), each running
+    its action immediately when clicked. "Take screenshot" is
+    functionally identical to a plain left-click when
+    `capture-screenshot` is the default — listed for discoverability.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
     of every base with `showInDelayedSubmenu` (primary-group by
     default, plus any more-group base that opts in — e.g.
@@ -230,21 +172,9 @@ sub-modules above.
     `capture-selection-{html,text,markdown}` — all
     `supportsDelayed: false` anyway) are only reachable via "Set
     default click action" if at all.
-  - **Set default click action ▸** — submenu with a hotkey row and
-    two sections:
-    - First row: **`Set hotkeys (Default <shortcut>)`** (or
-      `Set hotkeys (Default not set)` when unbound). The
-      parenthesized part reflects the `_execute_action` command
-      shortcut — the hotkey equivalent of clicking the toolbar
-      icon.
-    - Clicking the row opens `chrome://extensions/shortcuts`
-      in a new tab so the user can bind / rebind keys (there's
-      no API to edit shortcuts programmatically).
-    - Refreshed on menu install and on every user interaction
-      via `refreshMenusIfHotkeysChanged`, so a key edit shows
-      up on the *next* click — Chrome fires no event when the
-      user changes a binding.
-    - Separator.
+  - **Set default click action ▸** — submenu split into two sections.
+    Hotkey editing lives on the Options page; this submenu only sets
+    the click defaults.
     - **`── When text is selected ──`** header (`enabled: false`),
       then the five with-selection choices (three
       `capture-selection-<format>` shortcuts,
@@ -398,14 +328,13 @@ sub-modules above.
     for the full story, including the 8e100d1 regression this caused.
 
 - **Keyboard commands.** The manifest's `commands` block exposes
-  nine extension-command entries: Chrome's reserved
-  `_execute_action` (fires `chrome.action.onClicked` — the
-  toolbar-click equivalent), plus one per base action
-  (`00-capture-screenshot`, `01-capture-page-contents`,
-  `02-capture-with-details`, `03-capture-url`, `04-capture-both`,
-  `10-capture-selection-html`, `11-capture-selection-text`,
-  `12-capture-selection-markdown`).
+  ten entries: two meta-commands (`_execute_action`,
+  `01-secondary-action`) plus one per base capture action. Capture
+  actions use `1N-` prefixes; selection-format actions use `2N-`.
 
+  - The meta-commands run whatever the user has stored as the Click
+    or Dbl default and are documented in
+    [options-and-settings.md → Keyboard commands](options-and-settings.md#keyboard-commands).
   - The two-digit `NN-` prefix is a display-order hack, not part of
     the action id. `chrome://extensions/shortcuts` lists commands in
     raw string-sort order on the *command name*; without the
@@ -413,13 +342,15 @@ sub-modules above.
     an arbitrary alphabetical layout. The `chrome.commands.onCommand`
     listener strips the prefix via `COMMAND_PREFIX_PATTERN` before
     dispatching.
-  - Stripped names match their delay-0 `CAPTURE_ACTIONS` ids, so
-    the dispatch is a direct `findCaptureAction(stripped)` lookup —
-    no separate mapping table.
+  - Stripped names match their delay-0 `CAPTURE_ACTIONS` ids
+    (except `secondary-action`, which routes to `runDblDefault()`),
+    so the dispatch is a direct `findCaptureAction(stripped)`
+    lookup — no separate mapping table.
   - No `suggested_key` is declared on any entry; Chrome caps
     suggested defaults at four per extension and a fresh-install
     default risks colliding with Chrome / other extensions. Users
-    bind keys themselves at `chrome://extensions/shortcuts`.
+    bind keys themselves at `chrome://extensions/shortcuts` (or via
+    the Options page's "Edit in Chrome" button).
   - Selection-format hotkeys are global: they fire the action
     directly, and the action itself throws
     `No selection {format} content` when nothing is selected —
@@ -427,6 +358,11 @@ sub-modules above.
   - Command dispatch routes through `runWithErrorReporting`, so a
     restricted-URL scrape or an absent active tab surfaces on the
     toolbar icon the same way a toolbar click would.
+
+- **Options page (`options.html`).** Bundled extension page reached
+  via the toolbar action's right-click → Options. Only UI for
+  editing the toolbar defaults + Capture-page Save defaults — see
+  [options-and-settings.md](options-and-settings.md).
 
 - **Active-tab resolution.** `captureVisible` always re-queries
   the active tab in the last-focused window *after* any delay,
@@ -682,17 +618,11 @@ sub-modules above.
     - Unchecking the master clears all three radios.
     - Re-checking the master restores the last-picked format (or
       the initial default on the first check — see below).
-  - Initial default under a selection:
-    - Screenshot checkbox unchecks automatically — the page opens
-      focused on capturing the selection, not the whole tab.
-    - Save selection master auto-checks; the radio lands on the
-      SW-reported `defaultSelectionFormat`.
-    - That format is derived from the with-selection click default
-      (`capture-selection-<fmt>` → its format, anything else →
-      markdown).
-    - If the chosen format has no content (e.g. image-only
-      selection), the page falls back to the first non-empty
-      format.
+  - Initial defaults: `loadData` reads `capturePageDefaults` and
+    applies the matching branch (with-selection or without-selection)
+    on first paint. See
+    [options-and-settings.md → Capture-page first-paint pre-checks](options-and-settings.md#capture-page-first-paint-pre-checks)
+    for the rules + fresh-install values.
   - Each radio enables independently based on the presence of
     non-empty content in that format (an image-only selection
     enables HTML but leaves text / markdown disabled with a

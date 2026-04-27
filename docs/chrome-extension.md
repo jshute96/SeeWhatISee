@@ -416,11 +416,19 @@ promising — the main issue was the `onActivated` restore logic.
     capture actions with `group: 'more'` so they land there
     automatically).
 
-## "Capture with details…" — extension page + runtime messaging
+## Options page (`options.html`)
 
-The details flow opens a bundled extension page (`capture.html`)
-in a new tab, previews the pre-captured screenshot, and waits for
-the user to pick which artifacts to save before writing anything.
+Bundled second extension page reached via right-click → Options on
+the toolbar action. Owns the only UI for editing the four toolbar
+defaults and the Capture-page Save defaults. See
+[options-and-settings.md](options-and-settings.md) for the layout,
+wire, and the storage shape it edits.
+
+## Capture page (`capture.html`) — extension page + runtime messaging
+
+The Capture page opens in a new tab, previews the pre-captured
+screenshot, and waits for the user to pick which artifacts to save
+before writing anything.
 
 This section is split by topic:
 

@@ -20,22 +20,12 @@ import {
 } from './capture-actions.js';
 import {
   WITH_SELECTION_CHOICES,
-  doubleClickActionId,
   getDefaultActionTooltip,
+  getDefaultDblWithoutSelectionId,
   getDefaultWithSelectionId,
   getDefaultWithoutSelectionId,
   isSelectionBaseId,
 } from './default-action.js';
-
-// URL of the Chrome page where users bind / rebind extension
-// shortcuts. There's no API to edit them programmatically — opening
-// the page is the only way to drive the user into the configuration
-// flow. Same URL on stable / beta / canary.
-export const SHORTCUTS_URL = 'chrome://extensions/shortcuts';
-// Id of the "Set hotkeys (Default …)" status row at the top of
-// the "Set default click action" submenu. Click handler opens
-// `SHORTCUTS_URL` in a new tab so the user can bind / rebind.
-export const ACTION_HOTKEY_INFO_ID = 'action-hotkey-info';
 
 export const DEFAULT_CLICK_PARENT_ID = 'default-click-parent';
 export const DELAYED_PARENT_ID = 'delayed-capture-parent';
@@ -69,10 +59,10 @@ export const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
 export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 
 // Keyboard shortcuts declared in manifest.json's `commands` block.
-// Command names carry a two-digit ordering prefix (`00-`, `01-`, …)
-// because chrome://extensions/shortcuts lists commands in raw
-// string-sort order on the command *name* rather than our preferred order.
-// The prefix is stripped here before dispatch so the rest of the code
+// Command names carry a two-digit ordering prefix (`NN-`) because
+// chrome://extensions/shortcuts lists commands in raw string-sort
+// order on the command *name* rather than our preferred order. The
+// prefix is stripped here before dispatch so the rest of the code
 // keeps using bare action ids.
 export const COMMAND_PREFIX_PATTERN = /^\d{2}-/;
 
@@ -186,18 +176,10 @@ export async function refreshMenusAndTooltip(
 ): Promise<void> {
   const defaultId = await getDefaultWithoutSelectionId();
   const withId = await getDefaultWithSelectionId();
-  const dblId = doubleClickActionId(defaultId);
+  const dblId = await getDefaultDblWithoutSelectionId();
   const commands = preloadedCommands ?? (await chrome.commands.getAll());
   const shortcuts = commandsToShortcutMap(commands);
   cachedShortcutFingerprint = shortcutFingerprint(commands);
-
-  try {
-    await chrome.contextMenus.update(ACTION_HOTKEY_INFO_ID, {
-      title: actionHotkeyInfoTitle(shortcuts.get('_execute_action')),
-    });
-  } catch {
-    /* menu not installed yet */
-  }
 
   // Action rows — top-level + delay submenu + More submenu. They
   // share CAPTURE_ACTIONS ids, so updating by id hits whichever
@@ -276,19 +258,6 @@ export async function refreshMenusIfHotkeysChanged(): Promise<void> {
   await refreshMenusAndTooltip(commands);
 }
 
-function actionHotkeyInfoTitle(shortcut: string | undefined): string {
-  // Reuse the "unselected menu item" indent so this row aligns with
-  // the ✓ / non-✓ action rows below. The with / without-selection
-  // section headers get the same prefix for the same reason.
-  //
-  // "Default" names the `_execute_action` hotkey specifically — the
-  // click-the-icon equivalent. The row title reads as a verb
-  // ("Set hotkeys") to signal that clicking it opens the shortcut
-  // editor, with the current state of the default binding in
-  // parentheses as a glanceable status.
-  const suffix = shortcut ? `(Default ${shortcut})` : '(Default not set)';
-  return `${DEFAULT_UNSELECTED_PREFIX}Set hotkeys ${suffix}`;
-}
 
 /**
  * Build the right-side hint for a menu entry. Assembles up to two
@@ -546,44 +515,42 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //
 // Right-click context menu on the toolbar action. Structure:
 //
+//   Capture...
 //   Take screenshot
 //   Save HTML contents
-//   Capture with details...
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
+//       • Capture... in 2s
 //       • Take screenshot in 2s
 //       • Save HTML contents in 2s
-//       • Capture with details in 2s...
 //       • Capture screenshot and HTML in 2s
 //       ─────────
+//       • Capture... in 5s
 //       • Take screenshot in 5s
 //       • Save HTML contents in 5s
-//       • Capture with details in 5s...
 //       • Capture screenshot and HTML in 5s
 //   Set default click action  ▸     (submenu; ✓ on selected in each section)
-//       Set hotkeys (Default <shortcut>)   (click → chrome://extensions/shortcuts)
-//       ─────────
 //         ──  When text is selected  ──      (disabled header)
-//       ✓ Capture selection as HTML
+//       ✓ Capture...
+//         Capture selection as HTML
 //         Capture selection as text
 //         Capture selection as markdown
-//         Capture with details...
 //         Ignore selection (use default below)
 //       ─────────
 //         ──  When no text is selected  ──   (disabled header)
-//       ✓ Take screenshot
+//       ✓ Capture...
+//         Take screenshot
 //         Save HTML contents
-//         Capture with details...
 //         Capture URL                      (no delayed variants)
 //         Capture screenshot and HTML
 //       ─────────
+//         Capture... in 2s
 //         Take screenshot in 2s
 //         Save HTML contents in 2s
-//         Capture with details in 2s...
 //         Capture screenshot and HTML in 2s
 //       ─────────
+//         Capture... in 5s
 //         Take screenshot in 5s
 //         Save HTML contents in 5s
-//         Capture with details in 5s...
 //         Capture screenshot and HTML in 5s
 //   More  ▸                         (submenu)
 //       • Capture URL
@@ -676,7 +643,7 @@ export async function installContextMenu(): Promise<void> {
   // Double-click) track the without-selection default only.
   const defaultId = await getDefaultWithoutSelectionId();
   const withId = await getDefaultWithSelectionId();
-  const dblId = doubleClickActionId(defaultId);
+  const dblId = await getDefaultDblWithoutSelectionId();
   const commands = await chrome.commands.getAll();
   const shortcuts = commandsToShortcutMap(commands);
   // Seed the fingerprint so the first post-install call to
@@ -745,19 +712,6 @@ export async function installContextMenu(): Promise<void> {
     title: 'Set default click action',
     contexts: ['action'],
   });
-
-  // First row: a read-only status line showing the `_execute_action`
-  // hotkey. Clicking opens `chrome://extensions/shortcuts` so the
-  // user can edit it — there's no programmatic API to change it.
-  // We leave the row enabled (not `enabled: false` like the section
-  // headers below) precisely so the click is actionable.
-  chrome.contextMenus.create({
-    id: ACTION_HOTKEY_INFO_ID,
-    parentId: DEFAULT_CLICK_PARENT_ID,
-    title: actionHotkeyInfoTitle(shortcuts.get('_execute_action')),
-    contexts: ['action'],
-  });
-  createSeparator(`${DEFAULT_CLICK_PARENT_ID}-sep-hotkey`, DEFAULT_CLICK_PARENT_ID);
 
   chrome.contextMenus.create({
     id: WITH_SEL_HEADER_ID,

@@ -195,12 +195,18 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
         SeeWhatISee: {
           setDefaultWithSelectionId: (id: string) => Promise<void>;
           setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+          setDefaultDblWithSelectionId: (id: string) => Promise<void>;
+          setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
         };
       }
     ).SeeWhatISee;
-    // Pin the with-selection default so the middle tooltip line
-    // stays stable regardless of the starting storage state.
+    // Pin every default we don't sweep below so the only line that
+    // moves between titles is `Click:`. Double-click stays at
+    // `capture-with-details` and With-selection click at
+    // `capture-selection-html`.
     await api.setDefaultWithSelectionId('capture-selection-html');
+    await api.setDefaultDblWithSelectionId('capture-with-details');
+    await api.setDefaultDblWithoutSelectionId('capture-with-details');
     await api.setDefaultWithoutSelectionId('capture-screenshot');
     const a = await chrome.action.getTitle({});
     await api.setDefaultWithoutSelectionId('capture-screenshot-2s');
@@ -221,15 +227,25 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
   //   <blank>
   //   Click: <…>
   //   Double-click: <…>
-  //   With selection: <…>
+  //   With selection click: <…>
+  //   With selection double-click: <…>
   //   <blank trailing line>
-  const withSelLine = 'With selection: Capture as HTML';
-  const expected = (click: string, dbl: string) =>
-    ['SeeWhatISee', '', `Click: ${click}`, `Double-click: ${dbl}`, withSelLine, ''].join('\n');
-  expect(titles.a).toBe(expected('Take screenshot', 'Capture with details'));
-  expect(titles.b).toBe(expected('Take screenshot in 2s', 'Capture with details'));
-  expect(titles.c).toBe(expected('Save HTML contents', 'Capture with details'));
-  expect(titles.d).toBe(expected('Capture with details', 'Take screenshot'));
+  const withSelClickLine = 'With selection click: Capture as HTML';
+  const withSelDblLine = 'With selection double-click: Capture...';
+  const expected = (click: string): string =>
+    [
+      'SeeWhatISee',
+      '',
+      `Click: ${click}`,
+      'Double-click: Capture...',
+      withSelClickLine,
+      withSelDblLine,
+      '',
+    ].join('\n');
+  expect(titles.a).toBe(expected('Take screenshot'));
+  expect(titles.b).toBe(expected('Take screenshot in 2s'));
+  expect(titles.c).toBe(expected('Save HTML contents'));
+  expect(titles.d).toBe(expected('Capture...'));
 });
 
 // ─── Selection-aware click dispatch ──────────────────────────────
@@ -258,22 +274,31 @@ type ClickApi = {
   handleActionClick: () => Promise<void>;
   setDefaultWithSelectionId: (id: string) => Promise<void>;
   setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+  setDefaultDblWithSelectionId: (id: string) => Promise<void>;
+  setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
 };
 
-async function pinClickDefaults(
-  sw: Worker,
-  withId: string,
-  withoutId: string,
-): Promise<void> {
-  await sw.evaluate(
-    async ({ withId, withoutId }: { withId: string; withoutId: string }) => {
-      await chrome.storage.local.clear();
-      const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
-      await api.setDefaultWithSelectionId(withId);
-      await api.setDefaultWithoutSelectionId(withoutId);
-    },
-    { withId, withoutId },
-  );
+interface PinDefaults {
+  clickWith: string;
+  clickWithout: string;
+  // Both Dbl defaults take their fresh-install fallbacks unless an
+  // override is supplied — most tests don't double-click and so don't
+  // care, but the few that do can pin the slot they exercise.
+  dblWith?: string;
+  dblWithout?: string;
+}
+
+async function pinClickDefaults(sw: Worker, opts: PinDefaults): Promise<void> {
+  await sw.evaluate(async (o: PinDefaults) => {
+    await chrome.storage.local.clear();
+    const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
+    await api.setDefaultWithSelectionId(o.clickWith);
+    await api.setDefaultWithoutSelectionId(o.clickWithout);
+    if (o.dblWith !== undefined) await api.setDefaultDblWithSelectionId(o.dblWith);
+    if (o.dblWithout !== undefined) {
+      await api.setDefaultDblWithoutSelectionId(o.dblWithout);
+    }
+  }, opts);
 }
 
 async function runSingleClick(sw: Worker): Promise<void> {
@@ -323,7 +348,7 @@ for (const { id, format, ext } of [
     getServiceWorker,
   }) => {
     const sw = await getServiceWorker();
-    await pinClickDefaults(sw, id, 'capture-with-details');
+    await pinClickDefaults(sw, { clickWith: id, clickWithout: 'capture-with-details' });
 
     const openerPage = await extensionContext.newPage();
     await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -350,7 +375,10 @@ test('click with selection: with-sel=capture-with-details opens details with sel
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  await pinClickDefaults(sw, 'capture-with-details', 'capture-screenshot');
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-screenshot',
+  });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -388,7 +416,10 @@ test('click with selection: with-sel=ignore-selection runs the without-selection
   const sw = await getServiceWorker();
   // ignore-selection + capture-screenshot should take a screenshot even
   // though a selection is present — the probe is skipped entirely.
-  await pinClickDefaults(sw, 'ignore-selection', 'capture-screenshot');
+  await pinClickDefaults(sw, {
+    clickWith: 'ignore-selection',
+    clickWithout: 'capture-screenshot',
+  });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -417,18 +448,23 @@ test('click with selection: with-sel=ignore-selection runs the without-selection
   await openerPage.close();
 });
 
-test('double-click with selection: always opens details (even when without-sel=capture-with-details)', async ({
+test('double-click with selection: routes to dbl-with-sel default (capture-with-details)', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // Without-sel = capture-with-details → classic alternate is
-  // capture-screenshot (screenshot). With a selection present and
-  // with-sel != ignore-selection, the new rule overrides that
-  // alternate and routes double-click to details. This test
-  // regression-guards the override.
+  // Pin dbl-with-sel = capture-with-details and run a double-click on
+  // a page with a selection. The dispatcher reads the stored Dbl
+  // defaults independently of the Click defaults, so what runs is
+  // always whichever action the user has saved for that
+  // (Dbl × selection-state) slot.
   const sw = await getServiceWorker();
-  await pinClickDefaults(sw, 'capture-selection-html', 'capture-with-details');
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-selection-html',
+    clickWithout: 'capture-with-details',
+    dblWith: 'capture-with-details',
+    dblWithout: 'capture-screenshot',
+  });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -456,25 +492,36 @@ test('double-click with selection: always opens details (even when without-sel=c
   await openerPage.close();
 });
 
-// Details-page initial format radio tracks the with-selection
-// click default. Double-click + selection reliably opens the
-// details page regardless of what the click default is, so we use
-// it as the vehicle here. `capture-with-details` is included to
-// cover the fallthrough: any with-sel default that isn't a
-// `capture-selection-<fmt>` shortcut lands on markdown.
-for (const { withSel, expectRadio } of [
-  { withSel: 'capture-selection-html', expectRadio: 'cap-selection-html' },
-  { withSel: 'capture-selection-text', expectRadio: 'cap-selection-text' },
-  { withSel: 'capture-selection-markdown', expectRadio: 'cap-selection-markdown' },
-  { withSel: 'capture-with-details', expectRadio: 'cap-selection-markdown' },
+// Details-page initial format radio tracks the stored
+// `capturePageDefaults.withSelection.format` setting (set by the
+// user on the Options page). Double-click + selection reliably opens
+// the details page when dbl-with = capture-with-details, so we use
+// it as the vehicle here.
+for (const { format, expectRadio } of [
+  { format: 'html', expectRadio: 'cap-selection-html' },
+  { format: 'text', expectRadio: 'cap-selection-text' },
+  { format: 'markdown', expectRadio: 'cap-selection-markdown' },
 ] as const) {
-  test(`details: initial format radio from with-sel=${withSel} is #${expectRadio}`, async ({
+  test(`details: initial format radio from capturePageDefaults.format=${format} is #${expectRadio}`, async ({
     extensionContext,
     fixtureServer,
     getServiceWorker,
   }) => {
     const sw = await getServiceWorker();
-    await pinClickDefaults(sw, withSel, 'capture-screenshot');
+    await pinClickDefaults(sw, {
+      clickWith: 'capture-with-details',
+      clickWithout: 'capture-screenshot',
+      dblWith: 'capture-with-details',
+      dblWithout: 'capture-screenshot',
+    });
+    await sw.evaluate(async (fmt) => {
+      await chrome.storage.local.set({
+        capturePageDefaults: {
+          withoutSelection: { screenshot: true, html: false },
+          withSelection: { screenshot: false, html: false, selection: true, format: fmt },
+        },
+      });
+    }, format);
 
     const openerPage = await extensionContext.newPage();
     await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -496,18 +543,23 @@ for (const { withSel, expectRadio } of [
   });
 }
 
-test('double-click with selection: ignore-selection keeps the classic alternate (screenshot)', async ({
+test('double-click with selection: ignore-selection on dbl-with-sel falls through to dbl-without', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // ignore-selection + without-sel=capture-with-details → classic
-  // double-click alternate is capture-screenshot. The "selection present"
-  // override must NOT trigger when the user has opted out via
-  // ignore-selection, so a selection on the page shouldn't flip
-  // the dispatch to details.
+  // dbl-with-sel = ignore-selection means "don't probe for selection
+  // on a double-click — just run the dbl-without action." Pinning
+  // dbl-without = capture-screenshot makes the assertion concrete:
+  // a double-click on a page with a selection should produce a
+  // screenshot, never open details, and never save the selection.
   const sw = await getServiceWorker();
-  await pinClickDefaults(sw, 'ignore-selection', 'capture-with-details');
+  await pinClickDefaults(sw, {
+    clickWith: 'ignore-selection',
+    clickWithout: 'capture-with-details',
+    dblWith: 'ignore-selection',
+    dblWithout: 'capture-screenshot',
+  });
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -530,6 +582,307 @@ test('double-click with selection: ignore-selection keeps the classic alternate 
   expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
 
   await openerPage.close();
+});
+
+// ─── Double-click without selection ──────────────────────────────
+
+test('double-click without selection: runs the stored dbl-without default', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // No selection on the page → the dispatcher uses the dbl-without
+  // default regardless of dbl-with-sel. Pin dbl-without =
+  // capture-screenshot; click-without is a different action so the
+  // assertion can tell which slot fired.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+    dblWith: 'capture-with-details',
+    dblWithout: 'capture-screenshot',
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  // Deliberately no seedSelection — this exercises the no-selection
+  // branch.
+
+  let detailsOpened = false;
+  const onPage = (p: Page): void => {
+    if (p.url().endsWith('/capture.html')) detailsOpened = true;
+  };
+  extensionContext.on('page', onPage);
+
+  await runDoubleClick(sw);
+
+  await new Promise((r) => setTimeout(r, 150));
+  extensionContext.off('page', onPage);
+  expect(detailsOpened, 'details must NOT open — dbl-without is capture-screenshot').toBe(
+    false,
+  );
+
+  const r = await latestLogRecord(sw);
+  expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+
+  await openerPage.close();
+});
+
+// ─── Secondary-action command ────────────────────────────────────
+//
+// `runDblDefault` is the SW-side path the `01-secondary-action`
+// keyboard command takes. Driving it directly proves the command
+// produces the same dispatch a Dbl click would, without having to
+// simulate Chrome's keyboard-shortcut delivery.
+
+test('runDblDefault: with selection, runs dbl-with-sel default', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+    dblWith: 'capture-selection-markdown',
+    dblWithout: 'capture-screenshot',
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  await sw.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { runDblDefault: () => Promise<void> };
+    }).SeeWhatISee;
+    await api.runDblDefault();
+  });
+
+  const r = await latestLogRecord(sw);
+  expect(r?.selection?.format).toBe('markdown');
+  expect(r?.screenshot).toBeUndefined();
+
+  await openerPage.close();
+});
+
+// ─── Capture page Save-checkbox pre-check ────────────────────────
+//
+// On open, the capture page applies the stored
+// `capturePageDefaults` to the Save checkboxes. Branches by
+// selection presence: an active selection → `withSelection` defaults
+// (with the screenshot/html/selection toggles + the format radio),
+// no selection → `withoutSelection` defaults.
+
+async function pinCaptureDetailsDefaults(
+  sw: Worker,
+  defaults: {
+    withoutSelection: { screenshot: boolean; html: boolean };
+    withSelection: {
+      screenshot: boolean;
+      html: boolean;
+      selection: boolean;
+      format: 'html' | 'text' | 'markdown';
+    };
+  },
+): Promise<void> {
+  await sw.evaluate(async (d) => {
+    await chrome.storage.local.set({ capturePageDefaults: d });
+  }, defaults);
+}
+
+test('capture page (no selection): pre-checks reflect stored withoutSelection defaults', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  // click-without = capture-with-details so a single click opens the
+  // capture page. Override the capturePageDefaults with both
+  // boxes ON so we can verify both flip from their static-HTML state
+  // (`screenshot` is checked-by-default in capture.html, but `html`
+  // is unchecked-by-default — so this proves the page is reading
+  // storage, not just leaving the static markup alone).
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+  });
+  await pinCaptureDetailsDefaults(sw, {
+    withoutSelection: { screenshot: true, html: true },
+    withSelection: { screenshot: false, html: false, selection: true, format: 'markdown' },
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+  await runSingleClick(sw);
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  await expect(capturePage.locator('#cap-screenshot')).toBeChecked();
+  await expect(capturePage.locator('#cap-html')).toBeChecked();
+  // The Save-selection master row stays disabled when there's no
+  // selection on the page — the page never enables it.
+  await expect(capturePage.locator('#cap-selection')).toBeDisabled();
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('capture page (no selection): screenshot defaults to OFF when stored', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The capture.html static markup has cap-screenshot checked. This
+  // test pins withoutSelection.screenshot=false and verifies the
+  // page actually unchecks it — confirms loadData applies the
+  // stored default rather than leaving the static state alone.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+  });
+  await pinCaptureDetailsDefaults(sw, {
+    withoutSelection: { screenshot: false, html: false },
+    withSelection: { screenshot: false, html: false, selection: true, format: 'markdown' },
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+  await runSingleClick(sw);
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  await expect(capturePage.locator('#cap-screenshot')).not.toBeChecked();
+  await expect(capturePage.locator('#cap-html')).not.toBeChecked();
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('capture page (with selection): pre-checks reflect stored withSelection defaults', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // With a selection on the page, the capture page should apply the
+  // `withSelection` branch of capturePageDefaults. Pin a non-
+  // default shape so the assertions can tell stored-from-defaults.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+  });
+  await pinCaptureDetailsDefaults(sw, {
+    withoutSelection: { screenshot: false, html: false },
+    withSelection: { screenshot: true, html: true, selection: false, format: 'text' },
+  });
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+  await seedSelection(openerPage);
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+  await runSingleClick(sw);
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  await expect(capturePage.locator('#cap-screenshot')).toBeChecked();
+  await expect(capturePage.locator('#cap-html')).toBeChecked();
+  await expect(capturePage.locator('#cap-selection')).not.toBeChecked();
+  await expect(capturePage.locator('#cap-selection-text')).toBeChecked();
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('capture page: format radio falls back when preferred format has no content', async ({
+  extensionContext,
+  getServiceWorker,
+}) => {
+  // Stored format is `markdown`, but the seeded selection shape is
+  // image-only — html non-empty, text + markdown empty. The page
+  // should fall back to the first format that *does* have content
+  // (html), not leave the radio group blank or pick markdown.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, {
+    clickWith: 'capture-with-details',
+    clickWithout: 'capture-with-details',
+  });
+  await pinCaptureDetailsDefaults(sw, {
+    withoutSelection: { screenshot: true, html: false },
+    withSelection: { screenshot: false, html: false, selection: true, format: 'markdown' },
+  });
+
+  // Open a capture.html tab directly from the SW and seed its
+  // session with a fake `DetailsSession` carrying html-only
+  // selection content. We reload the page after seeding so
+  // `loadData` runs against the populated session — sidesteps the
+  // race between `chrome.tabs.create` returning and the page's
+  // first `getDetailsData` round-trip.
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+  await sw.evaluate(async () => {
+    const url = chrome.runtime.getURL('capture.html');
+    const tab = await chrome.tabs.create({ url });
+    await chrome.storage.session.set({
+      [`captureDetails_${tab.id!}`]: {
+        capture: {
+          // 1×1 transparent PNG — content doesn't matter, the
+          // capture page just needs a valid data URL to render.
+          screenshotDataUrl:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8AAQQACgwE/Y2vd6QAAAABJRU5ErkJggg==',
+          html: '<html><body><p>x</p></body></html>',
+          url: 'http://example.com/test',
+          timestamp: '2026-04-27T00:00:00.000Z',
+          screenshotFilename: 'screenshot-fallback-test.png',
+          contentsFilename: 'contents-fallback-test.html',
+          selections: { html: '<img src="x.png">', text: '', markdown: '' },
+          selectionFilenames: {
+            html: 'selection-fallback-test.html',
+            text: 'selection-fallback-test.txt',
+            markdown: 'selection-fallback-test.md',
+          },
+        },
+        openerTabId: tab.id,
+      },
+    });
+  });
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+  await capturePage.reload();
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  // The preferred format (`markdown`) is empty for this capture, so
+  // the page falls back to the first contentful format (`html`).
+  await expect(capturePage.locator('#cap-selection-html')).toBeChecked();
+  await expect(capturePage.locator('#cap-selection-text')).not.toBeChecked();
+  await expect(capturePage.locator('#cap-selection-markdown')).not.toBeChecked();
+  // Save selection master should still be checked (stored
+  // withSelection.selection = true).
+  await expect(capturePage.locator('#cap-selection')).toBeChecked();
+
+  await capturePage.close();
 });
 
 // ─── getDefaultWithoutSelectionId storage migration ──────────────

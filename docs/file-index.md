@@ -95,14 +95,18 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
 | `src/background/error-reporting.ts` | Icon/tooltip error surface: `runWithErrorReporting`, `reportCaptureError`, `clearCaptureError`, unhandled-rejection suppression |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `captureBoth` shortcuts, delay/title helpers |
-| `src/background/default-action.ts` | Default-click preferences (with/without selection), `handleActionClick` dispatcher, `getDefaultActionTooltip` builder |
+| `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
-| `src/background/capture-details.ts` | "Capture with details…" flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
+| `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
+| `src/background/capture-page-defaults.ts` | Stored "Default items to save on Capture page" preferences — shape, fresh-install defaults, normalize/get/set |
+| `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection for selection capture |
-| `src/capture.html` | Extension page for the "Capture with details…" flow (URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay) |
+| `src/capture.html` | Capture page (the `Capture...` action's review surface) — URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay |
 | `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, highlight overlay (rects/lines/Redact/Crop/drag-to-crop), bake-in, fit-to-viewport |
+| `src/options.html` | Extension options page — Default-action hotkey table, Click / Double-click radios per selection state, Save-checkbox defaults |
+| `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders the four sections, refreshes hotkeys on focus / radio click, saves via `setOptions` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
@@ -160,6 +164,7 @@ One-line descriptions of every source file, grouped by directory.
 | `file-index.md` | This file — one-line descriptions of every source file |
 | `architecture.md` | High-level architecture of the extension and capture flow |
 | `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, details flow, Playwright patterns) |
+| `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
 | `images/copy-icon.png` | Inline icon image referenced from the README's details-page bullet for the Copy button |

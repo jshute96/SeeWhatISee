@@ -11,10 +11,7 @@ import {
   type SelectionFormat,
 } from '../capture.js';
 import { runWithErrorReporting } from './error-reporting.js';
-import {
-  detailsDefaultSelectionFormat,
-  getDefaultWithSelectionId,
-} from './default-action.js';
+import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 
 // "Capture with details…" flow. We grab both the screenshot and
 // the HTML up-front (so the user can decide which to save without
@@ -646,14 +643,14 @@ export function installDetailsMessageHandlers(): void {
         // from `captureBothToMemory` so the page can grey out the
         // corresponding rows and show an error icon with the reason.
         //
-        // `defaultSelectionFormat` is the format the details page
-        // should pre-check when the selection has content, derived
-        // from the user's with-selection click default. When that
-        // default names a specific format the page lands on it;
-        // otherwise it falls through to markdown (matching the
-        // fresh-install default). The page still picks a different
-        // format if the chosen one has no content.
-        const withId = await getDefaultWithSelectionId();
+        // `capturePageDefaults` carries the user's stored Save-
+        // checkbox preferences (split by selection-presence). The
+        // page applies the matching branch on first paint, so the
+        // initial state of the screenshot / HTML / selection
+        // checkboxes + the format radio reflects what the user picked
+        // on the Options page — independent of the with-selection
+        // click default.
+        const capturePageDefaults = await getCaptureDetailsDefaults();
         sendResponse({
           screenshotDataUrl: session.capture.screenshotDataUrl,
           html: session.capture.html,
@@ -662,7 +659,7 @@ export function installDetailsMessageHandlers(): void {
           htmlError: session.capture.htmlError,
           selectionError: session.capture.selectionError,
           screenshotError: session.capture.screenshotError,
-          defaultSelectionFormat: detailsDefaultSelectionFormat(withId),
+          capturePageDefaults,
         });
       })();
       return true;

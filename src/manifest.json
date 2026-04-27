@@ -23,32 +23,39 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "commands": {
     "_execute_action": {
       "description": "Activate SeeWhatISee (same as clicking the toolbar icon)"
     },
-    "00-capture-screenshot": {
+    "01-secondary-action": {
+      "description": "Secondary action (same as double-click)"
+    },
+    "11-capture-screenshot": {
       "description": "Take screenshot"
     },
-    "01-capture-page-contents": {
+    "12-capture-page-contents": {
       "description": "Save HTML contents"
     },
-    "02-capture-with-details": {
-      "description": "Capture with details…"
+    "13-capture-with-details": {
+      "description": "Capture…"
     },
-    "03-capture-url": {
+    "14-capture-url": {
       "description": "Capture URL"
     },
-    "04-capture-both": {
+    "15-capture-both": {
       "description": "Capture screenshot and HTML"
     },
-    "10-capture-selection-html": {
+    "21-capture-selection-html": {
       "description": "Capture selection as HTML"
     },
-    "11-capture-selection-text": {
+    "22-capture-selection-text": {
       "description": "Capture selection as text"
     },
-    "12-capture-selection-markdown": {
+    "23-capture-selection-markdown": {
       "description": "Capture selection as markdown"
     }
   }

@@ -167,7 +167,21 @@ export async function captureBoth(delayMs = 0): Promise<void> {
 
 // Array order is user-visible: within each delay row / group, menu
 // entries appear in the order their bases are declared here.
+// `capture-with-details` is the most common pick (its own toolbar
+// action and the default Double-click), so we list it first inside
+// each section for top-of-mind visibility.
 const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
+  {
+    baseId: 'capture-with-details',
+    baseTitle: 'Capture...',
+    // Tooltip fragment keeps the trailing "..." so the toolbar tooltip
+    // signals "this opens another page" the same way the menu label
+    // does — Capture... is the action's full name, not a sentence
+    // continuation.
+    baseTooltipFragment: 'Capture...',
+    group: 'primary',
+    run: (delayMs) => startCaptureWithDetails(delayMs),
+  },
   {
     baseId: 'capture-screenshot',
     baseTitle: 'Take screenshot',
@@ -181,13 +195,6 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTooltipFragment: 'Save HTML contents',
     group: 'primary',
     run: (delayMs) => savePageContents(delayMs),
-  },
-  {
-    baseId: 'capture-with-details',
-    baseTitle: 'Capture with details...',
-    baseTooltipFragment: 'Capture with details',
-    group: 'primary',
-    run: (delayMs) => startCaptureWithDetails(delayMs),
   },
   {
     baseId: 'capture-url',
@@ -266,15 +273,12 @@ function delayedId(baseId: string, delaySec: number): string {
   return delaySec === 0 ? baseId : `${baseId}-${delaySec}s`;
 }
 
-// Build a delayed title. For base titles that end in "..." (the
-// "opens a dialog" convention used by "Capture with details..."),
-// we slot the "in Ns" phrase *before* the ellipsis so the ellipsis
-// still trails the whole label: "Capture with details in 2s...".
+// Build a delayed title. The "in Ns" phrase is appended verbatim,
+// so dialog-style titles that end in "..." (e.g. "Capture...") read
+// as "Capture... in 2s" — the ellipsis stays anchored to the action
+// name and the delay sits as a plain trailing phrase.
 function delayedTitle(baseTitle: string, delaySec: number): string {
   if (delaySec === 0) return baseTitle;
-  if (baseTitle.endsWith('...')) {
-    return `${baseTitle.slice(0, -3)} in ${delaySec}s...`;
-  }
   return `${baseTitle} in ${delaySec}s`;
 }
 

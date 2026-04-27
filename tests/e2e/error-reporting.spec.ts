@@ -25,17 +25,16 @@
 import { test, expect } from '../fixtures/extension';
 
 // Default tooltip on the `capture-screenshot` click action. The background
-// script derives the toolbar title from whichever CAPTURE_ACTIONS
-// entry the user has picked as the default; the tests here pin that
-// selection to `capture-screenshot` in beforeEach (with
-// `capture-selection-html` as the with-selection default) so the
-// expected baseline is stable. Layout:
+// script derives the toolbar title from the four stored defaults;
+// the tests here pin them in beforeEach so the expected baseline is
+// stable. Layout:
 //
 //   SeeWhatISee
 //   <blank>
 //   Click: Take screenshot
-//   Double-click: Capture with details
-//   With selection: Capture as HTML
+//   Double-click: Capture...
+//   With selection click: Capture as HTML
+//   With selection double-click: Capture...
 //   <blank trailing line>
 //
 // The blanks bracket the action block so it has breathing room from
@@ -43,8 +42,9 @@ import { test, expect } from '../fixtures/extension';
 // site" permission line below.
 const ACTION_LINES = [
   'Click: Take screenshot',
-  'Double-click: Capture with details',
-  'With selection: Capture as HTML',
+  'Double-click: Capture...',
+  'With selection click: Capture as HTML',
+  'With selection double-click: Capture...',
 ];
 const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');
 
@@ -61,6 +61,8 @@ interface ErrorApi {
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
   setDefaultWithSelectionId: (id: string) => Promise<void>;
   setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+  setDefaultDblWithSelectionId: (id: string) => Promise<void>;
+  setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
 }
 
 // Per-test harness that hooks chrome.action.setIcon in the service
@@ -109,13 +111,16 @@ test.beforeEach(async ({ getServiceWorker }) => {
       SeeWhatISee: {
         setDefaultWithSelectionId: (id: string) => Promise<void>;
         setDefaultWithoutSelectionId: (id: string) => Promise<void>;
+        setDefaultDblWithSelectionId: (id: string) => Promise<void>;
+        setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
       };
     }).SeeWhatISee;
     await api.setDefaultWithoutSelectionId('capture-screenshot');
-    // Pin the with-selection default too so the tooltip's
-    // "With selection: …" line stays stable regardless of the
-    // starting storage state.
+    // Pin all three remaining defaults too so every tooltip line
+    // stays stable regardless of the starting storage state.
     await api.setDefaultWithSelectionId('capture-selection-html');
+    await api.setDefaultDblWithoutSelectionId('capture-with-details');
+    await api.setDefaultDblWithSelectionId('capture-with-details');
   });
   await installSetIconSpy(sw);
 });

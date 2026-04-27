@@ -1,19 +1,21 @@
 // Default click-action preferences + toolbar-click dispatch. Owns the
-// `defaultClickWith[out]Selection` storage keys, the with-selection
-// choice list, the single/double-click `handleActionClick` dispatcher,
-// and the `getDefaultActionTooltip` builder that renders the toolbar
-// tooltip from the two stored defaults.
+// four `defaultClick…` / `defaultDbl…` storage keys, the
+// with-selection choice list, the single/double-click
+// `handleActionClick` dispatcher, and the `getDefaultActionTooltip`
+// builder that renders the toolbar tooltip from the four stored
+// defaults.
 
-import { captureVisible, scrapeSelection, type SelectionFormat } from '../capture.js';
+import { scrapeSelection } from '../capture.js';
 import {
   CAPTURE_ACTIONS,
   type CaptureAction,
 } from './capture-actions.js';
 import { runWithErrorReporting } from './error-reporting.js';
-import { detailsStorageKey, startCaptureWithDetails } from './capture-details.js';
+import { detailsStorageKey } from './capture-details.js';
 import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js';
 
-// The default click action is split in two so the toolbar behaves
+// The default click and double-click actions are each split in two
+// (with-selection / without-selection) so the toolbar behaves
 // sensibly in both states the user can put a page in:
 //   - With a selection on the page — most users want the selection
 //     captured; the three "Capture selection as …" shortcuts and the
@@ -26,8 +28,12 @@ import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js
 //     error with `No selection content`).
 const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
 const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
-const DEFAULT_WITH_SELECTION_ID = 'capture-selection-markdown';
-const DEFAULT_WITHOUT_SELECTION_ID = 'capture-with-details';
+const DEFAULT_DBL_WITH_SELECTION_KEY = 'defaultDblWithSelection';
+const DEFAULT_DBL_WITHOUT_SELECTION_KEY = 'defaultDblWithoutSelection';
+const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture-with-details';
+const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture-with-details';
+const DEFAULT_DBL_WITH_SELECTION_ID = 'capture-selection-markdown';
+const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'capture-screenshot';
 // Sentinel id used in place of a CAPTURE_ACTIONS id when the user
 // wants a page selection to *not* steer the click default. Never
 // appears in CAPTURE_ACTIONS; `handleActionClick` treats it as "fall
@@ -47,28 +53,6 @@ const SELECTION_BASE_IDS: ReadonlySet<string> = new Set([
 
 export function isSelectionBaseId(baseId: string): boolean {
   return SELECTION_BASE_IDS.has(baseId);
-}
-
-/**
- * Map the user's with-selection click default to the
- * `SelectionFormat` the details page should pre-check. When the
- * default names a specific format (`capture-selection-<fmt>`) it's
- * mapped directly; any other default (e.g. `capture-with-details`,
- * `ignore-selection`) falls through to `'markdown'` — matching the
- * fresh-install default so the details page lands on a single
- * predictable format whenever the user hasn't explicitly picked one.
- * The page still falls back to the first non-empty format if the
- * chosen one happens to have no content (e.g. image-only selection).
- */
-export function detailsDefaultSelectionFormat(withSelectionId: string): SelectionFormat {
-  switch (withSelectionId) {
-    case 'capture-selection-html':
-      return 'html';
-    case 'capture-selection-text':
-      return 'text';
-    default:
-      return 'markdown';
-  }
 }
 
 export function findCaptureAction(id: string | undefined): CaptureAction | undefined {
@@ -93,11 +77,14 @@ export interface WithSelectionChoice {
   tooltipFragment: string | null;
 }
 
+// Order is user-visible (Set-default submenu, Options page).
+// `capture-with-details` is listed first to put the most common pick
+// at the top of the section.
 const WITH_SELECTION_CHOICE_ACTION_IDS = [
+  'capture-with-details',
   'capture-selection-html',
   'capture-selection-text',
   'capture-selection-markdown',
-  'capture-with-details',
 ] as const;
 
 export const WITH_SELECTION_CHOICES: WithSelectionChoice[] = [
@@ -126,7 +113,7 @@ export async function getDefaultWithSelectionId(): Promise<string> {
   const id = stored[DEFAULT_CLICK_WITH_SELECTION_KEY];
   return typeof id === 'string' && findWithSelectionChoice(id)
     ? id
-    : DEFAULT_WITH_SELECTION_ID;
+    : DEFAULT_CLICK_WITH_SELECTION_ID;
 }
 
 // Legacy → current id migration. Two base ids were renamed so the
@@ -165,14 +152,14 @@ export async function getDefaultWithoutSelectionId(): Promise<string> {
   // the `capture-selection-*` format shortcuts (no longer permitted
   // in this slot — they'd just error on every click without a
   // selection).
-  if (typeof rawId !== 'string') return DEFAULT_WITHOUT_SELECTION_ID;
+  if (typeof rawId !== 'string') return DEFAULT_CLICK_WITHOUT_SELECTION_ID;
   const id = migrateLegacyActionId(rawId);
   if (id !== rawId) {
     await chrome.storage.local.set({ [DEFAULT_CLICK_WITHOUT_SELECTION_KEY]: id });
   }
   const action = findCaptureAction(id);
   if (!action || isSelectionBaseId(action.baseId)) {
-    return DEFAULT_WITHOUT_SELECTION_ID;
+    return DEFAULT_CLICK_WITHOUT_SELECTION_ID;
   }
   return id;
 }
@@ -182,8 +169,58 @@ export async function getDefaultWithoutSelectionAction(): Promise<CaptureAction>
   return findCaptureAction(id) ?? CAPTURE_ACTIONS[0]!;
 }
 
+// ── Double-click defaults ────────────────────────────────────────
+//
+// Both Dbl slots draw from the same id pools as their Click siblings —
+// any non-selection action for `getDefaultDblWithoutSelectionId`, the
+// `WITH_SELECTION_CHOICES` set (4 actions + ignore-selection) for
+// `getDefaultDblWithSelectionId`. Stored under their own keys so the
+// user can mix-and-match (e.g. Click=Capture..., Double-click=Take
+// screenshot for a fast no-dialog screenshot habit).
+
+export async function getDefaultDblWithoutSelectionId(): Promise<string> {
+  const stored = await chrome.storage.local.get(DEFAULT_DBL_WITHOUT_SELECTION_KEY);
+  const rawId = stored[DEFAULT_DBL_WITHOUT_SELECTION_KEY];
+  if (typeof rawId !== 'string') return DEFAULT_DBL_WITHOUT_SELECTION_ID;
+  const id = migrateLegacyActionId(rawId);
+  if (id !== rawId) {
+    await chrome.storage.local.set({ [DEFAULT_DBL_WITHOUT_SELECTION_KEY]: id });
+  }
+  const action = findCaptureAction(id);
+  if (!action || isSelectionBaseId(action.baseId)) {
+    return DEFAULT_DBL_WITHOUT_SELECTION_ID;
+  }
+  return id;
+}
+
+export async function getDefaultDblWithSelectionId(): Promise<string> {
+  const stored = await chrome.storage.local.get(DEFAULT_DBL_WITH_SELECTION_KEY);
+  const id = stored[DEFAULT_DBL_WITH_SELECTION_KEY];
+  return typeof id === 'string' && findWithSelectionChoice(id)
+    ? id
+    : DEFAULT_DBL_WITH_SELECTION_ID;
+}
+
+export async function setDefaultDblWithoutSelectionId(id: string): Promise<void> {
+  const action = findCaptureAction(id);
+  if (!action) throw new Error(`Unknown capture action id: ${id}`);
+  if (isSelectionBaseId(action.baseId)) {
+    throw new Error(`${action.baseId} is not a valid without-selection default`);
+  }
+  await chrome.storage.local.set({ [DEFAULT_DBL_WITHOUT_SELECTION_KEY]: id });
+  await refreshMenusAndTooltip();
+}
+
+export async function setDefaultDblWithSelectionId(id: string): Promise<void> {
+  if (!findWithSelectionChoice(id)) {
+    throw new Error(`Unknown with-selection default id: ${id}`);
+  }
+  await chrome.storage.local.set({ [DEFAULT_DBL_WITH_SELECTION_KEY]: id });
+  await refreshMenusAndTooltip();
+}
+
 /**
- * Build the toolbar icon tooltip from the two current defaults.
+ * Build the toolbar icon tooltip from the four stored defaults.
  *
  * Every fragment is authored on the action / with-selection choice
  * itself (see `baseTooltipFragment` on `BASE_CAPTURE_ACTIONS` and
@@ -192,12 +229,13 @@ export async function getDefaultWithoutSelectionAction(): Promise<CaptureAction>
  * concatenates the pre-built pieces. Layout is:
  *
  *   SeeWhatISee
- *   <blank>                        (only when errorMessage !== undefined)
- *   ERROR: <errorMessage>          (only when errorMessage !== undefined)
+ *   <blank>                                       (only when errorMessage !== undefined)
+ *   ERROR: <errorMessage>                         (only when errorMessage !== undefined)
  *   <blank>
- *   Click: <click.tooltipFragment>
- *   Double-click: <doubleClick.tooltipFragment>
- *   With selection: <withChoice.tooltipFragment>
+ *   Click: <click-no-sel.tooltipFragment>
+ *   Double-click: <dbl-no-sel.tooltipFragment>
+ *   With selection click: <click-with-sel.tooltipFragment>          (if not ignore-selection)
+ *   With selection double-click: <dbl-with-sel.tooltipFragment>     (if not ignore-selection)
  *   <blank>
  *
  * The blanks give each block breathing room — bracketing the ERROR
@@ -206,25 +244,20 @@ export async function getDefaultWithoutSelectionAction(): Promise<CaptureAction>
  * below (the "Wants access to this site" permission line, for
  * example).
  *
- * The `With selection:` line is omitted for the `ignore-selection`
- * choice (its fragment is `null`), since the click then behaves
- * identically with or without a selection and the extra line would
- * just be noise.
+ * The two `With selection …` lines are independently omitted when
+ * the corresponding stored choice is `ignore-selection` (its
+ * `tooltipFragment` is `null`) — that branch then behaves identically
+ * with or without a selection, so the extra line would be noise.
  */
 export async function getDefaultActionTooltip(errorMessage?: string): Promise<string> {
   const click = await getDefaultWithoutSelectionAction();
-  const withId = await getDefaultWithSelectionId();
-  // `doubleClickActionId` only ever returns `capture-screenshot` or
-  // `capture-with-details` — both static CAPTURE_ACTIONS entries —
-  // so the `!` is a static-lookup assertion, not a fallback. The
-  // old `?? CAPTURE_ACTIONS[0]` default was wrong anyway (would
-  // have rendered "Take screenshot" for a `capture-screenshot` click
-  // default — the opposite of the intended alternate).
-  const doubleClick = findCaptureAction(doubleClickActionId(click.id))!;
-  const withChoice = findWithSelectionChoice(withId);
+  const dblWithoutId = await getDefaultDblWithoutSelectionId();
+  const doubleClick = findCaptureAction(dblWithoutId) ?? CAPTURE_ACTIONS[0]!;
+  const clickWithChoice = findWithSelectionChoice(await getDefaultWithSelectionId());
+  const dblWithChoice = findWithSelectionChoice(await getDefaultDblWithSelectionId());
   // The `_execute_action` hotkey — when bound — is equivalent to
   // clicking the toolbar icon, so we fold it into the `Click:`
-  // label rather than adding a fourth action line. When unbound
+  // label rather than adding another action line. When unbound
   // (fresh install / no user binding) the label stays the plain
   // `Click:` so users who haven't touched shortcuts don't see
   // empty-looking hints.
@@ -238,35 +271,22 @@ export async function getDefaultActionTooltip(errorMessage?: string): Promise<st
     `${clickLabel}: ${click.tooltipFragment}`,
     `Double-click: ${doubleClick.tooltipFragment}`,
   );
-  if (withChoice && withChoice.tooltipFragment !== null) {
-    lines.push(`With selection: ${withChoice.tooltipFragment}`);
+  // The with-selection lines are omitted when the corresponding
+  // choice is `ignore-selection` — its `tooltipFragment` is `null`
+  // precisely so the line drops, since a click with selection then
+  // behaves identically to a click without one and the line would
+  // just be noise.
+  if (clickWithChoice && clickWithChoice.tooltipFragment !== null) {
+    lines.push(`With selection click: ${clickWithChoice.tooltipFragment}`);
+  }
+  if (dblWithChoice && dblWithChoice.tooltipFragment !== null) {
+    lines.push(`With selection double-click: ${dblWithChoice.tooltipFragment}`);
   }
   // Trailing empty entry → one trailing `\n` after `join('\n')`,
   // which Chrome's tooltip renderer shows as one blank line below
   // the action block.
   lines.push('');
   return lines.join('\n');
-}
-
-// The double-click hint's target is derived from the without-selection
-// click default: if details is the default, double-click takes a
-// screenshot; otherwise double-click opens capture-with-details.
-// Mirrors the no-selection branch in handleActionClick so menu hints
-// are accurate for the common case.
-//
-// Hints don't reflect the with-selection-present override (see
-// handleActionClick: double-click on a page with a selection, with
-// `withId !== ignore-selection`, always opens details). That's
-// deliberate — we can't reliably predict selection state at
-// menu-render time, and a hint that flips between opens depending
-// on selection would read as churn. Net effect: the only case where
-// hint drifts from runtime is "without-sel default is
-// capture-with-details AND there's a selection" (hint says Take
-// screenshot; actual double-click opens details).
-export function doubleClickActionId(withoutSelectionId: string): string {
-  return withoutSelectionId === DEFAULT_WITHOUT_SELECTION_ID
-    ? 'capture-screenshot'
-    : DEFAULT_WITHOUT_SELECTION_ID;
 }
 
 /**
@@ -358,6 +378,50 @@ export async function activeTabHasSelection(): Promise<boolean> {
   }
 }
 
+/**
+ * Run one of the four stored defaults, picked by (single vs.
+ * double-click) × (selection present vs. not). The selection probe
+ * happens inside the timer / on the second click so it reflects
+ * the tab state at dispatch time (after any tab switch during the
+ * double-click window). Ignore-selection short-circuits the probe.
+ */
+async function dispatchAction(withoutId: string, withId: string): Promise<void> {
+  let useWith = false;
+  if (withId !== IGNORE_SELECTION_ID) {
+    useWith = await activeTabHasSelection();
+  }
+  if (useWith) {
+    const action = findCaptureAction(withId);
+    if (action) {
+      await action.run();
+      return;
+    }
+    // Unrecognized with-selection id falls through to without —
+    // the setters reject unknown ids, so this only fires on a
+    // storage migration regression or stale value left over from
+    // a prior build.
+    console.warn(
+      '[SeeWhatISee] unknown with-selection default id, falling through:',
+      withId,
+    );
+  }
+  const action = findCaptureAction(withoutId) ?? CAPTURE_ACTIONS[0]!;
+  await action.run();
+}
+
+/**
+ * Run the stored Double-click defaults — used by the
+ * `01-secondary-action` keyboard command. Mirrors the second-click
+ * branch of `handleActionClick` but skips the timer entirely (a
+ * keyboard press has no need for double-press detection — there's a
+ * separate command for that).
+ */
+export async function runDblDefault(): Promise<void> {
+  const dblWithoutId = await getDefaultDblWithoutSelectionId();
+  const dblWithId = await getDefaultDblWithSelectionId();
+  await dispatchAction(dblWithoutId, dblWithId);
+}
+
 export async function handleActionClick(): Promise<void> {
   // If the user is currently looking at a capture.html tab, clicking
   // the toolbar icon triggers its Capture button — same as clicking
@@ -376,83 +440,31 @@ export async function handleActionClick(): Promise<void> {
     }
   }
 
-  const withoutId = await getDefaultWithoutSelectionId();
-  const withId = await getDefaultWithSelectionId();
+  const clickWithoutId = await getDefaultWithoutSelectionId();
+  const clickWithId = await getDefaultWithSelectionId();
+  const dblWithoutId = await getDefaultDblWithoutSelectionId();
+  const dblWithId = await getDefaultDblWithSelectionId();
 
-  // Double-click: run the alternate action.
-  //
-  // With a selection present AND the user hasn't opted out via
-  // `ignore-selection`, always route to the details page — regardless
-  // of what the single-click default would be. That's the "give me
-  // the full dialog for this selection" intent, and it's the same
-  // target we'd already pick for every click default except
-  // `capture-with-details` itself. Probing on the second click (not
-  // once up-front) keeps the behavior in sync with the tab state at
-  // dispatch time, the same rationale that drives the probe inside
-  // the first-click timer below.
-  //
-  // Without a selection (or with `ignore-selection`), fall back to
-  // the classic alternate: `capture-with-details` becomes
-  // `capture-screenshot`, everything else becomes `capture-with-details`.
-  // The menu hints track this without-selection mapping (we can't
-  // predict selection state at menu-render time), so choosing the
-  // same mapping here keeps the hints honest for the common case.
+  // Double-click: cancel the pending first-click timer and run the
+  // dbl-* defaults instead.
   if (pendingClickTimer !== undefined) {
     clearTimeout(pendingClickTimer);
     pendingClickTimer = undefined;
-    if (withId !== IGNORE_SELECTION_ID && (await activeTabHasSelection())) {
-      await runWithErrorReporting(() => startCaptureWithDetails());
-      return;
-    }
-    if (withoutId === DEFAULT_WITHOUT_SELECTION_ID) {
-      await runWithErrorReporting(() => captureVisible());
-    } else {
-      await runWithErrorReporting(() => startCaptureWithDetails());
-    }
+    await runWithErrorReporting(() => dispatchAction(dblWithoutId, dblWithId));
     return;
   }
 
   // First click: wait for a potential second click before running
-  // the default action. If the user switches tabs during the 250 ms
-  // window, the capture targets whatever tab is visible when the
-  // timer fires — captureVisibleTab can only capture what's on
+  // the click-* defaults. If the user switches tabs during the
+  // 250 ms window, the capture targets whatever tab is visible when
+  // the timer fires — captureVisibleTab can only capture what's on
   // screen, and re-activating the original tab would be surprising.
   await new Promise<void>((resolve) => {
-    pendingClickTimer = setTimeout(async () => {
+    pendingClickTimer = setTimeout(() => {
       pendingClickTimer = undefined;
-      // Selection detection happens inside the timer so it reflects
-      // the tab state at dispatch time (after any tab switch during
-      // the double-click window). Ignore-selection skips the probe
-      // entirely — the user has opted out of selection-steered
-      // behavior.
-      let useWith = false;
-      if (withId !== IGNORE_SELECTION_ID) {
-        useWith = await activeTabHasSelection();
-      }
-      void runWithErrorReporting(async () => {
-        if (useWith) {
-          if (withId === 'capture-with-details') {
-            await startCaptureWithDetails();
-            return;
-          }
-          const action = findCaptureAction(withId);
-          if (action) {
-            await action.run();
-            return;
-          }
-          // Fall through — unrecognized with-selection id behaves
-          // like ignore-selection. Shouldn't happen in practice
-          // (the setter rejects unknown ids), so a live warning
-          // here would surface a storage-migration regression or
-          // a stale value left over from a previous build.
-          console.warn(
-            '[SeeWhatISee] unknown with-selection default id, falling through:',
-            withId,
-          );
-        }
-        const action = findCaptureAction(withoutId) ?? CAPTURE_ACTIONS[0]!;
-        await action.run();
-      }).then(resolve, resolve);
+      void runWithErrorReporting(() =>
+        dispatchAction(clickWithoutId, clickWithId),
+      ).then(resolve, resolve);
     }, DOUBLE_CLICK_MS);
   });
 }

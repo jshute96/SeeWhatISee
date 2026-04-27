@@ -14,13 +14,13 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 
 ### Chrome extension
 
-- Click the extension icon ![icon](src/icons/icon-16.png) to take a screenshot, opening the capture details page (see below).
+- Click the extension icon ![icon](src/icons/icon-16.png) to take a screenshot, opening the *Capture* page (see below).
   - Double-click it to bypass the details page and take a screenshot immediately.
   - If there's text selected on the page, the click instead copies the selected text.
 - Right-click the icon for more options:
   - Take a screenshot.
   - Capture the HTML contents of the page.
-  - **Capture with details…** Opens a review page (see below).
+  - **Capture…** Opens a review page (see below).
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
   - **Set default click action ▸** — Choose which action to apply
@@ -36,6 +36,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       Screenshot files are still saved in your Downloads folder.
 - **Keyboard shortcuts** can be configured on `chrome://extensions/shortcuts`.
   There's a link to this page on the **Set default** menu.
+- **Options** — Opens options page, where you can configure default actions
+  for click and double-click, default Save choices on the *Capture* page,
+  and hotkeys.
 
 #### Capturing selected text
 
@@ -49,9 +52,9 @@ The selection can be saved in three formats:
   - The markdown format preserves the content and structure, in a format friendly for both humans and agents to read.
   - When the selection is *already* markdown source, the original markdown is preserved without reformatting.
 
-On the **Capture with details** page, you can also view or edit the selection content.
+On the *Capture* page, you can also view or edit the selection content.
 
-#### Capturing with details
+#### *Capture* page
 
 This page allows full control of what's captured.  You can add highlights on the page and **add a prompt telling the agent what you want to do**.
 
@@ -213,7 +216,7 @@ present when that action was included.
     - `filename` — filename of the selection file (`.html`, `.txt`, or `.md`).
     - `format` — one of `"html"`, `"text"`, `"markdown"`.
     - `isEdited` — `true` if the user edited the captured body before saving.
-- `prompt` — user-entered prompt from the "Capture with details…"
+- `prompt` — user-entered prompt from the *Capture* page
   flow, giving instructions for agents on what to do with this capture.
 - `url` — URL of the captured tab, or `""` if unavailable.
 

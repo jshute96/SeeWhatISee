@@ -80,16 +80,21 @@ interface DetailsData {
    */
   screenshotError?: string;
   /**
-   * Format the details page should pre-check when the selection
-   * has content. Derived by the SW from the user's with-selection
-   * click default: a `capture-selection-<fmt>` default maps to its
-   * format, anything else falls through to `'markdown'` (the
-   * fresh-install default). `loadData()` still picks a different
-   * format if the chosen one has no content — e.g. an image-only
-   * selection has HTML content but the markdown / text bodies
-   * trim to empty, so the radio lands on HTML instead.
+   * Stored "Default items to save" preferences from the Options
+   * page, split by selection-presence. `loadData()` applies the
+   * matching branch on first paint — the format radio comes from
+   * `withSelection.format` (subject to that format having content;
+   * falls back to the first non-empty format otherwise).
    */
-  defaultSelectionFormat?: SelectionFormat;
+  capturePageDefaults: {
+    withoutSelection: { screenshot: boolean; html: boolean };
+    withSelection: {
+      screenshot: boolean;
+      html: boolean;
+      selection: boolean;
+      format: SelectionFormat;
+    };
+  };
 }
 
 /**
@@ -1125,28 +1130,23 @@ async function loadData(): Promise<void> {
       }
       if (anyFormatHasContent) {
         // Pick the initial radio. Prefer the user's configured
-        // with-selection default (from the click-default setting),
-        // falling back to the first format with content. The
+        // capture-page format default; fall back to the first format
+        // with content if the chosen one is empty for this capture
+        // (e.g. image-only selection → no text/markdown body). The
         // chosen format also becomes the "sticky default" that the
         // master checkbox restores when unchecked + re-checked.
-        const preferred = response.defaultSelectionFormat ?? null;
-        const initialFormat =
-          preferred && contentfulFormats.includes(preferred)
-            ? preferred
-            : contentfulFormats[0]!;
+        const preferred = response.capturePageDefaults.withSelection.format;
+        const initialFormat = contentfulFormats.includes(preferred)
+          ? preferred
+          : contentfulFormats[0]!;
         selectionRows[initialFormat].radio.checked = true;
         defaultSelectionFormat = initialFormat;
-        // At least one format is saveable — enable the master,
-        // default-check it, and reveal the format rows. A user
-        // who bothered to select text almost certainly wants it
-        // in the record. Also uncheck screenshot: when a selection
-        // exists, the details page opens focused on capturing it,
-        // not the whole page. The user can still tick screenshot
-        // back on before clicking Capture.
+        // At least one format is saveable — enable the master and
+        // reveal the format rows. The master's checked state, plus
+        // the screenshot/HTML rows, come from the stored
+        // `withSelection` defaults below (after the if/else block).
         selectionBox.disabled = false;
-        selectionBox.checked = true;
         selectionFormatsEl.hidden = false;
-        screenshotBox.checked = false;
       } else {
         // Every format is empty (typically a whitespace-only
         // selection). Leave the format rows hidden and surface a
@@ -1157,6 +1157,20 @@ async function loadData(): Promise<void> {
         selectionErrorIcon.title = 'Selection has no saveable content';
       }
     }
+    // Apply the user's stored Save-checkbox defaults. We branch on
+    // whether the page is in "with-selection" mode (master is
+    // available + at least one format had content) vs.
+    // "no-selection" mode. Each checkbox is set only when it isn't
+    // already disabled (artifact-error rows stay unchecked).
+    const useWithSelection = !selectionBox.disabled;
+    const cdd = response.capturePageDefaults;
+    const saveDefaults = useWithSelection ? cdd.withSelection : cdd.withoutSelection;
+    if (!screenshotBox.disabled) screenshotBox.checked = saveDefaults.screenshot;
+    if (!htmlBox.disabled) htmlBox.checked = saveDefaults.html;
+    if (useWithSelection) {
+      selectionBox.checked = cdd.withSelection.selection;
+    }
+
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
     // popping in a frame later). `complete` is false for a freshly-

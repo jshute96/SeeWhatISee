@@ -41,6 +41,12 @@ await cp(resolve(root, 'src/manifest.json'), resolve(dist, 'manifest.json'));
 //     picked up by tsc along with the rest of src/.
 await cp(resolve(root, 'src/capture.html'), resolve(dist, 'capture.html'));
 
+// 3b-ii. Copy the options page HTML. The controller (src/options.ts)
+//        compiles via tsc along with the rest of src/. Loaded as a
+//        classic <script> in options.html — keep it as a non-module
+//        TypeScript file (no top-level imports/exports).
+await cp(resolve(root, 'src/options.html'), resolve(dist, 'options.html'));
+
 // 3c. Copy the offscreen-document HTML into dist/. The accompanying
 //     TypeScript (src/offscreen.ts) is picked up by tsc; the HTML
 //     just hosts a <script> tag pointing at the compiled offscreen.js.

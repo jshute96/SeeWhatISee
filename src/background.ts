@@ -27,15 +27,19 @@ import {
   captureUrlOnly,
 } from './background/capture-actions.js';
 import {
+  findCaptureAction,
+  getDefaultDblWithSelectionId,
+  getDefaultDblWithoutSelectionId,
   getDefaultWithSelectionId,
   getDefaultWithoutSelectionId,
-  findCaptureAction,
   handleActionClick,
+  runDblDefault,
+  setDefaultDblWithSelectionId,
+  setDefaultDblWithoutSelectionId,
   setDefaultWithSelectionId,
   setDefaultWithoutSelectionId,
 } from './background/default-action.js';
 import {
-  ACTION_HOTKEY_INFO_ID,
   CLEAR_LOG_MENU_ID,
   COMMAND_PREFIX_PATTERN,
   COPY_LAST_HTML_MENU_ID,
@@ -43,7 +47,6 @@ import {
   COPY_LAST_SELECTION_MENU_ID,
   DEFAULT_CLICK_WITH_SEL_PREFIX,
   DEFAULT_CLICK_WITHOUT_SEL_PREFIX,
-  SHORTCUTS_URL,
   SNAPSHOTS_DIR_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
@@ -61,6 +64,7 @@ import {
   installDetailsMessageHandlers,
   startCaptureWithDetails,
 } from './background/capture-details.js';
+import { installOptionsMessageHandlers } from './background/options.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`
@@ -68,6 +72,7 @@ import {
 // buried in imports.
 installUnhandledRejectionHandler();
 installDetailsMessageHandlers();
+installOptionsMessageHandlers();
 
 chrome.action.onClicked.addListener(() => {
   // Fire-and-forget refresh so any hotkey edit since our last
@@ -90,6 +95,13 @@ chrome.action.onClicked.addListener(() => {
 chrome.commands.onCommand.addListener((command) => {
   void refreshMenusIfHotkeysChanged();
   const actionId = command.replace(COMMAND_PREFIX_PATTERN, '');
+  // Meta-command: run whatever the user has stored as their
+  // double-click default. Selection-aware via the same probe
+  // `handleActionClick` uses on its second-click branch.
+  if (actionId === 'secondary-action') {
+    void runWithErrorReporting(() => runDblDefault());
+    return;
+  }
   const action = findCaptureAction(actionId);
   if (!action) {
     console.warn('[SeeWhatISee] unhandled keyboard command:', command);
@@ -169,15 +181,6 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     } catch (err) {
       console.warn('[SeeWhatISee] failed to set without-selection default:', err);
     }
-    return;
-  }
-
-  // "Set hotkeys (Default …)" row at the top of the "Set default click
-  // action" submenu — open Chrome's shortcut-editor page. There's no
-  // programmatic API to rebind a command, so punting to the editor
-  // is the canonical flow.
-  if (id === ACTION_HOTKEY_INFO_ID) {
-    await chrome.tabs.create({ url: SHORTCUTS_URL });
     return;
   }
 
@@ -262,9 +265,14 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   clearCaptureError,
   runWithErrorReporting,
   handleActionClick,
+  runDblDefault,
   getDefaultWithSelectionId,
   getDefaultWithoutSelectionId,
+  getDefaultDblWithSelectionId,
+  getDefaultDblWithoutSelectionId,
   setDefaultWithSelectionId,
   setDefaultWithoutSelectionId,
+  setDefaultDblWithSelectionId,
+  setDefaultDblWithoutSelectionId,
   refreshActionTooltip,
 };
