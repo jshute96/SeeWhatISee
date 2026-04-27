@@ -12,10 +12,10 @@ All keys live in `chrome.storage.local`.
 
 | Key | Pool | Fresh-install default |
 |------|------|------------------------|
-| `defaultClickWithSelection` | `WITH_SELECTION_CHOICES` (`capture`, `save-selection-{html,text,markdown}`, `ignore-selection`) | `capture` |
+| `defaultClickWithSelection` | `WITH_SELECTION_CHOICES` (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`, `ignore-selection`) | `capture` |
 | `defaultClickWithoutSelection` | every `CAPTURE_ACTIONS` entry except `save-selection-*` | `capture` |
-| `defaultDblWithSelection` | same as click-with-sel | `save-selection-markdown` |
-| `defaultDblWithoutSelection` | same as click-without-sel | `save-screenshot` |
+| `defaultDblWithSelection` | same as click-with-sel | `save-defaults` |
+| `defaultDblWithoutSelection` | same as click-without-sel | `save-defaults` |
 
 - The "with-selection" pools include `ignore-selection`, a sentinel
   that means "skip the selection probe and fall through to the
@@ -29,7 +29,8 @@ All keys live in `chrome.storage.local`.
   - `capture-screenshot` → `save-screenshot`
   - `capture-page-contents` → `save-page-contents`
   - `capture-url` → `save-url`
-  - `capture-both` → `save-both`
+  - `capture-both` → `save-all`
+  - `save-both` → `save-all` (intermediate id from earlier rename)
   - `capture-selection-{html,text,markdown}` →
     `save-selection-{html,text,markdown}`
   - `capture-now` → `save-screenshot` (older legacy id, predates
@@ -139,8 +140,9 @@ than naming a specific action:
   a pressed Secondary hotkey always fires the same dispatch a Dbl
   click would.
 
-The remaining manifest commands (`11-capture`, `12-save-screenshot`,
-etc.) name specific actions and route through `findCaptureAction` —
+The remaining manifest commands (`05-capture`, `11-save-defaults`,
+`12-save-screenshot`, etc.) name specific actions and route through
+`findCaptureAction` —
 see `architecture.md` → "Keyboard commands" for that side.
 
 ## Options page (`options.html`)
@@ -151,6 +153,8 @@ Reachable via the toolbar action's right-click → Options or
 
 ### Layout
 
+Sections are rendered top-to-bottom in this order:
+
 - **Default action hotkey** — two-row table:
   - `Default action` (same as click on toolbar icon) → shows the
     `_execute_action` shortcut.
@@ -159,17 +163,10 @@ Reachable via the toolbar action's right-click → Options or
   - Read-only — Chrome has no API to bind hotkeys. An inline "Chrome
     extension settings page" button opens
     `chrome://extensions/shortcuts`.
-- **Default actions with no text selection** — table over every
-  non-selection `CAPTURE_ACTIONS` entry. Columns: Click radio,
-  Double-click radio, Action, Hotkey. Rows are bucketed by delay
-  value under static section-row labels (`Capture immediately`,
-  `Capture after 2 second delay`, `Capture after 5 second delay`).
-- **Default actions with text selected** — table over the four
-  `WITH_SELECTION_CHOICES` action ids
-  (`capture`, `save-selection-{html,text,markdown}`)
-  plus the `ignore-selection` sentinel. Same column shape.
-- **Default items to save on Capture page** — two side-by-side
-  fieldsets that mirror `capture.html`:
+- **Default items to save on *Capture* page and in *Save default
+  items*** — two side-by-side fieldsets that mirror `capture.html`.
+  Sits second so users configuring the `save-defaults` shortcut see
+  what it will write before picking it as a default action.
   - *Without selection*: Save screenshot, Save HTML.
   - *With selection*: Save screenshot, Save HTML, Save selection
     master + nested format radios (`as HTML / as text / as markdown`).
@@ -177,6 +174,15 @@ Reachable via the toolbar action's right-click → Options or
     format radios are independent — the format radios persist the
     *default* `as`-mode for whenever Save selection is on, so they
     stay enabled even when Save selection is off.
+- **Default actions with no text selection** — table over every
+  non-selection `CAPTURE_ACTIONS` entry. Columns: Click radio,
+  Double-click radio, Action, Hotkey. Rows are bucketed by delay
+  value under static section-row labels (`Capture immediately`,
+  `Capture after 2 second delay`, `Capture after 5 second delay`).
+- **Default actions with text selected** — table over the five
+  `WITH_SELECTION_CHOICES` action ids
+  (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
+  plus the `ignore-selection` sentinel. Same column shape.
 
 ### Wire
 

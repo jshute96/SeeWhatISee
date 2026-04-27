@@ -33,7 +33,7 @@ that wires Chrome event listeners. The substantive logic lives in
 `src/background/`:
 
 - `error-reporting.ts` — icon/tooltip error surface (`runWithErrorReporting`).
-- `capture-actions.ts` — the `CAPTURE_ACTIONS` table + `captureUrlOnly` / `captureBoth` shortcuts.
+- `capture-actions.ts` — the `CAPTURE_ACTIONS` table + `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts.
 - `default-action.ts` — Click + Double-click defaults, `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder.
 - `context-menu.ts` — `installContextMenu`, menu title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard).
 - `capture-details.ts` — Capture-page per-tab session + `ensure*Downloaded` artifact cache.
@@ -98,19 +98,32 @@ sub-modules above.
     ["Capture page flow"](#capture-page-flow) below
     for the full design.
 
-  The two `more` bases are shortcuts for the two fixed checkbox
-  combinations in the Capture page flow:
+  The `more` bases are shortcuts that skip the Capture-page dialog
+  round-trip:
 
+  - **`save-defaults` — "Save default items".** Runs the same
+    artifact-write path the Capture page would on Save click, applying
+    the user's stored `capturePageDefaults` (split by
+    selection-presence). Probes the captured page state and picks the
+    with-selection branch when at least one selection format has
+    saveable content — same rule the Capture page uses to decide
+    whether the master Save-selection row is enabled. Format pick
+    prefers `capturePageDefaults.withSelection.format` and falls back
+    to the first format with non-empty content. Throws on
+    `screenshotError` / `htmlError` only when the matching default is
+    set; the toolbar error channel surfaces the reason.
   - **`save-url` — "Save URL".** Equivalent to the Capture
     page with *neither* file checked: the record gets just
     `timestamp` + `url` (no `screenshot`, no `contents`). Goes
     through `captureBothToMemory` + `recordDetailedCapture` so the
     delay / active-tab-after-delay semantics match; the screenshot
     + HTML payloads are discarded.
-  - **`save-both` — "Save screenshot and HTML".**
-    Equivalent to the Capture page with *both* files checked.
-    Downloads both artifacts and writes a record that references
-    both.
+  - **`save-all` — "Save everything".** Saves the screenshot, the
+    HTML, and (when the page has a non-empty selection) the selection
+    in the user's configured selection-format default — same fallback
+    rule as `save-defaults`. Re-throws `screenshotError` /
+    `htmlError`; the selection branch is skipped silently when no
+    selection was present or the scrape errored.
 
 - **Default click + double-click actions.** Four independent
   defaults are persisted in `chrome.storage.local`, one per
@@ -122,12 +135,12 @@ sub-modules above.
   dispatch paths, tooltip layout — lives in
   [options-and-settings.md](options-and-settings.md).
 
-  - **With-selection choices** (five, all at delay 0):
+  - **With-selection choices** (six, all at delay 0):
     - `save-selection-html` — save the selection as an HTML
       fragment.
     - `save-selection-text` — save the selection as plain text.
     - `save-selection-markdown` — save the selection as markdown.
-      Default on fresh installs. `selectionMarkdownBody` either
+      `selectionMarkdownBody` either
       short-circuits to the verbatim selection text (when the
       selection is itself markdown source — e.g. a `.md` file viewed
       in GitHub `?plain=1` or a CodeMirror editor, where running
@@ -142,6 +155,11 @@ sub-modules above.
       checkbox state on first paint comes from
       `capturePageDefaults`, not from this click default — see
       [options-and-settings.md → Capture-page first-paint pre-checks](options-and-settings.md#capture-page-first-paint-pre-checks).
+    - `save-defaults` — write the same artifacts the Capture page
+      would on Save click, applying `capturePageDefaults` without
+      ever opening the page. Default for the Double-click slot on
+      fresh installs (both Click and Dbl Without-selection default to
+      `capture` / `save-defaults` respectively).
     - `ignore-selection` — sentinel. Skip the probe and use the
       without-selection default.
   - **Without-selection choices**: every `CAPTURE_ACTIONS` entry
@@ -165,7 +183,7 @@ sub-modules above.
   - **Capture with delay ▸** — submenu with the 2s and 5s variants
     of every base with `showInDelayedSubmenu` (primary-group by
     default, plus any more-group base that opts in — e.g.
-    `save-both`). Separator-grouped by delay. In-submenu
+    `save-defaults`, `save-all`). Separator-grouped by delay. In-submenu
     separators don't count against the top-level cap, so the visual
     grouping is free. More-group actions that don't opt in
     (`save-url` and the three
@@ -198,20 +216,27 @@ sub-modules above.
   - **More ▸** — submenu home for the more-group capture actions
     and for infrequent utilities that would otherwise crowd out
     primary capture entries at the top level.
-    - **Save URL** / **Save screenshot and HTML** — shortcuts
-      for the "neither" and "both" checkbox combinations of the
-      Capture page flow, skipping the dialog round-trip.
+    - **Save default items** — runs `saveDefaults`: the
+      Capture-page Save path with the user's stored
+      `capturePageDefaults`, no dialog. Listed first under More with
+      its own divider, since it's the everyday Save-without-dialog
+      pick.
+    - **Save URL** / **Save everything** — shortcuts
+      for the "neither" and "everything" checkbox combinations,
+      skipping the dialog round-trip.
       - *Save URL* is a `BASE_CAPTURE_ACTION` with
         `supportsDelayed: false` (no delayed variants): the action
         records the URL at click time, so a delay would only let
         the user navigate somewhere else first — a confusing
         interaction that's easy to reproduce intentionally just by
         opening the other page.
-      - *Save screenshot and HTML* gets delayed variants and
+      - *Save everything* (`save-all`) gets delayed variants and
         sets `showInDelayedSubmenu: true` so they surface in the
         main "Capture with delay" submenu next to the primary
         delayed entries; matches the other capture actions'
-        active-tab-after-delay semantics.
+        active-tab-after-delay semantics. Also saves the selection
+        when one is present, picking the user's configured
+        selection-format default.
     - **Save selection as HTML / text / markdown** — three
       format-specific shortcuts that each call
       `captureSelection(format)`. The scrape returns all three
@@ -597,9 +622,21 @@ sub-modules above.
 - Impact on the More-menu shortcuts:
   - `save-url` (URL-only) deliberately ignores `htmlError` —
     it doesn't need HTML anyway.
-  - `save-both` (screenshot + HTML) re-throws `screenshotError`
-    or `htmlError` so the toolbar icon / tooltip surfaces the
-    reason via the standard error-reporting channel.
+  - `save-defaults` re-throws `screenshotError` / `htmlError` only
+    when the matching default is on (e.g. an `htmlError` only fails
+    the action when `withSelection.html === true` /
+    `withoutSelection.html === true` for the active branch);
+    otherwise the action records what it can and leaves the broken
+    artifact off the sidecar. `selectionError` is never re-thrown —
+    `data.selections` is unset on a selection-scrape failure, so
+    `useWithSelection` collapses to false and the user's
+    with-selection defaults don't apply.
+  - `save-all` (screenshot + HTML + selection-if-any) re-throws
+    `screenshotError` or `htmlError` so the toolbar icon / tooltip
+    surfaces the reason via the standard error-reporting channel.
+    The selection branch is silently skipped when no selection was
+    present or its scrape errored — same `selectionError` policy as
+    `save-defaults`.
 
 ### What the page shows
 

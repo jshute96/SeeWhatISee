@@ -32,8 +32,8 @@ const DEFAULT_DBL_WITH_SELECTION_KEY = 'defaultDblWithSelection';
 const DEFAULT_DBL_WITHOUT_SELECTION_KEY = 'defaultDblWithoutSelection';
 const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture';
 const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture';
-const DEFAULT_DBL_WITH_SELECTION_ID = 'save-selection-markdown';
-const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'save-screenshot';
+const DEFAULT_DBL_WITH_SELECTION_ID = 'save-defaults';
+const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'save-defaults';
 // Sentinel id used in place of a CAPTURE_ACTIONS id when the user
 // wants a page selection to *not* steer the click default. Never
 // appears in CAPTURE_ACTIONS; `handleActionClick` treats it as "fall
@@ -82,6 +82,7 @@ export interface WithSelectionChoice {
 // of the section.
 const WITH_SELECTION_CHOICE_ACTION_IDS = [
   'capture',
+  'save-defaults',
   'save-selection-html',
   'save-selection-text',
   'save-selection-markdown',
@@ -141,7 +142,8 @@ const LEGACY_BASE_ID_MAP: Record<string, string> = {
   'capture-screenshot': 'save-screenshot',
   'capture-page-contents': 'save-page-contents',
   'capture-url': 'save-url',
-  'capture-both': 'save-both',
+  'capture-both': 'save-all',
+  'save-both': 'save-all',
   'capture-selection-html': 'save-selection-html',
   'capture-selection-text': 'save-selection-text',
   'capture-selection-markdown': 'save-selection-markdown',

@@ -4,9 +4,12 @@ import {
   captureVisible,
   downloadHtml,
   downloadScreenshot,
+  downloadSelection,
   recordDetailedCapture,
   savePageContents,
+  type SelectionFormat,
 } from '../capture.js';
+import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 import { startCaptureWithDetails } from './capture-details.js';
 
 // Capture actions surfaced to the user.
@@ -138,17 +141,83 @@ export async function captureUrlOnly(delayMs = 0): Promise<void> {
 }
 
 /**
- * "Save screenshot and HTML" — the Capture-page "both files
- * checked" path, run without opening the page. Grabs both artifacts,
- * writes them, and records a sidecar entry referencing both.
+ * "Save default items" — runs the same artifact-write path the
+ * Capture page would on Save click, applying the user's stored
+ * `capturePageDefaults` (split by selection-presence) without ever
+ * opening the page. Selection-aware on its own: probes the captured
+ * page state and picks the with-selection branch when at least one
+ * selection format has saveable content, mirroring the Capture page's
+ * own master-row enable rule.
+ *
+ * Throws when the user's defaults asked for an artifact that errored
+ * at scrape time — same behavior as `captureAll`. The toolbar error
+ * channel surfaces the reason on the icon / tooltip so the user
+ * understands why nothing landed.
+ *
+ * Selection format pick mirrors the Capture page: prefer the user's
+ * configured default; fall back to the first format with non-empty
+ * content when the preferred format is empty for this capture (e.g.
+ * image-only selection → empty text body, configured default = text).
+ */
+export async function saveDefaults(delayMs = 0): Promise<void> {
+  const data = await captureBothToMemory(delayMs);
+  const defaults = await getCaptureDetailsDefaults();
+
+  const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
+  const contentfulFormats = data.selections
+    ? allFormats.filter((fmt) => (data.selections![fmt] ?? '').trim().length > 0)
+    : [];
+  const useWithSelection = contentfulFormats.length > 0;
+  const branch = useWithSelection ? defaults.withSelection : defaults.withoutSelection;
+
+  if (branch.screenshot && data.screenshotError) {
+    throw new Error(data.screenshotError);
+  }
+  if (branch.html && data.htmlError) {
+    throw new Error(data.htmlError);
+  }
+
+  let selectionFormat: SelectionFormat | undefined;
+  if (useWithSelection && defaults.withSelection.selection) {
+    const preferred = defaults.withSelection.format;
+    selectionFormat = contentfulFormats.includes(preferred)
+      ? preferred
+      : contentfulFormats[0];
+  }
+
+  if (branch.screenshot) await downloadScreenshot(data);
+  if (branch.html) await downloadHtml(data);
+  if (selectionFormat) await downloadSelection(data, selectionFormat);
+
+  await recordDetailedCapture({
+    capture: data,
+    includeScreenshot: branch.screenshot,
+    includeHtml: branch.html,
+    selectionFormat,
+  });
+}
+
+/**
+ * "Save everything" — saves the screenshot, the HTML, and (when the
+ * page has a non-empty selection at capture time) the selection in
+ * the user's configured selection-format default. No dialog; no
+ * Capture page round-trip.
+ *
+ * Selection format: prefer `capturePageDefaults.withSelection.format`;
+ * fall back to the first format with non-empty content if the
+ * preferred format is empty for this capture (e.g. image-only
+ * selection → empty text body, configured default = text). When the
+ * selection scrape failed (`selectionError`) or no selection was
+ * present, the selection branch is skipped silently — saving "what's
+ * there" is the action's contract, not "fail if no selection".
  *
  * Unlike the Capture page flow (which gracefully falls back to a
- * screenshot-only UI), this shortcut *requires* both artifacts by
- * definition, so we surface a `screenshotError` or `htmlError` as a
- * thrown error — the action's error-reporting channel then swaps the
- * icon / tooltip so the user sees why nothing landed.
+ * screenshot-only UI), this shortcut *requires* the screenshot and
+ * HTML by definition, so a `screenshotError` or `htmlError` throws
+ * — the action's error-reporting channel then swaps the icon /
+ * tooltip so the user sees why nothing landed.
  */
-export async function captureBoth(delayMs = 0): Promise<void> {
+export async function captureAll(delayMs = 0): Promise<void> {
   const data = await captureBothToMemory(delayMs);
   if (data.screenshotError) {
     throw new Error(data.screenshotError);
@@ -158,10 +227,26 @@ export async function captureBoth(delayMs = 0): Promise<void> {
   }
   await downloadScreenshot(data);
   await downloadHtml(data);
+
+  const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
+  const contentfulFormats = data.selections
+    ? allFormats.filter((fmt) => (data.selections![fmt] ?? '').trim().length > 0)
+    : [];
+  let selectionFormat: SelectionFormat | undefined;
+  if (contentfulFormats.length > 0) {
+    const defaults = await getCaptureDetailsDefaults();
+    const preferred = defaults.withSelection.format;
+    selectionFormat = contentfulFormats.includes(preferred)
+      ? preferred
+      : contentfulFormats[0];
+    await downloadSelection(data, selectionFormat);
+  }
+
   await recordDetailedCapture({
     capture: data,
     includeScreenshot: true,
     includeHtml: true,
+    selectionFormat,
   });
 }
 
@@ -184,6 +269,20 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTooltipFragment: 'Capture...',
     group: 'primary',
     run: (delayMs) => startCaptureWithDetails(delayMs),
+  },
+  {
+    // Runs the same artifact-write path the Capture page would on
+    // Save click, applying the user's stored `capturePageDefaults`.
+    // Lives in the More group (the top-level menu is reserved for
+    // the three primary single-artifact actions + Capture...) but
+    // its delayed variants are promoted into the Capture-with-delay
+    // submenu — same pattern as `save-all`.
+    baseId: 'save-defaults',
+    baseTitle: 'Save default items',
+    baseTooltipFragment: 'Save default items',
+    group: 'more',
+    showInDelayedSubmenu: true,
+    run: (delayMs) => saveDefaults(delayMs),
   },
   {
     baseId: 'save-screenshot',
@@ -213,17 +312,17 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     run: (delayMs) => captureUrlOnly(delayMs),
   },
   {
-    baseId: 'save-both',
-    baseTitle: 'Save screenshot and HTML',
-    baseTooltipFragment: 'Save screenshot and HTML',
+    baseId: 'save-all',
+    baseTitle: 'Save everything',
+    baseTooltipFragment: 'Save everything',
     group: 'more',
     // Promote delayed variants up into the Capture-with-delay
     // submenu (next to plain screenshot / HTML / Capture...). The
     // undelayed variant stays in More — this is still a slightly
-    // niche combo at 0s — but a delayed screenshot-AND-HTML is
+    // niche combo at 0s — but a delayed save-everything is
     // useful enough to surface alongside the primary delayed entries.
     showInDelayedSubmenu: true,
-    run: (delayMs) => captureBoth(delayMs),
+    run: (delayMs) => captureAll(delayMs),
   },
   // Three selection-format shortcuts. A single capture can only
   // produce one selection file, so we expose each serialization

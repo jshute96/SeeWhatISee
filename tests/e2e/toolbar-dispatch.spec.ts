@@ -932,8 +932,10 @@ test('getDefaultWithoutSelectionId: migrates legacy action ids to the current na
     { legacy: 'capture-page-contents', current: 'save-page-contents' },
     { legacy: 'capture-page-contents-2s', current: 'save-page-contents-2s' },
     { legacy: 'capture-url', current: 'save-url' },
-    { legacy: 'capture-both', current: 'save-both' },
-    { legacy: 'capture-both-2s', current: 'save-both-2s' },
+    { legacy: 'capture-both', current: 'save-all' },
+    { legacy: 'capture-both-2s', current: 'save-all-2s' },
+    { legacy: 'save-both', current: 'save-all' },
+    { legacy: 'save-both-2s', current: 'save-all-2s' },
     { legacy: 'capture-now', current: 'save-screenshot' },
     { legacy: 'capture-now-2s', current: 'save-screenshot-2s' },
   ];

@@ -1,6 +1,7 @@
 // E2E coverage for the two More-submenu capture shortcuts:
 // `captureUrlOnly` (Capture page flow with neither file checked) and
-// `captureBoth` (Capture page flow with both files checked). Both are
+// `captureAll` (Save everything: screenshot + HTML + selection if any).
+// Both are
 // thin wrappers that go through the same Capture page flow helpers
 // (`captureBothToMemory`, `recordDetailedCapture`), so these tests
 // mainly pin the wiring — i.e. that the two shortcut entry points
@@ -16,7 +17,7 @@ const SCREENSHOT_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 const CONTENTS_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
 
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test here takes at least one screenshot (captureBoth always;
+// Each test here takes at least one screenshot (captureAll always;
 // captureUrlOnly also goes through captureBothToMemory). Cushion the
 // start so adjacent tests don't trip the quota.
 test.beforeEach(async () => {
@@ -52,7 +53,7 @@ async function readLatestRecord(sw: Worker): Promise<CaptureRecord> {
 // lose the patch.
 async function runWithSpy(
   sw: Worker,
-  fnName: 'captureUrlOnly' | 'captureBoth',
+  fnName: 'captureUrlOnly' | 'captureAll',
 ): Promise<void> {
   await sw.evaluate(async (name) => {
     interface SpyState {
@@ -114,7 +115,7 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   await page.close();
 });
 
-test('captureBoth writes PNG + HTML + log record referencing both', async ({
+test('captureAll writes PNG + HTML + log record referencing both', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -127,7 +128,7 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
   await page.bringToFront();
 
   const sw = await getServiceWorker();
-  await runWithSpy(sw, 'captureBoth');
+  await runWithSpy(sw, 'captureAll');
 
   const record = await readLatestRecord(sw);
   expect(record.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
@@ -159,7 +160,7 @@ test('captureBoth writes PNG + HTML + log record referencing both', async ({
 // The two More-submenu shortcuts deliberately diverge when
 // `captureBothToMemory` returns an `htmlError`:
 //   - `captureUrlOnly` ignores it (URL-only records never need HTML).
-//   - `captureBoth` re-throws so `runWithErrorReporting` can swap in
+//   - `captureAll` re-throws so `runWithErrorReporting` can swap in
 //     the toolbar error icon + tooltip — the shortcut requires HTML
 //     by definition.
 // We simulate the failure by stubbing `chrome.scripting.executeScript`
@@ -236,7 +237,7 @@ test('captureUrlOnly: htmlError is ignored — URL-only record still lands', asy
   await page.close();
 });
 
-test('captureBoth: htmlError is re-thrown so the toolbar error channel surfaces it', async ({
+test('captureAll: htmlError is re-thrown so the toolbar error channel surfaces it', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -255,9 +256,9 @@ test('captureBoth: htmlError is re-thrown so the toolbar error channel surfaces 
       try {
         await (
           self as unknown as {
-            SeeWhatISee: { captureBoth: () => Promise<void> };
+            SeeWhatISee: { captureAll: () => Promise<void> };
           }
-        ).SeeWhatISee.captureBoth();
+        ).SeeWhatISee.captureAll();
         return null;
       } catch (err) {
         return err instanceof Error ? err.message : String(err);

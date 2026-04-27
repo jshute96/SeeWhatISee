@@ -26,8 +26,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **Set default click action ▸** — Choose which action to apply
     when clicking the icon, with or without text selected.
   - **More ▸**
+    - **Save default items** — Saves the default items the *Capture* page saves, according to current options.
     - **Save URL** — Record just the current tab's URL, without a screenshot.
-    - **Save screenshot and HTML** — Save both the screenshot and the HTML snapshot.
+    - **Save everything** — Saves the screenshot, the HTML, and the current selection (if any).
     - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
     - **Snapshots directory** — Opens the on-disk capture directory

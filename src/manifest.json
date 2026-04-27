@@ -34,8 +34,11 @@
     "01-secondary-action": {
       "description": "Secondary action (same as double-click)"
     },
-    "11-capture": {
+    "05-capture": {
       "description": "Capture…"
+    },
+    "11-save-defaults": {
+      "description": "Save default items (without opening Capture page)"
     },
     "12-save-screenshot": {
       "description": "Save screenshot"
@@ -46,8 +49,8 @@
     "14-save-url": {
       "description": "Save URL"
     },
-    "15-save-both": {
-      "description": "Save screenshot and HTML"
+    "15-save-all": {
+      "description": "Save everything (screenshot, contents, and selection)"
     },
     "21-save-selection-html": {
       "description": "Save selection as HTML"

@@ -520,17 +520,20 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //   Save HTML contents
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Capture... in 2s
+//       • Save default items in 2s
 //       • Save screenshot in 2s
 //       • Save HTML contents in 2s
-//       • Save screenshot and HTML in 2s
+//       • Save everything in 2s
 //       ─────────
 //       • Capture... in 5s
+//       • Save default items in 5s
 //       • Save screenshot in 5s
 //       • Save HTML contents in 5s
-//       • Save screenshot and HTML in 5s
+//       • Save everything in 5s
 //   Set default click action  ▸     (submenu; ✓ on selected in each section)
 //         ──  When text is selected  ──      (disabled header)
 //       ✓ Capture...
+//         Save default items
 //         Save selection as HTML
 //         Save selection as text
 //         Save selection as markdown
@@ -538,23 +541,28 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //       ─────────
 //         ──  When no text is selected  ──   (disabled header)
 //       ✓ Capture...
+//         Save default items
 //         Save screenshot
 //         Save HTML contents
 //         Save URL                         (no delayed variants)
-//         Save screenshot and HTML
+//         Save everything
 //       ─────────
 //         Capture... in 2s
+//         Save default items in 2s
 //         Save screenshot in 2s
 //         Save HTML contents in 2s
-//         Save screenshot and HTML in 2s
+//         Save everything in 2s
 //       ─────────
 //         Capture... in 5s
+//         Save default items in 5s
 //         Save screenshot in 5s
 //         Save HTML contents in 5s
-//         Save screenshot and HTML in 5s
+//         Save everything in 5s
 //   More  ▸                         (submenu)
+//       • Save default items             (runs Capture-page Save with stored defaults, no dialog)
+//       ─────────
 //       • Save URL
-//       • Save screenshot and HTML
+//       • Save everything
 //       ─────────
 //       • Save selection as HTML         (saves the selected HTML fragment)
 //       • Save selection as text         (saves selection.toString())
@@ -656,9 +664,9 @@ export async function installContextMenu(): Promise<void> {
   // The three undelayed primary capture actions, one per base action.
   // Titles carry a right-side (Click) / (Double-click) / hotkey hint
   // when they match the current defaults or have a bound command —
-  // see actionMenuTitle. More-group base actions (save-url,
-  // save-both) live in the More submenu and don't get a top-level
-  // slot.
+  // see actionMenuTitle. More-group base actions (save-defaults,
+  // save-url, save-all) live in the More submenu and don't get a
+  // top-level slot.
   for (const action of captureActionsWithDelay(0, 'primary')) {
     chrome.contextMenus.create({
       id: action.id,
@@ -777,13 +785,22 @@ export async function installContextMenu(): Promise<void> {
   // without a special case, and `setDefaultWithoutSelectionId`'s
   // hint-refresh loop can update their titles too.
   //
-  // A separator is dropped between the non-selection entries
-  // (`save-url`, `save-both`) and the `save-selection-*` format
-  // shortcuts — the two groups are semantically distinct (work on
-  // any page vs. only when text is selected) and the divider makes
-  // that visible at a glance.
+  // Two separators split the More-group entries into three groups:
+  //   1. `save-defaults` (the everyday Save-defaults shortcut), then
+  //   2. the non-selection capture-page shortcuts (`save-url`,
+  //      `save-all`), then
+  //   3. the `save-selection-*` format shortcuts.
+  // Group (1) is the user's most likely Save-without-dialog pick, so
+  // it sits at the top with its own divider. The (2)/(3) split keeps
+  // the always-applicable shortcuts visually distinct from the ones
+  // that only work when text is selected.
+  let moreDefaultsSeparatorInserted = false;
   let moreSelectionSeparatorInserted = false;
   for (const action of captureActionsWithDelay(0, 'more')) {
+    if (action.baseId !== 'save-defaults' && !moreDefaultsSeparatorInserted) {
+      createSeparator(`${MORE_PARENT_ID}-sep-defaults`, MORE_PARENT_ID);
+      moreDefaultsSeparatorInserted = true;
+    }
     if (isSelectionBaseId(action.baseId) && !moreSelectionSeparatorInserted) {
       createSeparator(`${MORE_PARENT_ID}-sep-selection`, MORE_PARENT_ID);
       moreSelectionSeparatorInserted = true;

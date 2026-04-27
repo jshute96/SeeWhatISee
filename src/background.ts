@@ -23,8 +23,9 @@ import {
   runWithErrorReporting,
 } from './background/error-reporting.js';
 import {
-  captureBoth,
+  captureAll,
   captureUrlOnly,
+  saveDefaults,
 } from './background/capture-actions.js';
 import {
   findCaptureAction,
@@ -246,7 +247,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   savePageContents,
   captureBothToMemory,
   captureUrlOnly,
-  captureBoth,
+  captureAll,
+  saveDefaults,
   captureSelection,
   downloadScreenshot,
   downloadHtml,
