@@ -1,9 +1,9 @@
-// E2E coverage for the core "Capture with details…" flow: the
+// E2E coverage for the core "Capture page" flow: the
 // save-option matrix (PNG only, HTML only, PNG+HTML, URL-only ±
 // prompt) and the tab lifecycle (positioning next to the opener,
 // returning focus on close).
 //
-// The rest of the details-flow surface lives in sibling specs:
+// The rest of the Capture page flow surface lives in sibling specs:
 //   - `capture-details-copy.spec.ts` — copy-filename buttons and
 //     per-tab download-cache semantics.
 //   - `capture-details-edit.spec.ts` — edit-html / edit-selection
@@ -202,7 +202,7 @@ test('details: tab opens next to opener and returns focus on close', async ({
   }
 
   // Three tabs total so the opener has neighbors on both sides
-  // and the details tab can't accidentally satisfy the
+  // and the Capture page tab can't accidentally satisfy the
   // "right-neighbor" assertion by being at the end of the strip.
   // Distinct colors make it easy to tell which tab Chrome
   // activates if a regression bites.
@@ -244,7 +244,7 @@ test('details: tab opens next to opener and returns focus on close', async ({
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // Verify the details tab is at openerIndex + 1, i.e. immediately
+  // Verify the Capture page tab is at openerIndex + 1, i.e. immediately
   // to the right of the opener. We can't filter `chrome.tabs.query`
   // by `url` (that needs the `tabs` permission, which the manifest
   // deliberately omits), so we look the tab up via its session-
@@ -257,7 +257,7 @@ test('details: tab opens next to opener and returns focus on close', async ({
     const tab = await chrome.tabs.get(tabId);
     return tab.index;
   });
-  // The details tab opens immediately to the right of the opener
+  // The Capture page tab opens immediately to the right of the opener
   // (`index: active.index + 1` in startCaptureWithDetails).
   expect(detailsIndex).toBe(openerIndex + 1);
 

@@ -1,11 +1,11 @@
 // E2E coverage for the two More-submenu capture shortcuts:
-// `captureUrlOnly` (details flow with neither file checked) and
-// `captureBoth` (details flow with both files checked). Both are
-// thin wrappers that go through the same details-flow helpers
+// `captureUrlOnly` (Capture page flow with neither file checked) and
+// `captureBoth` (Capture page flow with both files checked). Both are
+// thin wrappers that go through the same Capture page flow helpers
 // (`captureBothToMemory`, `recordDetailedCapture`), so these tests
 // mainly pin the wiring — i.e. that the two shortcut entry points
-// end up writing the same kind of log record the details UI would
-// produce for those checkbox combinations.
+// end up writing the same kind of log record the Capture page UI
+// would produce for those checkbox combinations.
 
 import fs from 'node:fs';
 import type { Worker } from '@playwright/test';

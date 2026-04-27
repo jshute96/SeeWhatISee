@@ -19,7 +19,7 @@ import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js
 // sensibly in both states the user can put a page in:
 //   - With a selection on the page — most users want the selection
 //     captured; the three "Capture selection as …" shortcuts and the
-//     details flow (with the selection-only checkbox set) are
+//     Capture page flow (with the selection-only checkbox set) are
 //     meaningful defaults here. `Ignore selection` is the opt-out:
 //     treat the click as if no selection existed and fall through to
 //     the other default.
@@ -353,7 +353,7 @@ export async function setDefaultWithSelectionId(id: string): Promise<void> {
 // Double-click detection state. A second click within the window
 // runs an alternate action:
 //   - Default is capture-with-details → double-click takes a screenshot
-//   - Any other default → double-click opens capture with details
+//   - Any other default → double-click opens Capture page
 let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
 
 const DOUBLE_CLICK_MS = 250;

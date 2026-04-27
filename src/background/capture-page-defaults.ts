@@ -3,7 +3,7 @@
 // normalizes the shape so callers can trust every field is present and
 // well-typed even if storage holds a partial / legacy object.
 //
-// The capture page (`capture-page.ts`) reads these to seed its Save
+// The Capture page (`capture-page.ts`) reads these to seed its Save
 // checkboxes on first paint, and the options page reads / writes them
 // via the SW message handlers in `background/options.ts`.
 

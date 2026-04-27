@@ -1,4 +1,4 @@
-// E2E coverage for the edit dialogs on the capture page — page
+// E2E coverage for the edit dialogs on the Capture page — page
 // contents HTML, selection HTML, selection text, selection
 // markdown — plus the shared Edit/Preview toggle wiring and the
 // graceful UX for a failed HTML/selection scrape (restricted URLs).
@@ -12,7 +12,7 @@
 //   - Preview toggle: sandboxed blob iframe, base target=_blank,
 //     <script>/<meta refresh> stripping, malformed HTML recovery,
 //     markdown rendering, script stripping in raw HTML inside md.
-//   - HTML scrape failure still opens the details page with the
+//   - HTML scrape failure still opens the Capture page with the
 //     right rows disabled + error icons, and still allows a
 //     url-only/prompt-only capture.
 
@@ -131,7 +131,7 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
 
 // Whitespace-only variant: the scraped fragment's `innerHTML` is
 // non-empty (so the SW sends us a `selections` object), but every
-// format trims to empty. The details page must collapse the whole
+// format trims to empty. The Capture page must collapse the whole
 // selection group to disabled + unchecked, not leave the master
 // enabled with three dead radios underneath.
 async function seedWhitespaceOnlySelection(page: Page): Promise<void> {
@@ -770,7 +770,7 @@ test('details: selection-markdown preview strips <script> from raw HTML inside m
 //
 // `chrome.scripting.executeScript` fails on restricted URLs
 // (chrome://, the Web Store, file:// without explicit opt-in, etc.)
-// — the details flow must still open, with Save HTML + Save
+// — the Capture page flow must still open, with Save HTML + Save
 // selection disabled and error icons explaining why, so the user
 // can still take a URL- / screenshot- / prompt-only capture with
 // annotations. We simulate the failure by stubbing executeScript in

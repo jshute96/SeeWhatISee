@@ -88,7 +88,7 @@ export type PageScrapeResult = {
  *     algorithm (`toString`) finds the visible characters but the
  *     "give me the DOM between these boundaries" algorithm
  *     (`cloneContents`) finds nothing. We accept the selection as
- *     text-only: HTML body is `''` (the details page greys out the
+ *     text-only: HTML body is `''` (the Capture page greys out the
  *     HTML / markdown rows for this capture) and the text body has
  *     the user's selection — which is the format that matters for
  *     source code anyway.

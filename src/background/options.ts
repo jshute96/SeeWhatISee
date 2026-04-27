@@ -2,7 +2,7 @@
 // `src/options.ts`). Owns the two `runtime.onMessage` round-trips the page
 // uses to read the catalog + current defaults and to persist them. Kept on
 // its own listener so the message-type union doesn't have to share a
-// discriminator with the unrelated details-page traffic in
+// discriminator with the unrelated Capture-page traffic in
 // `capture-details.ts` — Chrome dispatches to all registered listeners.
 import { CAPTURE_ACTIONS } from './capture-actions.js';
 import {

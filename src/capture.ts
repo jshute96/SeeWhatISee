@@ -89,7 +89,7 @@ export interface Artifact {
 /**
  * Which serialization format a saved selection file uses. A single
  * capture only ever writes one format (we can't tell which the user
- * wants without asking, and the More menu / details page make that
+ * wants without asking, and the More menu / Capture page make that
  * choice explicit), so the record carries exactly one of these.
  *
  *   - `'html'`     — raw `innerHTML` of the range, wrapped in `<div>`.
@@ -170,15 +170,15 @@ export interface ScreenshotArtifact {
 }
 
 /**
- * Kinds of captured body that the details page's Edit dialogs can
+ * Kinds of captured body that the Capture page's Edit dialogs can
  * replace. Imported by both the SW (`background.ts`) for its
- * `updateArtifact` dispatch table and the details page
+ * `updateArtifact` dispatch table and the Capture page
  * (`capture-page.ts`) for the `EDIT_KINDS` catalog — both sides
  * share this single definition so a new kind added in one file
  * can't silently go unhandled on the other.
  *
  * The three `selection*` kinds are independent editable mirrors:
- * the user can edit each selection format separately on the details
+ * the user can edit each selection format separately on the Capture
  * page, but only the format chosen for save ends up in `log.json`.
  */
 export type EditableArtifactKind =
@@ -192,7 +192,7 @@ export interface CaptureRecord {
   timestamp: string;
   /**
    * Captured screenshot artifact. Set on the immediate / delayed
-   * screenshot paths, and on the "Capture with details…" path when
+   * screenshot paths, and on the "Capture page" path when
    * the user keeps the screenshot. Carries the bare PNG filename
    * plus optional `hasHighlights` / `hasRedactions` / `isCropped`
    * flags (see `ScreenshotArtifact`).
@@ -206,7 +206,7 @@ export interface CaptureRecord {
   screenshot?: ScreenshotArtifact;
   /**
    * Captured HTML artifact. Set on HTML captures — the "Save HTML
-   * contents" menu entry, and the "Capture with details…" path when
+   * contents" menu entry, and the "Capture page" path when
    * the user keeps the HTML. Carries the bare filename (no
    * directory) plus an optional `isEdited: true` flag that appears
    * iff the user saved an edit via the Edit HTML dialog before
@@ -216,7 +216,7 @@ export interface CaptureRecord {
   /**
    * Captured selection artifact. Set by either `captureSelection()`
    * (the More → Capture selection shortcuts — one per format) or
-   * the details flow when the user picked a selection format to
+   * the Capture page flow when the user picked a selection format to
    * save. Carries the bare filename, the chosen `format` (so
    * downstream consumers can dispatch without parsing the
    * extension), and an optional `isEdited: true` flag set when the
@@ -228,7 +228,7 @@ export interface CaptureRecord {
    */
   selection?: SelectionArtifact;
   /**
-   * User-entered prompt text from the "Capture with details…" flow,
+   * User-entered prompt text from the "Capture page" flow,
    * trimmed. Omitted entirely when empty so the field's presence
    * implies there is something to act on.
    */
@@ -361,7 +361,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
 /**
  * Shape returned from the page-side selection scrape. All three
  * formats are computed in one `executeScript` round-trip so the
- * More-menu selection-format shortcuts and the details flow share
+ * More-menu selection-format shortcuts and the Capture page flow share
  * the same scraped view of the page.
  *
  *   - `html`     — `innerHTML` of the selected range fragment, used
@@ -502,7 +502,7 @@ export async function captureSelection(
     url: active.url ?? '',
   };
 
-  // Reuse the details-flow helper so the trailing-newline logic
+  // Reuse the Capture page flow helper so the trailing-newline logic
   // lives in one place. We build a minimal InMemoryCapture to pass
   // through — only `selections`, `selectionFilenames`, and the
   // chosen `format` are read.
@@ -532,7 +532,7 @@ export interface InMemoryCapture {
   screenshotDataUrl: string;
   /**
    * Full HTML of the captured tab. Empty string when scraping failed
-   * — `htmlError` is then set with the reason. The details page uses
+   * — `htmlError` is then set with the reason. The Capture page uses
    * the error field (not the empty string) to decide whether to
    * grey out the Save HTML checkbox.
    */
@@ -544,12 +544,12 @@ export interface InMemoryCapture {
    * this here — rather than re-stamping at save time — means the
    * record's `timestamp` and the filename's embedded local time both
    * describe the *capture moment*, not whenever the user got around
-   * to clicking Save in the details flow.
+   * to clicking Save in the Capture page flow.
    */
   timestamp: string;
   /**
    * Filename the screenshot will be written under if the user saves
-   * it. Computed from `timestamp` so the capture-with-details page
+   * it. Computed from `timestamp` so the Capture page
    * can show / copy the exact name before the file lands on disk.
    */
   screenshotFilename: string;
@@ -561,12 +561,12 @@ export interface InMemoryCapture {
   /**
    * The user's page selection at capture time, rendered in all
    * three storage formats (HTML fragment, plain text, and
-   * markdown). Undefined when no selection existed — the details
+   * markdown). Undefined when no selection existed — the Capture
    * page uses that to grey out / uncheck every "Save selection as
    * …" row and disable their Copy / Edit buttons. A given format's
    * entry may be an empty string even when `selections` is set
    * (e.g. an image-only selection has non-empty `html` but empty
-   * `text`); each format row on the details page is gated
+   * `text`); each format row on the Capture page is gated
    * independently on its per-format emptiness.
    */
   selections?: SelectionBodies;
@@ -582,9 +582,9 @@ export interface InMemoryCapture {
   /**
    * Reason HTML could not be captured (e.g. restricted URL where
    * `chrome.scripting.executeScript` can't inject). Set only when
-   * scraping failed — the details page reads this to disable + flag
+   * scraping failed — the Capture page reads this to disable + flag
    * the Save HTML row with an error icon while still opening the
-   * details flow so the user can add a URL-only / screenshot-only
+   * Capture page flow so the user can add a URL-only / screenshot-only
    * record with any prompt or highlights they want.
    */
   htmlError?: string;
@@ -600,7 +600,7 @@ export interface InMemoryCapture {
   /**
    * Reason screenshot could not be captured (e.g. restricted URL
    * like the Web Store where extensions aren't allowed to capture).
-   * Set only when captureVisibleTab failed — the details page reads
+   * Set only when captureVisibleTab failed — the Capture page reads
    * this to flag the screenshot row/preview with an error icon.
    */
   screenshotError?: string;
@@ -608,7 +608,7 @@ export interface InMemoryCapture {
 
 /**
  * Capture the visible tab's screenshot *and* full HTML without
- * writing anything to disk. Used by the "Capture with details…"
+ * writing anything to disk. Used by the "Capture page"
  * flow: the extension page previews the screenshot while the user
  * decides which artifacts to keep. The page can also pre-download
  * individual artifacts via the SW's `ensure…Downloaded` helpers
@@ -618,7 +618,7 @@ export interface InMemoryCapture {
  * The active-tab query happens once and both the screenshot and the
  * HTML scrape target that tab, so the two artifacts are guaranteed
  * to describe the same page. If the user switches tabs during the
- * details flow, the tab identifier we capture here is stable.
+ * Capture page flow, the tab identifier we capture here is stable.
  *
  * `delayMs` (default 0) sleeps before the active-tab lookup so the
  * user can activate hover states / open menus before the capture
@@ -651,7 +651,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   // Scraping can fail on restricted URLs (chrome://, the Web Store,
   // etc.) where extensions aren't allowed to inject scripts. We catch
   // those failures and still return a valid `InMemoryCapture` with the
-  // screenshot + URL so the details page can open — it just disables
+  // screenshot + URL so the Capture page can open — it just disables
   // the Save HTML / Save selection rows and surfaces the error via an
   // icon tooltip. The screenshot + prompt + highlights remain usable
   // so the user isn't locked out of the flow entirely.
@@ -683,7 +683,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     selectionError = htmlError;
   }
 
-  // Pin the capture moment + filenames here so the details page can
+  // Pin the capture moment + filenames here so the Capture page can
   // show / copy the exact filename the file will land at, even if
   // the user waits minutes before clicking Save.
   const now = new Date();
@@ -725,7 +725,7 @@ export interface SaveDetailedOptions {
    * Save one of the captured selection formats as
    * `selection-<timestamp>.{html,txt,md}`. `undefined` means "don't
    * save a selection." Only one format is ever written per capture;
-   * the details page's three Save-selection-as-… rows are mutually
+   * the Capture page's three Save-selection-as-… rows are mutually
    * exclusive. Ignored when `capture.selections` is unset (no
    * selection existed at capture time) or the chosen format's body
    * is empty.
@@ -796,7 +796,7 @@ async function downloadArtifact(filename: string, url: string): Promise<number> 
     // We rely on `compactTimestamp` giving unique filenames across
     // captures (see `compactTimestamp` below), so `'overwrite'` is
     // safe everywhere: log.json deliberately overwrites every time,
-    // and the details flow may rewrite the same pinned filename as
+    // and the Capture page flow may rewrite the same pinned filename as
     // the user edits highlights / re-copies.
     conflictAction: 'overwrite',
   });
@@ -879,7 +879,7 @@ export async function downloadSelection(
  * path and can't return until the file is actually written.
  *
  * Polls at 50 ms; default timeout is 5 s, plenty for the data-URL
- * downloads the details flow uses (PNGs and HTML, both essentially
+ * downloads the Capture page flow uses (PNGs and HTML, both essentially
  * synchronous on completion). Throws on `interrupted` or timeout
  * so the caller can surface a real error.
  */
@@ -900,7 +900,7 @@ export async function waitForDownloadComplete(
 }
 
 /**
- * Append a log entry for a "Capture with details…" result.
+ * Append a log entry for a "Capture page" result.
  * Assumes the screenshot / HTML files (when included) have already
  * been downloaded by the caller via `downloadScreenshot` /
  * `downloadHtml` — this only writes the sidecar, no file IO for
@@ -971,7 +971,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   // Timestamp + filenames were pinned at capture time (see
   // captureBothToMemory) so they describe when the screenshot was
   // *taken*, not when the user clicked Save — and so the filenames
-  // shown / copied on the details page exactly match what hits disk.
+  // shown / copied on the Capture page exactly match what hits disk.
   const record: CaptureRecord = {
     timestamp: opts.capture.timestamp,
     url: opts.capture.url,
@@ -1160,7 +1160,7 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  * can use `conflictAction: 'overwrite'` uniformly without worrying
  * about clobbering an unrelated capture. Two captures inside the
  * same millisecond would break this. It hasn't come up (user-
- * driven clicks can't happen that fast, and the details flow
+ * driven clicks can't happen that fast, and the Capture page flow
  * pins a single timestamp per session), so we don't guard against
  * it.
  *

@@ -760,7 +760,7 @@ export async function installContextMenu(): Promise<void> {
   // ── "More" submenu ──────────────────────────────────────────
   // Home for:
   //   - capture actions that don't earn a top-level slot (the
-  //     "neither / both files" shortcuts for the details flow —
+  //     "neither / both files" shortcuts for the Capture page flow —
   //     equivalent to opening capture-with-details and ticking
   //     neither or both checkboxes, minus the dialog round-trip)
   //   - infrequent utilities that would otherwise compete for a

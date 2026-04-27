@@ -13,7 +13,7 @@ import {
 import { runWithErrorReporting } from './error-reporting.js';
 import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 
-// "Capture with details…" flow. We grab both the screenshot and
+// "Capture page" flow. We grab both the screenshot and
 // the HTML up-front (so the user can decide which to save without
 // worrying that the page will have changed in the meantime) and
 // stash them under a per-tab key in chrome.storage.session.
@@ -37,7 +37,7 @@ const DETAILS_STORAGE_PREFIX = 'captureDetails_';
 export interface DetailsSession {
   capture: InMemoryCapture;
   // Tab id of the page the user captured from, so we can re-focus
-  // it when the details tab closes. Optional: the active-tab
+  // it when the Capture page tab closes. Optional: the active-tab
   // lookup can in principle return no id (chrome:// pages, races).
   openerTabId?: number;
   // Per-artifact download tracking.
@@ -62,7 +62,7 @@ export interface DetailsSession {
     // Edit selection dialog, which fires `updateArtifact` and drops
     // this entry so the next Copy / Capture re-materializes the
     // edited body under the same pinned `selectionFilenames[fmt]`.
-    // Keyed per format because the details page exposes independent
+    // Keyed per format because the Capture page exposes independent
     // Copy + Edit controls for each of HTML / text / markdown and
     // any of them can have a file materialized.
     selections?: Partial<Record<SelectionFormat, { downloadId: number; path: string }>>;
@@ -97,7 +97,7 @@ export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   // hover state the same way delayed screenshots do.
   const data = await captureBothToMemory(delayMs);
 
-  // Re-query the active tab so we can position the details tab
+  // Re-query the active tab so we can position the Capture page tab
   // immediately to its right and remember it as the opener. The
   // tab strip hasn't moved between captureBothToMemory's query
   // and now (no async user input in between), so this resolves to
@@ -125,7 +125,7 @@ export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
 
   const tab = await chrome.tabs.create(createProps);
   if (tab.id === undefined) {
-    throw new Error('Failed to open capture details tab');
+    throw new Error('Failed to open Capture page tab');
   }
   const session: DetailsSession = {
     capture: data,
@@ -187,7 +187,7 @@ interface UpdateArtifactMessage {
   /** Which captured body to replace. */
   kind: EditableArtifactKind;
   /**
-   * Full replacement body. Sent by the details page when the user
+   * Full replacement body. Sent by the Capture page when the user
    * saves an edit in the corresponding Edit dialog.
    */
   value: string;
@@ -197,7 +197,7 @@ interface SaveDetailsMessage {
   screenshot: boolean;
   html: boolean;
   /**
-   * Which selection format the user picked on the details page, or
+   * Which selection format the user picked on the Capture page, or
    * `null` when no selection is being saved. The three "Save
    * selection as …" rows are mutually exclusive so at most one is
    * ever set.
@@ -229,7 +229,7 @@ interface SaveDetailsMessage {
   editVersion?: number;
   /**
    * Optional replacement screenshot data URL with the user's
-   * highlights baked into the PNG bytes. The capture page sends this
+   * highlights baked into the PNG bytes. The Capture page sends this
    * only when the user both drew highlights and chose to save the
    * screenshot — otherwise the original (un-annotated) capture in
    * session storage is used as-is.
@@ -245,7 +245,7 @@ type DetailsMessage =
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
  * `undefined` when the entry is missing (e.g. the user closed the
- * details tab between message dispatch and handler, or the SW was
+ * Capture page tab between message dispatch and handler, or the SW was
  * torn down and lost the in-memory link). Most callers wrap this
  * with `requireDetailsSession` to throw; `getDetailsData` calls it
  * directly so it can no-op silently and let the page render a
@@ -264,7 +264,7 @@ async function loadDetailsSession(tabId: number): Promise<DetailsSession | undef
  */
 async function requireDetailsSession(tabId: number): Promise<DetailsSession> {
   const session = await loadDetailsSession(tabId);
-  if (!session) throw new Error('Capture data missing for details tab');
+  if (!session) throw new Error('Capture data missing for Capture page tab');
   return session;
 }
 
@@ -511,7 +511,7 @@ export async function ensureSelectionDownloaded(
  * each writes its own slot under `capture.selections[fmt]` + flips
  * `session.selectionEdited[fmt] = true` + drops
  * `session.downloads.selections[fmt]`. A selection-markdown edit
- * doesn't touch the HTML or text bodies — on the details page each
+ * doesn't touch the HTML or text bodies — on the Capture page each
  * format row has its own Edit dialog.
  *
  * New editable artifact kinds add one entry here (and one to the
@@ -610,7 +610,7 @@ function applyArtifactEdit(
 
 /**
  * Install the runtime.onMessage + tabs.onRemoved listeners that
- * drive the details page (data fetch, artifact materialization,
+ * drive the Capture page (data fetch, artifact materialization,
  * edit saves, final save-and-close, session cleanup on tab close).
  */
 export function installDetailsMessageHandlers(): void {
@@ -752,7 +752,7 @@ export function installDetailsMessageHandlers(): void {
           // if recordDetailedCapture throws: the stashed data is no longer
           // useful and the user can click the menu item again to retry.
           //
-          // Trade-off: on failure the details tab disappears out from
+          // Trade-off: on failure the Capture page tab disappears out from
           // under the user, and the only visible signal is the usual
           // error-icon / tooltip swap from runWithErrorReporting. That's
           // consistent with every other capture path (they all fail
@@ -761,7 +761,7 @@ export function installDetailsMessageHandlers(): void {
           // now-stale preview the user would have to close by hand.
           await chrome.storage.session.remove(key);
           // Re-activate the opener (the page the user captured from)
-          // *before* removing the details tab.
+          // *before* removing the Capture page tab.
           //
           // We tested removing this and relying on Chrome's natural
           // close behavior. Chrome's pick is not reliably the right
@@ -778,14 +778,14 @@ export function installDetailsMessageHandlers(): void {
               await chrome.tabs.update(openerTabId, { active: true });
             } catch (err) {
               // Best-effort: if the opener was closed during the
-              // details flow, just log and proceed with the close.
+              // Capture page flow, just log and proceed with the close.
               console.warn('[SeeWhatISee] failed to focus opener tab:', err);
             }
           }
           try {
             await chrome.tabs.remove(tabId);
           } catch (err) {
-            console.warn('[SeeWhatISee] failed to close details tab:', err);
+            console.warn('[SeeWhatISee] failed to close Capture page tab:', err);
           }
         }
       });
@@ -796,7 +796,7 @@ export function installDetailsMessageHandlers(): void {
     return false;
   });
 
-  // If the user closes a details tab manually (without clicking
+  // If the user closes a Capture page tab manually (without clicking
   // Capture), drop its stashed data so session storage doesn't grow
   // until the browser restarts.
   chrome.tabs.onRemoved.addListener((tabId) => {

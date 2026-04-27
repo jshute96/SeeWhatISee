@@ -1,4 +1,4 @@
-// E2E coverage for the details-page *drawing* overlay: the
+// E2E coverage for the Capture-page *drawing* overlay: the
 // highlight-bar buttons (Redact, Crop, Undo, Clear), the SVG
 // annotation surface (rect / line draws), the drag-to-crop
 // gesture, and the resulting on-disk flags on log.json's
@@ -34,7 +34,7 @@ test.beforeEach(async () => {
 // ─── Helpers ─────────────────────────────────────────────────────
 
 // Read the current effective crop bounds (or null when no crop is
-// effective) straight out of the details page. Relies on the
+// effective) straight out of the Capture page. Relies on the
 // `__seeState` hook capture-page.ts installs at load time.
 async function readEffectiveCrop(
   capturePage: Page,
@@ -271,7 +271,7 @@ test('drawing: undo/clear buttons reflect the edit stack', async ({
   await expect(undo).toBeDisabled();
   await expect(clear).toBeDisabled();
 
-  // Close the details tab cleanly so it doesn't leak into the next
+  // Close the Capture page tab cleanly so it doesn't leak into the next
   // test.
   await Promise.all([
     capturePage.waitForEvent('close'),

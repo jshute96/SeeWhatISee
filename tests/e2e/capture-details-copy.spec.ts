@@ -1,4 +1,4 @@
-// E2E coverage for the copy-filename buttons on the capture page
+// E2E coverage for the copy-filename buttons on the Capture page
 // and their interaction with the SW's per-tab download cache.
 //
 // Each click materializes the file on disk via the SW (writing

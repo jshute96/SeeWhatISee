@@ -1,5 +1,5 @@
 // Lightweight HTML → Markdown converter used by `captureSelection`
-// and the details flow so a selected fragment can be saved as
+// and the Capture page flow so a selected fragment can be saved as
 // CommonMark-ish markdown instead of raw HTML.
 //
 // Scope / tradeoffs:

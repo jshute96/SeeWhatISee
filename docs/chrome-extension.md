@@ -285,7 +285,7 @@ showed the global title. We don't use per-tab titles.
 
 ### Abandoned: capture-page tooltip override
 
-Goal: show "SeeWhatISee — Capture" when the capture page is
+Goal: show "SeeWhatISee — Capture" when the Capture page is
 active. Approaches tried:
 
 - **`setTitle` from background after `chrome.tabs.create`** —
@@ -651,7 +651,7 @@ If the user has any edits *and* is saving the screenshot:
 
 ### Tab positioning + return-to-opener
 
-`startCaptureWithDetails` opens the details tab at
+`startCaptureWithDetails` opens the Capture page tab at
 `index: active.index + 1` and sets `openerTabId: active.id`, so it
 appears immediately to the right of the tab the user captured from.
 
@@ -659,7 +659,7 @@ On close, the `saveDetails` finally block:
 
 1. Removes the session-storage entry.
 2. Re-activates the opener tab via `chrome.tabs.update`.
-3. Removes the details tab.
+3. Removes the Capture page tab.
 
 The ordering matters and the explicit re-activation is required:
 
@@ -674,10 +674,10 @@ The ordering matters and the explicit re-activation is required:
 - **Why use a stashed `openerTabId` instead of `chrome.tabs.get`?**
   `Tab.openerTabId` is one of the fields Chrome strips when the
   extension lacks the `tabs` permission, and `<all_urls>` host
-  permission doesn't cover our own `chrome-extension://` details
+  permission doesn't cover our own `chrome-extension://` Capture page
   tab. We stash the opener id in the `DetailsSession` wrapper at
   create time and read it back from there.
-- **Best-effort.** If the opener was closed during the details
+- **Best-effort.** If the opener was closed during the Capture page
   flow, `chrome.tabs.update` rejects; we log and proceed with the
   close.
 
@@ -712,7 +712,7 @@ The ordering matters and the explicit re-activation is required:
   — which matters because `chrome.downloads.download` resolves on
   download *start*, not completion (overkill for our tiny data-URL
   payloads in practice).
-- **Manual tab close cleanup.** If the user closes the details
+- **Manual tab close cleanup.** If the user closes the Capture page
   tab without clicking Capture, a `chrome.tabs.onRemoved` handler
   drops the stashed capture from `chrome.storage.session`. Without
   this, session storage would grow until the browser restarts.

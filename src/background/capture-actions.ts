@@ -12,8 +12,8 @@ import { startCaptureWithDetails } from './capture-details.js';
 // Capture actions surfaced to the user.
 //
 // Each action is a (base, delay) pair: the base says *what* to
-// capture (plain screenshot, HTML contents, the details flow, or
-// one of the fixed-checkbox details-flow shortcuts) and the delay
+// capture (plain screenshot, HTML contents, the Capture page flow, or
+// one of the fixed-checkbox Capture page flow shortcuts) and the delay
 // says *when* to capture (immediate, 2s, or 5s). We define the
 // bases once and expand them across the delays at module load so
 // every menu surface stays in sync from a single source.
@@ -119,7 +119,7 @@ export interface CaptureAction {
 }
 
 /**
- * "Capture URL" — the details-page "neither file checked" path, run
+ * "Capture URL" — the Capture-page "neither file checked" path, run
  * without opening the page. Still goes through `captureBothToMemory`
  * so the delay / active-tab-after-delay semantics match every other
  * capture, but the screenshot + HTML payloads are discarded — only
@@ -138,11 +138,11 @@ export async function captureUrlOnly(delayMs = 0): Promise<void> {
 }
 
 /**
- * "Capture screenshot and HTML" — the details-page "both files
+ * "Capture screenshot and HTML" — the Capture-page "both files
  * checked" path, run without opening the page. Grabs both artifacts,
  * writes them, and records a sidecar entry referencing both.
  *
- * Unlike the details flow (which gracefully falls back to a
+ * Unlike the Capture page flow (which gracefully falls back to a
  * screenshot-only UI), this shortcut *requires* both artifacts by
  * definition, so we surface a `screenshotError` or `htmlError` as a
  * thrown error — the action's error-reporting channel then swaps the

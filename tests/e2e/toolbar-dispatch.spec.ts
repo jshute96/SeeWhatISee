@@ -10,7 +10,7 @@
 //   - `handleActionClick` with each without-selection default id.
 //   - Tooltip text reflects the configured default ids.
 //   - `captureBothToMemory(delayMs)` — the in-memory primitive that
-//     the details flow's delayed path shares.
+//     the Capture page flow's delayed path shares.
 //   - Selection-aware click dispatch: with-sel × single vs double
 //     click × ignore-selection opt-out.
 //   - `getDefaultWithoutSelectionId` fallback + legacy id migration.
@@ -65,7 +65,7 @@ test('captureBothToMemory(delayMs) sleeps before snapshotting', async ({
     return elapsed;
   });
 
-  // Delay must actually fire — the details-flow delayed path shares
+  // Delay must actually fire — the Capture page flow delayed path shares
   // the same timer. A missing `await` on the setTimeout would make
   // this near-zero.
   expect(elapsedMs).toBeGreaterThanOrEqual(190);
@@ -94,7 +94,7 @@ test('default click action set to capture-screenshot: handleActionClick takes a 
   await openerPage.bringToFront();
 
   // If a capture.html tab opens, the test should fail — capture-screenshot
-  // should dispatch directly, not open the details flow.
+  // should dispatch directly, not open the Capture page flow.
   let detailsOpened = false;
   const onPage = (p: Page) => {
     if (p.url().endsWith('/capture.html')) detailsOpened = true;
@@ -128,7 +128,7 @@ test('default click action set to capture-screenshot: handleActionClick takes a 
   await openerPage.close();
 });
 
-test('default click action set to capture-with-details: handleActionClick opens the details page', async ({
+test('default click action set to capture-with-details: handleActionClick opens the Capture page', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -164,7 +164,7 @@ test('default click action set to capture-with-details: handleActionClick opens 
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // Close the details tab cleanly so it doesn't leak into the next
+  // Close the Capture page tab cleanly so it doesn't leak into the next
   // test.
   await Promise.all([
     capturePage.waitForEvent('close'),
@@ -267,8 +267,8 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
 // the opener page via `seedSelection`, and then drives
 // `handleActionClick` from the SW. Assertions read the in-memory
 // log (`chrome.storage.local.get('captureLog')`) rather than
-// log.json — no need for the download-spy setup that the details
-// flow uses, since we only care about what was recorded.
+// log.json — no need for the download-spy setup that the Capture
+// page flow uses, since we only care about what was recorded.
 
 type ClickApi = {
   handleActionClick: () => Promise<void>;
@@ -394,7 +394,7 @@ test('click with selection: with-sel=capture-with-details opens details with sel
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // With a selection present, the details page opens focused on
+  // With a selection present, the Capture page opens focused on
   // capturing it: Save selection master checked, screenshot
   // unchecked. HTML is unchecked by default regardless of
   // selection state.
@@ -402,7 +402,7 @@ test('click with selection: with-sel=capture-with-details opens details with sel
   await expect(capturePage.locator('#cap-html')).not.toBeChecked();
   await expect(capturePage.locator('#cap-selection')).toBeChecked();
 
-  // Close the details tab without saving so nothing leaks into the
+  // Close the Capture page tab without saving so nothing leaks into the
   // log / file system.
   await capturePage.close();
   await openerPage.close();
@@ -427,8 +427,8 @@ test('click with selection: with-sel=ignore-selection runs the without-selection
   await seedSelection(openerPage);
 
   // If the probe *did* run and kicked us into a with-selection
-  // branch, we'd either open a details page or save a selection
-  // file. Guard against the details path opening.
+  // branch, we'd either open a Capture page or save a selection
+  // file. Guard against the Capture page path opening.
   let detailsOpened = false;
   const onPage = (p: Page): void => {
     if (p.url().endsWith('/capture.html')) detailsOpened = true;
@@ -439,7 +439,7 @@ test('click with selection: with-sel=ignore-selection runs the without-selection
 
   await new Promise((r) => setTimeout(r, 150));
   extensionContext.off('page', onPage);
-  expect(detailsOpened, 'no details page opens in ignore-selection mode').toBe(false);
+  expect(detailsOpened, 'no Capture page opens in ignore-selection mode').toBe(false);
 
   const r = await latestLogRecord(sw);
   expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
@@ -481,7 +481,7 @@ test('double-click with selection: routes to dbl-with-sel default (capture-with-
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
 
-  // When a selection is present, the details page opens focused
+  // When a selection is present, the Capture page opens focused
   // on capturing it: Save selection master checked, screenshot
   // unchecked. The user can still tick screenshot back on before
   // clicking Capture.
@@ -492,10 +492,10 @@ test('double-click with selection: routes to dbl-with-sel default (capture-with-
   await openerPage.close();
 });
 
-// Details-page initial format radio tracks the stored
+// Capture-page initial format radio tracks the stored
 // `capturePageDefaults.withSelection.format` setting (set by the
 // user on the Options page). Double-click + selection reliably opens
-// the details page when dbl-with = capture-with-details, so we use
+// the Capture page when dbl-with = capture-with-details, so we use
 // it as the vehicle here.
 for (const { format, expectRadio } of [
   { format: 'html', expectRadio: 'cap-selection-html' },
@@ -670,7 +670,7 @@ test('runDblDefault: with selection, runs dbl-with-sel default', async ({
 
 // ─── Capture page Save-checkbox pre-check ────────────────────────
 //
-// On open, the capture page applies the stored
+// On open, the Capture page applies the stored
 // `capturePageDefaults` to the Save checkboxes. Branches by
 // selection presence: an active selection → `withSelection` defaults
 // (with the screenshot/html/selection toggles + the format radio),
@@ -693,14 +693,14 @@ async function pinCaptureDetailsDefaults(
   }, defaults);
 }
 
-test('capture page (no selection): pre-checks reflect stored withoutSelection defaults', async ({
+test('Capture page (no selection): pre-checks reflect stored withoutSelection defaults', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
   // click-without = capture-with-details so a single click opens the
-  // capture page. Override the capturePageDefaults with both
+  // Capture page. Override the capturePageDefaults with both
   // boxes ON so we can verify both flip from their static-HTML state
   // (`screenshot` is checked-by-default in capture.html, but `html`
   // is unchecked-by-default — so this proves the page is reading
@@ -736,7 +736,7 @@ test('capture page (no selection): pre-checks reflect stored withoutSelection de
   await openerPage.close();
 });
 
-test('capture page (no selection): screenshot defaults to OFF when stored', async ({
+test('Capture page (no selection): screenshot defaults to OFF when stored', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -774,12 +774,12 @@ test('capture page (no selection): screenshot defaults to OFF when stored', asyn
   await openerPage.close();
 });
 
-test('capture page (with selection): pre-checks reflect stored withSelection defaults', async ({
+test('Capture page (with selection): pre-checks reflect stored withSelection defaults', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // With a selection on the page, the capture page should apply the
+  // With a selection on the page, the Capture page should apply the
   // `withSelection` branch of capturePageDefaults. Pin a non-
   // default shape so the assertions can tell stored-from-defaults.
   const sw = await getServiceWorker();
@@ -814,7 +814,7 @@ test('capture page (with selection): pre-checks reflect stored withSelection def
   await openerPage.close();
 });
 
-test('capture page: format radio falls back when preferred format has no content', async ({
+test('Capture page: format radio falls back when preferred format has no content', async ({
   extensionContext,
   getServiceWorker,
 }) => {
@@ -849,7 +849,7 @@ test('capture page: format radio falls back when preferred format has no content
       [`captureDetails_${tab.id!}`]: {
         capture: {
           // 1×1 transparent PNG — content doesn't matter, the
-          // capture page just needs a valid data URL to render.
+          // Capture page just needs a valid data URL to render.
           screenshotDataUrl:
             'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8AAQQACgwE/Y2vd6QAAAABJRU5ErkJggg==',
           html: '<html><body><p>x</p></body></html>',

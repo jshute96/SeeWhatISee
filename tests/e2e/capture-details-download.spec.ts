@@ -3,7 +3,7 @@
 // Edit dialogs).
 //
 // These buttons call `chrome.downloads.download({ saveAs: true })`
-// directly from the capture page. The native save dialog can't be
+// directly from the Capture page. The native save dialog can't be
 // driven from Playwright, so each test installs the page-side
 // download spy from `details-helpers` to stub the call and record
 // the requested filename, the `saveAs` flag, and the bytes the
@@ -37,7 +37,7 @@ import {
 } from './details-helpers';
 
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test in this file issues one capture via the details flow;
+// Each test in this file issues one capture via the Capture page flow;
 // without a small cushion the suite occasionally trips the quota.
 test.beforeEach(async () => {
   await new Promise((r) => setTimeout(r, 600));

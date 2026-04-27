@@ -95,20 +95,20 @@ sub-modules above.
     screenshot. Takes the same `delayMs`, forwarded through
     `captureBothToMemory` so the delay applies to the pre-open
     screenshot + HTML snapshot. See
-    ["Capture with details flow"](#capture-with-details-flow) below
+    ["Capture page flow"](#capture-page-flow) below
     for the full design.
 
   The two `more` bases are shortcuts for the two fixed checkbox
-  combinations in the details flow:
+  combinations in the Capture page flow:
 
-  - **`capture-url` — "Capture URL".** Equivalent to the details
+  - **`capture-url` — "Capture URL".** Equivalent to the Capture
     page with *neither* file checked: the record gets just
     `timestamp` + `url` (no `screenshot`, no `contents`). Goes
     through `captureBothToMemory` + `recordDetailedCapture` so the
     delay / active-tab-after-delay semantics match; the screenshot
     + HTML payloads are discarded.
   - **`capture-both` — "Capture screenshot and HTML".**
-    Equivalent to the details page with *both* files checked.
+    Equivalent to the Capture page with *both* files checked.
     Downloads both artifacts and writes a record that references
     both.
 
@@ -200,7 +200,7 @@ sub-modules above.
     primary capture entries at the top level.
     - **Capture URL** / **Capture screenshot and HTML** — shortcuts
       for the "neither" and "both" checkbox combinations of the
-      details flow, skipping the dialog round-trip.
+      Capture page flow, skipping the dialog round-trip.
       - *Capture URL* is a `BASE_CAPTURE_ACTION` with
         `supportsDelayed: false` (no delayed variants): the action
         records the URL at click time, so a delay would only let
@@ -414,7 +414,7 @@ sub-modules above.
     saves it as an HTML file. Same delay semantics as
     `captureVisible`.
   - `captureBothToMemory(delayMs?)` does *both* of the above
-    without saving, returning the data for the details flow to
+    without saving, returning the data for the Capture page flow to
     stash and preview. Same delay semantics.
   - `downloadScreenshot` / `downloadHtml` start a download from the
     pre-captured data; `waitForDownloadComplete` polls until the
@@ -474,7 +474,7 @@ sub-modules above.
     - `selection` — selection artifact object
       `{ "filename": "selection-<timestamp>.{html,txt,md}", "format": "html"|"text"|"markdown", "isEdited"?: true }`,
       set by the More → Capture-selection-as-… shortcuts or the
-      details flow when the user picked a format on a
+      Capture page flow when the user picked a format on a
       Save-selection-as-… row. A capture only ever writes one
       selection format; the `format` field is the ground truth
       (the extension mirrors it for human readability).
@@ -482,7 +482,7 @@ sub-modules above.
       saved an edit through the corresponding Edit dialog before
       capture. Omitted on the raw scrape. See
       [`isEdited` sidecar flag](#isedited-sidecar-flag).
-    - `prompt` — user-entered text from "Capture with details…", omitted
+    - `prompt` — user-entered text from "Capture page", omitted
       when empty.
 
     Screenshot captures emit `{timestamp, screenshot, url}`; HTML
@@ -534,7 +534,7 @@ sub-modules above.
   (no `screenshot`, no `contents`) let the user send a
   prompt-about-the-URL without attaching any page content.
 
-## Capture with details flow
+## Capture page flow
 
 - A right-click menu entry opens `capture.html` so the user can
   review and annotate the capture before it's saved.
@@ -565,8 +565,8 @@ sub-modules above.
   `captureVisibleTab` is also blocked, so `screenshotError` fires
   there; on generic `chrome://` pages the screenshot still
   succeeds.
-- Impact on the details flow:
-  - The details page still opens with the screenshot preview.
+- Impact on the Capture page flow:
+  - The Capture page still opens with the screenshot preview.
     When `screenshotError` is set the preview image will be
     broken (empty data URL) but the rest of the page still
     renders; Save screenshot and its Copy button are
@@ -685,7 +685,7 @@ active crop region.
 ### Edit dialogs (template-driven)
 
 - Pencil icons sit next to each editable artifact's Copy button in
-  the capture page — currently HTML plus one per selection format
+  the Capture page — currently HTML plus one per selection format
   (HTML, text, markdown); more kinds can be added without new dialog
   markup.
 - A single `<template id="edit-dialog-template">` in `capture.html`
@@ -815,12 +815,12 @@ active crop region.
 
 - Emitted inside `contents` / `selection` artifact objects in
   `log.json` whenever the user saved an edit through the
-  corresponding dialog and then kept the artifact on the details
+  corresponding dialog and then kept the artifact on the Capture
   page — i.e. the artifact carries `{ "filename": "…", "isEdited":
   true }` instead of the bare-filename object.
 - Sticky per session: once the user has saved an *actual change*
   through the dialog (an unchanged-textarea Save is a no-op and
-  doesn't flip the flag), later saves on the same details tab carry
+  doesn't flip the flag), later saves on the same Capture page tab carry
   `isEdited: true` regardless of whether they edit again — the
   on-disk body *is* the edit.
 - Omitted on unedited records, matching the `screenshot.hasHighlights`
@@ -871,7 +871,7 @@ active crop region.
   semantics: Copy materializes a file; Capture writes the log
   entry. As a result, two scenarios leave on-disk files with no
   log entry:
-  - User clicks Copy and then closes the details tab without
+  - User clicks Copy and then closes the Capture page tab without
     clicking Capture.
   - User clicks Copy on (say) the screenshot, then unchecks the
     Save screenshot checkbox before clicking Capture. The log
@@ -929,7 +929,7 @@ active crop region.
   `selection.isEdited`. It's valid to save with no checkboxes
   ticked — the record then carries just the URL (and any prompt).
 - After the save resolves, the background re-activates the opener
-  tab and then removes the details tab — the user lands back on
+  tab and then removes the Capture page tab — the user lands back on
   the page they captured from. Chrome's natural close-time pick is
   not reliably the immediate right neighbor (we tested this and
   Chrome activated a tab two positions right of the closed slot in

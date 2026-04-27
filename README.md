@@ -15,7 +15,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 ### Chrome extension
 
 - Click the extension icon ![icon](src/icons/icon-16.png) to take a screenshot, opening the *Capture* page (see below).
-  - Double-click it to bypass the details page and take a screenshot immediately.
+  - Double-click it to bypass the *Capture* page and take a screenshot immediately.
   - If there's text selected on the page, the click instead copies the selected text.
 - Right-click the icon for more options:
   - Take a screenshot.
@@ -38,7 +38,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   There's a link to this page on the **Set default** menu.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
-  and hotkeys.
+  and keyboard hotkeys.
 
 #### Capturing selected text
 

@@ -1,4 +1,4 @@
-// Shared helpers for the details-flow E2E specs:
+// Shared helpers for the Capture page flow E2E specs:
 // `capture-with-details`, `capture-details-copy`,
 // `capture-details-edit`, `capture-drawing`, and
 // `toolbar-dispatch`. Covers flow open, capture submit, CodeJar
@@ -78,7 +78,7 @@ export async function readLatestRecord(sw: Worker): Promise<CaptureRecord> {
   return JSON.parse(lines[lines.length - 1]);
 }
 
-// Open a fixture page (the "opener") and trigger the details flow.
+// Open a fixture page (the "opener") and trigger the Capture page flow.
 // Returns both the opener page and the capture.html page so the
 // caller can manipulate the latter and clean up the former.
 export async function openDetailsFlow(
@@ -229,7 +229,7 @@ export async function dragRect(
 
 // ─── Clipboard + download spies (copy-button / edit-dialog tests) ─
 
-// Spy on `navigator.clipboard.writeText` from the capture page. The
+// Spy on `navigator.clipboard.writeText` from the Capture page. The
 // spy installs a per-page array of all text writes so the test can
 // inspect them without needing clipboard-read permission (which
 // additionally requires user activation to actually read back).
@@ -305,9 +305,9 @@ export async function findAllCapturedDownloads(
 //
 // The per-row "Save…" buttons and the in-dialog "Download" button
 // call `chrome.downloads.download({ saveAs: true })` directly from
-// the capture page (no SW round-trip). That call would normally pop
+// the Capture page (no SW round-trip). That call would normally pop
 // a native OS save dialog, which Playwright can't drive. The spy
-// below replaces `chrome.downloads.download` on the capture page
+// below replaces `chrome.downloads.download` on the Capture page
 // with a stub that:
 //
 //   - records the requested `filename`, `saveAs` flag, and `url`;

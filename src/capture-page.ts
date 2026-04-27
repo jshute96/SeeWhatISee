@@ -23,7 +23,7 @@
 
 /**
  * Three-value `SelectionFormat` literal union, duplicated here
- * because the details page loads via a classic (non-module)
+ * because the Capture page loads via a classic (non-module)
  * `<script>` tag and can't `import type` from capture.ts without
  * turning itself into a module. The SW ships this exact same union
  * on the wire; keep the three sites (`src/capture.ts`,
@@ -54,7 +54,7 @@ interface DetailsData {
    * the SW saw a selection on the active tab at capture time; each
    * format's entry may be an empty string on its own (e.g. `text`
    * is empty when the user selected an image-only region). The
-   * details page uses each format's emptiness to gate its Save
+   * Capture page uses each format's emptiness to gate its Save
    * selection row independently.
    */
   selections?: { html: string; text: string; markdown: string };
@@ -62,7 +62,7 @@ interface DetailsData {
    * Reason HTML couldn't be captured (e.g. restricted URL). When
    * set, we grey out the Save HTML row + disable its Copy and Edit
    * buttons and show a hoverable error icon explaining why. The
-   * details flow still opens so the user can capture just a URL /
+   * Capture page flow still opens so the user can capture just a URL /
    * screenshot / prompt / highlights.
    */
   htmlError?: string;
@@ -75,7 +75,7 @@ interface DetailsData {
   selectionError?: string;
   /**
    * Reason screenshot could not be captured. Set only when
-   * captureVisibleTab failed — the details page reads this to flag
+   * captureVisibleTab failed — the Capture page reads this to flag
    * the screenshot row/preview with an error icon.
    */
   screenshotError?: string;
@@ -149,7 +149,7 @@ const selectionFormatsEl = document.querySelector('.selection-formats') as HTMLD
 
 // Per-selection-format controls. Three parallel groups of radio
 // + copy + edit + error-icon controls, one per format row in the
-// details page. Gated independently by loadData() — enabled iff
+// Capture page. Gated independently by loadData() — enabled iff
 // the SW scraped non-empty content for that format. Only one row's
 // radio can be checked at a time (browser-enforced by the shared
 // `name="cap-selection-format"`), and the Capture button's
@@ -1376,7 +1376,7 @@ interface EditKindSpec {
   domSlug: string;
   /** Modal heading + editor aria-label. Short, user-visible. */
   title: string;
-  /** The pencil button inside the details-page row for this kind. */
+  /** The pencil button inside the Capture-page row for this kind. */
   openBtn: HTMLButtonElement;
   /** If set, the dialog exposes the Edit / Preview toggle and
    * renders a preview using the named renderer:

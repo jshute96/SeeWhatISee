@@ -160,7 +160,7 @@ Reachable via the toolbar action's right-click → Options or
   - *Without selection*: Save screenshot, Save HTML.
   - *With selection*: Save screenshot, Save HTML, Save selection
     master + nested format radios (`as HTML / as text / as markdown`).
-  - Unlike the capture page, the Save-selection master and the
+  - Unlike the Capture page, the Save-selection master and the
     format radios are independent — the format radios persist the
     *default* `as`-mode for whenever Save selection is on, so they
     stay enabled even when Save selection is off.
