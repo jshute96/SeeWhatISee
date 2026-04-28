@@ -147,9 +147,11 @@ see `architecture.md` → "Keyboard commands" for that side.
 
 ## Options page (`options.html`)
 
-Reachable via the toolbar action's right-click → Options or
-`chrome://extensions/?options=…`. Manifest entry `options_ui` with
-`open_in_tab: true` opens it in a full tab.
+Reachable via the toolbar action's right-click → Options, the
+**Options** button in the Capture page header (calls
+`chrome.runtime.openOptionsPage`), or `chrome://extensions/?options=…`.
+Manifest entry `options_ui` with `open_in_tab: true` opens it in a
+full tab.
 
 ### Layout
 

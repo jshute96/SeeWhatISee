@@ -115,6 +115,13 @@ interface DetailsData {
  */
 let editVersion = 0;
 
+const optionsBtn = document.getElementById('options-btn') as HTMLButtonElement;
+optionsBtn.addEventListener('click', () => {
+  // `openOptionsPage` honours the manifest's `open_in_tab: true`, so
+  // it lands in a new tab (or focuses an existing Options tab).
+  chrome.runtime.openOptionsPage();
+});
+
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
