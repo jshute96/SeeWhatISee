@@ -482,6 +482,11 @@ This section is split by topic:
   exceeds the cap we flip `overflow-y` from `hidden` to `auto` so
   the scrollbar only appears when needed. Plain Enter submits;
   Shift+Enter inserts a newline.
+- **Smart paste** — Ctrl+V on the prompt or an edit dialog routes
+  rich-text content to the right format for the target surface
+  (markdown / HTML source / plain text). Ctrl+Shift+V always
+  pastes verbatim plain text. See [smart-paste.md](smart-paste.md)
+  for the full design.
 - **Preview image** — see [fit-to-viewport](#image-fit-to-viewport).
 
 ### Image annotation pane

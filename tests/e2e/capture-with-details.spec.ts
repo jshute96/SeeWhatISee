@@ -8,6 +8,9 @@
 //     per-tab download-cache semantics.
 //   - `capture-details-edit.spec.ts` — edit-html / edit-selection
 //     dialogs, preview toggle, scrape-failure UX.
+//   - `capture-paste.spec.ts`        — rich-text paste handling
+//     (html→markdown / html-source routing, source-view short-
+//     circuit, real CodeJar copy/paste round-trips).
 //   - `capture-drawing.spec.ts`     — drawing overlay (boxes, lines,
 //     Redact, Crop, Undo, Clear, drag-to-crop, bake-in).
 //   - `toolbar-dispatch.spec.ts`    — toolbar `handleActionClick`,
@@ -181,6 +184,112 @@ test('details: url-only with no prompt', async ({
   expect(record.prompt).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
+  await openerPage.close();
+});
+
+// ─── Prompt paste behaviour ──────────────────────────────────────
+
+test('details: pasting HTML into the prompt converts to markdown', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  // Synthesize a regular Ctrl+V paste: clipboardData carries both
+  // text/html (rich) and text/plain (flat) — capture-page.ts should
+  // pick the html branch and run it through htmlToMarkdown.
+  const pasted = await capturePage.evaluate(() => {
+    const input = document.getElementById('prompt-text') as HTMLTextAreaElement;
+    input.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/html', '<p>Hello <b>world</b></p>');
+    dt.setData('text/plain', 'Hello world');
+    input.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dt,
+      bubbles: true,
+      cancelable: true,
+    }));
+    return input.value;
+  });
+  expect(pasted).toBe('Hello **world**');
+
+  // Now simulate Ctrl+Shift+V "paste as plain text": Chrome strips
+  // formatting before firing, so only text/plain is present. The
+  // handler should fall through to the default paste path — but
+  // since we're dispatching synthetically (no default behaviour),
+  // we just verify our handler didn't preventDefault and didn't
+  // mutate the value. In production the browser's default will
+  // then insert the plain text after our listener returns.
+  const afterPlainPaste = await capturePage.evaluate(() => {
+    const input = document.getElementById('prompt-text') as HTMLTextAreaElement;
+    input.value = '';
+    input.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'just text');
+    const ev = new ClipboardEvent('paste', {
+      clipboardData: dt,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(ev);
+    return { value: input.value, prevented: ev.defaultPrevented };
+  });
+  // Our handler short-circuits with no preventDefault, leaving the
+  // browser's native plain-text paste to run normally.
+  expect(afterPlainPaste.prevented).toBe(false);
+  expect(afterPlainPaste.value).toBe('');
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('details: prompt paste strips browser-added inline styles + bare spans', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  // Mirrors what Chrome puts on the clipboard when copying a
+  // rendered fragment from a page like GitHub: every element gets
+  // an inline `style="..."` populated from computed styles, and
+  // whitespace runs end up wrapped in bare `<span> </span>`. The
+  // selection-capture path produces neither — `cleanCopiedHtml`
+  // normalizes the clipboard payload so the markdown matches what
+  // the user would see if they captured the same selection
+  // directly.
+  const pasted = await capturePage.evaluate(() => {
+    const input = document.getElementById('prompt-text') as HTMLTextAreaElement;
+    input.focus();
+    const dt = new DataTransfer();
+    dt.setData(
+      'text/html',
+      '<!--StartFragment-->' +
+      '<h4 style="margin: 24px 0; font-weight: 600;">' +
+      '<em style="box-sizing: border-box;">Capture</em>' +
+      '<span> </span>page' +
+      '</h4>' +
+      '<p style="color: rgb(31, 35, 40);">' +
+      'Body with <strong style="font-weight: 600;">bold</strong>.' +
+      '</p>' +
+      '<!--EndFragment-->',
+    );
+    dt.setData('text/plain', 'Capture page\nBody with bold.');
+    input.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    }));
+    return input.value;
+  });
+  expect(pasted).toBe('#### *Capture* page\n\nBody with **bold**.');
+
+  await capturePage.close();
   await openerPage.close();
 });
 

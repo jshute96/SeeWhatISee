@@ -75,6 +75,10 @@ On this page, you can:
     - **Crop button** crops to the most recent red box.
     - **Drag borders** of the image or crop region to create or resize the crop.
   - **Undo** or **Clear** to roll back edits.
+- Format conversion in **Paste**
+  - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
+  - In the HTML editors, the HTML source is pasted.
+  - *Paste as plain text* (*Ctrl-Shift-V*) always pastes plain text.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
 focusing on highlighted areas in the screenshot.

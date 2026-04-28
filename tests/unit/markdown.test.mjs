@@ -1134,6 +1134,33 @@ test('round-trip: htmlToMarkdown output is detected as markdown source', () => {
   for (const html of cases) htmlToMarkdown(html);
 });
 
+test('inline whitespace inside <span> is preserved (regression)', () => {
+  // GitHub-style rendered HTML and other browser-clipboard payloads
+  // wrap whitespace runs in bare or styled `<span>` elements
+  // (e.g. `<em>Capture</em><span> </span>page`). The whitespace text
+  // node *is* the meaningful inline gap — emitting it must round-
+  // trip the gap as a single space, not collapse the surrounding
+  // tokens together. Matters whether the span is bare or carries
+  // attributes (a styled span doesn't get unwrapped upstream by
+  // capture-page.ts's cleanCopiedHtml, so this branch must hold up
+  // on its own).
+  assert.equal(
+    norm(_htmlToMarkdown('<h4><em>Capture</em><span> </span>page</h4>')),
+    '#### *Capture* page',
+  );
+  assert.equal(
+    norm(_htmlToMarkdown('<h4><em>Capture</em><span class="x"> </span>page</h4>')),
+    '#### *Capture* page',
+  );
+  // Top-level leading whitespace is still trimmed by the outer
+  // `htmlToMarkdown` wrap, so the change doesn't leak a stray
+  // leading space when a fragment starts with pretty-print text.
+  assert.equal(
+    norm(_htmlToMarkdown('   <p>hello</p>')),
+    'hello',
+  );
+});
+
 test('round-trip exception: plain-text-only HTML stays plain (not detected)', () => {
   // Documented exception. The converter passes plain prose through
   // unchanged; the detector correctly returns false because there

@@ -708,11 +708,22 @@ function emitNodes(nodes: Node[], ctx: EmitContext): string {
     // trailing "\n", which then reads as a one-space indent on the
     // next block's first line (e.g. `\n - bullet` instead of
     // `\n- bullet`). Preformatted content keeps every character.
+    //
+    // The "previous block just emitted" signal is `out.endsWith('\n')`
+    // — block emissions always trail a newline. We deliberately do
+    // NOT also drop on `out.length === 0`: when this loop is entered
+    // for an inline element's children (the `default:` unwrap of
+    // `<span>`, anchors that contain only whitespace, etc.), `out`
+    // starts empty and a leading whitespace-only text *is* the
+    // meaningful inline space — e.g. `<em>foo</em><span> </span>bar`
+    // must round-trip the gap as `*foo* bar`, not `*foo*bar`. Leading
+    // pretty-print whitespace at the very top level is harmless: the
+    // top-level `htmlToMarkdown` call wraps everything in `.trim()`.
     if (
       node.type === 'text' &&
       !ctx.preformatted &&
       node.value.trim().length === 0 &&
-      (out.length === 0 || out.endsWith('\n'))
+      out.endsWith('\n')
     ) {
       continue;
     }

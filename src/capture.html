@@ -901,6 +901,15 @@
     in place before `bindEditDialog` instantiates editors.
   -->
   <script src="codejar.js"></script>
-  <script src="capture-page.js"></script>
+  <!--
+    `capture-page.js` is loaded as an ES module so it can `import`
+    from `./markdown.js` directly. The `marked`/`hljs`/`CodeJar`
+    vendor globals above are still classic-script tags — module
+    code reads window globals fine, so they don't need to be
+    imported. Module scripts are deferred (run after DOM parses);
+    that's the same effective ordering we had with the classic-
+    script-at-end-of-body pattern.
+  -->
+  <script type="module" src="capture-page.js"></script>
 </body>
 </html>

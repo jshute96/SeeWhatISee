@@ -15,6 +15,11 @@
 //   - HTML scrape failure still opens the Capture page with the
 //     right rows disabled + error icons, and still allows a
 //     url-only/prompt-only capture.
+//
+// Rich-text paste tests (paste-into-editors, source-view
+// short-circuit, real copy/paste round-trips) live in
+// `capture-paste.spec.ts`.
+
 
 import fs from 'node:fs';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
