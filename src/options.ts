@@ -40,6 +40,13 @@ interface CaptureDetailsDefaults {
   };
 }
 
+interface OptionsFactoryDefaults {
+  clickWithoutId: string;
+  clickWithId: string;
+  dblWithoutId: string;
+  dblWithId: string;
+  capturePageDefaults: CaptureDetailsDefaults;
+}
 interface OptionsData {
   actions: OptionsActionRow[];
   withSelectionChoiceIds: string[];
@@ -51,6 +58,7 @@ interface OptionsData {
   capturePageDefaults: CaptureDetailsDefaults;
   shortcuts: Record<string, string>;
   executeActionShortcut: string | null;
+  factoryDefaults: OptionsFactoryDefaults;
 }
 
 // Radio group names. All radios in a column share a name so the
@@ -80,10 +88,33 @@ function $(sel: string): HTMLElement {
   return el as HTMLElement;
 }
 
-function setStatus(text: string, isError = false): void {
+// Status messages auto-clear after this many ms. Each setStatus call
+// resets the timer, so clicking Save/Undo/Defaults in sequence simply
+// replaces the previous message and restarts the countdown. Pass
+// `sticky: true` for messages that should persist (in-flight
+// "Saving…", terminal init-load errors) — those rely on the next
+// setStatus call to replace them, not the timer.
+const STATUS_TIMEOUT_MS = 5000;
+let statusTimer: number | null = null;
+
+function setStatus(
+  text: string,
+  opts: { isError?: boolean; sticky?: boolean } = {},
+): void {
+  if (statusTimer !== null) {
+    clearTimeout(statusTimer);
+    statusTimer = null;
+  }
   const status = $('#status');
   status.textContent = text;
-  status.classList.toggle('error', isError);
+  status.classList.toggle('error', opts.isError ?? false);
+  if (text && !opts.sticky) {
+    statusTimer = window.setTimeout(() => {
+      status.textContent = '';
+      status.classList.remove('error');
+      statusTimer = null;
+    }, STATUS_TIMEOUT_MS);
+  }
 }
 
 async function getOptionsData(): Promise<OptionsData> {
@@ -315,12 +346,16 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
   };
 }
 
-function renderAll(data: OptionsData): void {
-  latest = data;
+function renderForm(data: OptionsData): void {
   renderHotkeySection(data);
   renderWithoutTable(data);
   renderWithTable(data);
   renderCaptureDetailsDefaults(data);
+}
+
+function renderAll(data: OptionsData): void {
+  latest = data;
+  renderForm(data);
   document.body.style.visibility = 'visible';
 }
 
@@ -384,6 +419,16 @@ function pickedValue(group: string): string | null {
   return checked?.value ?? null;
 }
 
+// Footer buttons are disabled while a save is in flight so a stray
+// Undo / Defaults / Save click can't race the post-save re-render
+// (which would silently overwrite whatever the user just clicked) or
+// fire a second concurrent save.
+function setFooterButtonsDisabled(disabled: boolean): void {
+  for (const id of ['save', 'undo', 'defaults']) {
+    ($(`#${id}`) as HTMLButtonElement).disabled = disabled;
+  }
+}
+
 async function onSave(): Promise<void> {
   if (!latest) return;
   const clickWithoutId = pickedValue(COL_WITHOUT_CLICK);
@@ -393,12 +438,13 @@ async function onSave(): Promise<void> {
   if (!clickWithoutId || !clickWithId || !dblWithoutId || !dblWithId) {
     setStatus(
       'Pick a Click and Double-click action in each section before saving.',
-      true,
+      { isError: true },
     );
     return;
   }
 
-  setStatus('Saving…');
+  setStatus('Saving…', { sticky: true });
+  setFooterButtonsDisabled(true);
   try {
     await sendSetOptions({
       clickWithoutId,
@@ -407,15 +453,40 @@ async function onSave(): Promise<void> {
       dblWithId,
       capturePageDefaults: readCaptureDetailsDefaults(),
     });
-    setStatus('Saved.');
     // Re-fetch so the page reflects any normalization the SW applied
     // (e.g. capture-page-defaults format snapped back to a valid
     // value).
     const fresh = await getOptionsData();
     renderAll(fresh);
+    setStatus('Settings saved.');
   } catch (err) {
-    setStatus(`Save failed: ${err instanceof Error ? err.message : String(err)}`, true);
+    setStatus(`Save failed: ${err instanceof Error ? err.message : String(err)}`, { isError: true });
+  } finally {
+    setFooterButtonsDisabled(false);
   }
+}
+
+function onUndo(): void {
+  if (!latest) return;
+  // `latest` reflects the most recently saved state (re-fetched after
+  // each successful Save), so re-rendering from it discards any
+  // unsaved radio / checkbox changes.
+  renderForm(latest);
+  setStatus('Restored saved settings.');
+}
+
+function onDefaults(): void {
+  if (!latest) return;
+  const fd = latest.factoryDefaults;
+  renderForm({
+    ...latest,
+    clickWithoutId: fd.clickWithoutId,
+    clickWithId: fd.clickWithId,
+    dblWithoutId: fd.dblWithoutId,
+    dblWithId: fd.dblWithId,
+    capturePageDefaults: fd.capturePageDefaults,
+  });
+  setStatus('Default options applied above but not saved.');
 }
 
 async function init(): Promise<void> {
@@ -425,6 +496,12 @@ async function init(): Promise<void> {
   });
   $('#save').addEventListener('click', () => {
     void onSave();
+  });
+  $('#undo').addEventListener('click', () => {
+    onUndo();
+  });
+  $('#defaults').addEventListener('click', () => {
+    onDefaults();
   });
   // Window focus / blur as the "shortcut may have been edited
   // elsewhere" signal — see `refreshHotkeys` docstring for context.
@@ -441,7 +518,7 @@ async function init(): Promise<void> {
   } catch (err) {
     setStatus(
       `Failed to load options: ${err instanceof Error ? err.message : String(err)}`,
-      true,
+      { isError: true, sticky: true },
     );
     document.body.style.visibility = 'visible';
   }

@@ -184,12 +184,48 @@ Sections are rendered top-to-bottom in this order:
   (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
   plus the `ignore-selection` sentinel. Same column shape.
 
+### Footer buttons
+
+Three buttons in a row, plus a status message. All three are
+disabled while a save is in flight — a stray Undo or Defaults click
+mid-save would otherwise be silently overwritten by the post-save
+re-render, and a second Save click would race two concurrent
+round-trips.
+
+- **Save** — persists the four click/dbl ids and the
+  `capturePageDefaults` object.
+  - Status: "Settings saved." (or "Save failed: …" on error).
+- **Undo changes** — re-renders the form from the most recently
+  saved state (the `latest` cache, refreshed after every Save).
+  - Discards unsaved edits without round-tripping the SW.
+  - Status: "Restored saved settings."
+- **Defaults** — re-renders the form with `OptionsData.factoryDefaults`.
+  - Sourced from `DEFAULT_*_ID` constants in `default-action.ts`
+    and `DEFAULT_CAPTURE_DETAILS_DEFAULTS` in `capture-page-defaults.ts`.
+  - Does **not** save; the user must hit Save to persist.
+  - Status: "Default options applied above but not saved."
+
+### Status messages
+
+`setStatus(text, opts)` renders into the `#status` span; the next
+call replaces whatever's there.
+
+- Default mode auto-clears after 5 seconds — used for the three
+  per-button confirmations and the `setOptions` error path.
+- `sticky: true` skips the auto-clear timer for messages we don't
+  want to vanish on their own. Used for in-flight `Saving…` (so a
+  slow round-trip doesn't leave the UI looking idle) and for the
+  initial-load failure (terminal state with nothing else to render).
+- Sticky messages still get replaced by the next `setStatus` call —
+  e.g. `Saving…` → `Settings saved.` after the SW responds.
+
 ### Wire
 
 Messages handled in `background/options.ts`:
 
 - `getOptionsData` — returns the action catalog, the stored click/dbl
-  ids, the current `capturePageDefaults`, and the bound hotkey map.
+  ids, the current `capturePageDefaults`, the bound hotkey map, and
+  a `factoryDefaults` block consumed by the Defaults button.
 - `setOptions` — accepts new ids for any of the click/dbl slots plus
   a `capturePageDefaults` object. Each setter is wrapped
   independently so a stale value in one slot doesn't block the

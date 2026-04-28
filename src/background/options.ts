@@ -6,12 +6,17 @@
 // `capture-details.ts` — Chrome dispatches to all registered listeners.
 import { CAPTURE_ACTIONS } from './capture-actions.js';
 import {
+  DEFAULT_CAPTURE_DETAILS_DEFAULTS,
   getCaptureDetailsDefaults,
   setCaptureDetailsDefaults,
   type CaptureDetailsDefaults,
 } from './capture-page-defaults.js';
 import { commandsToShortcutMap } from './context-menu.js';
 import {
+  DEFAULT_CLICK_WITH_SELECTION_ID,
+  DEFAULT_CLICK_WITHOUT_SELECTION_ID,
+  DEFAULT_DBL_WITH_SELECTION_ID,
+  DEFAULT_DBL_WITHOUT_SELECTION_ID,
   getDefaultDblWithSelectionId,
   getDefaultDblWithoutSelectionId,
   getDefaultWithSelectionId,
@@ -29,15 +34,23 @@ import {
 // tables without duplicating the CAPTURE_ACTIONS /
 // WITH_SELECTION_CHOICES catalog. Kept narrow: the page only needs
 // ids + display titles + which slots each id is valid for, plus the
-// currently-selected defaults, the bound hotkeys, and the stored
-// "Default items to save" preferences. See `src/options.ts` for the
-// consumer.
+// currently-selected defaults, the bound hotkeys, the stored
+// "Default items to save" preferences, and a `factoryDefaults`
+// block consumed by the Options page's "Defaults" button. See
+// `src/options.ts` for the consumer.
 interface OptionsActionRow {
   id: string;
   title: string;
   baseId: string;
   delaySec: number;
   isSelection: boolean;
+}
+interface OptionsFactoryDefaults {
+  clickWithoutId: string;
+  clickWithId: string;
+  dblWithoutId: string;
+  dblWithId: string;
+  capturePageDefaults: CaptureDetailsDefaults;
 }
 interface OptionsData {
   actions: OptionsActionRow[];
@@ -50,6 +63,7 @@ interface OptionsData {
   capturePageDefaults: CaptureDetailsDefaults;
   shortcuts: Record<string, string>;
   executeActionShortcut: string | null;
+  factoryDefaults: OptionsFactoryDefaults;
 }
 
 export function installOptionsMessageHandlers(): void {
@@ -94,6 +108,13 @@ export function installOptionsMessageHandlers(): void {
           capturePageDefaults,
           shortcuts,
           executeActionShortcut: shortcutMap.get('_execute_action') ?? null,
+          factoryDefaults: {
+            clickWithoutId: DEFAULT_CLICK_WITHOUT_SELECTION_ID,
+            clickWithId: DEFAULT_CLICK_WITH_SELECTION_ID,
+            dblWithoutId: DEFAULT_DBL_WITHOUT_SELECTION_ID,
+            dblWithId: DEFAULT_DBL_WITH_SELECTION_ID,
+            capturePageDefaults: DEFAULT_CAPTURE_DETAILS_DEFAULTS,
+          },
         };
         sendResponse(data);
       })();

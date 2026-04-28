@@ -30,10 +30,10 @@ const DEFAULT_CLICK_WITH_SELECTION_KEY = 'defaultClickWithSelection';
 const DEFAULT_CLICK_WITHOUT_SELECTION_KEY = 'defaultClickWithoutSelection';
 const DEFAULT_DBL_WITH_SELECTION_KEY = 'defaultDblWithSelection';
 const DEFAULT_DBL_WITHOUT_SELECTION_KEY = 'defaultDblWithoutSelection';
-const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture';
-const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture';
-const DEFAULT_DBL_WITH_SELECTION_ID = 'save-defaults';
-const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'save-defaults';
+export const DEFAULT_CLICK_WITH_SELECTION_ID = 'capture';
+export const DEFAULT_CLICK_WITHOUT_SELECTION_ID = 'capture';
+export const DEFAULT_DBL_WITH_SELECTION_ID = 'save-defaults';
+export const DEFAULT_DBL_WITHOUT_SELECTION_ID = 'save-defaults';
 // Sentinel id used in place of a CAPTURE_ACTIONS id when the user
 // wants a page selection to *not* steer the click default. Never
 // appears in CAPTURE_ACTIONS; `handleActionClick` treats it as "fall
