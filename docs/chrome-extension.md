@@ -520,9 +520,17 @@ convert a drawn rectangle into the active crop region.
     CSS flips to `ns-resize` / `ew-resize` / `nwse-resize` /
     `nesw-resize` on hover so the affordance is discoverable
     without reading the tooltip.
-  - Small white grip squares at the four corners make the handles
-    visible even before the user hovers — otherwise the hit
-    regions are invisible.
+  - Small white grip squares at the four corners of the effective
+    crop region make the handles visible even before the user
+    hovers — otherwise the hit regions are invisible. They render
+    on the initial image too (at the image's own corners), so the
+    "drag the image edge to start cropping" affordance is
+    discoverable without first hovering into the hit band.
+  - The grip is centered on the corner and may extend past the
+    image edge; `#overlay` is `overflow: visible` so a boundary
+    corner shows the full square rather than a quarter-square nub.
+    Drag previews stay inside the image regardless because
+    `localCoords()` clamps mouse coords to the image rect.
   - Each completed drag commits a **new** `'crop'` edit on the
     stack, not an in-place mutation of the previous one. Undo
     peels back one resize at a time; earlier crops stay in the

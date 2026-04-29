@@ -1003,13 +1003,26 @@ function render(): void {
     if (cy + ch < h) dashed(cx, cy + ch, cx + cw, cy + ch);
     if (cx > 0) dashed(cx, cy, cx, cy + ch);
     if (cx + cw < w) dashed(cx + cw, cy, cx + cw, cy + ch);
-    // Small square grips at the four corners so the handles are
-    // discoverable without requiring the user to first hover into
-    // the invisible hit band. A 6×6 white grip with a 1px dark
-    // outline reads on both light and dark backgrounds.
+  }
+
+  // Small square grips at the four corners of the effective crop
+  // region (the active crop, or the full image when no crop exists).
+  // They're drawn even with no crop so the initial image hints that
+  // its borders are draggable — without them the edge hit band is
+  // invisible and the user has no cue to discover it. White fill
+  // with a 1px dark outline so they read on both light and dark
+  // backgrounds. Grips render centered on the corner and may extend
+  // past the image edge — `#overlay` is `overflow: visible` so the
+  // square is fully drawn even at a boundary corner.
+  {
+    const region = cropPreview ?? { x: 0, y: 0, w: 100, h: 100 };
+    const gx0 = (region.x / 100) * w;
+    const gy0 = (region.y / 100) * h;
+    const gw = (region.w / 100) * w;
+    const gh = (region.h / 100) * h;
     const gripSize = 6;
     const corners: Array<[number, number]> = [
-      [cx, cy], [cx + cw, cy], [cx, cy + ch], [cx + cw, cy + ch],
+      [gx0, gy0], [gx0 + gw, gy0], [gx0, gy0 + gh], [gx0 + gw, gy0 + gh],
     ];
     for (const [gx, gy] of corners) {
       const g = makeFilledRect(gx - gripSize / 2, gy - gripSize / 2, gripSize, gripSize, '#fff');

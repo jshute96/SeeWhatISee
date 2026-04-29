@@ -503,7 +503,12 @@
     left: 0;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    /* Visible (not hidden) so the corner crop-grip squares can
+       extend past the image edges — without this, grips at a
+       boundary corner are clipped to a quarter-square nub. Drag
+       previews stay inside the image because localCoords()
+       already clamps mouse coords to the image rect. */
+    overflow: visible;
     cursor: crosshair;
     user-select: none;
   }
