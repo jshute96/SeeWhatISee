@@ -100,6 +100,10 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored "Default items to save on Capture page" preferences — shape, fresh-install defaults, normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
+| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `installAskMessageHandler` |
+| `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
+| `src/background/ask/claude.ts` | Claude provider data — URLs and ranked selectors for the four DOM roles |
+| `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
@@ -157,6 +161,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `tests/unit/markdown.test.mjs` | Pure unit tests for `src/markdown.ts` — run via `node --test` (no browser required) |
+| `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/background/ask/index.ts` (`globMatch` / `matchesAny`) |
 
 ## Design Docs (`docs/`)
 
@@ -167,6 +172,7 @@ One-line descriptions of every source file, grouped by directory.
 | `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, Capture page flow, Playwright patterns) |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
+| `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |

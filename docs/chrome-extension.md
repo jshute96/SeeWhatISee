@@ -119,6 +119,30 @@ Even with `activeTab` granted, Chrome refuses to let an extension
 screenshot the CWS page itself. That's a Chrome policy limit, not
 something the manifest can fix — just something to warn users about.
 
+### Ask flow uses dynamic injection (no `content_scripts`)
+
+The Ask button on the Capture page sends artifacts to a third-party
+AI tab (currently `claude.ai`). Two design choices fall out of the
+permissions we already have:
+
+- **No `content_scripts` declaration.** The manifest does not list
+  AI-site URLs — `chrome.scripting.executeScript` covers it on
+  demand, so the extension runs zero code on AI sites until the user
+  actually clicks Ask.
+- **MAIN world execution.** `src/ask-inject.ts` is loaded with
+  `world: 'MAIN'` so it can dispatch `change` / `input` /
+  `beforeinput` events that the AI site's React composer (Claude
+  uses ProseMirror) actually listens to. An isolated-world script
+  fires events into a separate JS realm and the page never sees
+  them.
+
+The two-step injection — `executeScript({ files: ['ask-inject.js'] })`
+to register `window.__seeWhatISeeAsk`, then a second
+`executeScript({ func, args })` to invoke it — keeps the file
+self-contained (no `import`/`export`, runs as a classic script) and
+lets retries land in the same MAIN-world realm without re-loading
+the bundle.
+
 ## Error reporting: from invisible to visible
 
 ### Before

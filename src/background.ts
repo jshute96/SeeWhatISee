@@ -64,6 +64,7 @@ import {
   startCaptureWithDetails,
 } from './background/capture-details.js';
 import { installOptionsMessageHandlers } from './background/options.js';
+import { installAskMessageHandler } from './background/ask/index.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`
@@ -72,6 +73,7 @@ import { installOptionsMessageHandlers } from './background/options.js';
 installUnhandledRejectionHandler();
 installDetailsMessageHandlers();
 installOptionsMessageHandlers();
+installAskMessageHandler();
 
 chrome.action.onClicked.addListener(() => {
   // Fire-and-forget refresh so any hotkey edit since our last

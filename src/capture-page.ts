@@ -548,16 +548,20 @@ document.addEventListener('keydown', (e) => {
   // Suspend the page-wide hotkeys while any edit dialog is up —
   // e.g. Alt+H in the HTML dialog should type `h`, not silently
   // flip the Save HTML checkbox behind the modal.
+  // Note: this listener references `askBtn` which is declared
+  // further down the file. Safe because the listener fires on user
+  // input — long after all top-level `const`s have initialised.
   if (anyEditDialogOpen()) return;
   if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
-  // Alt+C clicks the Capture button. Alt+S / Alt+H toggle the
-  // screenshot / HTML checkboxes. Alt+N toggles the master "Save
-  // selection" checkbox. Alt+L / Alt+T / Alt+M pick one of the three
-  // format radios (and auto-check the master via the change listener
-  // wired in wireSelectionControls). Each is a no-op when its
-  // control is disabled so the hotkey matches what's on screen. The
-  // label underlines in capture.html mirror these keys.
+  // Alt+C clicks the Capture button. Alt+A opens the Ask menu.
+  // Alt+S / Alt+H toggle the screenshot / HTML checkboxes. Alt+N
+  // toggles the master "Save selection" checkbox. Alt+L / Alt+T /
+  // Alt+M pick one of the three format radios (and auto-check the
+  // master via the change listener wired in wireSelectionControls).
+  // Each is a no-op when its control is disabled so the hotkey
+  // matches what's on screen. The label underlines in capture.html
+  // mirror these keys.
   const selectionFormat: Partial<Record<string, SelectionFormat>> = {
     l: 'html', t: 'text', m: 'markdown',
   };
@@ -568,6 +572,13 @@ document.addEventListener('keydown', (e) => {
     if (captureBtn.disabled) return;
     e.preventDefault();
     captureBtn.click();
+  } else if (key === 'a') {
+    // Alt+A opens the Ask menu (or closes it if already open). No-op
+    // while the button is disabled (in-flight Ask) so a double-press
+    // doesn't queue a second send.
+    if (askBtn.disabled) return;
+    e.preventDefault();
+    askBtn.click();
   } else if (key === 's') {
     if (screenshotBox.disabled) return;
     e.preventDefault();
@@ -2350,6 +2361,305 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
     captureBtn.click();
   }
 });
+
+// ─── Ask flow ─────────────────────────────────────────────────────
+//
+// Click `#ask-btn` → fetch the providers + their open tabs from the
+// SW → render the menu → user clicks an item → assemble payload from
+// the same Capture-page state the Capture button reads → send
+// `askAi` to the SW. The SW handles tab focus + script injection.
+
+interface AskTabSummary {
+  tabId: number;
+  title: string;
+  url: string;
+}
+interface AskProviderListing {
+  id: 'claude';
+  label: string;
+  enabled: boolean;
+  existingTabs: AskTabSummary[];
+}
+type AskDestination =
+  | { kind: 'newTab'; provider: 'claude' }
+  | { kind: 'existingTab'; provider: 'claude'; tabId: number };
+
+const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
+const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
+const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
+const askStatus = document.getElementById('ask-status') as HTMLDivElement;
+const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
+
+// Sync the "Ask <provider>" button label and tooltip with whichever
+// providers the registry currently has enabled. Runs once at page
+// load — once Gemini / ChatGPT adapters land, the label and tooltip
+// will follow without any HTML edits here. While only one provider
+// is enabled we name it directly; with multiple, fall back to a
+// neutral label (the menu will let the user pick).
+async function refreshAskTargetLabel(): Promise<void> {
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      action: 'askListProviders',
+    })) as { providers: AskProviderListing[] } | undefined;
+    const enabled = (response?.providers ?? []).filter((p) => p.enabled);
+    if (enabled.length === 1) {
+      askTargetLabel.textContent = enabled[0].label;
+      askBtn.title = `Send to ${enabled[0].label} on web`;
+    } else if (enabled.length > 1) {
+      askTargetLabel.textContent = 'AI';
+      askBtn.title = 'Send to an AI on web';
+    }
+    // 0 enabled → leave the HTML defaults in place; the menu's
+    // empty-state will tell the user when they actually click.
+  } catch {
+    // Best-effort: a missing background or transient SW restart
+    // shouldn't blank the button. Leave the static HTML defaults.
+  }
+}
+void refreshAskTargetLabel();
+
+function setAskStatus(text: string, kind: 'ok' | 'error' | 'info'): void {
+  askStatus.textContent = text;
+  askStatus.classList.remove('ok', 'error');
+  if (kind === 'ok') askStatus.classList.add('ok');
+  else if (kind === 'error') askStatus.classList.add('error');
+}
+
+// Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
+// closeAskMenu() clears it so a close that happens *before* the timer
+// fires doesn't leak listener attaches against an already-hidden menu.
+let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
+
+function closeAskMenu(): void {
+  askMenu.hidden = true;
+  askBtn.setAttribute('aria-expanded', 'false');
+  if (askListenerAttachTimer !== null) {
+    clearTimeout(askListenerAttachTimer);
+    askListenerAttachTimer = null;
+  }
+  document.removeEventListener('click', onDocumentClickWhileAskOpen, true);
+  document.removeEventListener('keydown', onKeydownWhileAskOpen, true);
+}
+
+function onDocumentClickWhileAskOpen(e: MouseEvent): void {
+  // Outside-click dismiss. Clicks inside the menu still bubble through
+  // to their item-handler (registered on each <li>) — closeAskMenu()
+  // there happens *after* the click handler runs.
+  const target = e.target as Node | null;
+  if (askMenu.contains(target) || askBtn.contains(target)) return;
+  closeAskMenu();
+}
+
+function onKeydownWhileAskOpen(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeAskMenu();
+    askBtn.focus();
+  }
+}
+
+async function openAskMenu(): Promise<void> {
+  if (!askMenu.hidden) {
+    closeAskMenu();
+    return;
+  }
+  askMenuList.replaceChildren();
+  const loading = document.createElement('li');
+  loading.className = 'ask-menu-heading';
+  loading.textContent = 'Loading…';
+  askMenuList.appendChild(loading);
+  askMenu.hidden = false;
+  askBtn.setAttribute('aria-expanded', 'true');
+  // Defer listener attach so the click that opened the menu doesn't
+  // immediately close it on the same event-loop tick. Track the timer
+  // and check `askMenu.hidden` at fire time so a close-before-fire
+  // (Escape, programmatic toggle, etc.) doesn't leave dangling
+  // listeners — closeAskMenu() also clears the pending timer.
+  askListenerAttachTimer = setTimeout(() => {
+    askListenerAttachTimer = null;
+    if (askMenu.hidden) return;
+    document.addEventListener('click', onDocumentClickWhileAskOpen, true);
+    document.addEventListener('keydown', onKeydownWhileAskOpen, true);
+  }, 0);
+
+  const response = (await chrome.runtime.sendMessage({
+    action: 'askListProviders',
+  })) as { providers: AskProviderListing[] } | undefined;
+  // Bail if the user already closed the menu while we were waiting.
+  if (askMenu.hidden) return;
+
+  askMenuList.replaceChildren();
+  const providers = response?.providers ?? [];
+  if (providers.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'ask-menu-heading';
+    empty.textContent = 'No providers configured';
+    askMenuList.appendChild(empty);
+    return;
+  }
+
+  // Section 1: "New window in <provider>" — one entry per registered
+  // provider, including disabled ones (rendered as "coming soon").
+  const newHeading = document.createElement('li');
+  newHeading.className = 'ask-menu-heading';
+  newHeading.textContent = 'New window in';
+  askMenuList.appendChild(newHeading);
+  for (const provider of providers) {
+    const li = document.createElement('li');
+    li.className = 'ask-menu-item';
+    li.setAttribute('role', 'menuitem');
+    li.tabIndex = 0;
+    if (!provider.enabled) {
+      li.textContent = `${provider.label} (coming soon)`;
+      li.setAttribute('aria-disabled', 'true');
+    } else {
+      li.textContent = provider.label;
+      li.addEventListener('click', () => {
+        closeAskMenu();
+        void runAsk({ kind: 'newTab', provider: provider.id });
+      });
+    }
+    askMenuList.appendChild(li);
+  }
+
+  // Section 2..N: "Existing window in <provider>" — only rendered for
+  // providers with at least one matching tab open. Each section gets
+  // a horizontal separator before its heading so the menu visually
+  // segments into "new windows" vs. each "existing windows" group.
+  for (const provider of providers) {
+    if (!provider.enabled || provider.existingTabs.length === 0) continue;
+    const sep = document.createElement('li');
+    sep.className = 'ask-menu-separator';
+    sep.setAttribute('role', 'separator');
+    askMenuList.appendChild(sep);
+    const heading = document.createElement('li');
+    heading.className = 'ask-menu-heading';
+    heading.textContent = `Existing window in ${provider.label}`;
+    askMenuList.appendChild(heading);
+    for (const tab of provider.existingTabs) {
+      const li = document.createElement('li');
+      li.className = 'ask-menu-item';
+      li.setAttribute('role', 'menuitem');
+      li.tabIndex = 0;
+      li.title = tab.url;
+      li.textContent = tab.title || tab.url || `Tab ${tab.tabId}`;
+      li.addEventListener('click', () => {
+        closeAskMenu();
+        void runAsk({
+          kind: 'existingTab',
+          provider: provider.id,
+          tabId: tab.tabId,
+        });
+      });
+      askMenuList.appendChild(li);
+    }
+  }
+}
+
+askBtn.addEventListener('click', () => {
+  void openAskMenu();
+});
+
+interface AskAttachment {
+  data: string;
+  kind: 'image' | 'text';
+  mimeType: string;
+  filename: string;
+}
+
+const SELECTION_FILE_META: Record<
+  SelectionFormat,
+  { filename: string; mimeType: string }
+> = {
+  html: { filename: 'selection.html', mimeType: 'text/html' },
+  text: { filename: 'selection.txt', mimeType: 'text/plain' },
+  markdown: { filename: 'selection.md', mimeType: 'text/markdown' },
+};
+
+function buildAskAttachments(): AskAttachment[] {
+  const out: AskAttachment[] = [];
+  if (screenshotBox.checked && !screenshotBox.disabled) {
+    // Bake current edits into the PNG when there are any — Ask uses
+    // the same on-screen state the user is looking at, mirroring the
+    // Capture button's bake-on-save policy.
+    const data = hasBakeableEdits() ? renderHighlightedPng() : previewImg.src;
+    out.push({
+      data,
+      kind: 'image',
+      mimeType: 'image/png',
+      filename: 'screenshot.png',
+    });
+  }
+  if (htmlBox.checked && !htmlBox.disabled && captured.html) {
+    out.push({
+      data: captured.html,
+      kind: 'text',
+      mimeType: 'text/html',
+      filename: 'page.html',
+    });
+  }
+  const fmt = selectedSelectionFormat();
+  if (fmt) {
+    const body = captured[SELECTION_WIRE_KIND[fmt]];
+    if (body && body.trim().length > 0) {
+      const meta = SELECTION_FILE_META[fmt];
+      out.push({
+        data: body,
+        kind: 'text',
+        mimeType: meta.mimeType,
+        filename: meta.filename,
+      });
+    }
+  }
+  return out;
+}
+
+async function runAsk(destination: AskDestination): Promise<void> {
+  askBtn.disabled = true;
+  setAskStatus('Sending…', 'info');
+  try {
+    const promptText = promptInput.value.trim();
+    const attachments = buildAskAttachments();
+    // Guard against the all-empty case: every Save row unchecked AND
+    // no prompt would otherwise focus a Claude tab and silently do
+    // nothing while the status flipped to "Sent." — confusing.
+    if (attachments.length === 0 && promptText.length === 0) {
+      setAskStatus(
+        'Nothing to send — check at least one box or type a prompt.',
+        'error',
+      );
+      return;
+    }
+    const payload = {
+      attachments,
+      promptText,
+      // Empty prompt → user wants to set up the conversation and keep
+      // typing on the AI side. Non-empty → fire it off.
+      autoSubmit: promptText.length > 0,
+    };
+    const response = (await chrome.runtime.sendMessage({
+      action: 'askAi',
+      destination,
+      payload,
+    })) as { ok: boolean; error?: string } | undefined;
+    if (!response) {
+      setAskStatus('No response from background.', 'error');
+      return;
+    }
+    if (!response.ok) {
+      setAskStatus(response.error ?? 'Ask failed.', 'error');
+      return;
+    }
+    setAskStatus('Sent.', 'ok');
+  } catch (err) {
+    setAskStatus(
+      `Ask failed: ${err instanceof Error ? err.message : String(err)}`,
+      'error',
+    );
+  } finally {
+    askBtn.disabled = false;
+  }
+}
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then
 // internally calls fitImage. That first fitImage runs before the

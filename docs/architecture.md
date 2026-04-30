@@ -39,6 +39,7 @@ that wires Chrome event listeners. The substantive logic lives in
 - `capture-details.ts` — Capture-page per-tab session + `ensure*Downloaded` artifact cache.
 - `capture-page-defaults.ts` — stored Capture-page Save defaults (`capturePageDefaults`).
 - `options.ts` — Options-page SW wire (`getOptionsData` / `setOptions`).
+- `ask/` — Ask flow: routes the staged Capture-page payload to a chosen AI tab (see "Ask AI" below).
 
 The sections below keep referring to these by file for locator
 accuracy; "background.ts" in older wording generally means "the
@@ -958,6 +959,13 @@ active crop region.
 See [`chrome-extension.md`](chrome-extension.md) for the
 runtime-message and session-storage hazards (CSP, SW idle-out,
 permission gaps).
+
+## Ask AI
+
+The "Ask" button on the Capture page sends the currently-staged
+artifacts to an AI web UI in another tab (Claude in v1). Architecture,
+provider registry, send flow, payload shape, ProseMirror notes, and
+diagnostics live in [`ask-on-web.md`](ask-on-web.md).
 
 ## Why a separate `dist/`
 
