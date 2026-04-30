@@ -54,6 +54,24 @@
   const FILE_SETTLE_DELAY_MS = 1500;
   const POLL_INTERVAL_MS = 150;
 
+  // Test-only tuning hook. If the target page sets
+  // `window.__seeWhatISeeAskTuning` before the runtime is invoked,
+  // those values override the defaults — the e2e fake-Claude
+  // fixture uses this to skip the prod-side settle delays (the
+  // fake page processes events synchronously, so the real-Claude
+  // timings would just slow the suite down). Production claude.ai
+  // never sets the global, so the production timings stand.
+  interface AskTuning {
+    fileSettleMs?: number;
+    preSubmitSettleMs?: number;
+  }
+  function tuning(): AskTuning {
+    return (
+      (window as unknown as { __seeWhatISeeAskTuning?: AskTuning })
+        .__seeWhatISeeAskTuning ?? {}
+    );
+  }
+
   // Console logger for diagnosing weird behavior on AI sites. Every
   // step of the Ask flow logs through here so a user looking at the
   // AI tab's DevTools console can see exactly what we did, which
@@ -134,8 +152,9 @@
     // clickSubmit() is the authoritative "uploads finished" gate
     // for the auto-submit path; this fixed settle delay only
     // protects the typing step from a transient composer reset.
-    log(`attachFiles: settling for ${FILE_SETTLE_DELAY_MS}ms`);
-    await delay(FILE_SETTLE_DELAY_MS);
+    const settle = tuning().fileSettleMs ?? FILE_SETTLE_DELAY_MS;
+    log(`attachFiles: settling for ${settle}ms`);
+    await delay(settle);
   }
 
   async function typePrompt(
@@ -310,7 +329,7 @@
       //    Without this, the no-attachment path can race the editor
       //    state update and the loop times out before re-render.
       if (payload.autoSubmit && payload.promptText.trim().length > 0) {
-        await delay(POLL_INTERVAL_MS);
+        await delay(tuning().preSubmitSettleMs ?? POLL_INTERVAL_MS);
         await clickSubmit(selectors);
       } else {
         log('run: autoSubmit off or prompt empty, leaving for user');

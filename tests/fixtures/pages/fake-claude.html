@@ -74,6 +74,17 @@
       lastSubmitHtml: null,
     };
 
+    // Tuning hook the inject runtime checks before sleeping. The
+    // production timings exist to give claude.ai's React state time
+    // to ingest uploads + type events; this fixture processes those
+    // synchronously, so the prod values would just slow the suite.
+    // Production claude.ai never sets this global — `?? FILE_SETTLE_DELAY_MS`
+    // / `?? POLL_INTERVAL_MS` keep the prod timings unchanged.
+    window.__seeWhatISeeAskTuning = {
+      fileSettleMs: 50,
+      preSubmitSettleMs: 50,
+    };
+
     const fileInput = document.querySelector('input[type="file"]');
     const editor = document.querySelector('[data-testid="chat-input"]');
     const submitBtn = document.querySelector('button[aria-label="Send message"]');
