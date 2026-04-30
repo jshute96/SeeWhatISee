@@ -79,7 +79,7 @@ On this page, you can:
   - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
   - In the HTML editors, the HTML source is pasted.
   - *Paste as plain text* (*Ctrl-Shift-V*) always pastes plain text.
-- **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. Click **Ask** (or press Alt+A) to pick the destination — a new Claude tab, or any Claude tab you already have open. If you typed a prompt, it's auto-submitted.
+- **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. Click **Ask** (or press Alt+A) to pick the destination — a new tab in Claude or Gemini, or any open tab you already have. If you typed a prompt, it's auto-submitted.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
 focusing on highlighted areas in the screenshot.

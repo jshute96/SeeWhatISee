@@ -2,8 +2,8 @@
 
 The "Ask AI" button on the Capture page sends the currently-staged
 artifacts (screenshot, HTML snapshot, optional selection, prompt) to
-an AI web UI in another tab. v1 supports Claude only; the
-provider-adapter layout makes Gemini / ChatGPT additive.
+an AI web UI in another tab. v1 ships with Claude and Gemini; the
+provider-adapter layout makes ChatGPT / others additive.
 
 ## Goals
 
@@ -48,7 +48,7 @@ from `chrome.tabs.query` per registered provider:
 ```
 New window in
   Claude
-  (Gemini  — coming soon, disabled)
+  Gemini
   (ChatGPT — coming soon, disabled)
 ─────────────────────────────────────
 Existing window in Claude
@@ -95,6 +95,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 | `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `sendToAi`, `installAskMessageHandler`. Resolves target tab, focuses it, runs the injected runtime. |
 | `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
+| `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
 | `src/capture.html` + `src/capture-page.ts` | Ask button, menu, status line, payload assembly. |
 
@@ -102,7 +103,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 ```ts
 type AskProvider = {
-  id: 'claude';                 // future: | 'gemini' | 'chatgpt'
+  id: 'claude' | 'gemini';      // future: | 'chatgpt'
   label: string;
   urlPatterns: string[];        // chrome.tabs.query
   excludeUrlPatterns?: string[];// glob excludes filtered post-query
@@ -127,7 +128,36 @@ type AskProvider = {
 `AskInjectSelectors` has four ranked lists: `fileInput`,
 `textInput`, `submitButton`, `attachmentPreview` (vestigial, kept
 for future preview-confirmation work). The injected runtime walks
-each list in order and uses the first match.
+each list in order and uses the first match. There's also an
+optional `preFileInputClicks` list for providers (Gemini today)
+whose file input only appears after a click chain — see below.
+
+### `preFileInputClicks` (Gemini)
+
+Some providers don't expose a file `<input>` in the initial DOM:
+
+- The user has to open an "Add files" menu first, then pick "Upload
+  files", and only that menu action creates the input.
+- For these providers the adapter declares `preFileInputClicks` — a
+  list of button selectors the runtime clicks in order before
+  searching for the file input.
+
+For the duration of the click chain the runtime patches
+`HTMLInputElement.prototype.click` to a no-op for `type="file"` inputs:
+
+- Without the patch, a menu-item click handler would call `.click()`
+  on the freshly-created input and pop the OS file picker —
+  defeating programmatic upload.
+- The patch is installed and restored inside the same try/finally so
+  it can't leak even if a click selector throws.
+- Once the click chain finishes, the runtime polls for the input via
+  `waitForRankedLast` and picks the **last** match in document order
+  — handles the second-call case where a stale input from the
+  previous attach may still be in the DOM.
+
+Claude's adapter omits `preFileInputClicks`; the runtime takes the
+fast path (a single `findRanked` call against `fileInput`) and the
+override never installs.
 
 ### Adding a new provider
 

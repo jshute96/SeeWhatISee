@@ -14,10 +14,11 @@
 
 (() => {
   interface AskSelectors {
+    preFileInputClicks?: string[];
     fileInput: string[];
     textInput: string[];
     submitButton: string[];
-    attachmentPreview: string[];
+    attachmentPreview?: string[];
   }
 
   interface AskAttachment {
@@ -103,6 +104,51 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  // Poll for a single CSS selector to appear within `timeoutMs`.
+  // Used by the preFileInputClicks flow where each click may render
+  // the next click target asynchronously (Gemini opens a menu, then
+  // the menu animation populates buttons).
+  async function waitForSelector<T extends Element = HTMLElement>(
+    selector: string,
+    timeoutMs: number,
+  ): Promise<T | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const el = document.querySelector<T>(selector);
+      if (el) return el;
+      await delay(POLL_INTERVAL_MS);
+    }
+    return null;
+  }
+
+  // Like findRanked, but polls until *some* selector matches and
+  // returns the LAST element matching that selector (not the first).
+  // Used by attachFiles after preFileInputClicks when the file input
+  // is created asynchronously by the provider's upload-menu flow:
+  // a stale input from a previous call may still be in the DOM, but
+  // the freshly-created one is appended after it, so the last match
+  // is the one we want. For Claude this path isn't used (preClicks
+  // is empty and there's only one input anyway).
+  async function waitForRankedLast<T extends Element = HTMLElement>(
+    role: string,
+    selectors: string[],
+    timeoutMs: number,
+  ): Promise<T | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      for (const sel of selectors) {
+        const els = document.querySelectorAll<T>(sel);
+        if (els.length > 0) {
+          log(`${role}: matched`, sel, `(picking last of ${els.length})`);
+          return els[els.length - 1];
+        }
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+    logWarn(`${role}: no selector matched within ${timeoutMs}ms`, selectors);
+    return null;
+  }
+
   function dataUrlToFile(dataUrl: string, filename: string, mime: string): File {
     // Hand-decode to avoid going through fetch() — claude.ai's CSP can
     // intercept fetch() of data: URLs in some cases.
@@ -135,15 +181,78 @@
       `attachFiles: ${files.length} file(s)`,
       files.map((f) => `${f.name} (${f.type}, ${f.size} bytes)`),
     );
-    const input = findRanked<HTMLInputElement>('fileInput', selectors.fileInput);
-    if (!input) throw new Error('Could not find the file-upload input');
 
-    const dt = new DataTransfer();
-    for (const f of files) dt.items.add(f);
-    input.files = dt.files;
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    log('attachFiles: dispatched change+input on file input');
+    // Some providers (Gemini today) don't expose a file input in
+    // their initial DOM — it's added only after the user opens an
+    // "Add files" menu and picks an item. The clicks that surface it
+    // would normally fire `input.click()` and pop the OS file
+    // picker; we override `HTMLInputElement.prototype.click` for
+    // `type=file` inputs to a no-op for the duration so we can set
+    // `.files` directly without ever showing the picker.
+    //
+    // attachFiles is single-shot — the caller (run()) awaits each
+    // call before issuing the next, so origClick is captured against
+    // an unpatched prototype every time. Don't parallelize.
+    const preClicks = selectors.preFileInputClicks ?? [];
+    const origClick = HTMLInputElement.prototype.click;
+    let input: HTMLInputElement | null;
+    let didOverride = false;
+    try {
+      // Install the patch INSIDE the try so the matching restore is
+      // lexically obvious — any future code added between install and
+      // here can't bypass the finally.
+      if (preClicks.length > 0) {
+        HTMLInputElement.prototype.click = function (): void {
+          if (this.type === 'file') {
+            log('attachFiles: intercepted file-input click (suppressing native picker)');
+            return;
+          }
+          return origClick.call(this);
+        };
+        didOverride = true;
+      }
+
+      for (const sel of preClicks) {
+        const el = await waitForSelector<HTMLElement>(sel, 3000);
+        if (!el) {
+          throw new Error(`preFileInputClicks: selector did not appear: ${sel}`);
+        }
+        log('preFileInputClicks: clicking', sel);
+        el.click();
+        // Brief settle so the next selector (often part of a popup
+        // menu) has a chance to render before we look for it.
+        await delay(POLL_INTERVAL_MS);
+      }
+
+      // For providers with preClicks, the file input may not be in
+      // the DOM yet — poll for it. We deliberately pick the LAST
+      // matching element on the page, not the first: when Ask is
+      // called twice in a row, the previous call's input may still
+      // be in the DOM (now stale, with files already attached). The
+      // freshly-created input is the one most recently inserted, so
+      // in document order it's last among its siblings of the same
+      // selector. For Claude (no preClicks) the first selector
+      // matches immediately and there's only one.
+      if (preClicks.length > 0) {
+        input = await waitForRankedLast<HTMLInputElement>(
+          'fileInput',
+          selectors.fileInput,
+          3000,
+        );
+      } else {
+        input = findRanked<HTMLInputElement>('fileInput', selectors.fileInput);
+      }
+      if (!input) throw new Error('Could not find the file-upload input');
+
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      log('attachFiles: dispatched change+input on file input');
+    } finally {
+      if (didOverride) HTMLInputElement.prototype.click = origClick;
+    }
 
     // No DOM-based confirmation: AI sites' attachment-preview
     // selectors are too brittle to maintain across UI changes, and

@@ -45,7 +45,10 @@ export default defineConfig({
       name: 'claude',
       testMatch: /claude\.live\.spec\.ts$/,
     },
-    // { name: 'gemini',  testMatch: /gemini\.live\.spec\.ts$/ },
+    {
+      name: 'gemini',
+      testMatch: /gemini\.live\.spec\.ts$/,
+    },
     // { name: 'chatgpt', testMatch: /chatgpt\.live\.spec\.ts$/ },
   ],
 });

@@ -43,8 +43,5 @@ export const claudeProvider: AskProvider = {
       'button[aria-label="Send message"]',
       'button[aria-label*="send" i]',
     ],
-    // Currently unused (see AskInjectSelectors.attachmentPreview);
-    // kept as `[]` to make that explicit at the data layer.
-    attachmentPreview: [],
   },
 };

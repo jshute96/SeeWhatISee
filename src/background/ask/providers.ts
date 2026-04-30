@@ -10,8 +10,9 @@
 // background/ask/index.ts.
 
 import { claudeProvider } from './claude.js';
+import { geminiProvider } from './gemini.js';
 
-export type AskProviderId = 'claude';
+export type AskProviderId = 'claude' | 'gemini';
 
 /**
  * One ranked list per role. The injected runtime tries each entry
@@ -20,6 +21,21 @@ export type AskProviderId = 'claude';
  * extension update.
  */
 export interface AskInjectSelectors {
+  /**
+   * Buttons the runtime should click in sequence (in this exact
+   * order) before searching for the file input. Used by providers
+   * that don't expose a file input in the initial DOM — e.g. Gemini,
+   * which only creates one when the user opens its upload menu and
+   * picks "Upload files". For each entry the runtime waits up to a
+   * short timeout for the selector to appear, clicks it, then moves
+   * on. While these clicks run, `HTMLInputElement.prototype.click`
+   * is patched to a no-op for `type=file` inputs so the OS file
+   * picker doesn't surface mid-flow.
+   *
+   * Empty / omitted (Claude) means the file input is in the page
+   * already and the runtime can skip straight to setting `files`.
+   */
+  preFileInputClicks?: string[];
   fileInput: string[];
   textInput: string[];
   submitButton: string[];
@@ -27,11 +43,11 @@ export interface AskInjectSelectors {
    * Element that appears once an attached file has been accepted by
    * the AI's UI. Reserved for future DOM-based upload confirmation
    * — currently unused: the submit-enable poll in `ask-inject.ts`
-   * is the authoritative "uploads finished" gate. Kept on the
-   * interface so existing provider data files don't need editing
-   * when we re-introduce preview detection.
+   * is the authoritative "uploads finished" gate. Optional so
+   * provider data files don't need to write `attachmentPreview: []`
+   * boilerplate while it's vestigial.
    */
-  attachmentPreview: string[];
+  attachmentPreview?: string[];
 }
 
 export interface AskProvider {
@@ -107,7 +123,7 @@ export interface AskProvider {
   enabled: boolean;
 }
 
-export const ASK_PROVIDERS: AskProvider[] = [claudeProvider];
+export const ASK_PROVIDERS: AskProvider[] = [claudeProvider, geminiProvider];
 
 export function getAskProvider(id: AskProviderId): AskProvider {
   const p = ASK_PROVIDERS.find((x) => x.id === id);

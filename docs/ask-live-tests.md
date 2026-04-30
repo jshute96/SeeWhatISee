@@ -2,8 +2,8 @@
 
 Manual e2e tests that run our injection library
 (`src/ask-inject.ts`) against the **real** AI provider pages
-(claude.ai today; Gemini and ChatGPT later). Used to confirm
-the production selectors still match the live DOM and the
+(claude.ai and gemini.google.com today; ChatGPT later). Used to
+confirm the production selectors still match the live DOM and the
 production timing constants are still right.
 
 These tests are **not** part of `npm test` — they require a
@@ -56,11 +56,25 @@ these):
 | `playwright.config.live.ts` | Live config; one Playwright project per provider |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote-debug port 9222 + persistent profile |
 | `.chrome-test-profile/` | Persistent browser profile holding AI-provider login sessions (gitignored) |
-| `tests/e2e-live/<provider>.live.spec.ts` | Per-provider tests |
+| `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin shape: selectors + DOM-verification helpers |
+| `tests/e2e-live/lib/live-suite.ts` | Shared test cases — `runLiveSuite(provider)` runs all five tests against any plugin |
+| `tests/e2e-live/<provider>.live.spec.ts` | Thin per-provider wiring: builds a `LiveProvider`, calls `runLiveSuite` |
 
 The deterministic e2e fixture at `tests/fixtures/extension.ts`
 is **not** used by live tests. Each live spec attaches to the
 running browser via `chromium.connectOverCDP` directly.
+
+### Plugin pattern
+
+Each provider's spec file is small — selectors, then a handful of
+DOM-verification helpers, then `runLiveSuite(provider)`. The five
+tests (selectors smoke, multi-file no-submit, two prompt-only
+calls accumulate, two file-attach calls accumulate, image + HTML +
+selection + prompt → submit) live once in `lib/live-suite.ts`.
+
+When you add a new provider, you implement the plugin contract
+(`LiveProvider`) and you get the same coverage Claude and Gemini
+get, with no test logic copied.
 
 ## One-time setup
 
@@ -73,9 +87,9 @@ scripts/open-test-browser.sh
 
 A Chromium window opens.
 
-- Log in to the AI provider's site (claude.ai today). Use a
-  **dedicated test account** — every auto-submit run creates a
-  real conversation.
+- Log in to each AI provider's site (claude.ai and
+  gemini.google.com today). Use a **dedicated test account** for
+  each — every auto-submit run creates a real conversation.
 - Sessions persist in `.chrome-test-profile/`. Future runs reuse
   the saved login.
 
@@ -85,6 +99,7 @@ Leave the browser running.
 
 ```bash
 npm run test:live-claude     # just Claude
+npm run test:live-gemini     # just Gemini
 npm run test:live            # all enabled providers
 ```
 
@@ -92,7 +107,8 @@ If the browser isn't running, you'll get a clear error pointing
 at the launch script.
 
 Production timings are exercised (no `__seeWhatISeeAskTuning`
-override). Expect ~30 s per submitting test on Claude.
+override). Expect ~30 s per submitting test on Claude and ~10 s
+on Gemini.
 
 ## Test design principles
 
@@ -139,13 +155,16 @@ a `claude.ai/new` tab into the user's interactive browser.
 
 ## Per-provider tests
 
-Each provider's spec follows the same three-test pattern:
+Each provider runs the same five-test set, defined once in
+`lib/live-suite.ts`:
 
 | Test | Submits? | Asserts |
 |------|----------|---------|
-| Selectors smoke | No | Each prod selector still matches the live DOM. Type one character first so the Send button renders. |
-| Multi-file no-submit | No | All file types attach in one call; image preview + non-image thumbnails carry the right filenames; composer empty; user can keep typing. |
-| Multi-file + prompt → submit | **Yes** | Same payload + tagged prompt; user-message bubble with the run tag appears in the conversation. |
+| Selectors smoke | No | The file-input entry selector and the prompt-composer selector match the live DOM. Type one character first so the Send button renders. |
+| Multi-file no-submit | No | All three attachment types (image + HTML + selection) attach in one call; provider-specific locators see each by filename; composer is empty; user can keep typing. |
+| Two prompt-only calls accumulate | No | Calling the runtime twice with text but no submit appends — pins the additive contract used by repeat-Ask flows. |
+| Two file-attach calls accumulate | No | Calling the runtime twice with files but no submit shows both attachments — same contract on the upload side. |
+| Multi-file + prompt → submit | **Yes** | Same payload + tagged prompt; provider-specific user-message locator sees the tag in the conversation. Then a follow-up call confirms the composer was reset and the runtime works against a fresh editor. |
 
 ## Troubleshooting
 
@@ -161,11 +180,10 @@ scripts/open-test-browser.sh
 
 Most likely upstream DOM drift. Open the test browser yourself,
 go to the provider's site, inspect the elements that match each
-of the prod selectors. Update both:
+of the prod selectors, and update `src/background/ask/<provider>.ts`.
 
-- `src/background/ask/<provider>.ts` (the production selectors)
-- `tests/e2e-live/<provider>.live.spec.ts` (the mirror at the
-  top of the file — they should always match)
+The live spec imports those selectors directly — there's no
+separate mirror to keep in sync.
 
 ### Auto-submit test passes but no `user-message` bubble
 
@@ -187,11 +205,15 @@ The live tests don't depend on the extension being up-to-date —
 they read `dist/ask-inject.js` directly — but if you're cross-
 checking against the running extension, reload it first.
 
-## Adding a new provider (Gemini, ChatGPT, …)
+## Adding a new provider (ChatGPT, …)
 
-1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`,
-   following the structure of `claude.live.spec.ts`. Mirror the
-   provider's selectors at the top of the file.
+1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`:
+   - Import `selectors` and `newTabUrl` from the prod adapter at
+     `src/background/ask/<provider>.ts`.
+   - Write the four DOM-verification helpers + `readComposerText`
+     for that provider's chip / message DOM.
+   - Call `runLiveSuite(provider)`.
+   - `gemini.live.spec.ts` is the smallest template.
 2. Uncomment the matching project in `playwright.config.live.ts`.
 3. Log in to the provider in the running test browser
    (`.chrome-test-profile/` retains the session).

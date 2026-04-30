@@ -141,7 +141,6 @@ async function overrideAskProviders(
             submitButton: selectorOverrides.submitButton ?? [
               'button[aria-label="Send message"]',
             ],
-            attachmentPreview: [],
           },
         },
       ]);

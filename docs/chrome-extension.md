@@ -122,8 +122,8 @@ something the manifest can fix — just something to warn users about.
 ### Ask flow uses dynamic injection (no `content_scripts`)
 
 The Ask button on the Capture page sends artifacts to a third-party
-AI tab (currently `claude.ai`). Two design choices fall out of the
-permissions we already have:
+AI tab (claude.ai or gemini.google.com today). Two design choices
+fall out of the permissions we already have:
 
 - **No `content_scripts` declaration.** The manifest does not list
   AI-site URLs — `chrome.scripting.executeScript` covers it on
@@ -131,10 +131,11 @@ permissions we already have:
   actually clicks Ask.
 - **MAIN world execution.** `src/ask-inject.ts` is loaded with
   `world: 'MAIN'` so it can dispatch `change` / `input` /
-  `beforeinput` events that the AI site's React composer (Claude
-  uses ProseMirror) actually listens to. An isolated-world script
-  fires events into a separate JS realm and the page never sees
-  them.
+  `beforeinput` events that the AI site's composer actually listens
+  to (Claude uses ProseMirror, Gemini uses Quill — both ignore
+  `.value =` writes and only respond to real input pipeline events).
+  An isolated-world script fires events into a separate JS realm
+  and the page never sees them.
 
 The two-step injection — `executeScript({ files: ['ask-inject.js'] })`
 to register `window.__seeWhatISeeAsk`, then a second
