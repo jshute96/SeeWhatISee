@@ -143,16 +143,74 @@ can fail is the contract between our library and the real page.
 
 ### Test-account tagging
 
-Each run uses a per-process tag like `[SeeWhatISee live test
-1777520000000]`. Tagged messages cluster at the top of the test
-account's history and are easy to identify and delete by hand.
-Claude doesn't expose a programmatic conversation-delete API.
+Each run uses a per-suite tag like `[SeeWhatISee live test claude
+1777520000000]` (provider id + timestamp). Tagged messages cluster
+at the top of the test account's history and are easy to identify
+and delete by hand. Claude doesn't expose a programmatic
+conversation-delete API.
 
-### Tab cleanup
+### Tab reuse (don't raise the OS window)
 
-Each test tracks its opened pages in a per-test array and an
-`afterEach` closes them. Without this, every failed test leaks
-a `claude.ai/new` tab into the user's interactive browser.
+CDP's `Target.createTarget` (what Playwright's `context.newPage()`
+calls) activates the new tab and raises the OS window. The suite
+goes to some lengths to keep that to a minimum:
+
+- `getSharedProviderPage` first scans the open tabs for one whose
+  URL **exactly matches the provider's start URL** (host + path).
+  If found, it caches and reuses that tab.
+- A tab on the same host but a different path (e.g. an active
+  `claude.ai/chat/<id>` conversation you're reading) is skipped —
+  we don't clobber in-flight work.
+- Only when no eligible tab exists does the suite call `newPage`
+  (one window raise).
+- The browser handle and the per-provider tab references are held
+  at module scope, so they're shared across the Claude / Gemini /
+  ChatGPT suites in the same `npm run test:live`.
+- `afterAll` navigates the cached page back to the start URL and
+  leaves it open, so the *next* run finds it via the same loop.
+
+This avoids window raises across most providers.
+
+**Gemini caveat**: the raise-prevention strategies above don't
+help on gemini.google.com — the window still raises ~once per
+test in a Gemini run. Claude / ChatGPT runs are quiet.
+
+What we tried that didn't help:
+
+- **Skipping `newPage`** by reusing the user's existing tab on
+  `/app`. The tab is reused, but the `goto` between tests still
+  raises.
+- **Driving navigation from inside the page** with
+  `window.location.replace(...)` instead of Playwright's
+  `page.goto(...)` (which sends CDP `Page.navigate`). Same number
+  of raises.
+- **Same-URL `goto`** (URL stays at `/app` throughout a no-submit
+  test). Inspecting `page.url()` between tests confirms the URL
+  never drifts during the suite, so the raise isn't being caused
+  by an actual cross-URL navigation. Each goto-as-reload still
+  raises.
+
+What that suggests:
+
+- It's the page-load handler itself, not the navigation API.
+- Something gemini.google.com runs on every fresh load (bundle
+  init, auth refresh, service-worker activation, etc.) calls
+  `window.focus()` or equivalent.
+- Chrome obliges and raises the OS window.
+- No goto-flavoured workaround is left.
+
+Paths we did *not* take but that would in principle work:
+
+- **Never navigate during the suite.** Reset composer text and
+  attached files via DOM manipulation between tests instead of
+  reloading the page. Adds a per-provider "clear state" helper to
+  the `LiveProvider` plugin and makes the auto-submit test's
+  reset trickier (post-submit URL has drifted). Worth it only if
+  the per-test raise becomes a bigger nuisance than it currently
+  is.
+- **Run gemini.google.com with a profile flag** that disables its
+  focus calls. There isn't an obvious one and we'd be debugging
+  Google's bundle.
 
 ## Per-provider tests
 

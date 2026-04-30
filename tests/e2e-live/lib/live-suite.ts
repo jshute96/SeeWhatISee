@@ -27,6 +27,86 @@ const REPO_ROOT = path.resolve(
 );
 const ASK_INJECT_PATH = path.join(REPO_ROOT, 'dist/ask-inject.js');
 
+// ─── Module-level state, shared across every `runLiveSuite` call ───
+//
+// Why module-level (not per-suite): we run with `workers: 1`, so all
+// three provider suites execute in the same worker process. Holding
+// the CDP browser handle and the per-provider tabs at module scope
+// means we connect once and we touch each provider's tab once,
+// regardless of how many suites and tests run.
+//
+// Why we don't close anything between runs: CDP's `Target.createTarget`
+// (the only call here that raises the OS window) fires on
+// `ctx.newPage()`. If we close-and-reopen between runs, every run
+// pays N raises. By leaving the tabs open and navigating them back
+// to the provider's start URL in afterAll, the *next* run finds the
+// tabs sitting on the start URL and reuses them — zero raises.
+
+let SHARED_BROWSER: Browser | null = null;
+const SHARED_PAGES = new Map<string, Page>();
+
+async function getSharedBrowser(providerLabel: string): Promise<Browser> {
+  if (SHARED_BROWSER && SHARED_BROWSER.isConnected()) return SHARED_BROWSER;
+  // Old handle (if any) is dead — its `Page` references are bound to
+  // the disconnected browser and can't be reused. Drop them so the
+  // next call to `getSharedProviderPage` re-scans `ctx.pages()`
+  // against the freshly-attached handle.
+  SHARED_PAGES.clear();
+  try {
+    SHARED_BROWSER = await chromium.connectOverCDP(CDP_ENDPOINT);
+    return SHARED_BROWSER;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not attach to test browser at ${CDP_ENDPOINT}: ${msg}\n\n` +
+        `Launch it first:\n` +
+        `  scripts/open-test-browser.sh\n` +
+        `then log in to your ${providerLabel} test account and rerun.`,
+    );
+  }
+}
+
+async function getSharedProviderPage(
+  browser: Browser,
+  provider: LiveProvider,
+): Promise<Page> {
+  const cached = SHARED_PAGES.get(provider.id);
+  if (cached && !cached.isClosed()) return cached;
+
+  const ctx = browser.contexts()[0];
+  if (!ctx)
+    throw new Error('CDP browser has no contexts — is it fully started?');
+
+  // Try to reuse an existing tab sitting on the provider's start URL
+  // exactly. The pathname check matters: we want `claude.ai/new`,
+  // not the user's `claude.ai/chat/<id>` active conversation. After
+  // any previous run's afterAll we've navigated our tab back to the
+  // start URL, so this branch keeps hitting after the very first run.
+  const startUrl = new URL(provider.newTabUrl);
+  for (const p of ctx.pages()) {
+    if (p.isClosed()) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(p.url());
+    } catch {
+      continue;
+    }
+    if (
+      parsed.host === startUrl.host &&
+      parsed.pathname === startUrl.pathname
+    ) {
+      SHARED_PAGES.set(provider.id, p);
+      return p;
+    }
+  }
+
+  // No eligible tab — pay one window raise. Subsequent runs find this
+  // newly-opened tab via the loop above and skip the raise.
+  const page = await ctx.newPage();
+  SHARED_PAGES.set(provider.id, page);
+  return page;
+}
+
 // 1×1 transparent PNG — smallest possible image attachment, keeps
 // network traffic and account usage minimal.
 const TINY_PNG_DATA_URL =
@@ -58,7 +138,6 @@ type AskRuntime = (
  * single `runLiveSuite(provider)` call.
  */
 export function runLiveSuite(provider: LiveProvider): void {
-  let browser: Browser;
   let askInjectSrc: string;
   // Per-run tag so each Ask test's user-message bubble is unique
   // (and conversations sort to the top of your account's history,
@@ -74,49 +153,37 @@ export function runLiveSuite(provider: LiveProvider): void {
       );
     }
     askInjectSrc = fs.readFileSync(ASK_INJECT_PATH, 'utf8');
-    try {
-      browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `Could not attach to test browser at ${CDP_ENDPOINT}: ${msg}\n\n` +
-          `Launch it first:\n` +
-          `  scripts/open-test-browser.sh\n` +
-          `then log in to your ${provider.label} test account and rerun.`,
-      );
-    }
+    // Warm the shared browser handle. No-op after the first suite
+    // (Claude/Gemini/ChatGPT all share the connection).
+    await getSharedBrowser(provider.label);
   });
 
   test.afterAll(async () => {
-    // Closes the CDP wire, NOT the underlying browser — that stays
-    // open for the next test run + your manual browsing.
-    await browser?.close();
-  });
-
-  // Pages opened in a test are tracked here and closed in afterEach
-  // so even a failing test cleans up after itself. Without this the
-  // CDP browser accumulates a dozen+ stale tabs across runs.
-  let pagesToClose: Page[] = [];
-
-  test.afterEach(async () => {
-    for (const p of pagesToClose) {
+    // Navigate the cached page back to the provider's start URL so
+    // that the *next* run (which gets a fresh `SHARED_PAGES` map)
+    // finds it via the start-URL loop in `getSharedProviderPage` and
+    // skips `newPage`. We never close the page or the browser
+    // handle: closing them defeats the cache (next run pays N
+    // raises again).
+    const page = SHARED_PAGES.get(provider.id);
+    if (page && !page.isClosed()) {
       try {
-        await p.close();
+        await page.goto(provider.newTabUrl, {
+          waitUntil: 'domcontentloaded',
+        });
       } catch {
-        // Tab might already be closed (auto-submit flows can navigate
-        // away, then the tab closes when we close the browser handle
-        // in afterAll). Ignore.
+        // Tab may have been closed by the user or the auto-submit
+        // flow may have left it in an awkward state; ignore.
       }
     }
-    pagesToClose = [];
   });
 
   async function openFreshProviderPage(): Promise<Page> {
-    const ctx = browser.contexts()[0];
-    if (!ctx)
-      throw new Error('CDP browser has no contexts — is it fully started?');
-    const page = await ctx.newPage();
-    pagesToClose.push(page);
+    const browser = await getSharedBrowser(provider.label);
+    const page = await getSharedProviderPage(browser, provider);
+    // Reset page state via `goto` — clears the composer, drops any
+    // attached files, and unloads the runtime IIFE. Skipping this
+    // would leak state across the suite.
     await page.goto(provider.newTabUrl, { waitUntil: 'domcontentloaded' });
     await provider.waitForComposerReady(page);
     return page;
