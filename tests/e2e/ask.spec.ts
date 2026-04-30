@@ -18,6 +18,12 @@
 //   - Multi-line prompt: paragraph breaks, no premature submit.
 //   - Error flows: missing inject-runtime selectors, tab closed
 //     between menu open and click.
+//   - Alt+A keyboard binding still opens the menu.
+//
+// Target-window pinning lives in a sibling spec —
+// `tests/e2e/ask-pinned-tabs.spec.ts` — because that suite opens
+// extra Claude tabs per test and benefits from staying small. Both
+// specs share `tests/e2e/ask-helpers.ts`.
 //
 // SW idle-out caveat: the test seam mutates `ASK_PROVIDERS` in
 // memory via `_setAskProvidersForTest`. If the MV3 service worker
@@ -27,235 +33,20 @@
 // the SW idle window; if a flake ever surfaces here, persist the
 // override in `chrome.storage.session` instead.
 
-import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow, seedSelection } from './details-helpers';
+import {
+  clickExistingFakeClaudeItem,
+  clickNewClaudeItem,
+  configureCapture,
+  fakeClaudeState,
+  installAskTestHooks,
+  openFakeClaudeTab,
+  overrideAskProviders,
+  waitForAskMenuReady,
+} from './ask-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window);
-// each test in this file opens the Capture page once, so a small
-// cushion keeps the suite from tripping the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
-// Match patterns ignore ports, so `http://127.0.0.1/...` is enough
-// to match the fixture server regardless of which random port it
-// chose. The fake-claude page lives at /fake-claude.html.
-const FAKE_CLAUDE_URL_PATTERN = 'http://127.0.0.1/fake-claude.html*';
-
-// ─── State + helpers shared across cases ─────────────────────────
-
-interface AttachedFile {
-  name: string;
-  type: string;
-  size: number;
-  content?: string; // populated for text/* files after FileReader resolves
-}
-interface FakeClaudeState {
-  attachedFiles: AttachedFile[];
-  submitClicks: number;
-  lastSubmitText: string | null;
-  lastSubmitHtml: string | null;
-}
-
-/**
- * Read state off the fake-Claude page after waiting for any pending
- * FileReader.text() promises to settle. The fake page populates the
- * `content` field asynchronously, so reading raw `attachedFiles`
- * right after the runtime returns can race the read.
- */
-async function fakeClaudeState(page: Page): Promise<FakeClaudeState> {
-  // Bounded explicitly so a stuck content-read (e.g. a future test
-  // that attaches a non-text MIME we forgot to handle) fails fast
-  // with a clear error instead of timing out at the test level.
-  await page.waitForFunction(
-    () => {
-      interface Win { __seeFakeClaude?: FakeClaudeState }
-      const s = (window as unknown as Win).__seeFakeClaude;
-      if (!s) return false;
-      return s.attachedFiles.every(
-        (f) =>
-          !(f.type === 'text/html' || f.type === 'text/plain' || f.type === 'text/markdown')
-          || f.content !== undefined,
-      );
-    },
-    null,
-    { timeout: 5000 },
-  );
-  return await page.evaluate(
-    () =>
-      (window as unknown as { __seeFakeClaude: FakeClaudeState })
-        .__seeFakeClaude,
-  );
-}
-
-interface OverrideOpts {
-  excludeUrlPatterns?: string[];
-  /**
-   * Override the inject-runtime selectors. Defaults to the real
-   * claude.ai selectors (which also match the fake-Claude fixture).
-   * Tests use this to force missing-selector error paths.
-   */
-  selectors?: {
-    fileInput?: string[];
-    textInput?: string[];
-    submitButton?: string[];
-  };
-}
-
-/**
- * Replace the Ask-provider registry with a single fake-Claude entry
- * pointing at the fixture page. The pre-existing `ASK_PROVIDERS`
- * array binding is preserved (the setter mutates in place) so
- * importers see the swap. afterEach restores from `originalProviders`.
- */
-async function overrideAskProviders(
-  sw: Worker,
-  baseUrl: string,
-  opts: OverrideOpts = {},
-): Promise<void> {
-  await sw.evaluate(
-    ({ urlPattern, newTabUrl, excludes, selectorOverrides }) => {
-      const api = (
-        self as unknown as {
-          SeeWhatISee: {
-            _setAskProvidersForTest: (p: unknown[]) => void;
-          };
-        }
-      ).SeeWhatISee;
-      api._setAskProvidersForTest([
-        {
-          id: 'claude',
-          label: 'Claude',
-          urlPatterns: [urlPattern],
-          excludeUrlPatterns: excludes,
-          newTabUrl,
-          enabled: true,
-          selectors: {
-            fileInput: selectorOverrides.fileInput ?? [
-              'input[data-testid="file-upload"]',
-            ],
-            textInput: selectorOverrides.textInput ?? [
-              'div.ProseMirror[contenteditable="true"]',
-            ],
-            submitButton: selectorOverrides.submitButton ?? [
-              'button[aria-label="Send message"]',
-            ],
-          },
-        },
-      ]);
-    },
-    {
-      urlPattern: FAKE_CLAUDE_URL_PATTERN,
-      newTabUrl: `${baseUrl}/fake-claude.html`,
-      excludes: opts.excludeUrlPatterns ?? [],
-      selectorOverrides: opts.selectors ?? {},
-    },
-  );
-}
-
-let originalProviders: unknown[] | null = null;
-
-test.beforeAll(async ({ getServiceWorker }) => {
-  const sw = await getServiceWorker();
-  originalProviders = await sw.evaluate(() => {
-    const api = (
-      self as unknown as {
-        SeeWhatISee: { ASK_PROVIDERS: unknown[] };
-      }
-    ).SeeWhatISee;
-    // JSON deep-clone so a later in-place mutation of ASK_PROVIDERS
-    // doesn't corrupt our snapshot. The provider shape is plain
-    // data (strings + bool + arrays) so JSON round-trip is lossless;
-    // adding regex/function fields would break this assumption.
-    return JSON.parse(JSON.stringify(api.ASK_PROVIDERS));
-  });
-});
-
-test.afterEach(async ({ getServiceWorker }) => {
-  if (!originalProviders) return;
-  const sw = await getServiceWorker();
-  await sw.evaluate((providers) => {
-    const api = (
-      self as unknown as {
-        SeeWhatISee: { _setAskProvidersForTest: (p: unknown[]) => void };
-      }
-    ).SeeWhatISee;
-    api._setAskProvidersForTest(providers);
-  }, originalProviders);
-});
-
-/** Wait for the Ask menu to render its real items (not the Loading placeholder). */
-async function waitForAskMenuReady(capturePage: Page): Promise<void> {
-  await expect(
-    capturePage.locator('#ask-menu .ask-menu-heading', {
-      hasText: 'New window in',
-    }),
-  ).toBeVisible();
-}
-
-/** Click the existing-tab item that points at the fake-Claude page (title "Fake Claude"). */
-async function clickExistingFakeClaudeItem(capturePage: Page): Promise<void> {
-  await capturePage
-    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
-    .click();
-}
-
-/** Click the "New window in Claude" item. */
-async function clickNewClaudeItem(capturePage: Page): Promise<void> {
-  // The new-tab item's text is exactly "Claude" (no parenthetical
-  // suffix, since the only enabled provider has label "Claude").
-  // hasText is a substring match, so exclude the existing-tab
-  // entry which contains "Fake Claude".
-  await capturePage
-    .locator('#ask-menu .ask-menu-item')
-    .filter({ hasText: /^Claude$/ })
-    .click();
-}
-
-/** Open a fake-Claude tab and wait for its `__seeFakeClaude` global. */
-async function openFakeClaudeTab(
-  ctx: BrowserContext,
-  fixtureServer: { baseUrl: string },
-): Promise<Page> {
-  const page = await ctx.newPage();
-  await page.goto(`${fixtureServer.baseUrl}/fake-claude.html`);
-  await page.waitForFunction(() =>
-    Boolean(
-      (window as unknown as { __seeFakeClaude?: unknown }).__seeFakeClaude,
-    ),
-  );
-  return page;
-}
-
-/**
- * Adjust the Capture page's Save checkboxes / selection-format radio /
- * prompt to a desired state. `selectionFormat: null` (or undefined)
- * leaves the master Save-selection unchecked.
- */
-async function configureCapture(
-  page: Page,
-  opts: {
-    saveScreenshot: boolean;
-    saveHtml: boolean;
-    selectionFormat?: 'html' | 'text' | 'markdown' | null;
-    prompt?: string;
-  },
-): Promise<void> {
-  const ss = page.locator('#cap-screenshot');
-  if ((await ss.isChecked()) !== opts.saveScreenshot) await ss.click();
-  const html = page.locator('#cap-html');
-  if ((await html.isChecked()) !== opts.saveHtml) await html.click();
-  if (opts.selectionFormat) {
-    // Click the format radio — capture-page's change handler
-    // auto-checks the master `cap-selection`.
-    await page.locator(`#cap-selection-${opts.selectionFormat}`).click();
-  } else {
-    const sel = page.locator('#cap-selection');
-    if ((await sel.isChecked()) === true) await sel.click();
-  }
-  await page.locator('#prompt-text').fill(opts.prompt ?? '');
-}
+installAskTestHooks();
 
 // ─── Menu rendering ───────────────────────────────────────────────
 
@@ -274,7 +65,7 @@ test('ask menu: lists "New window in" plus an open fake-Claude tab', async ({
 
   const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
   await expect(
@@ -301,7 +92,7 @@ test('ask menu: "Existing window in" section omitted when no tab matches', async
   const sw = await getServiceWorker();
   await overrideAskProviders(sw, fixtureServer.baseUrl);
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
   await expect(
@@ -330,7 +121,7 @@ test('ask menu: excludeUrlPatterns filters tabs out', async ({
 
   const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
   // Exclusion pattern must filter the tab out of the listing.
@@ -365,7 +156,7 @@ test('ask: "Nothing to send" guard fires before any SW round-trip', async ({
     prompt: '',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickNewClaudeItem(capturePage);
 
@@ -510,7 +301,7 @@ for (const c of matrixCases) {
 
     await configureCapture(capturePage, c);
 
-    await capturePage.locator('#ask-btn').click();
+    await capturePage.locator('#ask-caret').click();
     await waitForAskMenuReady(capturePage);
     await clickExistingFakeClaudeItem(capturePage);
 
@@ -572,7 +363,7 @@ test('ask: edited HTML body is sent (not the original capture)', async ({
     prompt: 'review my edits',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -625,7 +416,7 @@ test('ask: edited selection body is sent (not the original capture)', async ({
     prompt: 'use my edited summary',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -672,7 +463,7 @@ test('ask: drawing a highlight bakes the modified PNG into the attachment', asyn
       prompt: 'analyze',
     });
 
-    await capturePage.locator('#ask-btn').click();
+    await capturePage.locator('#ask-caret').click();
     await waitForAskMenuReady(capturePage);
     await clickExistingFakeClaudeItem(capturePage);
     await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -725,7 +516,7 @@ test('ask: multi-line prompt produces paragraph breaks, not premature submit', a
   const promptText = 'first line\nsecond line\n\nfourth after blank';
   await capturePage.locator('#prompt-text').fill(promptText);
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -783,7 +574,7 @@ test('ask error: missing file-input selector → status reports the failure', as
     prompt: 'will fail',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -824,7 +615,7 @@ test('ask error: missing prompt-input selector → status reports the failure', 
     prompt: 'this prompt cannot be typed',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -857,7 +648,7 @@ test('ask error: target tab closed between menu render and click', async ({
     prompt: 'to a closed tab',
   });
 
-  await capturePage.locator('#ask-btn').click();
+  await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
   // Close the fake-Claude tab between menu render and item click.
@@ -871,6 +662,41 @@ test('ask error: target tab closed between menu render and click', async ({
     'Could not open Claude',
     { timeout: 10_000 },
   );
+
+  await openerPage.close();
+});
+
+// ─── Keyboard binding ────────────────────────────────────────────
+
+test('Alt+A opens the Ask menu (does not direct-send)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+
+  // Configure the page so a direct-send *would* succeed if Alt+A
+  // somehow hit the main button — distinguishes "menu opened" from
+  // "send fired" (which would set #ask-status to "Sending…/Sent.").
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'should not send',
+  });
+
+  await capturePage.locator('body').focus();
+  await capturePage.keyboard.press('Alt+a');
+
+  await waitForAskMenuReady(capturePage);
+  await expect(capturePage.locator('#ask-menu')).toBeVisible();
+  // Status line untouched — no send fired.
+  await expect(capturePage.locator('#ask-status')).toHaveText('');
 
   await openerPage.close();
 });

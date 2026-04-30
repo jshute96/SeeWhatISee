@@ -15,28 +15,39 @@ the provider-adapter layout makes additional providers additive.
   prompt text. Cleaner prompt history, handles large pages.
 - Auto-submit when the user typed a prompt; leave the input alone
   when they didn't.
-- Pick destination (new tab vs. existing tab) every time.
+- Remember the last destination so repeat-Asks reuse the same
+  conversation tab. The drop-down caret remains available for
+  picking a different target.
 
 ## UI on the Capture page
 
 ### Button stack
 
-- `#capture` and `#ask-btn` sit one above the other in a
-  `.button-stack` grid that's sized to `max-content` of the wider
-  child, with `width: 100%` on each button — so the two buttons
-  share a width regardless of label length.
-- Ask button label is `<u>A</u>sk <span id="ask-target-label">…</span>`.
-  The trailing span is updated by `refreshAskTargetLabel()` from the
-  enabled providers — "Ask Claude" today, "Ask AI" with multiple
-  enabled providers.
-- Tooltips: Capture is "Save to disk (Read with /see-what-i-see
-  skills)". Ask is "Send to `<provider>` on web", recomputed
-  alongside the label.
+- `#capture` and the Ask split widget (`.ask-split`) sit one above
+  the other in a `.button-stack` grid that's sized to `max-content`
+  of the wider child. The Capture button has `width: 100%`; the
+  Ask split is a flex row that fills its grid cell and divides the
+  space between its two halves.
+- Ask split is two buttons sharing a single visual chrome:
+  - `#ask-btn` — the main "Ask `<provider>`" label. Click sends
+    straight to the resolved default destination (no menu).
+  - `#ask-caret` — chevron-only square button on the right edge.
+    Click opens the menu so the user can pick a different target.
+- The trailing label `#ask-target-label` and the main button's
+  tooltip are updated by `refreshAskTargetLabel()` to match
+  whichever provider the resolved default points at — "Ask Claude"
+  while the pin lives on a Claude tab, "Ask ChatGPT" once the user
+  picks a ChatGPT tab from the menu, and so on.
+- Tooltip phrasing reflects the destination kind: "Send to existing
+  Claude window" when a pinned tab is alive, "Send to new Claude
+  window" when the fallback is in play.
 
 ### Hotkeys
 
 - `Alt+C` — Capture.
-- `Alt+A` — open the Ask menu (toggle).
+- `Alt+A` — open the Ask menu (caret click). Mirrors the keyboard
+  path the menu had before pinning landed, so the user always has a
+  chance to pick a different target.
 - Both no-op when their button is `disabled` (in-flight save / Ask).
 - The underlines on `C` / `A` mirror the hotkeys.
 
@@ -67,7 +78,36 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
 - Each section is preceded by a horizontal separator
   (`.ask-menu-separator`).
 - One click on a menu item both picks the destination and sends.
+- Each item has a leading 16px check slot (always reserved). The
+  item that matches the **resolved default** carries `is-default`
+  and shows the green check — that's the one plain `#ask-btn` will
+  hit. Reserving the slot on every item keeps labels vertically
+  aligned across the menu.
 - ESC and outside-click dismiss the menu.
+
+### Pinning (the resolved default)
+
+Plan-Ask (clicking `#ask-btn` without opening the menu) targets
+whichever destination the SW currently considers the default:
+
+- **Pin shape** — `{ provider, tabId }` written to
+  `chrome.storage.session` under `askPin`. Session storage means the
+  pin clears on browser restart, which is appropriate since `tabId`
+  is only meaningful inside a single Chrome session.
+- **Pin reuse rules** — kept only when the tab still exists, the
+  pinned provider is still enabled, and the tab's URL still matches
+  one of that provider's `urlPatterns` (so a navigated-away tab
+  doesn't get hijacked). Stale pins are cleared in passing.
+- **Fallback** — first enabled provider's "newTab" entry, used when
+  there's no pin or the pin is dead. "First" is registry order in
+  `ASK_PROVIDERS` (Claude → Gemini → ChatGPT today), so adding a
+  provider above an existing one in the array would change which
+  provider plain-Ask picks for first-time users.
+
+`sendToAi` writes the pin on every successful send, including
+new-tab opens (so the freshly-created tab gets reused next time).
+`resolveDefaultDestination` reads it for the menu / button label /
+plain-Ask path.
 
 ### Status line
 
@@ -95,7 +135,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 | File | Purpose |
 |------|---------|
-| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `sendToAi`, `installAskMessageHandler`. Resolves target tab, focuses it, runs the injected runtime. |
+| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveDefaultDestination`, `sendToAi`, `installAskMessageHandler`. Resolves target tab, focuses it, runs the injected runtime, and pins the destination on success. |
 | `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
@@ -177,21 +217,30 @@ override never installs.
 
 ```
 Capture page (capture-page.ts)
-  click #ask-btn ─────────────────────────────────────┐
+  click #ask-caret ───────────────────────────────────┐
     sendMessage({ action: 'askListProviders' }) ──▶   │
-      background/ask/index.ts → listAskProviders()    │
-        chrome.tabs.query(provider.urlPatterns)       │
-    rebuild popup menu                                │
+      background/ask/index.ts                         │
+        listAskProviders() + resolveDefaultDestination()
+          chrome.tabs.query(provider.urlPatterns)     │
+          read 'askPin' from chrome.storage.session   │
+    rebuild popup menu (check on the default item)    │
                                                       │
   user picks a destination ◀────────────────────────  ┘
-    sendMessage({ action: 'askAi', destination, payload }) ──▶
-      background/ask/index.ts → sendToAi()
-        ├── resolve tab (existing or new — wait 'complete' up to 15s)
-        ├── focus tab + window
-        ├── executeScript({ files: ['ask-inject.js'], world: 'MAIN' })
-        └── executeScript({ func: invokeRuntime, args: [selectors, payload] })
-              window.__seeWhatISeeAsk(selectors, payload) — see below
+    sendMessage({ action: 'askAi', destination, payload }) ──▶ ▼
+                                                                │
+  click #ask-btn ─────────────────────────────────────────────► │
+    sendMessage({ action: 'askAiDefault', payload }) ──▶        │
+      background/ask/index.ts                                   │
+        resolveDefaultDestination()                             │
+        sendToAi() ◀───────────────────────────────────────────┘
+          ├── resolve tab (existing or new — wait 'complete' up to 15s)
+          ├── focus tab + window
+          ├── executeScript({ files: ['ask-inject.js'], world: 'MAIN' })
+          ├── executeScript({ func: invokeRuntime, args: [selectors, payload] })
+          │     window.__seeWhatISeeAsk(selectors, payload) — see below
+          └── on success: write 'askPin' = { provider, tabId }
     show #ask-status: "Sent." or error
+    refresh #ask-target-label (the pin may have moved)
 ```
 
 ### Payload
@@ -305,8 +354,6 @@ provider all live in [`ask-live-tests.md`](ask-live-tests.md).
 
 ## Out of scope (v1)
 
-- Pinning a default destination so plain Ask sends without showing
-  the menu.
 - Options-page controls (preferred provider, attachment subset,
   auto-submit toggle).
 - Optional structured-prompt mode (URL footer, inline selection

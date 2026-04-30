@@ -574,12 +574,15 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     captureBtn.click();
   } else if (key === 'a') {
-    // Alt+A opens the Ask menu (or closes it if already open). No-op
-    // while the button is disabled (in-flight Ask) so a double-press
-    // doesn't queue a second send.
-    if (askBtn.disabled) return;
+    // Alt+A opens the Ask menu (or closes it if already open). The
+    // keyboard path opens the menu rather than firing the default
+    // send so the user gets a chance to pick a different target —
+    // mirrors the behaviour the menu had before pinning landed. No-
+    // op while the caret is disabled (in-flight Ask) so a double-
+    // press doesn't queue a second send.
+    if (askCaret.disabled) return;
     e.preventDefault();
-    askBtn.click();
+    askCaret.click();
   } else if (key === 's') {
     if (screenshotBox.disabled) return;
     e.preventDefault();
@@ -2365,10 +2368,20 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
 
 // ─── Ask flow ─────────────────────────────────────────────────────
 //
-// Click `#ask-btn` → fetch the providers + their open tabs from the
-// SW → render the menu → user clicks an item → assemble payload from
-// the same Capture-page state the Capture button reads → send
-// `askAi` to the SW. The SW handles tab focus + script injection.
+// Two click targets in the Ask split widget:
+//   - `#ask-btn`   → resolve default destination via the SW (pinned
+//                    tab if alive, else "new window in" the first
+//                    enabled provider) and send straight to it. No
+//                    menu.
+//   - `#ask-caret` → fetch the providers + their open tabs + the
+//                    same resolved default → render the menu with a
+//                    leading check on whichever item plain-Ask would
+//                    have hit. Picking an item sends to it.
+//
+// In both paths the payload is built from the Capture-page state the
+// Capture button reads. The SW handles tab focus + script injection,
+// and pins the chosen destination so the next plain-Ask reuses the
+// same tab.
 
 interface AskTabSummary {
   tabId: number;
@@ -2386,34 +2399,68 @@ type AskDestination =
   | { kind: 'existingTab'; provider: AskProviderId; tabId: number };
 
 const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
+const askCaret = document.getElementById('ask-caret') as HTMLButtonElement;
 const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
 const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
 const askStatus = document.getElementById('ask-status') as HTMLDivElement;
 const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
 
-// Sync the "Ask <provider>" button label and tooltip with whichever
-// providers the registry currently has enabled. Runs once at page
-// load. While only one provider is enabled we name it directly;
-// with multiple, fall back to a neutral label (the menu lets the
-// user pick).
-async function refreshAskTargetLabel(): Promise<void> {
+/**
+ * Read the providers + the resolved default destination from the
+ * SW. The default is what plain-Ask will target right now (pinned
+ * tab if alive, else the first enabled provider's new tab). One
+ * round-trip serves both menu rendering and label refreshes; the
+ * menu open path keeps the providers and the simpler refreshes
+ * just look at `defaultDestination`.
+ */
+async function fetchAskState(): Promise<{
+  providers: AskProviderListing[];
+  defaultDestination: AskDestination | null;
+}> {
   try {
     const response = (await chrome.runtime.sendMessage({
       action: 'askListProviders',
-    })) as { providers: AskProviderListing[] } | undefined;
-    const enabled = (response?.providers ?? []).filter((p) => p.enabled);
-    if (enabled.length === 1) {
-      askTargetLabel.textContent = enabled[0].label;
-      askBtn.title = `Send to ${enabled[0].label} on web`;
-    } else if (enabled.length > 1) {
-      askTargetLabel.textContent = 'AI';
-      askBtn.title = 'Send to an AI on web';
-    }
-    // 0 enabled → leave the HTML defaults in place; the menu's
-    // empty-state will tell the user when they actually click.
+    })) as
+      | {
+          providers: AskProviderListing[];
+          defaultDestination: AskDestination | null;
+        }
+      | undefined;
+    return {
+      providers: response?.providers ?? [],
+      defaultDestination: response?.defaultDestination ?? null,
+    };
   } catch {
-    // Best-effort: a missing background or transient SW restart
-    // shouldn't blank the button. Leave the static HTML defaults.
+    return { providers: [], defaultDestination: null };
+  }
+}
+
+// Sync the "Ask <provider>" button label + tooltip to the resolved
+// default destination. Called at page load and after every Ask
+// (since pin-on-success can swap the active provider). Failures
+// here are silent — the static HTML default ("Ask Claude") is a
+// safe fallback.
+async function refreshAskTargetLabel(): Promise<void> {
+  const { providers, defaultDestination } = await fetchAskState();
+  if (defaultDestination) {
+    const provider = providers.find((p) => p.id === defaultDestination.provider);
+    if (provider) {
+      askTargetLabel.textContent = provider.label;
+      const verb = defaultDestination.kind === 'existingTab'
+        ? 'Send to existing'
+        : 'Send to new';
+      askBtn.title = `${verb} ${provider.label} window`;
+      return;
+    }
+  }
+  // No default available — fall back to a generic label.
+  const enabled = providers.filter((p) => p.enabled);
+  if (enabled.length === 1) {
+    askTargetLabel.textContent = enabled[0].label;
+    askBtn.title = `Send to ${enabled[0].label} on web`;
+  } else if (enabled.length > 1) {
+    askTargetLabel.textContent = 'AI';
+    askBtn.title = 'Send to an AI on web';
   }
 }
 void refreshAskTargetLabel();
@@ -2432,7 +2479,7 @@ let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
 
 function closeAskMenu(): void {
   askMenu.hidden = true;
-  askBtn.setAttribute('aria-expanded', 'false');
+  askCaret.setAttribute('aria-expanded', 'false');
   if (askListenerAttachTimer !== null) {
     clearTimeout(askListenerAttachTimer);
     askListenerAttachTimer = null;
@@ -2444,9 +2491,15 @@ function closeAskMenu(): void {
 function onDocumentClickWhileAskOpen(e: MouseEvent): void {
   // Outside-click dismiss. Clicks inside the menu still bubble through
   // to their item-handler (registered on each <li>) — closeAskMenu()
-  // there happens *after* the click handler runs.
+  // there happens *after* the click handler runs. The main Ask
+  // button is *not* an outside-click here either: clicking it is a
+  // direct send (which closes the menu via the explicit handler).
   const target = e.target as Node | null;
-  if (askMenu.contains(target) || askBtn.contains(target)) return;
+  if (
+    askMenu.contains(target) ||
+    askCaret.contains(target) ||
+    askBtn.contains(target)
+  ) return;
   closeAskMenu();
 }
 
@@ -2454,8 +2507,56 @@ function onKeydownWhileAskOpen(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault();
     closeAskMenu();
-    askBtn.focus();
+    askCaret.focus();
   }
+}
+
+/**
+ * Render a `<li>` for one menu pick. The first column is a fixed-
+ * width check slot — `is-default` toggles whether the check glyph
+ * is visible. Putting the slot on every item (rather than only on
+ * the default one) keeps labels vertically aligned across the menu.
+ */
+function renderAskMenuItem(opts: {
+  label: string;
+  title?: string;
+  isDefault: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'ask-menu-item';
+  if (opts.isDefault) li.classList.add('is-default');
+  li.setAttribute('role', 'menuitem');
+  if (opts.title) li.title = opts.title;
+  const check = document.createElement('span');
+  check.className = 'ask-menu-check';
+  check.setAttribute('aria-hidden', 'true');
+  check.innerHTML = '<svg><use href="#check-icon"></use></svg>';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'ask-menu-label';
+  labelEl.textContent = opts.label;
+  li.append(check, labelEl);
+  if (opts.disabled) {
+    li.setAttribute('aria-disabled', 'true');
+  } else {
+    li.tabIndex = 0;
+    if (opts.onClick) li.addEventListener('click', opts.onClick);
+  }
+  return li;
+}
+
+function isSameDestination(
+  a: AskDestination | null,
+  b: AskDestination,
+): boolean {
+  if (!a) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.provider !== b.provider) return false;
+  if (a.kind === 'existingTab' && b.kind === 'existingTab') {
+    return a.tabId === b.tabId;
+  }
+  return true;
 }
 
 async function openAskMenu(): Promise<void> {
@@ -2469,7 +2570,7 @@ async function openAskMenu(): Promise<void> {
   loading.textContent = 'Loading…';
   askMenuList.appendChild(loading);
   askMenu.hidden = false;
-  askBtn.setAttribute('aria-expanded', 'true');
+  askCaret.setAttribute('aria-expanded', 'true');
   // Defer listener attach so the click that opened the menu doesn't
   // immediately close it on the same event-loop tick. Track the timer
   // and check `askMenu.hidden` at fire time so a close-before-fire
@@ -2482,14 +2583,11 @@ async function openAskMenu(): Promise<void> {
     document.addEventListener('keydown', onKeydownWhileAskOpen, true);
   }, 0);
 
-  const response = (await chrome.runtime.sendMessage({
-    action: 'askListProviders',
-  })) as { providers: AskProviderListing[] } | undefined;
+  const { providers, defaultDestination } = await fetchAskState();
   // Bail if the user already closed the menu while we were waiting.
   if (askMenu.hidden) return;
 
   askMenuList.replaceChildren();
-  const providers = response?.providers ?? [];
   if (providers.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'ask-menu-heading';
@@ -2505,21 +2603,24 @@ async function openAskMenu(): Promise<void> {
   newHeading.textContent = 'New window in';
   askMenuList.appendChild(newHeading);
   for (const provider of providers) {
-    const li = document.createElement('li');
-    li.className = 'ask-menu-item';
-    li.setAttribute('role', 'menuitem');
-    li.tabIndex = 0;
-    if (!provider.enabled) {
-      li.textContent = `${provider.label} (coming soon)`;
-      li.setAttribute('aria-disabled', 'true');
-    } else {
-      li.textContent = provider.label;
-      li.addEventListener('click', () => {
-        closeAskMenu();
-        void runAsk({ kind: 'newTab', provider: provider.id });
-      });
-    }
-    askMenuList.appendChild(li);
+    const dest: AskDestination = { kind: 'newTab', provider: provider.id };
+    askMenuList.appendChild(
+      renderAskMenuItem({
+        label: provider.enabled
+          ? provider.label
+          : `${provider.label} (coming soon)`,
+        isDefault: provider.enabled
+          ? isSameDestination(defaultDestination, dest)
+          : false,
+        disabled: !provider.enabled,
+        onClick: provider.enabled
+          ? () => {
+              closeAskMenu();
+              void runAsk(dest);
+            }
+          : undefined,
+      }),
+    );
   }
 
   // Section 2..N: "Existing window in <provider>" — only rendered for
@@ -2537,27 +2638,35 @@ async function openAskMenu(): Promise<void> {
     heading.textContent = `Existing window in ${provider.label}`;
     askMenuList.appendChild(heading);
     for (const tab of provider.existingTabs) {
-      const li = document.createElement('li');
-      li.className = 'ask-menu-item';
-      li.setAttribute('role', 'menuitem');
-      li.tabIndex = 0;
-      li.title = tab.url;
-      li.textContent = tab.title || tab.url || `Tab ${tab.tabId}`;
-      li.addEventListener('click', () => {
-        closeAskMenu();
-        void runAsk({
-          kind: 'existingTab',
-          provider: provider.id,
-          tabId: tab.tabId,
-        });
-      });
-      askMenuList.appendChild(li);
+      const dest: AskDestination = {
+        kind: 'existingTab',
+        provider: provider.id,
+        tabId: tab.tabId,
+      };
+      askMenuList.appendChild(
+        renderAskMenuItem({
+          label: tab.title || tab.url || `Tab ${tab.tabId}`,
+          title: tab.url,
+          isDefault: isSameDestination(defaultDestination, dest),
+          onClick: () => {
+            closeAskMenu();
+            void runAsk(dest);
+          },
+        }),
+      );
     }
   }
 }
 
-askBtn.addEventListener('click', () => {
+askCaret.addEventListener('click', () => {
   void openAskMenu();
+});
+
+askBtn.addEventListener('click', () => {
+  // Close the menu if it happens to be open (e.g. user opened via
+  // the caret then changed their mind and hit the main button).
+  if (!askMenu.hidden) closeAskMenu();
+  void runAskDefault();
 });
 
 interface AskAttachment {
@@ -2617,34 +2726,55 @@ function buildAskAttachments(): AskAttachment[] {
   return out;
 }
 
-async function runAsk(destination: AskDestination): Promise<void> {
+/**
+ * Build the Ask payload from current Capture-page state. Returns
+ * `null` (with a status message already shown) when the user has
+ * neither a prompt nor any checked Save row to send — guards against
+ * silently focusing the AI tab and doing nothing. The caller skips
+ * the SW round-trip in that case.
+ */
+function buildAskPayload(): {
+  attachments: AskAttachment[];
+  promptText: string;
+  autoSubmit: boolean;
+} | null {
+  const promptText = promptInput.value.trim();
+  const attachments = buildAskAttachments();
+  if (attachments.length === 0 && promptText.length === 0) {
+    setAskStatus(
+      'Nothing to send — check at least one box or type a prompt.',
+      'error',
+    );
+    return null;
+  }
+  return {
+    attachments,
+    promptText,
+    // Empty prompt → user wants to set up the conversation and keep
+    // typing on the AI side. Non-empty → fire it off.
+    autoSubmit: promptText.length > 0,
+  };
+}
+
+/**
+ * Send the assembled payload via the SW and reflect the outcome
+ * in the Ask status line. Disables both halves of the split button
+ * while in flight so a double-press can't queue a second send. On
+ * success, refresh the button label since the SW may have just
+ * pinned a different destination.
+ */
+async function runAskWithMessage(message: {
+  action: 'askAi' | 'askAiDefault';
+  destination?: AskDestination;
+  payload: NonNullable<ReturnType<typeof buildAskPayload>>;
+}): Promise<void> {
   askBtn.disabled = true;
+  askCaret.disabled = true;
   setAskStatus('Sending…', 'info');
   try {
-    const promptText = promptInput.value.trim();
-    const attachments = buildAskAttachments();
-    // Guard against the all-empty case: every Save row unchecked AND
-    // no prompt would otherwise focus a Claude tab and silently do
-    // nothing while the status flipped to "Sent." — confusing.
-    if (attachments.length === 0 && promptText.length === 0) {
-      setAskStatus(
-        'Nothing to send — check at least one box or type a prompt.',
-        'error',
-      );
-      return;
-    }
-    const payload = {
-      attachments,
-      promptText,
-      // Empty prompt → user wants to set up the conversation and keep
-      // typing on the AI side. Non-empty → fire it off.
-      autoSubmit: promptText.length > 0,
-    };
-    const response = (await chrome.runtime.sendMessage({
-      action: 'askAi',
-      destination,
-      payload,
-    })) as { ok: boolean; error?: string } | undefined;
+    const response = (await chrome.runtime.sendMessage(message)) as
+      | { ok: boolean; error?: string }
+      | undefined;
     if (!response) {
       setAskStatus('No response from background.', 'error');
       return;
@@ -2654,6 +2784,10 @@ async function runAsk(destination: AskDestination): Promise<void> {
       return;
     }
     setAskStatus('Sent.', 'ok');
+    // Refresh after success: a "New window in X" pick just turned
+    // into a pin against the freshly-created tab, so the next plain
+    // Ask should target it. The label needs to reflect that.
+    void refreshAskTargetLabel();
   } catch (err) {
     setAskStatus(
       `Ask failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -2661,7 +2795,20 @@ async function runAsk(destination: AskDestination): Promise<void> {
     );
   } finally {
     askBtn.disabled = false;
+    askCaret.disabled = false;
   }
+}
+
+async function runAsk(destination: AskDestination): Promise<void> {
+  const payload = buildAskPayload();
+  if (!payload) return;
+  await runAskWithMessage({ action: 'askAi', destination, payload });
+}
+
+async function runAskDefault(): Promise<void> {
+  const payload = buildAskPayload();
+  if (!payload) return;
+  await runAskWithMessage({ action: 'askAiDefault', payload });
 }
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then

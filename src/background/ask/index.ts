@@ -59,7 +59,82 @@ export interface AskProviderListing {
   existingTabs: AskTabSummary[];
 }
 
+/**
+ * Pin record persisted across menu opens. Stored in
+ * `chrome.storage.session` (cleared on browser restart) since `tabId`
+ * is only meaningful inside a single Chrome session anyway. Updated
+ * automatically by `sendToAi` on every successful send so the next
+ * plain-Ask click reuses the same destination tab.
+ */
+interface AskPin {
+  provider: AskProviderId;
+  tabId: number;
+}
+
+const PIN_KEY = 'askPin';
+
 const NEW_TAB_LOAD_TIMEOUT_MS = 15000;
+
+async function readPin(): Promise<AskPin | null> {
+  try {
+    const got = await chrome.storage.session.get(PIN_KEY);
+    const pin = got[PIN_KEY] as AskPin | undefined;
+    if (!pin || typeof pin.tabId !== 'number' || typeof pin.provider !== 'string') {
+      return null;
+    }
+    return pin;
+  } catch {
+    return null;
+  }
+}
+
+async function writePin(pin: AskPin | null): Promise<void> {
+  try {
+    if (pin === null) await chrome.storage.session.remove(PIN_KEY);
+    else await chrome.storage.session.set({ [PIN_KEY]: pin });
+  } catch {
+    // Session storage may be unavailable in unusual MV3 states.
+    // Pinning is a UX nicety — drop the write rather than fail Ask.
+  }
+}
+
+/**
+ * Decide what plain Ask (button click without opening the menu)
+ * should target right now. Order:
+ *
+ * 1. Pinned tab if it still exists, the pinned provider is enabled,
+ *    and the tab's URL still matches one of that provider's
+ *    `urlPatterns` (so a navigated-away tab doesn't get hijacked).
+ * 2. First enabled provider's "newTab" entry as the fallback.
+ * 3. `null` if no provider is enabled.
+ *
+ * Pin verification clears a stale pin in passing.
+ */
+export async function resolveDefaultDestination(): Promise<AskDestination | null> {
+  const pin = await readPin();
+  if (pin) {
+    const provider = ASK_PROVIDERS.find((p) => p.id === pin.provider);
+    if (provider && provider.enabled) {
+      try {
+        const tab = await chrome.tabs.get(pin.tabId);
+        if (tab.id !== undefined && tab.url) {
+          const matches = await chrome.tabs.query({ url: provider.urlPatterns });
+          const stillProvider = matches.some((t) => t.id === pin.tabId);
+          const excluded = matchesAny(tab.url, provider.excludeUrlPatterns ?? []);
+          if (stillProvider && !excluded) {
+            return { kind: 'existingTab', provider: pin.provider, tabId: pin.tabId };
+          }
+        }
+      } catch {
+        // Tab gone or inaccessible — fall through to clear + fallback.
+      }
+    }
+    await writePin(null);
+  }
+  const fallback = ASK_PROVIDERS.find((p) => p.enabled);
+  if (!fallback) return null;
+  return { kind: 'newTab', provider: fallback.id };
+}
 
 export async function listAskProviders(): Promise<AskProviderListing[]> {
   const out: AskProviderListing[] = [];
@@ -180,6 +255,10 @@ export async function sendToAi(
     if (!result.ok) {
       return { ok: false, error: result.error ?? 'Unknown injection failure', tabId };
     }
+    // Pin this destination so the next plain-Ask click reuses the
+    // same tab. Includes both new-tab opens (so the freshly-created
+    // tab gets reused) and existing-tab picks.
+    await writePin({ provider: provider.id, tabId });
     return { ok: true, tabId };
   } catch (err) {
     return {
@@ -267,21 +346,32 @@ function describe(err: unknown): string {
 }
 
 interface AskMessage {
-  action: 'askAi' | 'askListProviders';
+  action: 'askAi' | 'askAiDefault' | 'askListProviders';
   destination?: AskDestination;
   payload?: AskPayload;
 }
 
 /**
- * Routes Ask-related runtime messages: `askListProviders` (called
- * to populate the menu) and `askAi` (the send itself). Installed
- * once from background.ts alongside the other handler installers.
+ * Routes Ask-related runtime messages:
+ *
+ * - `askListProviders` — provider + open-tab listing for the menu.
+ *   Response includes `defaultDestination` so the page can render a
+ *   check next to whichever item plain-Ask will currently target,
+ *   and refresh the Ask button label.
+ * - `askAi` — send to a specific destination (menu pick).
+ * - `askAiDefault` — resolve + send to the current default. Lets
+ *   the page invoke pin-or-fallback in one round-trip.
+ *
+ * Installed once from background.ts.
  */
 export function installAskMessageHandler(): void {
   chrome.runtime.onMessage.addListener(
     (msg: AskMessage, _sender, sendResponse) => {
       if (msg?.action === 'askListProviders') {
-        void listAskProviders().then((providers) => sendResponse({ providers }));
+        void Promise.all([listAskProviders(), resolveDefaultDestination()]).then(
+          ([providers, defaultDestination]) =>
+            sendResponse({ providers, defaultDestination }),
+        );
         return true;
       }
       if (msg?.action === 'askAi') {
@@ -290,6 +380,22 @@ export function installAskMessageHandler(): void {
           return false;
         }
         void sendToAi(msg.destination, msg.payload).then(sendResponse);
+        return true;
+      }
+      if (msg?.action === 'askAiDefault') {
+        if (!msg.payload) {
+          sendResponse({ ok: false, error: 'Missing payload' });
+          return false;
+        }
+        const payload = msg.payload;
+        void resolveDefaultDestination()
+          .then((destination) => {
+            if (!destination) {
+              return { ok: false, error: 'No Ask provider available' };
+            }
+            return sendToAi(destination, payload);
+          })
+          .then(sendResponse);
         return true;
       }
       return false;

@@ -24,6 +24,7 @@ export const claudeProvider: AskProvider = {
     'https://claude.ai/customize*',
     'https://claude.ai/design*',
     'https://claude.ai/downloads*',
+    'https://claude.ai/recents*',
   ],
   newTabUrl: 'https://claude.ai/new',
   enabled: true,

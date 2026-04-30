@@ -101,7 +101,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored "Default items to save on Capture page" preferences — shape, fresh-install defaults, normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
-| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `installAskMessageHandler` |
+| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveDefaultDestination`, `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
 | `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
 | `src/background/ask/claude.ts` | Claude provider data — URLs and ranked selectors for the four DOM roles |
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
@@ -159,8 +159,10 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
-| `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime against the fake-Claude fixture |
-| `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by `ask.spec.ts` so tests don't talk to the real claude.ai |
+| `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime, Alt+A keyboard binding |
+| `tests/e2e/ask-pinned-tabs.spec.ts` | E2E tests for target-window pinning — pin lifecycle, dead/navigated/disabled-provider invalidation, plain-Ask reuse |
+| `tests/e2e/ask-helpers.ts` | Shared scaffolding for the Ask specs — fake-Claude state reader, provider-override seam, per-test hooks (snapshot/restore + pin reset) |
+| `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by the Ask specs so tests don't talk to the real claude.ai |
 | `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin contract for the live test suite — selectors plus per-provider DOM-verification helpers |
 | `tests/e2e-live/lib/live-suite.ts` | Shared live-test cases parameterized by a `LiveProvider` — runs the same five tests against any provider |
 | `tests/e2e-live/claude.live.spec.ts` | Claude `LiveProvider` wiring (selectors imported from `claude.ts`, data-testid-based locators) — calls `runLiveSuite` |

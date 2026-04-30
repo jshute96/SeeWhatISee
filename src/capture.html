@@ -520,21 +520,56 @@
     box-sizing: border-box;
   }
   button#capture,
-  button#ask-btn {
-    /* width:100% paired with the .button-stack grid below makes both
-     * buttons render at the wider button's natural width, regardless
-     * of which label is longer. */
-    width: 100%;
+  button#ask-btn,
+  button#ask-caret {
     padding: 8px 16px;
     font-size: 14px;
     font-weight: 500;
     border: 1px solid #555;
-    border-radius: 4px;
     background: #f5f5f5;
     cursor: pointer;
   }
+  /* width:100% paired with the .button-stack grid below makes the
+   * buttons render at the widest button's natural width, regardless
+   * of which label is longer. The Ask split's outer wrapper takes
+   * the column width and divides it between #ask-btn and #ask-caret. */
+  button#capture {
+    width: 100%;
+    border-radius: 4px;
+  }
+  /*
+   * Split button: main "Ask <provider>" label on the left flexes to
+   * fill, caret button on the right is a fixed-width chevron. They
+   * share a continuous border by joining at a common edge — the
+   * caret's left-border is dropped, the main button's right-border
+   * is still drawn so the join reads as a divider. Outer radii at
+   * the start of the main button and the end of the caret only.
+   */
+  .ask-split {
+    display: flex;
+    width: 100%;
+  }
+  button#ask-btn {
+    flex: 1;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+  }
+  button#ask-caret {
+    /* Squarish target sized to the chevron glyph; mirrors the
+     * 8px vertical padding of the main button so they line up. */
+    padding: 8px 10px;
+    border-left: none;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+  }
+  button#ask-caret svg {
+    width: 10px;
+    height: 10px;
+    display: block;
+  }
   button#capture:disabled,
-  button#ask-btn:disabled {
+  button#ask-btn:disabled,
+  button#ask-caret:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -588,7 +623,10 @@
     list-style: none;
   }
   .ask-menu .ask-menu-heading {
-    padding: 6px 12px 2px;
+    /* Left padding is item-padding (12px) + check-slot (16px) +
+     * item-gap (6px) so the heading text aligns with the items'
+     * label column rather than their leading check glyph. */
+    padding: 6px 12px 2px 34px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -596,9 +634,39 @@
     color: #666;
   }
   .ask-menu .ask-menu-item {
+    /* Two-column row: [check slot 16px][label flexes].
+     * The check slot is always reserved (even on items that aren't
+     * the current default) so labels stay vertically aligned across
+     * the menu and a check appearing/disappearing doesn't shift the
+     * neighbouring rows. */
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 12px;
     cursor: pointer;
     white-space: nowrap;
+    overflow: hidden;
+  }
+  .ask-menu .ask-menu-item .ask-menu-check {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #060;
+  }
+  .ask-menu .ask-menu-item .ask-menu-check svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* Hide the glyph when the slot is empty so unrelated items don't
+   * flicker on hover. The slot itself stays width-allocated. */
+  .ask-menu .ask-menu-item:not(.is-default) .ask-menu-check svg {
+    visibility: hidden;
+  }
+  .ask-menu .ask-menu-item .ask-menu-label {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -739,6 +807,20 @@
               stroke-linecap="round" stroke-linejoin="round"></path>
         <path d="M14 6l4 4"
               fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+      <!-- Down-chevron glyph for the Ask split-button caret. -->
+      <symbol id="caret-down-icon" viewBox="0 0 24 24">
+        <path d="M6 9l6 6 6-6"
+              fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+      <!-- Check glyph — marks the menu item that plain-Ask will hit.
+           Stroke drawn in the menu's accent color; sized 14×14 inside
+           the 16px check slot. -->
+      <symbol id="check-icon" viewBox="0 0 24 24">
+        <path d="M5 12l5 5L20 7"
+              fill="none" stroke="currentColor" stroke-width="3"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
       <!-- Download glyph — arrow into a tray. Shown on the per-row
@@ -960,19 +1042,35 @@
           <button id="capture"
                   title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
           <!--
-            "Ask <provider>" sends the staged capture to a chosen AI tab.
-            The trailing label (in #ask-target-label) and the tooltip
-            are updated by capture-page.ts at load time from the enabled
-            providers in the registry, so the button reads "Ask Claude"
-            today and will say "Ask Gemini" / etc. once those adapters
-            ship. Clicking opens the menu below it; Alt+A from the
-            keyboard does the same.
+            Split "Ask" widget. Two buttons sharing a single visual
+            chrome:
+              - #ask-btn   sends straight to the resolved default
+                           destination — the pinned tab from the last
+                           Ask if it still exists, otherwise a new
+                           window in the first enabled provider.
+              - #ask-caret opens the menu of providers + matching
+                           open tabs. The menu marks (with a leading
+                           check) whichever item plain-Ask would have
+                           targeted, so the user always sees what the
+                           main button is about to do.
+            The trailing #ask-target-label and the button's tooltip
+            track the resolved default — they show "Ask Claude" while
+            the pin lives on a Claude tab, "Ask ChatGPT" once the user
+            picks a ChatGPT tab from the menu, and so on. Alt+A is
+            wired to the caret (open the menu) so the keyboard path
+            still gives the user a chance to pick a different target.
           -->
           <div class="ask-wrap">
-            <button id="ask-btn" type="button"
-                    aria-haspopup="menu" aria-expanded="false"
-                    aria-controls="ask-menu"
-                    title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span></button>
+            <div class="ask-split">
+              <button id="ask-btn" type="button"
+                      title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span></button>
+              <button id="ask-caret" type="button"
+                      aria-haspopup="menu" aria-expanded="false"
+                      aria-controls="ask-menu"
+                      aria-label="Choose Ask target">
+                <svg aria-hidden="true"><use href="#caret-down-icon"></use></svg>
+              </button>
+            </div>
             <div id="ask-menu" class="ask-menu" role="menu" hidden>
               <ul></ul>
             </div>
