@@ -623,10 +623,11 @@
     list-style: none;
   }
   .ask-menu .ask-menu-heading {
-    /* Left padding is item-padding (12px) + check-slot (16px) +
-     * item-gap (6px) so the heading text aligns with the items'
-     * label column rather than their leading check glyph. */
-    padding: 6px 12px 2px 34px;
+    /* Headings sit flush with the menu's left edge (matching item
+     * padding only — no indent for the row's leading indicator
+     * slot). Reads as a separator strip introducing each group
+     * rather than as a label aligned with the items. */
+    padding: 6px 12px 2px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -634,11 +635,11 @@
     color: #666;
   }
   .ask-menu .ask-menu-item {
-    /* Two-column row: [check slot 16px][label flexes].
-     * The check slot is always reserved (even on items that aren't
-     * the current default) so labels stay vertically aligned across
-     * the menu and a check appearing/disappearing doesn't shift the
-     * neighbouring rows. */
+    /* Two-column row: [indicator slot 16px][label flexes].
+     * The indicator slot is always reserved (even on items that
+     * aren't the current default) so labels stay vertically aligned
+     * across the menu and the pin / pin-off / new-window glyph
+     * appearing/disappearing doesn't shift neighbouring rows. */
     display: flex;
     align-items: center;
     gap: 6px;
@@ -660,18 +661,18 @@
     width: 14px;
     height: 14px;
   }
-  /* Hide the glyph when the row is neither the resolved default
-   * (green check) nor a stale pin (grey check). The slot itself
-   * stays width-allocated so labels remain aligned. */
+  /* Hide the pin glyph when the row is neither the resolved default
+   * (green pin) nor a stale pin (grey crossed-out pin). The slot
+   * itself stays width-allocated so labels remain aligned. */
   .ask-menu .ask-menu-item:not(.is-default):not(.is-stale)
       .ask-menu-check svg {
     visibility: hidden;
   }
-  /* Stale pin: same check glyph as the default, but in the muted
-   * #888 we use elsewhere for disabled labels (matches the
-   * `aria-disabled` row colour the excluded items already pick up).
-   * Communicates "this used to be the default" without competing
-   * visually with the green check on the live default. */
+  /* Stale pin: a crossed-out pin in the muted #888 we use elsewhere
+   * for disabled labels (matches the `aria-disabled` row colour the
+   * excluded items already pick up). Communicates "pin used to
+   * point here" without competing visually with the green pin on
+   * the live default. */
   .ask-menu .ask-menu-item.is-stale .ask-menu-check {
     color: #888;
   }
@@ -841,13 +842,34 @@
               fill="none" stroke="currentColor" stroke-width="3"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- Check glyph — marks the menu item that plain-Ask will hit.
-           Stroke drawn in the menu's accent color; sized 14×14 inside
-           the 16px check slot. -->
-      <symbol id="check-icon" viewBox="0 0 24 24">
-        <path d="M5 12l5 5L20 7"
-              fill="none" stroke="currentColor" stroke-width="3"
-              stroke-linecap="round" stroke-linejoin="round"></path>
+      <!-- Indicator glyphs for the Ask menu's leading slot. From
+           Google Material Symbols (outlined variant), Apache 2.0
+           license. Source:
+             symbols/web/push_pin/materialsymbolsoutlined
+             symbols/web/keep_off/materialsymbolsoutlined
+             symbols/web/new_window/materialsymbolsoutlined
+           Different viewBoxes (24×24 vs 960×960 -y origin) reflect
+           Material's two design grids; SVG `<symbol>` scales each
+           independently, so they still render at the same visual
+           size in the 14×14 menu slot.
+           - `pin-icon` marks the existing-tab row plain-Ask is
+             pinned to (`is-default` on an existing tab).
+           - `pin-off-icon` marks a stale-pin row (`is-stale`).
+           - `new-window-icon` marks the "New window in <provider>"
+             row plain-Ask will hit (`is-default` on a new-tab row).
+             "Pin" doesn't fit here — it's an action row, not a
+             pinned target. -->
+      <symbol id="pin-icon" viewBox="0 0 24 24">
+        <path fill="currentColor"
+              d="m16 12 2 2v2h-5v6l-1 1-1-1v-6H6v-2l2-2V5H7V3h10v2h-1Zm-7.15 2h6.3L14 12.85V5h-4v7.85ZM12 14Z"/>
+      </symbol>
+      <symbol id="pin-off-icon" viewBox="0 -960 960 960">
+        <path fill="currentColor"
+              d="M680-840v80h-40v327l-80-80v-247H400v87l-87-87-33-33v-47h400ZM480-40l-40-40v-240H240v-80l80-80v-46L56-792l56-56 736 736-58 56-264-264h-6v240l-40 40ZM354-400h92l-44-44-2-2-46 46Zm126-193Zm-78 149Z"/>
+      </symbol>
+      <symbol id="new-window-icon" viewBox="0 -960 960 960">
+        <path fill="currentColor"
+              d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h240v80H200v560h560v-240h80v240q0 33-23.5 56.5T760-120H200Zm440-400v-120H520v-80h120v-120h80v120h120v80H720v120h-80Z"/>
       </symbol>
       <!-- Download glyph — arrow into a tray. Shown on the per-row
            "Save as…" buttons that open a native save dialog with the

@@ -2539,13 +2539,17 @@ function renderAskMenuItem(opts: {
    *  disabled item is disabled (e.g. "(Wrong page)"). */
   suffix?: string;
   title?: string;
+  /** Indicator-slot glyph for the active states (`isDefault` /
+   *  `isStale`). `'pin'` (default) for an existing pinned-tab row;
+   *  `'new-window'` for the "New window in <provider>" row. The
+   *  stale variant is always pin-off, regardless of this hint. */
+  glyph?: 'pin' | 'new-window';
   isDefault: boolean;
   /** Marks a row whose tab used to be the pin but has since
-   *  navigated to a wrong page. Renders the same check glyph as
-   *  `isDefault` but in grey, so the user sees where the pin
-   *  *was* alongside where Ask is going *now*. Mutually exclusive
-   *  with `isDefault` in practice (a stale pin can't also be the
-   *  resolved default). */
+   *  navigated to a wrong page. Renders the `pin-off` glyph in
+   *  grey, so the user sees where the pin *was* alongside where
+   *  Ask is going *now*. Mutually exclusive with `isDefault` in
+   *  practice (a stale pin can't also be the resolved default). */
   isStale?: boolean;
   disabled?: boolean;
   onClick?: () => void;
@@ -2559,7 +2563,17 @@ function renderAskMenuItem(opts: {
   const check = document.createElement('span');
   check.className = 'ask-menu-check';
   check.setAttribute('aria-hidden', 'true');
-  check.innerHTML = '<svg><use href="#check-icon"></use></svg>';
+  // Glyph picked by row kind: existing-tab "default" rows show a
+  // pin (the tab is pinned); "stale" rows show a crossed-out pin;
+  // new-window default rows show a new-window glyph instead, since
+  // those rows are an action ("open a new window") rather than a
+  // pinned target. `glyph` defaults to `'pin'` so call sites that
+  // don't care (the check is hidden via CSS unless is-default or
+  // is-stale anyway) can omit it.
+  const symbolId = opts.isStale
+    ? 'pin-off-icon'
+    : `${opts.glyph ?? 'pin'}-icon`;
+  check.innerHTML = `<svg><use href="#${symbolId}"></use></svg>`;
   const labelEl = document.createElement('span');
   labelEl.className = 'ask-menu-label';
   labelEl.textContent = opts.label;
@@ -2642,6 +2656,7 @@ async function openAskMenu(): Promise<void> {
         label: provider.enabled
           ? provider.label
           : `${provider.label} (coming soon)`,
+        glyph: 'new-window',
         isDefault: provider.enabled
           ? isSameDestination(defaultDestination, dest)
           : false,

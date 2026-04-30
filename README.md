@@ -311,3 +311,9 @@ GitHub UI.
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
   exposes its service worker
 - `docs/` — design docs and the file index
+
+## License
+
+The extension itself is MIT-licensed (see `LICENSE`). Bundled
+third-party assets and their licenses are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

@@ -2,7 +2,7 @@
 //
 // Ask remembers the destination of the last successful send and
 // reuses it on the next plain `#ask-btn` click. The menu marks the
-// pinned target with a leading check; `#ask-caret` always opens
+// pinned target with a leading pin glyph; `#ask-caret` always opens
 // the menu so the user can pick a different target.
 //
 // Split out from `ask.spec.ts` so the pin lifecycle (sending, then
@@ -24,7 +24,7 @@ import {
 
 installAskTestHooks();
 
-test('pin: with no pin, the "New window in" item shows the default check', async ({
+test('pin: with no pin, the "New window in" item shows the default pin', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -113,7 +113,7 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
   });
 
   // Reopen the menu — the existing-tab item should now carry the
-  // default check, and the "New window in Claude" item should not.
+  // default pin, and the "New window in Claude" item should not.
   await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
@@ -355,7 +355,7 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
   await openerPage.close();
 });
 
-test('pin: stale pin shows greyed-out check on the wrong-page row', async ({
+test('pin: stale pin shows greyed-out crossed pin on the wrong-page row', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -397,21 +397,21 @@ test('pin: stale pin shows greyed-out check on the wrong-page row', async ({
   const stale = capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' });
   await expect(stale).toHaveClass(/\bis-stale\b/);
-  // Stale rows are greyed-checked, not green-checked — verify both
-  // states do *not* coincide on the same row.
+  // Stale rows show a grey crossed-out pin, not the green pin —
+  // verify both states do *not* coincide on the same row.
   await expect(stale).not.toHaveClass(/\bis-default\b/);
 
   // The class alone proves nothing if the CSS rule that paints it
   // grey ever drifts. Pin the actual computed colour so a future
-  // refactor of the check-glyph styling can't silently regress to
-  // a green check on a stale row. Browsers serialise color as
+  // refactor of the indicator-glyph styling can't silently regress
+  // to a green glyph on a stale row. Browsers serialise color as
   // `rgb(r, g, b)`; `#888` → `rgb(136, 136, 136)`.
   const checkColor = await stale
     .locator('.ask-menu-check')
     .evaluate((el) => getComputedStyle(el).color);
   expect(checkColor).toBe('rgb(136, 136, 136)');
 
-  // The "New window in Claude" row carries the live default check.
+  // The "New window in Claude" row carries the live default pin.
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
     .filter({ hasText: /^Claude$/ });

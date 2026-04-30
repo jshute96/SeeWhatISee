@@ -78,17 +78,17 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
 - Each section is preceded by a horizontal separator
   (`.ask-menu-separator`).
 - One click on a menu item both picks the destination and sends.
-- Each item has a leading 16px check slot (always reserved). The
-  item that matches the **resolved default** carries `is-default`
-  and shows the green check — that's the one plain `#ask-btn` will
-  hit. Reserving the slot on every item keeps labels vertically
-  aligned across the menu.
+- Each item has a leading 16px indicator slot (always reserved).
+  The item that matches the **resolved default** carries
+  `is-default` and shows a green pushpin glyph (`#pin-icon`) —
+  that's the one plain `#ask-btn` will hit. Reserving the slot on
+  every item keeps labels vertically aligned across the menu.
 - A still-alive pinned tab whose URL is now on a wrong page
-  (excluded) gets `is-stale` and a greyed check on the same slot.
-  Both the stale row and the new fallback's `is-default` row are
-  visible at once, so the user can see "this used to be the
-  default" alongside "this is what plain Ask will hit instead."
-  Mutually exclusive with `is-default`.
+  (excluded) gets `is-stale` and a grey crossed-out pin
+  (`#pin-off-icon`) on the same slot. Both the stale row and the
+  new fallback's `is-default` row are visible at once, so the user
+  can see "pin used to point here" alongside "this is what plain
+  Ask will hit instead." Mutually exclusive with `is-default`.
 - Tabs on the provider's host but on an excluded URL (settings,
   library, recents, etc.) appear in the listing too, rendered
   disabled with an italic `(Wrong page)` suffix. See
@@ -113,7 +113,7 @@ whichever destination the SW currently considers the default:
   - Pin is **kept** rather than cleared, so a navigation back
     restores it.
   - `resolveAsk` reports it as `staleTabPin` so the menu can render
-    the greyed-check row described above.
+    the grey crossed-pin row described above.
   - Plain-Ask in this state hits the fallback, and the new tab's
     id overwrites the stale pin via `sendToAi`'s `writePin` —
     a stale pin can't linger forever, just past the user's next
@@ -249,7 +249,7 @@ Capture page (capture-page.ts)
         listAskProviders() + resolveAsk()
           chrome.tabs.query(provider.urlPatterns)     │
           read 'askPin' from chrome.storage.session   │
-    rebuild popup menu (check on the default item)    │
+    rebuild popup menu (pin on the default item)      │
                                                       │
   user picks a destination ◀────────────────────────  ┘
     sendMessage({ action: 'askAi', destination, payload }) ──▶ ▼
