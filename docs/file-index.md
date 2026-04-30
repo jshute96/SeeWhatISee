@@ -12,7 +12,8 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
-| `playwright.config.ts` | Playwright test runner config |
+| `playwright.config.ts` | Playwright test runner config (default e2e suite) |
+| `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude, future Gemini/ChatGPT) — opt-in only |
 | `.gitignore` | Git ignore rules |
 
 ## Local Claude Config (`.claude/`)
@@ -126,6 +127,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/release-extension.sh` | Cuts a GitHub release for the Chrome extension (tag `extension-vX.Y.Z`); builds the zip and runs `gh release create` (draft by default) |
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
+| `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
 | `scripts/get-latest.sh` | Symlink to `plugin/scripts/get-latest.sh` |
 | `scripts/watch-and-copy.sh` | Symlink to `.gemini/scripts/watch-and-copy.sh` |
@@ -157,6 +159,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
 | `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime against the fake-Claude fixture |
 | `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by `ask.spec.ts` so tests don't talk to the real claude.ai |
+| `tests/e2e-live/claude.live.spec.ts` | Manual live e2e against the real claude.ai with a logged-in test user — selector smoke, auto-submit and no-submit Ask flows |
 
 ## Unit Tests (`tests/unit/`)
 
@@ -175,6 +178,7 @@ One-line descriptions of every source file, grouped by directory.
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
+| `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |

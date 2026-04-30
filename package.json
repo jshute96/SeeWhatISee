@@ -14,6 +14,11 @@
     "test:headed": "playwright test --headed",
     "pretest:unit": "node scripts/build.mjs",
     "test:unit": "node --test tests/unit/",
+    "pretest:live": "node scripts/build.mjs",
+    "test:live": "playwright test --config=playwright.config.live.ts",
+    "pretest:live-claude": "node scripts/build.mjs",
+    "test:live-claude": "playwright test --config=playwright.config.live.ts --project=claude",
+    "open-test-browser": "scripts/open-test-browser.sh",
     "clean": "rm -rf dist test-results playwright-report"
   },
   "devDependencies": {

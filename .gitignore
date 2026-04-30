@@ -26,3 +26,8 @@ dist/
 /playwright-report/
 /blob-report/
 /.playwright/
+
+# live-test browser profile. Created by scripts/open-test-browser.sh;
+# holds login sessions for Claude / Gemini / ChatGPT. Never commit —
+# these grant account access to anyone who reads the profile dir.
+/.chrome-test-profile/
