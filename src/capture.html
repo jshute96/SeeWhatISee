@@ -660,10 +660,20 @@
     width: 14px;
     height: 14px;
   }
-  /* Hide the glyph when the slot is empty so unrelated items don't
-   * flicker on hover. The slot itself stays width-allocated. */
-  .ask-menu .ask-menu-item:not(.is-default) .ask-menu-check svg {
+  /* Hide the glyph when the row is neither the resolved default
+   * (green check) nor a stale pin (grey check). The slot itself
+   * stays width-allocated so labels remain aligned. */
+  .ask-menu .ask-menu-item:not(.is-default):not(.is-stale)
+      .ask-menu-check svg {
     visibility: hidden;
+  }
+  /* Stale pin: same check glyph as the default, but in the muted
+   * #888 we use elsewhere for disabled labels (matches the
+   * `aria-disabled` row colour the excluded items already pick up).
+   * Communicates "this used to be the default" without competing
+   * visually with the green check on the live default. */
+  .ask-menu .ask-menu-item.is-stale .ask-menu-check {
+    color: #888;
   }
   .ask-menu .ask-menu-item .ask-menu-label {
     /* Don't claim the row's whole flex space — let the suffix sit

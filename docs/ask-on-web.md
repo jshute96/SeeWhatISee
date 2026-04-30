@@ -83,6 +83,12 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
   and shows the green check — that's the one plain `#ask-btn` will
   hit. Reserving the slot on every item keeps labels vertically
   aligned across the menu.
+- A still-alive pinned tab whose URL is now on a wrong page
+  (excluded) gets `is-stale` and a greyed check on the same slot.
+  Both the stale row and the new fallback's `is-default` row are
+  visible at once, so the user can see "this used to be the
+  default" alongside "this is what plain Ask will hit instead."
+  Mutually exclusive with `is-default`.
 - Tabs on the provider's host but on an excluded URL (settings,
   library, recents, etc.) appear in the listing too, rendered
   disabled with an italic `(Wrong page)` suffix. See
@@ -101,7 +107,19 @@ whichever destination the SW currently considers the default:
 - **Pin reuse rules** — kept only when the tab still exists, the
   pinned provider is still enabled, and the tab's URL still matches
   one of that provider's `urlPatterns` (so a navigated-away tab
-  doesn't get hijacked). Stale pins are cleared in passing.
+  doesn't get hijacked).
+- **Stale pin** — pinned tab is alive on the provider's host but
+  on an *excluded* URL (settings, library, recents):
+  - Pin is **kept** rather than cleared, so a navigation back
+    restores it.
+  - `resolveAsk` reports it as `staleTabPin` so the menu can render
+    the greyed-check row described above.
+  - Plain-Ask in this state hits the fallback, and the new tab's
+    id overwrites the stale pin via `sendToAi`'s `writePin` —
+    a stale pin can't linger forever, just past the user's next
+    decision.
+- **Pin clearing** — closed tabs, disabled providers, and off-host
+  navigations clear the pin lazily on the next `resolveAsk`.
 - **Fallback** — first enabled provider's "newTab" entry, used when
   there's no pin or the pin is dead. "First" is registry order in
   `ASK_PROVIDERS` (Claude → Gemini → ChatGPT today), so adding a
@@ -110,7 +128,7 @@ whichever destination the SW currently considers the default:
 
 `sendToAi` writes the pin on every successful send, including
 new-tab opens (so the freshly-created tab gets reused next time).
-`resolveDefaultDestination` reads it for the menu / button label /
+`resolveAsk` reads it for the menu / button label /
 plain-Ask path.
 
 ### Status line
@@ -139,7 +157,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 | File | Purpose |
 |------|---------|
-| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveDefaultDestination`, `sendToAi`, `installAskMessageHandler`. Resolves target tab, focuses it, runs the injected runtime, and pins the destination on success. |
+| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`. Resolves target tab (with stale-pin detection), focuses it, runs the injected runtime, and pins the destination on success. |
 | `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
@@ -169,7 +187,7 @@ type AskProvider = {
   suffix and aren't selectable.
 - Used for pages on the provider's domain that aren't valid chat
   targets — settings, projects index, login, recents.
-- Excluded tabs are also rejected by `resolveDefaultDestination`
+- Excluded tabs are also rejected by `resolveAsk`
   so plain Ask can never resolve to one.
 - Syntax is a simpler `*`-glob (case-insensitive) — see the jsdoc
   on `AskProvider.excludeUrlPatterns` for the full grammar and
@@ -228,7 +246,7 @@ Capture page (capture-page.ts)
   click #ask-caret ───────────────────────────────────┐
     sendMessage({ action: 'askListProviders' }) ──▶   │
       background/ask/index.ts                         │
-        listAskProviders() + resolveDefaultDestination()
+        listAskProviders() + resolveAsk()
           chrome.tabs.query(provider.urlPatterns)     │
           read 'askPin' from chrome.storage.session   │
     rebuild popup menu (check on the default item)    │
@@ -239,7 +257,7 @@ Capture page (capture-page.ts)
   click #ask-btn ─────────────────────────────────────────────► │
     sendMessage({ action: 'askAiDefault', payload }) ──▶        │
       background/ask/index.ts                                   │
-        resolveDefaultDestination()                             │
+        resolveAsk()                             │
         sendToAi() ◀───────────────────────────────────────────┘
           ├── resolve tab (existing or new — wait 'complete' up to 15s)
           ├── focus tab + window

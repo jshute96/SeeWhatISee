@@ -107,41 +107,92 @@ async function writePin(pin: AskPin | null): Promise<void> {
 }
 
 /**
- * Decide what plain Ask (button click without opening the menu)
- * should target right now. Order:
+ * Result of resolving plain Ask's target. `destination` is what
+ * the next click should hit; `staleTabPin`, when set, names a
+ * still-alive pinned tab whose URL is now on the provider's
+ * exclude list — the menu surfaces those rows with a greyed-out
+ * check so the user can see "this used to be the default" alongside
+ * the new fallback's regular check.
+ */
+export interface AskResolution {
+  destination: AskDestination | null;
+  staleTabPin?: { provider: AskProviderId; tabId: number };
+}
+
+/**
+ * Resolve plain Ask's target right now. Order:
  *
  * 1. Pinned tab if it still exists, the pinned provider is enabled,
- *    and the tab's URL still matches one of that provider's
- *    `urlPatterns` (so a navigated-away tab doesn't get hijacked).
+ *    its URL matches `urlPatterns`, and isn't excluded.
  * 2. First enabled provider's "newTab" entry as the fallback.
  * 3. `null` if no provider is enabled.
  *
- * Pin verification clears a stale pin in passing.
+ * Stale-pin handling:
+ *
+ * - Tab closed or navigated off the provider's host → clear the
+ *   pin in passing; nothing to surface.
+ * - Tab still on the provider's host but on an excluded URL
+ *   (settings, library, recents, etc.) → keep the pin (user might
+ *   navigate back) and report it as `staleTabPin` so the menu can
+ *   render a greyed check on that row.
  */
-export async function resolveDefaultDestination(): Promise<AskDestination | null> {
-  const pin = await readPin();
-  if (pin) {
-    const provider = ASK_PROVIDERS.find((p) => p.id === pin.provider);
-    if (provider && provider.enabled) {
-      try {
-        const tab = await chrome.tabs.get(pin.tabId);
-        if (tab.id !== undefined && tab.url) {
-          const matches = await chrome.tabs.query({ url: provider.urlPatterns });
-          const stillProvider = matches.some((t) => t.id === pin.tabId);
-          const excluded = matchesAny(tab.url, provider.excludeUrlPatterns ?? []);
-          if (stillProvider && !excluded) {
-            return { kind: 'existingTab', provider: pin.provider, tabId: pin.tabId };
-          }
-        }
-      } catch {
-        // Tab gone or inaccessible — fall through to clear + fallback.
-      }
-    }
-    await writePin(null);
-  }
+export async function resolveAsk(): Promise<AskResolution> {
   const fallback = ASK_PROVIDERS.find((p) => p.enabled);
-  if (!fallback) return null;
-  return { kind: 'newTab', provider: fallback.id };
+  const fallbackResolution: AskResolution = {
+    destination: fallback ? { kind: 'newTab', provider: fallback.id } : null,
+  };
+
+  const pin = await readPin();
+  if (!pin) return fallbackResolution;
+
+  const provider = ASK_PROVIDERS.find((p) => p.id === pin.provider);
+  if (!provider || !provider.enabled) {
+    await writePin(null);
+    return fallbackResolution;
+  }
+
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(pin.tabId);
+  } catch {
+    // Tab closed.
+    await writePin(null);
+    return fallbackResolution;
+  }
+  if (tab.id === undefined || !tab.url) {
+    await writePin(null);
+    return fallbackResolution;
+  }
+
+  const matches = await chrome.tabs.query({ url: provider.urlPatterns });
+  const stillProvider = matches.some((t) => t.id === pin.tabId);
+  if (!stillProvider) {
+    // Tab is no longer on the provider's host — either navigated
+    // off it, or closed in the small window between `tabs.get`
+    // (above) and `tabs.query` (just now). Either way, drop the
+    // pin and let the fallback take over.
+    await writePin(null);
+    return fallbackResolution;
+  }
+
+  const excluded = matchesAny(tab.url, provider.excludeUrlPatterns ?? []);
+  if (excluded) {
+    // Same host, wrong page. Keep the pin so a navigation back
+    // restores the default; surface the row as stale in the menu.
+    // Self-correcting race: the menu render is fed by a separate
+    // `chrome.tabs.query` in `listAskProviders`, so if the pinned
+    // tab closes between the two queries the page won't have an
+    // existing-tab row to mark — visually fine, and the next menu
+    // open's `tabs.get` will throw and clear the pin properly.
+    return {
+      destination: fallbackResolution.destination,
+      staleTabPin: { provider: pin.provider, tabId: pin.tabId },
+    };
+  }
+
+  return {
+    destination: { kind: 'existingTab', provider: pin.provider, tabId: pin.tabId },
+  };
 }
 
 export async function listAskProviders(): Promise<AskProviderListing[]> {
@@ -365,9 +416,9 @@ interface AskMessage {
  * Routes Ask-related runtime messages:
  *
  * - `askListProviders` — provider + open-tab listing for the menu.
- *   Response includes `defaultDestination` so the page can render a
- *   check next to whichever item plain-Ask will currently target,
- *   and refresh the Ask button label.
+ *   Response includes `defaultDestination` (the row plain-Ask
+ *   will hit, gets a green check) and `staleTabPin` (a still-alive
+ *   pinned tab that's now on a wrong page, gets a greyed check).
  * - `askAi` — send to a specific destination (menu pick).
  * - `askAiDefault` — resolve + send to the current default. Lets
  *   the page invoke pin-or-fallback in one round-trip.
@@ -378,9 +429,13 @@ export function installAskMessageHandler(): void {
   chrome.runtime.onMessage.addListener(
     (msg: AskMessage, _sender, sendResponse) => {
       if (msg?.action === 'askListProviders') {
-        void Promise.all([listAskProviders(), resolveDefaultDestination()]).then(
-          ([providers, defaultDestination]) =>
-            sendResponse({ providers, defaultDestination }),
+        void Promise.all([listAskProviders(), resolveAsk()]).then(
+          ([providers, resolution]) =>
+            sendResponse({
+              providers,
+              defaultDestination: resolution.destination,
+              staleTabPin: resolution.staleTabPin,
+            }),
         );
         return true;
       }
@@ -398,8 +453,8 @@ export function installAskMessageHandler(): void {
           return false;
         }
         const payload = msg.payload;
-        void resolveDefaultDestination()
-          .then((destination) => {
+        void resolveAsk()
+          .then(({ destination }) => {
             if (!destination) {
               return { ok: false, error: 'No Ask provider available' };
             }

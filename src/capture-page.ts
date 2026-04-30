@@ -2418,9 +2418,18 @@ const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanEl
  * menu open path keeps the providers and the simpler refreshes
  * just look at `defaultDestination`.
  */
+interface AskStatePin {
+  provider: AskProviderId;
+  tabId: number;
+}
 async function fetchAskState(): Promise<{
   providers: AskProviderListing[];
   defaultDestination: AskDestination | null;
+  /** Pin landed on a tab that's still alive on the provider's host
+   *  but on a wrong (excluded) page. The menu greys-out the check
+   *  on that row alongside the regular green check on whatever
+   *  `defaultDestination` resolved to instead. */
+  staleTabPin: AskStatePin | null;
 }> {
   try {
     const response = (await chrome.runtime.sendMessage({
@@ -2429,14 +2438,16 @@ async function fetchAskState(): Promise<{
       | {
           providers: AskProviderListing[];
           defaultDestination: AskDestination | null;
+          staleTabPin?: AskStatePin;
         }
       | undefined;
     return {
       providers: response?.providers ?? [],
       defaultDestination: response?.defaultDestination ?? null,
+      staleTabPin: response?.staleTabPin ?? null,
     };
   } catch {
-    return { providers: [], defaultDestination: null };
+    return { providers: [], defaultDestination: null, staleTabPin: null };
   }
 }
 
@@ -2529,12 +2540,20 @@ function renderAskMenuItem(opts: {
   suffix?: string;
   title?: string;
   isDefault: boolean;
+  /** Marks a row whose tab used to be the pin but has since
+   *  navigated to a wrong page. Renders the same check glyph as
+   *  `isDefault` but in grey, so the user sees where the pin
+   *  *was* alongside where Ask is going *now*. Mutually exclusive
+   *  with `isDefault` in practice (a stale pin can't also be the
+   *  resolved default). */
+  isStale?: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }): HTMLLIElement {
   const li = document.createElement('li');
   li.className = 'ask-menu-item';
   if (opts.isDefault) li.classList.add('is-default');
+  if (opts.isStale) li.classList.add('is-stale');
   li.setAttribute('role', 'menuitem');
   if (opts.title) li.title = opts.title;
   const check = document.createElement('span');
@@ -2597,7 +2616,7 @@ async function openAskMenu(): Promise<void> {
     document.addEventListener('keydown', onKeydownWhileAskOpen, true);
   }, 0);
 
-  const { providers, defaultDestination } = await fetchAskState();
+  const { providers, defaultDestination, staleTabPin } = await fetchAskState();
   // Bail if the user already closed the menu while we were waiting.
   if (askMenu.hidden) return;
 
@@ -2672,6 +2691,11 @@ async function openAskMenu(): Promise<void> {
           title: tab.url,
           isDefault: !tab.excluded
             && isSameDestination(defaultDestination, dest),
+          // Pin used to point here but the tab navigated to a wrong
+          // page. Both checks (greyed-here, fresh-on-the-fallback)
+          // appear together so the user can see what just happened.
+          isStale: staleTabPin?.provider === provider.id
+            && staleTabPin.tabId === tab.tabId,
           disabled: tab.excluded,
           onClick: tab.excluded
             ? undefined

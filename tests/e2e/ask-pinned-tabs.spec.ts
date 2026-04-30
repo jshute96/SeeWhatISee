@@ -266,7 +266,7 @@ test('pin: tab navigated away from the provider invalidates the pin', async ({
 
   // Move the pinned tab off the provider URL. The pin's tabId is
   // still alive, but its URL no longer matches `urlPatterns`, so
-  // resolveDefaultDestination should drop the pin and fall back.
+  // resolveAsk should drop the pin and fall back.
   await claudePage.goto(`${fixtureServer.baseUrl}/purple.html`);
 
   await configureCapture(capturePage, {
@@ -326,7 +326,7 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
   // Navigate the pinned tab to the same page but with a query
   // string that flips it into the exclude bucket. The tab still
   // matches `urlPatterns` (so it's still listed as a Claude tab),
-  // but resolveDefaultDestination must reject it because it now
+  // but resolveAsk must reject it because it now
   // matches `excludeUrlPatterns`.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
 
@@ -351,6 +351,126 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
   expect(fresh).not.toBe(claudePage);
 
   await fresh!.close();
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('pin: stale pin shows greyed-out check on the wrong-page row', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Same shape as the previous test — match all fake-Claude URLs,
+  // exclude `?excluded=…`. Lets us flip the pinned tab onto a
+  // wrong page without leaving the provider's host.
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    excludeUrlPatterns: ['*?excluded=*'],
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  // Pin to the existing tab via the menu.
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'first',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 10_000,
+  });
+
+  // Navigate the pinned tab onto a wrong page. Pin is no longer
+  // the default but should surface in the next menu render as a
+  // stale row alongside the new "New window in" default.
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+
+  const stale = capturePage
+    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' });
+  await expect(stale).toHaveClass(/\bis-stale\b/);
+  // Stale rows are greyed-checked, not green-checked — verify both
+  // states do *not* coincide on the same row.
+  await expect(stale).not.toHaveClass(/\bis-default\b/);
+
+  // The class alone proves nothing if the CSS rule that paints it
+  // grey ever drifts. Pin the actual computed colour so a future
+  // refactor of the check-glyph styling can't silently regress to
+  // a green check on a stale row. Browsers serialise color as
+  // `rgb(r, g, b)`; `#888` → `rgb(136, 136, 136)`.
+  const checkColor = await stale
+    .locator('.ask-menu-check')
+    .evaluate((el) => getComputedStyle(el).color);
+  expect(checkColor).toBe('rgb(136, 136, 136)');
+
+  // The "New window in Claude" row carries the live default check.
+  const newClaude = capturePage
+    .locator('#ask-menu .ask-menu-item')
+    .filter({ hasText: /^Claude$/ });
+  await expect(newClaude).toHaveClass(/\bis-default\b/);
+  await expect(newClaude).not.toHaveClass(/\bis-stale\b/);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('pin: navigating back from a wrong page restores the pin', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    excludeUrlPatterns: ['*?excluded=*'],
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  // Pin via the menu.
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'first',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 10_000,
+  });
+
+  // Stale roundtrip: wrong page → back to a valid URL. Pin should
+  // recover (we deliberately don't clear it on the stale leg) and
+  // become the live default again.
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html`);
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+
+  // `is-default` on the existing-tab row only happens when
+  // `resolveAsk` returns `{kind: 'existingTab', tabId: …}`, which
+  // requires a live pin — plain-Ask hasn't fired again, so the
+  // only way the pin can be live is if it survived the stale leg.
+  // i.e. asserting `is-default` here transitively proves "pin was
+  // kept, not cleared".
+  const existing = capturePage
+    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' });
+  await expect(existing).toHaveClass(/\bis-default\b/);
+  await expect(existing).not.toHaveClass(/\bis-stale\b/);
+
   await claudePage.close();
   await openerPage.close();
 });

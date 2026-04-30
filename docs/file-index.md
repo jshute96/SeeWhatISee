@@ -101,7 +101,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored "Default items to save on Capture page" preferences — shape, fresh-install defaults, normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
-| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveDefaultDestination`, `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
+| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
 | `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
 | `src/background/ask/claude.ts` | Claude provider data — URLs and ranked selectors for the four DOM roles |
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
