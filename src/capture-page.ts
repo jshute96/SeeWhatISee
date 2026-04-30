@@ -22,6 +22,7 @@
 // because the default extension-page CSP forbids inline scripts.
 
 import { htmlToMarkdown, looksLikeMarkdownSource } from './markdown.js';
+import { excludedSuffix } from './url-helpers.js';
 import type { AskProviderId } from './background/ask/providers.js';
 
 /**
@@ -2387,6 +2388,10 @@ interface AskTabSummary {
   tabId: number;
   title: string;
   url: string;
+  /** Tab is on the provider's host but on a non-chat page (settings,
+   *  library, recents, etc.) — rendered disabled with a "(Wrong
+   *  page)" suffix. */
+  excluded?: boolean;
 }
 interface AskProviderListing {
   id: AskProviderId;
@@ -2519,6 +2524,9 @@ function onKeydownWhileAskOpen(e: KeyboardEvent): void {
  */
 function renderAskMenuItem(opts: {
   label: string;
+  /** Italic text appended after the label — used to annotate why a
+   *  disabled item is disabled (e.g. "(Wrong page)"). */
+  suffix?: string;
   title?: string;
   isDefault: boolean;
   disabled?: boolean;
@@ -2537,6 +2545,12 @@ function renderAskMenuItem(opts: {
   labelEl.className = 'ask-menu-label';
   labelEl.textContent = opts.label;
   li.append(check, labelEl);
+  if (opts.suffix) {
+    const suffixEl = document.createElement('span');
+    suffixEl.className = 'ask-menu-suffix';
+    suffixEl.textContent = ` ${opts.suffix}`;
+    li.appendChild(suffixEl);
+  }
   if (opts.disabled) {
     li.setAttribute('aria-disabled', 'true');
   } else {
@@ -2646,12 +2660,25 @@ async function openAskMenu(): Promise<void> {
       askMenuList.appendChild(
         renderAskMenuItem({
           label: tab.title || tab.url || `Tab ${tab.tabId}`,
+          // Excluded tabs (settings, library, recents, etc.) live on
+          // the provider's host but aren't a valid Ask target. Show
+          // them disabled so the user can see the tab is recognised
+          // — just not pickable — and explain why with the suffix.
+          // Append the URL's first path segment when we can derive
+          // one so the user sees *which* sub-page the tab is on.
+          suffix: tab.excluded
+            ? excludedSuffix(tab.url)
+            : undefined,
           title: tab.url,
-          isDefault: isSameDestination(defaultDestination, dest),
-          onClick: () => {
-            closeAskMenu();
-            void runAsk(dest);
-          },
+          isDefault: !tab.excluded
+            && isSameDestination(defaultDestination, dest),
+          disabled: tab.excluded,
+          onClick: tab.excluded
+            ? undefined
+            : () => {
+                closeAskMenu();
+                void runAsk(dest);
+              },
         }),
       );
     }

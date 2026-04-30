@@ -104,7 +104,7 @@ test('ask menu: "Existing window in" section omitted when no tab matches', async
   await openerPage.close();
 });
 
-test('ask menu: excludeUrlPatterns filters tabs out', async ({
+test('ask menu: excludeUrlPatterns shows tabs disabled with suffix', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -124,12 +124,24 @@ test('ask menu: excludeUrlPatterns filters tabs out', async ({
   await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
 
-  // Exclusion pattern must filter the tab out of the listing.
-  await expect(
-    capturePage.locator('#ask-menu .ask-menu-heading', {
-      hasText: 'Existing window in',
-    }),
-  ).toHaveCount(0);
+  // Excluded tabs still surface in the menu, but disabled with a
+  // "(Wrong page: /<first-segment>)" suffix so the user
+  // sees the tab is recognised as a Claude tab — just not a valid
+  // Ask target — and which sub-page it's actually on. The fixture
+  // page lives at /fake-claude.html so the first-segment is the
+  // whole filename.
+  const existingItems = capturePage.locator('#ask-menu .ask-menu-item', {
+    hasText: 'Fake Claude',
+  });
+  await expect(existingItems).toHaveCount(1);
+  const item = existingItems.first();
+  await expect(item).toHaveAttribute('aria-disabled', 'true');
+  // Excluded tabs are never the resolved default — the pin
+  // resolver also rejects them, so plain Ask can never land here.
+  await expect(item).not.toHaveClass(/\bis-default\b/);
+  await expect(item.locator('.ask-menu-suffix')).toHaveText(
+    '(Wrong page: /fake-claude.html)',
+  );
 
   await claudePage.close();
   await openerPage.close();

@@ -292,6 +292,69 @@ test('pin: tab navigated away from the provider invalidates the pin', async ({
   await openerPage.close();
 });
 
+test('pin: tab navigated to an excluded URL invalidates the pin', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Match all fake-Claude URLs as Claude tabs, then exclude the
+  // ones with `?excluded=…`. The pinned tab will navigate from
+  // valid → excluded between sends.
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    excludeUrlPatterns: ['*?excluded=*'],
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'first',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 10_000,
+  });
+
+  // Navigate the pinned tab to the same page but with a query
+  // string that flips it into the exclude bucket. The tab still
+  // matches `urlPatterns` (so it's still listed as a Claude tab),
+  // but resolveDefaultDestination must reject it because it now
+  // matches `excludeUrlPatterns`.
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'second',
+  });
+  await capturePage.locator('#ask-btn').click();
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+
+  // Two fake-Claude tabs now: the excluded one (still navigated to
+  // ?excluded=1) and a fresh one the fallback opened to send into.
+  const allClaude = extensionContext
+    .pages()
+    .filter((p) => p.url().includes('/fake-claude.html'));
+  expect(allClaude).toHaveLength(2);
+  const fresh = allClaude.find((p) => !p.url().includes('excluded'));
+  expect(fresh).toBeDefined();
+  expect(fresh).not.toBe(claudePage);
+
+  await fresh!.close();
+  await claudePage.close();
+  await openerPage.close();
+});
+
 test('pin: disabled provider invalidates the pin and falls back', async ({
   extensionContext,
   fixtureServer,

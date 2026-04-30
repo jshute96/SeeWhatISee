@@ -107,6 +107,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
 | `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; ProseMirror composer reuses Claude's typing path |
 | `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit; runs `preFileInputClicks` with the OS picker suppressed |
+| `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
@@ -175,6 +176,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `tests/unit/markdown.test.mjs` | Pure unit tests for `src/markdown.ts` — run via `node --test` (no browser required) |
 | `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/background/ask/index.ts` (`globMatch` / `matchesAny`) |
+| `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 
 ## Design Docs (`docs/`)
 

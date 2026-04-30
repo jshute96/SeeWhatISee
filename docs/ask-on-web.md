@@ -83,6 +83,10 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
   and shows the green check — that's the one plain `#ask-btn` will
   hit. Reserving the slot on every item keeps labels vertically
   aligned across the menu.
+- Tabs on the provider's host but on an excluded URL (settings,
+  library, recents, etc.) appear in the listing too, rendered
+  disabled with an italic `(Wrong page)` suffix. See
+  `excludeUrlPatterns` below.
 - ESC and outside-click dismiss the menu.
 
 ### Pinning (the resolved default)
@@ -159,10 +163,14 @@ type AskProvider = {
 
 `excludeUrlPatterns`:
 
-- Removes tabs whose URL matches any pattern, even when
-  `urlPatterns` already matched them.
+- Marks tabs whose URL matches any pattern as `excluded` in the
+  menu listing — they still appear under "Existing window in X"
+  but are rendered disabled with a "(Wrong page)" italic
+  suffix and aren't selectable.
 - Used for pages on the provider's domain that aren't valid chat
-  targets — settings, projects index, login.
+  targets — settings, projects index, login, recents.
+- Excluded tabs are also rejected by `resolveDefaultDestination`
+  so plain Ask can never resolve to one.
 - Syntax is a simpler `*`-glob (case-insensitive) — see the jsdoc
   on `AskProvider.excludeUrlPatterns` for the full grammar and
   pitfalls.

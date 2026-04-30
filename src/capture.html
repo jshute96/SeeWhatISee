@@ -666,9 +666,25 @@
     visibility: hidden;
   }
   .ask-menu .ask-menu-item .ask-menu-label {
-    flex: 1;
+    /* Don't claim the row's whole flex space — let the suffix sit
+     * inline next to the label. flex-shrink:1 + min-width:0 lets a
+     * long title give way and ellipsise instead of pushing the
+     * suffix off the row's edge when the menu is at its 360px max
+     * width. */
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Italic annotation appended after the label — used today to
+   * mark excluded tabs as "(Wrong page: /<segment>)". The
+   * suffix is always one short string (segment is truncated past
+   * 20 chars in capture-page.ts), so flex-shrink:0 keeps it whole;
+   * the label ellipsises first when the row is tight. */
+  .ask-menu .ask-menu-item .ask-menu-suffix {
+    flex: 0 0 auto;
+    font-style: italic;
+    color: #888;
   }
   .ask-menu .ask-menu-item:hover,
   .ask-menu .ask-menu-item:focus {

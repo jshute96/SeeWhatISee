@@ -49,6 +49,14 @@ export interface AskTabSummary {
   tabId: number;
   title: string;
   url: string;
+  /**
+   * `true` when the tab matches one of the provider's
+   * `excludeUrlPatterns` (settings, library, recents, etc.). The
+   * page renders these as a disabled menu item with a "(Not on
+   * prompt page)" suffix so the user sees the tab is on the
+   * provider but isn't a valid Ask target.
+   */
+  excluded?: boolean;
 }
 
 export interface AskProviderListing {
@@ -149,14 +157,16 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
       enabled: provider.enabled,
       existingTabs: tabs
         .filter((t): t is chrome.tabs.Tab & { id: number } => t.id !== undefined)
-        // Drop tabs whose URL matches any exclusion (settings,
-        // projects index, etc.) — `chrome.tabs.query` only takes
-        // positive match patterns, so we filter post-query.
-        .filter((t) => !matchesAny(t.url ?? '', excludes))
+        // Tabs on excluded URLs (settings, library, recents, etc.)
+        // still appear in the menu but flagged so the page renders
+        // them disabled with a "(Wrong page)" suffix —
+        // `chrome.tabs.query` only takes positive match patterns,
+        // so we evaluate excludes post-query.
         .map((t) => ({
           tabId: t.id,
           title: t.title ?? t.url ?? `Tab ${t.id}`,
           url: t.url ?? '',
+          excluded: matchesAny(t.url ?? '', excludes),
         })),
     });
   }
