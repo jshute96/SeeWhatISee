@@ -78,11 +78,20 @@
   // AI tab's DevTools console can see exactly what we did, which
   // selector matched, and where (if anywhere) we got stuck. Cheap to
   // leave on — these are infrequent, user-initiated calls.
+  //
+  // Both helpers go through `console.log` deliberately. Even though
+  // we run in MAIN world via `chrome.scripting.executeScript`, Chrome
+  // attributes console output back to the extension and `console.warn`
+  // shows up on chrome://extensions as a warning. Failures here are
+  // already caught and returned as `AskResult.error` to the SW, so
+  // there's nothing for the user to act on at the extensions page —
+  // the warn-level signal was just noise. `[warn]` in the message
+  // keeps the bad-path lines visually distinct in DevTools.
   function log(...args: unknown[]): void {
     console.log('[SeeWhatISee Ask]', ...args);
   }
   function logWarn(...args: unknown[]): void {
-    console.warn('[SeeWhatISee Ask]', ...args);
+    console.log('[SeeWhatISee Ask] [warn]', ...args);
   }
 
   function findRanked<T extends Element = HTMLElement>(
