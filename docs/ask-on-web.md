@@ -131,6 +131,37 @@ new-tab opens (so the freshly-created tab gets reused next time).
 `resolveAsk` reads it for the menu / button label /
 plain-Ask path.
 
+### Toolbar pin entry
+
+The action context menu (right-click on the toolbar icon) carries
+a `Pin tab as Ask target` entry that lets the user pin/unpin the
+**current tab** directly, without opening the Capture page. Driven
+by `refreshPinAskTargetMenu` and `togglePinAskTarget` in
+`src/background.ts` / `src/background/context-menu.ts`:
+
+- **Eligibility** — enabled when either:
+  - The active tab is the current `askPin` (regardless of URL), so
+    the user can always Unpin from the tab the pin points at — even
+    after navigating it to a wrong page.
+  - The active tab matches an enabled provider's `urlPatterns`
+    (Chrome match-pattern grammar) and isn't on its
+    `excludeUrlPatterns` list, so it's a valid pin target.
+
+  Otherwise the entry greys out.
+- **Title** — flips between `Pin tab as Ask target` and
+  `Unpin tab as Ask target` based on whether the active tab is
+  the current `askPin`. The "Unpin" wording stays even when the
+  pinned tab has navigated to a wrong page.
+- **Refresh timing** — Chrome doesn't expose an `onShown` hook for
+  the action context menu, so we keep the entry's state ahead of
+  the user with listeners on `tabs.onActivated`, `tabs.onUpdated`
+  (status `'complete'` or URL change), `windows.onFocusChanged`,
+  and `storage.onChanged` for the `askPin` key.
+- **Toggle** — clicking calls `togglePinAskTarget(tab)`. We
+  re-resolve the provider at click time rather than trusting the
+  cached title, so a stale entry can't pin an already-excluded
+  page or refuse to clear a now-excluded pin.
+
 ### Status line
 
 `#ask-status` sits directly below the buttons + "Prompt:" label,

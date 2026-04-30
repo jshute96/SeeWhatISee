@@ -21,6 +21,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - **Capture…** Opens the *Capture* page (see below).
   - **Save screenshot.**
   - **Save HTML contents** of the page.
+  - **Pin tab as Ask target** — when you're on Claude / Gemini / ChatGPT, pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unpin tab as Ask target** while the current tab is the pin.
   - **Capture with delay ▸** — Capture the page after a delay, so
     you can activate hover states, menus, etc.
   - **More ▸**

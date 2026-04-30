@@ -74,7 +74,7 @@ export interface AskProviderListing {
  * automatically by `sendToAi` on every successful send so the next
  * plain-Ask click reuses the same destination tab.
  */
-interface AskPin {
+export interface AskPin {
   provider: AskProviderId;
   tabId: number;
 }
@@ -104,6 +104,52 @@ async function writePin(pin: AskPin | null): Promise<void> {
     // Session storage may be unavailable in unusual MV3 states.
     // Pinning is a UX nicety — drop the write rather than fail Ask.
   }
+}
+
+/**
+ * Read the current pin. Used by the toolbar context menu to decide
+ * whether the active tab is already pinned (and the entry should
+ * read "Unpin…" instead of "Pin…"). Returns null when no pin is
+ * set or session storage is unreadable.
+ */
+export async function getAskPin(): Promise<AskPin | null> {
+  return readPin();
+}
+
+/**
+ * Manually set or clear the pin. Used by the toolbar context-menu
+ * Pin/Unpin entry; the regular Ask flow updates the pin via
+ * `sendToAi` on a successful send and doesn't go through here.
+ */
+export async function setAskPin(pin: AskPin | null): Promise<void> {
+  await writePin(pin);
+}
+
+/**
+ * Find the Ask provider that the given (tabId, url) belongs to —
+ * one whose `urlPatterns` Chrome's match-pattern engine accepts
+ * for this tab and whose `excludeUrlPatterns` glob doesn't reject
+ * it. Returns null if no enabled provider claims the tab. Used by
+ * the toolbar Pin/Unpin entry to decide whether the entry should
+ * be enabled.
+ */
+export async function findProviderForTab(
+  tabId: number,
+  url: string,
+): Promise<AskProvider | null> {
+  if (!url) return null;
+  for (const provider of ASK_PROVIDERS) {
+    if (!provider.enabled) continue;
+    // Delegate `urlPatterns` matching to Chrome (its match-pattern
+    // grammar isn't a simple glob — see the AskProvider jsdoc) by
+    // scoping a `tabs.query` to this provider's patterns and
+    // checking whether our tab is in the result.
+    const matches = await chrome.tabs.query({ url: provider.urlPatterns });
+    if (!matches.some((t) => t.id === tabId)) continue;
+    if (matchesAny(url, provider.excludeUrlPatterns ?? [])) continue;
+    return provider;
+  }
+  return null;
 }
 
 /**
