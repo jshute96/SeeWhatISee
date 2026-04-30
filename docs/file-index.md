@@ -13,7 +13,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `playwright.config.ts` | Playwright test runner config (default e2e suite) |
-| `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude, future Gemini/ChatGPT) — opt-in only |
+| `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude / Gemini / ChatGPT) — opt-in only |
 | `.gitignore` | Git ignore rules |
 
 ## Local Claude Config (`.claude/`)
@@ -105,6 +105,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
 | `src/background/ask/claude.ts` | Claude provider data — URLs and ranked selectors for the four DOM roles |
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
+| `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; ProseMirror composer reuses Claude's typing path |
 | `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit; runs `preFileInputClicks` with the OS picker suppressed |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
@@ -164,6 +165,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e-live/lib/live-suite.ts` | Shared live-test cases parameterized by a `LiveProvider` — runs the same five tests against any provider |
 | `tests/e2e-live/claude.live.spec.ts` | Claude `LiveProvider` wiring (selectors imported from `claude.ts`, data-testid-based locators) — calls `runLiveSuite` |
 | `tests/e2e-live/gemini.live.spec.ts` | Gemini `LiveProvider` wiring (selectors imported from `gemini.ts`, Quill + `uploader-file-preview` chips + Angular `user-query` locators) — calls `runLiveSuite` |
+| `tests/e2e-live/chatgpt.live.spec.ts` | ChatGPT `LiveProvider` wiring (selectors imported from `chatgpt.ts`, `group/file-tile` chips + `data-message-author-role="user"` bubble) — calls `runLiveSuite` |
 
 ## Unit Tests (`tests/unit/`)
 

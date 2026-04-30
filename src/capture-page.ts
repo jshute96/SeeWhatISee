@@ -22,6 +22,7 @@
 // because the default extension-page CSP forbids inline scripts.
 
 import { htmlToMarkdown, looksLikeMarkdownSource } from './markdown.js';
+import type { AskProviderId } from './background/ask/providers.js';
 
 /**
  * Three-value `SelectionFormat` literal union, duplicated here for
@@ -2375,14 +2376,14 @@ interface AskTabSummary {
   url: string;
 }
 interface AskProviderListing {
-  id: 'claude';
+  id: AskProviderId;
   label: string;
   enabled: boolean;
   existingTabs: AskTabSummary[];
 }
 type AskDestination =
-  | { kind: 'newTab'; provider: 'claude' }
-  | { kind: 'existingTab'; provider: 'claude'; tabId: number };
+  | { kind: 'newTab'; provider: AskProviderId }
+  | { kind: 'existingTab'; provider: AskProviderId; tabId: number };
 
 const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
 const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
@@ -2392,10 +2393,9 @@ const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanEl
 
 // Sync the "Ask <provider>" button label and tooltip with whichever
 // providers the registry currently has enabled. Runs once at page
-// load — once Gemini / ChatGPT adapters land, the label and tooltip
-// will follow without any HTML edits here. While only one provider
-// is enabled we name it directly; with multiple, fall back to a
-// neutral label (the menu will let the user pick).
+// load. While only one provider is enabled we name it directly;
+// with multiple, fall back to a neutral label (the menu lets the
+// user pick).
 async function refreshAskTargetLabel(): Promise<void> {
   try {
     const response = (await chrome.runtime.sendMessage({

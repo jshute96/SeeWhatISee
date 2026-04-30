@@ -2,9 +2,9 @@
 
 Manual e2e tests that run our injection library
 (`src/ask-inject.ts`) against the **real** AI provider pages
-(claude.ai and gemini.google.com today; ChatGPT later). Used to
-confirm the production selectors still match the live DOM and the
-production timing constants are still right.
+(claude.ai, gemini.google.com, chatgpt.com). Used to confirm the
+production selectors still match the live DOM and the production
+timing constants are still right.
 
 These tests are **not** part of `npm test` — they require a
 manually-launched browser, a logged-in test account, and they
@@ -87,9 +87,9 @@ scripts/open-test-browser.sh
 
 A Chromium window opens.
 
-- Log in to each AI provider's site (claude.ai and
-  gemini.google.com today). Use a **dedicated test account** for
-  each — every auto-submit run creates a real conversation.
+- Log in to each AI provider's site (claude.ai,
+  gemini.google.com, chatgpt.com). Use a **dedicated test account**
+  for each — every auto-submit run creates a real conversation.
 - Sessions persist in `.chrome-test-profile/`. Future runs reuse
   the saved login.
 
@@ -100,6 +100,7 @@ Leave the browser running.
 ```bash
 npm run test:live-claude     # just Claude
 npm run test:live-gemini     # just Gemini
+npm run test:live-chatgpt    # just ChatGPT
 npm run test:live            # all enabled providers
 ```
 
@@ -107,8 +108,8 @@ If the browser isn't running, you'll get a clear error pointing
 at the launch script.
 
 Production timings are exercised (no `__seeWhatISeeAskTuning`
-override). Expect ~30 s per submitting test on Claude and ~10 s
-on Gemini.
+override). Expect ~7 s per submitting test on Claude / ChatGPT
+and ~5 s on Gemini.
 
 ## Test design principles
 
@@ -205,7 +206,7 @@ The live tests don't depend on the extension being up-to-date —
 they read `dist/ask-inject.js` directly — but if you're cross-
 checking against the running extension, reload it first.
 
-## Adding a new provider (ChatGPT, …)
+## Adding a new provider
 
 1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`:
    - Import `selectors` and `newTabUrl` from the prod adapter at
@@ -214,7 +215,8 @@ checking against the running extension, reload it first.
      for that provider's chip / message DOM.
    - Call `runLiveSuite(provider)`.
    - `gemini.live.spec.ts` is the smallest template.
-2. Uncomment the matching project in `playwright.config.live.ts`.
+2. Add a matching project entry in `playwright.config.live.ts`
+   (follow the Claude / Gemini / ChatGPT pattern).
 3. Log in to the provider in the running test browser
    (`.chrome-test-profile/` retains the session).
 4. Optionally add an `npm run test:live-<provider>` script.

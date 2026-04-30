@@ -9,10 +9,11 @@
 // `chrome.scripting.executeScript` boundary as `args` — see
 // background/ask/index.ts.
 
+import { chatgptProvider } from './chatgpt.js';
 import { claudeProvider } from './claude.js';
 import { geminiProvider } from './gemini.js';
 
-export type AskProviderId = 'claude' | 'gemini';
+export type AskProviderId = 'claude' | 'gemini' | 'chatgpt';
 
 /**
  * One ranked list per role. The injected runtime tries each entry
@@ -123,7 +124,11 @@ export interface AskProvider {
   enabled: boolean;
 }
 
-export const ASK_PROVIDERS: AskProvider[] = [claudeProvider, geminiProvider];
+export const ASK_PROVIDERS: AskProvider[] = [
+  claudeProvider,
+  geminiProvider,
+  chatgptProvider,
+];
 
 export function getAskProvider(id: AskProviderId): AskProvider {
   const p = ASK_PROVIDERS.find((x) => x.id === id);

@@ -1,10 +1,10 @@
 // Playwright config for the LIVE-provider e2e suite (`tests/e2e-live/`).
 //
-// These tests hit real AI sites (claude.ai today; gemini.google.com,
-// chatgpt.com later) with a logged-in user and so are NOT part of
-// the default `npm run test:e2e`. They run only when explicitly
+// These tests hit real AI sites (claude.ai, gemini.google.com,
+// chatgpt.com) with a logged-in user and so are NOT part of the
+// default `npm run test:e2e`. They run only when explicitly
 // requested via `npm run test:live` (all providers) or
-// `npm run test:live-claude` (one project).
+// `npm run test:live-<provider>` (one project).
 //
 // Scope is narrow: each spec tests the inject library
 // (`src/ask-inject.ts`) directly against the real AI page — it
@@ -23,7 +23,8 @@
 //
 // Adding a new provider:
 //   1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`.
-//   2. Uncomment the matching project below.
+//   2. Add a project entry below following the Claude/Gemini/ChatGPT
+//      pattern.
 //   3. Optionally add an `npm run test:live-<provider>` script.
 
 import { defineConfig } from '@playwright/test';
@@ -49,6 +50,9 @@ export default defineConfig({
       name: 'gemini',
       testMatch: /gemini\.live\.spec\.ts$/,
     },
-    // { name: 'chatgpt', testMatch: /chatgpt\.live\.spec\.ts$/ },
+    {
+      name: 'chatgpt',
+      testMatch: /chatgpt\.live\.spec\.ts$/,
+    },
   ],
 });

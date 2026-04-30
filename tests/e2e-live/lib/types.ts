@@ -18,7 +18,7 @@ import type { AskInjectSelectors } from '../../../src/background/ask/providers.j
 
 export interface LiveProvider {
   /** Stable id, used in fixture filenames and run-tag prefixes. */
-  id: 'claude' | 'gemini';
+  id: 'claude' | 'gemini' | 'chatgpt';
   /** Display name used in test descriptions. */
   label: string;
   /** Page opened for each test. */

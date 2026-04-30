@@ -2,8 +2,8 @@
 
 The "Ask AI" button on the Capture page sends the currently-staged
 artifacts (screenshot, HTML snapshot, optional selection, prompt) to
-an AI web UI in another tab. v1 ships with Claude and Gemini; the
-provider-adapter layout makes ChatGPT / others additive.
+an AI web UI in another tab. Ships with Claude, Gemini, and ChatGPT;
+the provider-adapter layout makes additional providers additive.
 
 ## Goals
 
@@ -49,13 +49,16 @@ from `chrome.tabs.query` per registered provider:
 New window in
   Claude
   Gemini
-  (ChatGPT — coming soon, disabled)
+  ChatGPT
 ─────────────────────────────────────
 Existing window in Claude
   "Helping with the Ask feature design…"
   "untitled"
 ─────────────────────────────────────
 Existing window in Gemini       ← only when Gemini has open tabs
+  …
+─────────────────────────────────────
+Existing window in ChatGPT      ← only when ChatGPT has open tabs
   …
 ```
 
@@ -96,6 +99,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 | `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
+| `src/background/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
 | `src/capture.html` + `src/capture-page.ts` | Ask button, menu, status line, payload assembly. |
 
@@ -103,7 +107,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 ```ts
 type AskProvider = {
-  id: 'claude' | 'gemini';      // future: | 'chatgpt'
+  id: 'claude' | 'gemini' | 'chatgpt';
   label: string;
   urlPatterns: string[];        // chrome.tabs.query
   excludeUrlPatterns?: string[];// glob excludes filtered post-query
@@ -292,7 +296,7 @@ Copy/Save any artifact manually as a recovery path.
 
 There's a separate manual suite at `tests/e2e-live/` that runs
 the injection library against the **real** provider pages
-(claude.ai today; Gemini / ChatGPT later). Used to confirm prod
+(claude.ai, gemini.google.com, chatgpt.com). Used to confirm prod
 selectors still match the live DOM and the prod timings still
 work. Not part of `npm test`.
 
@@ -301,8 +305,6 @@ provider all live in [`ask-live-tests.md`](ask-live-tests.md).
 
 ## Out of scope (v1)
 
-- Gemini and ChatGPT adapters — architecture supports them; defer
-  until Claude is solid.
 - Pinning a default destination so plain Ask sends without showing
   the menu.
 - Options-page controls (preferred provider, attachment subset,
