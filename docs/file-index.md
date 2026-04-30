@@ -155,6 +155,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
+| `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime against the fake-Claude fixture |
+| `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by `ask.spec.ts` so tests don't talk to the real claude.ai |
 
 ## Unit Tests (`tests/unit/`)
 

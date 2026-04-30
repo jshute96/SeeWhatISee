@@ -2595,7 +2595,10 @@ function buildAskAttachments(): AskAttachment[] {
       data: captured.html,
       kind: 'text',
       mimeType: 'text/html',
-      filename: 'page.html',
+      // `contents.html` matches the Save-to-disk filename prefix
+      // (`contents-<timestamp>.html`) so the HTML attachment in
+      // the AI tab and the saved-on-disk file share a name.
+      filename: 'contents.html',
     });
   }
   const fmt = selectedSelectionFormat();

@@ -114,3 +114,16 @@ export function getAskProvider(id: AskProviderId): AskProvider {
   if (!p) throw new Error(`Unknown Ask provider: ${id}`);
   return p;
 }
+
+/**
+ * Test-only seam that swaps the registry contents in place. Used by
+ * the Ask e2e specs to point Claude's `urlPatterns` / `newTabUrl` at
+ * a fixture page so tests don't have to talk to claude.ai. The
+ * pre-existing array binding is preserved (only the contents
+ * change), so importers see the swap without re-importing. Pass an
+ * empty array to clear; pass the real provider data to restore
+ * (tests should snapshot the original first).
+ */
+export function _setAskProvidersForTest(providers: AskProvider[]): void {
+  ASK_PROVIDERS.splice(0, ASK_PROVIDERS.length, ...providers);
+}

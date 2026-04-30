@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fake Claude</title>
+  <!--
+    Stand-in for claude.ai's prompt composer used by the Ask AI e2e
+    specs. The point isn't to look like Claude — the inject runtime
+    is selector-driven, so what matters is that this page exposes the
+    same DOM hooks (file input + contenteditable + Send button) and
+    records what the runtime did so tests can assert on it.
+
+    Any state the tests inspect lives on `window.__seeFakeClaude`:
+      attachedFiles  : [{ name, type, size }, …]   appended on `change`
+      submitClicks   : count of Send-button clicks
+      lastSubmitText : editor textContent at the moment of click
+      lastSubmitHtml : editor innerHTML at the moment of click
+
+    The Send button is disabled until the editor has non-whitespace
+    text or files are attached — same enable rule the real Claude
+    enforces, so the inject runtime's `clickSubmit` poll exercises
+    the same code path it would on the live site.
+  -->
+  <style>
+    body { font-family: sans-serif; padding: 24px; }
+    input[type="file"] { position: absolute; left: -9999px; }
+    .composer { max-width: 600px; }
+    [contenteditable] {
+      min-height: 40px;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    [contenteditable]:empty::before {
+      content: attr(data-placeholder);
+      color: #999;
+    }
+    button[aria-label="Send message"] {
+      margin-top: 8px;
+      padding: 6px 12px;
+    }
+    button[aria-label="Send message"]:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .attached-files {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Fake Claude</h1>
+  <p>This page exists for SeeWhatISee's Ask-AI e2e tests.</p>
+
+  <div class="composer">
+    <input type="file" data-testid="file-upload" multiple>
+    <div
+      contenteditable="true"
+      class="tiptap ProseMirror"
+      data-testid="chat-input"
+      data-placeholder="Write a message…"
+    ></div>
+    <div class="attached-files" id="attached-files"></div>
+    <button type="button" aria-label="Send message" disabled>Send message</button>
+  </div>
+
+  <script>
+    window.__seeFakeClaude = {
+      attachedFiles: [],
+      submitClicks: 0,
+      lastSubmitText: null,
+      lastSubmitHtml: null,
+    };
+
+    const fileInput = document.querySelector('input[type="file"]');
+    const editor = document.querySelector('[data-testid="chat-input"]');
+    const submitBtn = document.querySelector('button[aria-label="Send message"]');
+    const attachedList = document.getElementById('attached-files');
+
+    function refreshSubmit() {
+      const hasText = (editor.textContent || '').trim().length > 0;
+      const hasFiles = window.__seeFakeClaude.attachedFiles.length > 0;
+      submitBtn.disabled = !(hasText || hasFiles);
+    }
+
+    fileInput.addEventListener('change', () => {
+      const files = fileInput.files ? Array.from(fileInput.files) : [];
+      for (const f of files) {
+        // Push the entry synchronously so refreshSubmit() sees the
+        // file count immediately. Text content is read async via
+        // FileReader and patched onto the same entry when ready —
+        // tests that need the body call waitForFakeClaudeContents()
+        // before reading state.
+        const entry = { name: f.name, type: f.type, size: f.size };
+        window.__seeFakeClaude.attachedFiles.push(entry);
+        if (f.type === 'text/html' || f.type === 'text/plain' || f.type === 'text/markdown') {
+          f.text().then(function (text) { entry.content = text; });
+        }
+      }
+      // Visible bookkeeping so a screenshot of the page during a
+      // failed test shows what the runtime actually delivered.
+      attachedList.textContent =
+        'attached: ' +
+        window.__seeFakeClaude.attachedFiles
+          .map((f) => f.name + ' (' + f.type + ', ' + f.size + 'B)')
+          .join(', ');
+      refreshSubmit();
+    });
+
+    // input fires for both insertText and insertParagraph, which is
+    // what the inject runtime drives. Just refresh the submit gate.
+    editor.addEventListener('input', refreshSubmit);
+
+    submitBtn.addEventListener('click', () => {
+      window.__seeFakeClaude.submitClicks++;
+      window.__seeFakeClaude.lastSubmitText = editor.innerText;
+      window.__seeFakeClaude.lastSubmitHtml = editor.innerHTML;
+    });
+  </script>
+</body>
+</html>

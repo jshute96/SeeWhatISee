@@ -65,6 +65,7 @@ import {
 } from './background/capture-details.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import { installAskMessageHandler } from './background/ask/index.js';
+import { ASK_PROVIDERS, _setAskProvidersForTest } from './background/ask/providers.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`
@@ -248,4 +249,9 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   setDefaultDblWithSelectionId,
   setDefaultDblWithoutSelectionId,
   refreshActionTooltip,
+  // Test seams. Used by tests/e2e/ask-*.spec.ts to swap providers
+  // for a fixture page; ASK_PROVIDERS is exported (read-only) so
+  // tests can snapshot the originals before mutating.
+  ASK_PROVIDERS,
+  _setAskProvidersForTest,
 };

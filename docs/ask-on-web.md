@@ -167,7 +167,7 @@ The Capture page assembles the payload from existing checkbox state:
 | Field | Source |
 |-------|--------|
 | `attachments[]` (image/png) | `previewImg.src`, baked via `renderHighlightedPng()` if there are edits, when `screenshotBox.checked` |
-| `attachments[]` (text/html, `page.html`) | `captured.html`, when `htmlBox.checked` |
+| `attachments[]` (text/html, `contents.html`) | `captured.html`, when `htmlBox.checked` |
 | `attachments[]` (text/markdown\|plain\|html, `selection.{md,txt,html}`) | `captured[wireKind]` for the selected format, when selection master is checked |
 | `promptText` | `promptInput.value.trim()` |
 | `autoSubmit` | `promptText.length > 0` |
