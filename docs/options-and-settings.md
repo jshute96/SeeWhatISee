@@ -186,37 +186,9 @@ full tab.
 
 Sections are rendered top-to-bottom in this order:
 
-- **Default action hotkey** — two-row table:
-  - `Default action` (same as click on toolbar icon) → shows the
-    `_execute_action` shortcut.
-  - `Secondary action` (same as double-click) → shows the
-    `secondary-action` shortcut.
-  - Read-only — Chrome has no API to bind hotkeys. An inline "Chrome
-    extension settings page" button opens
-    `chrome://extensions/shortcuts`.
-- **Default items to save on *Capture* page and in *Save default
-  items*** — two side-by-side fieldsets that mirror `capture.html`.
-  Sits second so users configuring the `save-defaults` shortcut see
-  what it will write before picking it as a default action.
-  - *Without selection*: Save screenshot, Save HTML.
-  - *With selection*: Save screenshot, Save HTML, Save selection
-    master + nested format radios (`as HTML / as text / as markdown`).
-  - Unlike the Capture page, the Save-selection master and the
-    format radios are independent — the format radios persist the
-    *default* `as`-mode for whenever Save selection is on, so they
-    stay enabled even when Save selection is off.
-- **Default actions with no text selection** — table over every
-  non-selection `CAPTURE_ACTIONS` entry. Columns: Click radio,
-  Double-click radio, Action, Hotkey. Rows are bucketed by delay
-  value under static section-row labels (`Capture immediately`,
-  `Capture after 2 second delay`, `Capture after 5 second delay`).
-- **Default actions with text selected** — table over the five
-  `WITH_SELECTION_CHOICES` action ids
-  (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
-  plus the `ignore-selection` sentinel. Same column shape.
-- **Ask button settings** — table over registered Ask providers in
-  alphabetical-by-label order (ChatGPT, Claude, Gemini). Columns:
-  Provider, Enabled (checkbox), Default (radio).
+- **Ask button AI providers** (`<h1>`) — table over registered Ask
+  providers in alphabetical-by-label order (ChatGPT, Claude, Gemini).
+  Columns: Provider, Enabled (checkbox), Default (radio).
   - Toggling a checkbox immediately greys / re-enables that row's
     Default radio. If the toggled checkbox was the current default
     and was just unchecked, the page rotates the default to the
@@ -227,6 +199,75 @@ Sections are rendered top-to-bottom in this order:
     `src/options.ts`) mirrors the SW's
     `pickNextEnabledDefault` so the radio always reflects what the
     SW will accept on save.
+- **Default items to save on *Capture* page and in *Save default
+  items*** (`<h1>`) — two side-by-side fieldsets that mirror
+  `capture.html`.
+  - *Without selection*: Save screenshot, Save HTML.
+  - *With selection*: Save screenshot, Save HTML, Save selection
+    master + nested format radios (`as HTML / as text / as markdown`).
+  - Unlike the Capture page, the Save-selection master and the
+    format radios are independent — the format radios persist the
+    *default* `as`-mode for whenever Save selection is on, so they
+    stay enabled even when Save selection is off.
+- **Toolbar icon click and context menu** (`<h1>`) — wrapper
+  heading; the actual settings are in the `<h2>` sub-sections below.
+  - **Keyboard hotkeys for icon click** (`<h2>`) — two-row table:
+    - `Default action` (same as click on toolbar icon) → shows the
+      `_execute_action` shortcut.
+    - `Secondary action` (same as double-click) → shows the
+      `secondary-action` shortcut.
+    - Read-only — Chrome has no API to bind hotkeys. An inline
+      "Chrome extension settings page" button opens
+      `chrome://extensions/shortcuts`.
+  - **Default action with no text selection** (`<h2>`) and
+    **Default action with text selected** (`<h2>`) — wrapped in a
+    `.side-by-side` flex container so they sit beside each other when
+    the viewport has room and stack on narrow viewports. Columns:
+    Click radio, Double-click radio, Action, Hotkey. Per-row hotkey
+    cells composed by `composeRowHotkey` (see "Hotkey-cell display"
+    below). The without-selection table is bucketed by delay value
+    under section-row labels (`Capture immediately`, `Capture after
+    N second delay`); the delay groups are collapsible (see
+    "Collapsible delay groups" below). The with-selection table
+    covers `WITH_SELECTION_CHOICES`
+    (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
+    plus the `ignore-selection` sentinel.
+
+### Hotkey-cell display
+
+Each per-row hotkey cell can show up to three stacked lines, one per
+applicable hotkey:
+
+1. The Default-action hotkey (`_execute_action`) when this row is
+   the currently-picked Click action.
+2. The Secondary-action hotkey when this row is the currently-picked
+   Double-click action.
+3. The action's own bound keyboard shortcut, if any.
+
+"Currently-picked" is the live DOM radio state, so the cell updates
+the moment the user clicks a Click / Double-click radio — no Save
+round-trip required. Implemented by `composeRowHotkey` (joins
+applicable shortcuts with `\n`) and `recomputeHotkeyCells`
+(re-paints every row in both action tables); the hotkey-cell CSS
+uses `white-space: pre-line` and `line-height: 1.5` so the joined
+string renders as readable separate lines.
+
+### Collapsible delay groups
+
+Each `Capture after N second delay` section row in the no-selection
+table is collapsible, with a triangle caret toggle next to the label
+(rotated 90° via CSS when `aria-expanded="true"`).
+
+- Initial state per group is **auto-expanded** if any row in the
+  group is the saved Click / Double-click default OR has a bound
+  keyboard shortcut. Otherwise it auto-collapses so rarely-used
+  delayed actions don't dominate the page.
+- The user's manual toggle (clicking the caret) is recorded in a
+  module-level `userDelayGroupState` map so a subsequent re-render
+  (Save / Undo / Defaults / radio-driven `refreshHotkeys`) preserves
+  the user's choice instead of snapping the section back to its
+  auto-computed state. Cleared on full page reload.
+- "Capture immediately" is a plain section row, not collapsible.
 
 ### Footer buttons
 

@@ -115,8 +115,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
 | `src/capture.html` | Capture page (the `Capture...` action's review surface) — URL, HTML size, save options + Copy/Edit buttons, edit HTML + selection modals, prompt, highlight overlay |
 | `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, highlight overlay (rects/lines/Redact/Crop/drag-to-crop), bake-in, fit-to-viewport |
-| `src/options.html` | Extension options page — Default-action hotkey table, Click / Double-click radios per selection state, Save-checkbox defaults |
-| `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders the four sections, refreshes hotkeys on focus / radio click, saves via `setOptions` |
+| `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
+| `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, collapsible delay groups, saves via `setOptions` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |

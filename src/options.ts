@@ -196,7 +196,20 @@ function radio(
   r.value = value;
   r.checked = checked;
   r.addEventListener('change', () => {
+    // Immediate visual update: re-paint the hotkey cells so the
+    // Default-action / Secondary-action hotkey lands on the just-
+    // picked row without waiting for chrome.commands.getAll.
+    recomputeHotkeyCells();
     void refreshHotkeys();
+  });
+  // Belt-and-suspenders: stop a Click / Double-click radio click from
+  // bubbling. The toggle for the surrounding delay-group section is
+  // attached to its own button only — *not* the section row or any
+  // ancestor — so a radio click can't fold the group today; this
+  // guard keeps that invariant if a future change ever wires a
+  // row-level or tbody-level click handler.
+  r.addEventListener('click', (e) => {
+    e.stopPropagation();
   });
   return r;
 }
@@ -212,24 +225,163 @@ function sectionRow(label: string, colspan: number): HTMLTableRowElement {
   return tr;
 }
 
+/**
+ * Per-page record of delay-group expand decisions the user has made
+ * via the section-row toggle. Used so a re-render (Save / Undo /
+ * Defaults / radio-driven `refreshHotkeys` re-runs) doesn't flip a
+ * group the user just expanded/collapsed back to its auto-computed
+ * default. Cleared on full page reload.
+ */
+const userDelayGroupState = new Map<string, boolean>();
+
+/** Resolve the actual expand state for a delay group: user's explicit
+ *  toggle if they've made one this session, otherwise the auto-
+ *  computed default ("any default or hotkey lands in this group?"). */
+function resolveDelayGroupExpanded(
+  delayGroup: string,
+  autoExpanded: boolean,
+): boolean {
+  return userDelayGroupState.get(delayGroup) ?? autoExpanded;
+}
+
+/**
+ * Build a collapsible section divider row for a delay group. Adds a
+ * caret toggle next to the label that hides/shows every following row
+ * in the same `data-delay-group`. The caller has already resolved the
+ * expand state via `resolveDelayGroupExpanded` — pass it here as
+ * `initiallyExpanded` and pass `!initiallyExpanded` to each
+ * `appendWithoutRow` so the section header and data rows agree.
+ */
+function expandableSectionRow(
+  label: string,
+  colspan: number,
+  delayGroup: string,
+  initiallyExpanded: boolean,
+): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  tr.className = 'section section-expandable';
+  tr.dataset.delayGroup = delayGroup;
+  const cell = document.createElement('td');
+  cell.colSpan = colspan;
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'expand-toggle';
+  toggle.setAttribute('aria-expanded', String(initiallyExpanded));
+  toggle.setAttribute(
+    'aria-label',
+    initiallyExpanded ? `Collapse ${label}` : `Expand ${label}`,
+  );
+  // The caret glyph is set via CSS (::before) so it stays in sync
+  // with `aria-expanded` without the click handler having to swap
+  // text content. The button itself just carries the state.
+  toggle.addEventListener('click', () => toggleDelayGroup(tr, toggle, label));
+
+  cell.appendChild(toggle);
+  cell.appendChild(document.createTextNode(' ' + label));
+  tr.appendChild(cell);
+  return tr;
+}
+
+/**
+ * Toggle the collapsed/expanded state of a delay group. Flips
+ * `aria-expanded` on the toggle, updates its `aria-label`, and
+ * adds/removes the `is-collapsed` class on every data row tagged
+ * with the same `delayGroup` (the section row itself stays visible).
+ */
+function toggleDelayGroup(
+  sectionTr: HTMLTableRowElement,
+  toggle: HTMLButtonElement,
+  label: string,
+): void {
+  const delayGroup = sectionTr.dataset.delayGroup;
+  if (!delayGroup) return;
+  const expanded = toggle.getAttribute('aria-expanded') === 'true';
+  const next = !expanded;
+  toggle.setAttribute('aria-expanded', String(next));
+  toggle.setAttribute('aria-label', next ? `Collapse ${label}` : `Expand ${label}`);
+  // Persist the user's pick so a subsequent re-render (Save / Undo /
+  // Defaults) doesn't snap the section back to its auto-computed
+  // default state.
+  userDelayGroupState.set(delayGroup, next);
+  const tbody = sectionTr.parentElement;
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll(
+    `tr[data-delay-group="${delayGroup}"]:not(.section)`,
+  );
+  for (const row of Array.from(rows)) {
+    row.classList.toggle('is-collapsed', !next);
+  }
+}
+
 const WITHOUT_TABLE_COLS = 4;
 
 /**
+ * Compose the hotkey-cell display for one row in either the
+ * with-selection or without-selection table.
+ *
+ * Up to three lines, top-to-bottom:
+ *   1. The Default-action hotkey (`_execute_action`) if this row's id
+ *      is the currently-picked Click action.
+ *   2. The Secondary-action hotkey if this row's id is the
+ *      currently-picked Double-click action.
+ *   3. The action's own bound keyboard shortcut, if any.
+ *
+ * "Currently-picked" means the live DOM radio state, so the cell
+ * updates in real time as the user clicks Click/Double-click radios
+ * — without needing to wait for Save. The hotkey-cell CSS uses
+ * `white-space: pre-line` to render the joined string as separate
+ * visual lines.
+ */
+function composeRowHotkey(
+  rowId: string,
+  clickPick: string | null,
+  dblPick: string | null,
+  data: OptionsData,
+): string {
+  const lines: string[] = [];
+  if (rowId === clickPick && data.executeActionShortcut) {
+    lines.push(data.executeActionShortcut);
+  }
+  if (rowId === dblPick) {
+    const sec = data.shortcuts['secondary-action'];
+    if (sec) lines.push(sec);
+  }
+  const own = data.shortcuts[rowId];
+  if (own) lines.push(own);
+  return lines.join('\n');
+}
+
+/**
  * Build one body row for the no-selection table: action title,
- * hotkey, Click radio, Double-click radio.
+ * hotkey, Click radio, Double-click radio. `delayGroup` (when
+ * provided) stamps a `data-delay-group` attribute so
+ * `expandableSectionRow`'s toggle can find this row; `collapsed`
+ * applies the initial collapsed state.
  */
 function appendWithoutRow(
   tbody: HTMLElement,
   a: OptionsActionRow,
   data: OptionsData,
+  delayGroup?: string,
+  collapsed?: boolean,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
+  if (delayGroup !== undefined) tr.dataset.delayGroup = delayGroup;
+  if (collapsed) tr.classList.add('is-collapsed');
   const click = td(tr, 'radio-cell');
   click.appendChild(radio(COL_WITHOUT_CLICK, a.id, a.id === data.clickWithoutId));
   const dbl = td(tr, 'radio-cell');
   dbl.appendChild(radio(COL_WITHOUT_DBL, a.id, a.id === data.dblWithoutId));
   td(tr, 'action-cell').textContent = a.title;
-  td(tr, 'hotkey-cell').textContent = data.shortcuts[a.id] ?? '';
+  // Initial render uses the saved click/dbl ids; refreshHotkeys
+  // recomputes from live DOM picks on every radio change.
+  td(tr, 'hotkey-cell').textContent = composeRowHotkey(
+    a.id,
+    data.clickWithoutId,
+    data.dblWithoutId,
+    data,
+  );
   tbody.appendChild(tr);
   return tr;
 }
@@ -255,7 +407,12 @@ function appendWithRow(
   const dbl = td(tr, 'radio-cell');
   dbl.appendChild(radio(COL_WITH_DBL, id, id === data.dblWithId));
   td(tr, 'action-cell').textContent = displayTitle;
-  td(tr, 'hotkey-cell').textContent = data.shortcuts[id] ?? '';
+  td(tr, 'hotkey-cell').textContent = composeRowHotkey(
+    id,
+    data.clickWithId,
+    data.dblWithId,
+    data,
+  );
   tbody.appendChild(tr);
   return tr;
 }
@@ -293,10 +450,31 @@ function renderWithoutTable(data: OptionsData): void {
   }
 
   for (const [delaySec, rows] of byDelay) {
-    tbody.appendChild(
-      sectionRow(`Capture after ${delaySec} second delay`, WITHOUT_TABLE_COLS),
+    // A delay group auto-expands if anything in it would draw the
+    // user's eye: a Click / Double-click default points at one of
+    // its rows, OR any of its rows has a bound keyboard hotkey.
+    // Otherwise it auto-collapses so the page isn't dominated by
+    // rarely-used delayed actions. The user's manual toggle (if any)
+    // overrides this via `resolveDelayGroupExpanded`.
+    const autoExpanded = rows.some(
+      (a) =>
+        a.id === data.clickWithoutId
+        || a.id === data.dblWithoutId
+        || (data.shortcuts[a.id]?.length ?? 0) > 0,
     );
-    for (const a of rows) appendWithoutRow(tbody, a, data);
+    const delayGroup = `delay-${delaySec}`;
+    const expanded = resolveDelayGroupExpanded(delayGroup, autoExpanded);
+    tbody.appendChild(
+      expandableSectionRow(
+        `Capture after ${delaySec} second delay`,
+        WITHOUT_TABLE_COLS,
+        delayGroup,
+        expanded,
+      ),
+    );
+    for (const a of rows) {
+      appendWithoutRow(tbody, a, data, delayGroup, !expanded);
+    }
   }
 }
 
@@ -535,6 +713,54 @@ function renderAll(data: OptionsData): void {
 }
 
 /**
+ * Recompute every hotkey cell in the without-selection and with-
+ * selection tables from the live DOM radio picks (falling back to
+ * the saved ids when no radio is checked yet — typically only at
+ * first paint). Used by the radio `change` handler for an immediate
+ * sync repaint, and by `refreshHotkeys` after a chrome.commands
+ * fetch.
+ */
+function recomputeHotkeyCells(): void {
+  if (!latest) return;
+  const data = latest;
+  const withoutClickPick = pickedValue(COL_WITHOUT_CLICK) ?? data.clickWithoutId;
+  const withoutDblPick = pickedValue(COL_WITHOUT_DBL) ?? data.dblWithoutId;
+  const withClickPick = pickedValue(COL_WITH_CLICK) ?? data.clickWithId;
+  const withDblPick = pickedValue(COL_WITH_DBL) ?? data.dblWithId;
+
+  const updateRows = (
+    sel: string,
+    clickPick: string,
+    dblPick: string,
+  ): void => {
+    const rows = Array.from(
+      document.querySelectorAll(sel),
+    ) as HTMLTableRowElement[];
+    for (const tr of rows) {
+      if (tr.classList.contains('section')) continue;
+      const radioInput = tr.querySelector(
+        'input[type=radio]',
+      ) as HTMLInputElement | null;
+      const id = radioInput?.value;
+      if (!id) continue;
+      const hotkeyCell = tr.querySelector(
+        '.hotkey-cell',
+      ) as HTMLTableCellElement | null;
+      if (hotkeyCell) {
+        hotkeyCell.textContent = composeRowHotkey(
+          id,
+          clickPick,
+          dblPick,
+          data,
+        );
+      }
+    }
+  };
+  updateRows('#without-rows tr', withoutClickPick, withoutDblPick);
+  updateRows('#with-rows tr', withClickPick, withDblPick);
+}
+
+/**
  * Re-fetch shortcut bindings and update just the hotkey cells. Does
  * not blow away the user's radio picks. Triggered by:
  *   - window focus / blur — covers tabbing back from the
@@ -562,20 +788,12 @@ async function refreshHotkeys(): Promise<void> {
     // Section 1: refresh the single hotkey cell.
     renderHotkeySection(latest);
 
-    // Sections 2 + 3: update each hotkey cell in place; the radio
-    // column DOM stays intact so any in-progress (unsaved) radio
-    // picks survive.
-    const rows = Array.from(
-      document.querySelectorAll('#without-rows tr, #with-rows tr'),
-    ) as HTMLTableRowElement[];
-    for (const tr of rows) {
-      if (tr.classList.contains('section')) continue;
-      const radioInput = tr.querySelector('input[type=radio]') as HTMLInputElement | null;
-      const id = radioInput?.value;
-      if (!id) continue;
-      const hotkeyCell = tr.querySelector('.hotkey-cell') as HTMLTableCellElement | null;
-      if (hotkeyCell) hotkeyCell.textContent = map[id] ?? '';
-    }
+    // Sections 2 + 3: recompute each hotkey cell from the live DOM
+    // radio picks so the Default-action / Secondary-action hotkey
+    // shows up next to the row the user just selected — without
+    // waiting for a Save round-trip. The radio column DOM stays
+    // intact so any in-progress (unsaved) radio picks survive.
+    recomputeHotkeyCells();
   } catch (err) {
     console.warn('[SeeWhatISee] options: failed to refresh hotkeys:', err);
   }
