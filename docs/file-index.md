@@ -100,7 +100,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
-| `src/background/capture-page-defaults.ts` | Stored "Default items to save on Capture page" preferences — shape, fresh-install defaults, normalize/get/set |
+| `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 | `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
 | `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
@@ -152,6 +152,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the Capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
 | `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape-failure UX |
 | `tests/e2e/capture-paste.spec.ts` | E2E for rich-text paste — html→markdown / html-source routing, source-view short-circuit, real copy/paste round-trips |
+| `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl+Enter routing, `triggerCapture` hand-off |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
 | `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing overlay — boxes/lines/Redact/Crop/Undo/Clear, drag-to-crop, edit-flag semantics on log.json |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |

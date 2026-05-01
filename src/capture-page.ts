@@ -97,6 +97,14 @@ interface DetailsData {
       selection: boolean;
       format: SelectionFormat;
     };
+    /** Which of the two main page buttons is the "default" — drives
+     *  the highlight ring and routes Enter on the prompt + the
+     *  background's `triggerCapture` toolbar-icon hand-off. */
+    defaultButton: 'capture' | 'ask';
+    /** Plain-Enter behaviour in the Prompt textarea: 'send' fires the
+     *  default button, 'newline' inserts a newline. Shift+Enter is
+     *  always newline; Ctrl+Enter is always send. */
+    promptEnter: 'send' | 'newline';
   };
 }
 
@@ -538,11 +546,78 @@ function attachHtmlAwarePaste(
 
 attachHtmlAwarePaste(promptInput, 'asMarkdown');
 
-promptInput.addEventListener('keydown', (e) => {
-  // Shift+Enter inserts a newline; plain Enter submits.
-  if (e.key === 'Enter' && !e.shiftKey && !captureBtn.disabled) {
-    e.preventDefault();
+// Which page button (Capture or Ask) is currently the user's "default"
+// for the Capture page — drives the highlight ring and routes
+// Enter-on-prompt + the SW's `triggerCapture` hand-off. Seeded from
+// `capturePageDefaults.defaultButton` in `loadData()`; falls back to
+// 'capture' for first paint before the round-trip resolves.
+let currentDefaultButton: 'capture' | 'ask' = 'capture';
+
+// Plain-Enter behaviour in the Prompt textarea — 'send' fires the
+// default button, 'newline' lets the textarea insert the newline
+// natively. Shift+Enter and Ctrl+Enter ignore this and always do
+// newline / send respectively.
+let currentPromptEnter: 'send' | 'newline' = 'send';
+
+/**
+ * Apply / refresh the `.is-default` class so exactly one of the
+ * Capture button or the Ask split widget shows the "default action"
+ * highlight ring. Looking up the .ask-split element lazily so this
+ * helper is safe to call before that node is queried into a const.
+ */
+function applyDefaultButtonHighlight(which: 'capture' | 'ask'): void {
+  currentDefaultButton = which;
+  captureBtn.classList.toggle('is-default', which === 'capture');
+  const askSplit = document.querySelector('.ask-split');
+  askSplit?.classList.toggle('is-default', which === 'ask');
+}
+
+/**
+ * Fire whichever of the two main buttons is the current default.
+ * Returns true if a click was dispatched — Enter / triggerCapture
+ * branches use the return to decide whether to preventDefault. A
+ * disabled target is a no-op so a double-press can't re-submit while
+ * a save is in flight.
+ *
+ * The Ask path clicks `#ask-btn` (send-to-default) rather than
+ * `#ask-caret` (open menu) — the user has already made a steering
+ * decision via Options, so honouring that without forcing a menu pick
+ * keeps the keyboard path symmetric with Capture's.
+ *
+ * Degraded-state fallback: if the user picked `defaultButton='ask'`
+ * but the Ask split widget is disabled (no provider enabled, mid-Ask
+ * round-trip, etc.), fall through to Capture rather than no-op'ing
+ * — better to do *something* obvious than to silently drop the user's
+ * Enter.
+ */
+function clickDefaultPageButton(): boolean {
+  if (currentDefaultButton === 'ask') {
+    const askBtnEl = document.getElementById('ask-btn') as HTMLButtonElement | null;
+    if (askBtnEl && !askBtnEl.disabled) {
+      askBtnEl.click();
+      return true;
+    }
+  }
+  if (!captureBtn.disabled) {
     captureBtn.click();
+    return true;
+  }
+  return false;
+}
+
+promptInput.addEventListener('keydown', (e) => {
+  // Three Enter variants — fixed to avoid mode confusion:
+  //   - Shift+Enter: always newline. Wins over Ctrl+Shift+Enter too —
+  //     we treat any Shift hold as "user wants a literal newline".
+  //   - Ctrl+Enter (no Shift): always send.
+  //   - Plain Enter: follows the user's `promptEnter` setting; defaults
+  //     to send. When set to 'newline' we fall through to native
+  //     textarea handling.
+  if (e.key !== 'Enter') return;
+  if (e.shiftKey) return;
+  const sendIntent = e.ctrlKey || currentPromptEnter === 'send';
+  if (sendIntent) {
+    if (clickDefaultPageButton()) e.preventDefault();
   }
 });
 
@@ -1443,6 +1518,10 @@ async function loadData(): Promise<void> {
     if (useWithSelection) {
       selectionBox.checked = cdd.withSelection.selection;
     }
+    // Apply the user's chosen "default button" highlight and rebind
+    // the Enter / triggerCapture routing in one shot.
+    applyDefaultButtonHighlight(cdd.defaultButton);
+    currentPromptEnter = cdd.promptEnter;
 
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -2362,8 +2441,11 @@ captureBtn.addEventListener('click', () => {
 // (e.g. when the user clicks the toolbar icon while this page is
 // already open).
 chrome.runtime.onMessage.addListener((msg: { action: string }) => {
-  if (msg.action === 'triggerCapture' && !captureBtn.disabled) {
-    captureBtn.click();
+  // The message name predates the Capture/Ask default-button toggle
+  // — keep the wire name but route through the helper so the SW's
+  // hand-off respects the user's chosen default.
+  if (msg.action === 'triggerCapture') {
+    clickDefaultPageButton();
   }
 });
 
@@ -2541,10 +2623,11 @@ async function refreshAskTargetLabel(): Promise<void> {
 }
 void refreshAskTargetLabel();
 
-// Re-render the Ask label/disabled state on external state changes:
+// Re-render parts of the page on external state changes from other
+// tabs / the SW:
 //
 // - `local.askProviderSettings` — flipped from the Options page in
-//   another tab.
+//   another tab. Refreshes the Ask label + disabled state.
 // - `session.askPin` — the toolbar context-menu Pin/Unpin entry
 //   writes here (without going through `runAskWithMessage`), so
 //   without this listener the cached `currentDefaultAcceptedKinds`
@@ -2552,6 +2635,14 @@ void refreshAskTargetLabel();
 //   newly-restricted destination (e.g. a freshly-pinned `/code`
 //   tab). Post-Ask refreshes are still handled inline by
 //   `runAskWithMessage`.
+// - `local.capturePageDefaults` — flipped from the Options page in
+//   another tab. Live-applies `defaultButton` (highlight ring +
+//   Enter / triggerCapture routing) and `promptEnter`. The
+//   Save-checkbox state in the same blob is intentionally NOT
+//   re-applied — those are seeded once on first paint; clobbering
+//   the user's in-progress checkbox edits mid-session would be
+//   jarring. `defaultButton` and `promptEnter` have no equivalent
+//   in-page edit surface, so live-updating them has no conflict.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['askProviderSettings']) {
     void refreshAskTargetLabel();
@@ -2559,6 +2650,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (area === 'session' && changes['askPin']) {
     void refreshAskTargetLabel();
+    return;
+  }
+  if (area === 'local' && changes['capturePageDefaults']) {
+    const next = changes['capturePageDefaults'].newValue as
+      | { defaultButton?: 'capture' | 'ask'; promptEnter?: 'send' | 'newline' }
+      | undefined;
+    if (next?.defaultButton === 'capture' || next?.defaultButton === 'ask') {
+      applyDefaultButtonHighlight(next.defaultButton);
+    }
+    if (next?.promptEnter === 'send' || next?.promptEnter === 'newline') {
+      currentPromptEnter = next.promptEnter;
+    }
   }
 });
 

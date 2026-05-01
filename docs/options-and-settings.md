@@ -42,7 +42,7 @@ All keys live in `chrome.storage.local`.
   older builds (they would just error on every click without a
   selection).
 
-### Capture-page Save defaults
+### Capture-page settings
 
 ```ts
 interface CaptureDetailsDefaults {
@@ -50,6 +50,8 @@ interface CaptureDetailsDefaults {
   withSelection:    { screenshot: boolean; html: boolean;
                       selection: boolean;
                       format: 'html' | 'text' | 'markdown' };
+  defaultButton:    'capture' | 'ask';
+  promptEnter:      'send' | 'newline';
 }
 ```
 
@@ -58,6 +60,27 @@ interface CaptureDetailsDefaults {
 - Fresh-install defaults:
   - `withoutSelection`: screenshot only.
   - `withSelection`: selection only, as markdown.
+  - `defaultButton`: `capture` (the Capture page's main button).
+  - `promptEnter`: `send` (Enter on the Prompt fires the default).
+- `defaultButton` drives three things on the Capture page:
+  - which of the two main buttons (Capture or the Ask split widget)
+    gets the highlight ring.
+  - which one fires when the user presses Enter on the Prompt.
+  - which one fires when the toolbar icon is clicked while the
+    Capture page is already open (the SW's `triggerCapture`
+    hand-off).
+- `promptEnter` only steers the un-modified Enter key in the Prompt
+  textarea. Shift+Enter always inserts a newline; Ctrl+Enter always
+  fires the default button.
+- Degraded-state fallback: if `defaultButton='ask'` but the Ask
+  split is disabled (no provider enabled, mid-Ask round-trip),
+  Enter / `triggerCapture` falls through to `#capture` rather than
+  silently dropping the user's keystroke.
+- **Live updates.** The Capture page's `chrome.storage.onChanged`
+  listener picks up `defaultButton` / `promptEnter` changes the
+  moment the Options page Saves — no reload needed. The
+  Save-checkbox defaults are seed-only (re-applying them mid-session
+  would clobber the user's in-progress checkbox edits).
 - The setter re-normalizes on write so a partial / dirty input from
   the Options page can't put a malformed object into storage.
 
@@ -199,6 +222,26 @@ Sections are rendered top-to-bottom in this order:
     `src/options.ts`) mirrors the SW's
     `pickNextEnabledDefault` so the radio always reflects what the
     SW will accept on save.
+- ***Capture* page *Prompt* box settings** (`<h1>`) — two
+  side-by-side `<h2>` blocks (no fieldset border) inside a
+  `.side-by-side` flex wrapper:
+  - *Enter behavior in Prompt* table — columns `Enter key` /
+    `Action`. Three rows:
+    - `Enter` → Submit prompt / Add newline radios (the `promptEnter`
+      setting; defaults to *Submit prompt*).
+    - `Shift+Enter` → fixed `Add newline`.
+    - `Ctrl+Enter` → fixed `Submit prompt`.
+  - *Default submit button* table — columns `Button` / `Description`.
+    The Button cell renders each option as a `.btn-mock` span styled
+    to look like the actual Capture-page button (1px dark border,
+    light background, 4px radius). Two rows of radios for the
+    `defaultButton` setting:
+    - *Capture* — *Save to files*.
+    - *Ask <provider>* — *Send to provider web page*. The provider
+      label is appended live from the Ask-providers table above
+      (e.g. *Ask Claude*) so it always mirrors the Capture page's
+      `#ask-target-label`. Falls back to *Ask AI* when no provider
+      is enabled (matches the Capture page's `AI` fallback).
 - **Default items to save on *Capture* page and in *Save default
   items*** (`<h1>`) — two side-by-side fieldsets that mirror
   `capture.html`.

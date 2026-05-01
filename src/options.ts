@@ -29,6 +29,8 @@ interface OptionsActionRow {
   isSelection: boolean;
 }
 type OptionsSelectionFormat = 'html' | 'text' | 'markdown';
+type OptionsCapturePageDefaultButton = 'capture' | 'ask';
+type OptionsCapturePagePromptEnter = 'send' | 'newline';
 
 interface CaptureDetailsDefaults {
   withoutSelection: { screenshot: boolean; html: boolean };
@@ -38,6 +40,8 @@ interface CaptureDetailsDefaults {
     selection: boolean;
     format: OptionsSelectionFormat;
   };
+  defaultButton: OptionsCapturePageDefaultButton;
+  promptEnter: OptionsCapturePagePromptEnter;
 }
 
 interface OptionsAskProvider {
@@ -514,6 +518,14 @@ function renderCaptureDetailsDefaults(data: OptionsData): void {
     ($(`#cd-ws-fmt-${fmt}`) as HTMLInputElement).checked =
       cdd.withSelection.format === fmt;
   }
+  for (const btn of ['capture', 'ask'] as const) {
+    ($(`#cp-default-button-${btn}`) as HTMLInputElement).checked =
+      cdd.defaultButton === btn;
+  }
+  for (const v of ['send', 'newline'] as const) {
+    ($(`#cp-enter-key-${v}`) as HTMLInputElement).checked =
+      cdd.promptEnter === v;
+  }
 }
 
 function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
@@ -524,6 +536,17 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
   ) as HTMLInputElement | null;
   const format =
     (fmtRadio?.value as OptionsSelectionFormat | undefined) ?? 'markdown';
+  const defaultButtonRadio = document.querySelector(
+    'input[name="cp-default-button"]:checked',
+  ) as HTMLInputElement | null;
+  const defaultButton =
+    (defaultButtonRadio?.value as OptionsCapturePageDefaultButton | undefined)
+    ?? 'capture';
+  const enterRadio = document.querySelector(
+    'input[name="cp-enter-key"]:checked',
+  ) as HTMLInputElement | null;
+  const promptEnter =
+    (enterRadio?.value as OptionsCapturePagePromptEnter | undefined) ?? 'send';
   return {
     withoutSelection: {
       screenshot: checked('#cd-wos-screenshot'),
@@ -535,6 +558,8 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
       selection: checked('#cd-ws-selection'),
       format,
     },
+    defaultButton,
+    promptEnter,
   };
 }
 
@@ -619,6 +644,10 @@ function renderAskProvidersTable(data: OptionsData): void {
     defaultRadio.dataset.askDefault = provider.id;
     defaultRadio.checked = data.askProviderSettings.default === provider.id;
     defaultRadio.disabled = !enabledBox.checked;
+    // Picking a different Ask default needs to live-update the
+    // "Ask <provider>" label in the Default-submit-button table so
+    // it always mirrors what the Capture page would show.
+    defaultRadio.addEventListener('change', refreshDefaultButtonAskLabel);
     defaultCell.appendChild(defaultRadio);
 
     tbody.appendChild(tr);
@@ -672,6 +701,36 @@ function onAskEnabledChange(toggledId: string): void {
     newDefault = toggledId;
   }
   applyAskRadioState(orderedIds, enabled, newDefault);
+  // Auto-rotation may have moved the default — keep the
+  // Default-submit-button "Ask <provider>" label in sync.
+  refreshDefaultButtonAskLabel();
+}
+
+/**
+ * Update the "Ask <provider>" label in the Default-submit-button
+ * table to match whichever provider is currently picked as the Ask
+ * default in the providers table above. Mirrors the Capture page's
+ * `#ask-target-label` so the user sees the same text in both places.
+ *
+ * Falls back to a bare "Ask" when no provider is enabled (default is
+ * null) — there's nothing concrete to point the user at in that case.
+ */
+function refreshDefaultButtonAskLabel(): void {
+  if (!latest) return;
+  const target = document.getElementById('cp-default-button-ask-target');
+  if (!target) return;
+  const { defaultId } = readAskProvidersFromDom();
+  // Mirror the Capture page's #ask-target-label fallback: when no
+  // provider is enabled, the page renders "Ask AI" (not just "Ask"
+  // with a trailing space inside an <i>). Keep both surfaces in sync.
+  if (!defaultId) {
+    target.textContent = 'AI';
+    return;
+  }
+  const provider = latest.askProviders.find((p) => p.id === defaultId);
+  // The HTML already has a literal space before the <span>, so the
+  // span's content is the bare provider label.
+  target.textContent = provider ? provider.label : 'AI';
 }
 
 function applyAskRadioState(
@@ -704,6 +763,9 @@ function renderForm(data: OptionsData): void {
   renderWithTable(data);
   renderCaptureDetailsDefaults(data);
   renderAskProvidersTable(data);
+  // Must run after `renderAskProvidersTable` — it reads the live DOM
+  // radio state to find the current Ask default.
+  refreshDefaultButtonAskLabel();
 }
 
 function renderAll(data: OptionsData): void {

@@ -92,11 +92,22 @@ export async function openDetailsFlow(
   // inject a live `window.getSelection()` state that the SW's
   // scripting call observes as `selection`.
   beforeCapture?: (page: Page) => Promise<void>,
+  // Optional storage seed applied *after* the clear that opens this
+  // helper and *before* the flow starts — so the Capture page's
+  // first-paint `getDetailsData` round-trip sees these values.
+  // Use this for `capturePageDefaults` (button + Enter behaviour)
+  // and any other key the page reads from `chrome.storage.local`.
+  seedStorage?: Record<string, unknown>,
 ): Promise<{ openerPage: Page; capturePage: Page }> {
   // Clean log so stale entries from an earlier test in the same
   // worker can't satisfy our assertions.
   const sw0 = await getServiceWorker();
   await sw0.evaluate(() => chrome.storage.local.clear());
+  if (seedStorage) {
+    await sw0.evaluate(async (data) => {
+      await chrome.storage.local.set(data);
+    }, seedStorage);
+  }
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/${fixturePath}`);
@@ -387,6 +398,41 @@ export async function waitForPageDownloads(page: Page, n: number): Promise<void>
       ((self as unknown as { __seePgDl?: unknown[] }).__seePgDl?.length ?? 0) >= count,
     n,
     { timeout: 5000 },
+  );
+}
+
+// Spy on Capture / Ask-btn clicks. Records which button id received
+// the click and stops propagation so the page's own submit / Ask
+// handlers DON'T fire — the spy is for tests that only care about
+// *which* button was triggered, not about driving the full Capture
+// or Ask round-trip. Use a capture-phase listener so the spy sees the
+// click before the bubble-phase listeners that capture-page.ts wires
+// (the page's `captureBtn.addEventListener('click', …)` is bubble-
+// phase; stopImmediatePropagation in the capture phase suppresses it).
+export async function installButtonClickSpy(capturePage: Page): Promise<void> {
+  await capturePage.evaluate(() => {
+    interface Spy { __seeBtnClicks?: string[] }
+    const g = self as unknown as Spy;
+    g.__seeBtnClicks = [];
+    for (const id of ['capture', 'ask-btn']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.addEventListener(
+        'click',
+        (e) => {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          g.__seeBtnClicks!.push(id);
+        },
+        true,
+      );
+    }
+  });
+}
+
+export async function readButtonClickSpy(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (self as unknown as { __seeBtnClicks?: string[] }).__seeBtnClicks ?? [],
   );
 }
 

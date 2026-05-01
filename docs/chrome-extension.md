@@ -506,8 +506,22 @@ This section is split by topic:
   initially; on each `input` event we set `style.height = 'auto'`
   then `style.height = scrollHeight + 'px'`. Once `scrollHeight`
   exceeds the cap we flip `overflow-y` from `hidden` to `auto` so
-  the scrollbar only appears when needed. Plain Enter submits;
-  Shift+Enter inserts a newline.
+  the scrollbar only appears when needed.
+- **Enter-key routing** — the keydown handler reads two stored
+  `capturePageDefaults` fields:
+  - `promptEnter` (`'send'` | `'newline'`): plain Enter follows this
+    radio. Default `'send'`.
+  - `defaultButton` (`'capture'` | `'ask'`): when an Enter press
+    submits, it clicks whichever button (`#capture` or `#ask-btn`)
+    the user picked as default. Default `'capture'`. Same routing is
+    used by the SW's `triggerCapture` toolbar-icon hand-off.
+  - Shift+Enter always inserts a newline.
+  - Ctrl+Enter always submits via the chosen default button —
+    overrides `promptEnter='newline'` so a user with that setting
+    can still send without clicking.
+  - The chosen default button also gets a `.is-default` highlight
+    ring in the UI so it reads as "primary" before the user focuses
+    anything.
 - **Smart paste** — Ctrl+V on the prompt or an edit dialog routes
   rich-text content to the right format for the target surface
   (markdown / HTML source / plain text). Ctrl+Shift+V always

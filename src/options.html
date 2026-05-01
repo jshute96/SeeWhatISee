@@ -48,7 +48,7 @@
     background: #f5f5f5;
     border: 1px solid #ddd;
     padding: 6px 10px;
-    text-align: center;
+    text-align: left;
     font-weight: 600;
     white-space: nowrap;
   }
@@ -186,6 +186,51 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  /* Roomier vertical rhythm for the Enter-behavior table's stacked
+     radio rows — same `line-height: 1.5` the hotkey-cell uses to space
+     out its multi-line hotkey stacks. Without this the two radios
+     visually crowd each other inside the cell. */
+  .enter-behavior-table tbody td {
+    line-height: 1.5;
+  }
+  /* Radios in these tables sit inside <label> wrappers next to bare
+     text. The browser default `vertical-align: baseline` on the radio
+     drops the line so the radio's bottom sits on the row's baseline,
+     pushing the label text noticeably below the plain-text cells in
+     the same row. `middle` realigns the radio (and therefore the
+     surrounding label text) to the row's vertical centre, matching
+     what the `.cd-defaults` ruleset does for fieldset-style radios. */
+  .enter-behavior-table input[type="radio"],
+  .default-button-table input[type="radio"] {
+    vertical-align: middle;
+  }
+  /* Static "looks like a button" mock used in the Default-submit-
+     button table so the user sees the actual button visual next to
+     each radio rather than just the bare label text. Matches
+     `button#capture` / `#ask-btn` in capture.html (1px dark border,
+     light background, 4px radius, weight 500) so what the user picks
+     here reads as the same chrome as the Capture page renders. */
+  .default-button-table .btn-mock {
+    display: inline-block;
+    padding: 4px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid #555;
+    background: #f5f5f5;
+    border-radius: 4px;
+    vertical-align: middle;
+  }
+  /* Inline code spans (e.g. `/see-what-i-see` skill names) — render
+     in monospace + purple so they're visually distinct from the
+     surrounding prose. Subtle background tint for the same reason. */
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    color: #6f42c1;
+    background: #f3eefb;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
   .footer {
     display: flex;
     align-items: center;
@@ -245,6 +290,62 @@
     </thead>
     <tbody id="ask-providers-rows"></tbody>
   </table>
+</section>
+
+<br><hr><br><br>
+<section>
+  <h1><i>Capture</i> page <i>Prompt</i> box settings</h1>
+  <div class="side-by-side">
+    <div>
+      <h2>Enter behavior in <i>Prompt</i></h2>
+      <table class="enter-behavior-table">
+        <thead>
+          <tr>
+            <th>Enter key</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="hotkey-cell">Enter</td>
+            <td>
+              <div><label><input type="radio" name="cp-enter-key" value="send" id="cp-enter-key-send" checked> Submit prompt</label></div>
+              <div><label><input type="radio" name="cp-enter-key" value="newline" id="cp-enter-key-newline"> Add newline</label></div>
+            </td>
+          </tr>
+          <tr>
+            <td class="hotkey-cell">Shift+Enter</td>
+            <td>Add newline</td>
+          </tr>
+          <tr>
+            <td class="hotkey-cell">Ctrl+Enter</td>
+            <td>Submit prompt</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h2>Default submit button</h2>
+      <table class="default-button-table">
+        <thead>
+          <tr>
+            <th>Button</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><label><input type="radio" name="cp-default-button" value="capture" id="cp-default-button-capture" checked> <span class="btn-mock">Capture</span></label></td>
+            <td>Save to files <i>(Then collect in CLI agents with <code>/see-what-i-see</code> skills)</i></td>
+          </tr>
+          <tr>
+            <td><label><input type="radio" name="cp-default-button" value="ask" id="cp-default-button-ask"> <span class="btn-mock">Ask <span id="cp-default-button-ask-target"></span></span></label></td>
+            <td>Send to provider web page</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </section>
 
 <br><hr><br><br>

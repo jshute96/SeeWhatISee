@@ -538,6 +538,26 @@
     border-radius: 4px;
   }
   /*
+   * Default-button highlight — the user picks Capture or Ask as the
+   * "default" in Options; whichever wins gets `.is-default` from
+   * capture-page.ts and shows a subtle outer ring so it reads as
+   * "primary" even when nothing on the page has focus. Using box-shadow
+   * (not a thicker border) keeps geometry identical to its sibling so
+   * the two buttons still align in the .button-stack column.
+   *
+   * `.ask-split.is-default` rings the whole split widget (main label
+   * + caret) so the highlight reads as one button rather than ringing
+   * just the left half.
+   */
+  button#capture.is-default,
+  .ask-split.is-default {
+    /* The split-button's inner buttons each round their outer corners
+     * to 4px; matching that here so the ring traces the visible
+     * outline rather than a bigger square around it. */
+    border-radius: 4px;
+    box-shadow: 0 0 0 2px rgba(0, 95, 204, 0.35);
+  }
+  /*
    * Split button: main "Ask <provider>" label on the left flexes to
    * fill, caret button on the right is a fixed-width chevron. They
    * share a continuous border by joining at a common edge — the
