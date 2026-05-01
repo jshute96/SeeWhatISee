@@ -36,7 +36,8 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       Screenshot files are still saved in your Downloads folder.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
-  and keyboard hotkeys.
+  keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT)
+  are enabled for *Ask* plus which one is the default destination.
 
 #### Capturing selected text
 

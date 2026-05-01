@@ -2458,6 +2458,26 @@ async function fetchAskState(): Promise<{
 // safe fallback.
 async function refreshAskTargetLabel(): Promise<void> {
   const { providers, defaultDestination } = await fetchAskState();
+  // `listAskProviders` already filters out user-disabled providers,
+  // so an empty (or all-statically-disabled) listing means the user
+  // has nothing to Ask. Block both halves of the split button until
+  // they re-enable a provider on the Options page.
+  const enabled = providers.filter((p) => p.enabled);
+  const noProvidersTooltip = 'No Ask providers enabled; Update in Options';
+  if (enabled.length === 0) {
+    askBtn.disabled = true;
+    askCaret.disabled = true;
+    askBtn.title = noProvidersTooltip;
+    askCaret.title = noProvidersTooltip;
+    askTargetLabel.textContent = 'AI';
+    return;
+  }
+  // At least one provider is available — re-enable the split button
+  // (a previous "all disabled" render may have disabled it) and pick
+  // a label/tooltip from the resolved default.
+  askBtn.disabled = false;
+  askCaret.disabled = false;
+  askCaret.title = '';
   if (defaultDestination) {
     const provider = providers.find((p) => p.id === defaultDestination.provider);
     if (provider) {
@@ -2470,16 +2490,26 @@ async function refreshAskTargetLabel(): Promise<void> {
     }
   }
   // No default available — fall back to a generic label.
-  const enabled = providers.filter((p) => p.enabled);
   if (enabled.length === 1) {
     askTargetLabel.textContent = enabled[0].label;
     askBtn.title = `Send to ${enabled[0].label} on web`;
-  } else if (enabled.length > 1) {
+  } else {
     askTargetLabel.textContent = 'AI';
     askBtn.title = 'Send to an AI on web';
   }
 }
 void refreshAskTargetLabel();
+
+// Re-render the Ask label/disabled state when the user changes
+// provider settings on the Options page in another tab. The pin
+// session-storage key isn't watched here — those flips happen via
+// the SW after an Ask, and we already re-call refreshAskTargetLabel
+// after each runAskWithMessage.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes['askProviderSettings']) {
+    void refreshAskTargetLabel();
+  }
+});
 
 function setAskStatus(text: string, kind: 'ok' | 'error' | 'info'): void {
   askStatus.textContent = text;
@@ -2862,6 +2892,13 @@ async function runAskWithMessage(message: {
   } finally {
     askBtn.disabled = false;
     askCaret.disabled = false;
+    // Re-resolve the disabled state from the latest provider settings
+    // so a mid-Ask Options-page change (e.g. user disabled every
+    // provider while we were waiting on the SW) doesn't leave the
+    // buttons re-enabled. The `chrome.storage.onChanged` listener
+    // would also catch this on the next tick, but doing it here
+    // closes the brief "buttons clickable but no providers" window.
+    void refreshAskTargetLabel();
   }
 }
 

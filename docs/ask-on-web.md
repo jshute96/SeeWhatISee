@@ -118,13 +118,22 @@ whichever destination the SW currently considers the default:
     id overwrites the stale pin via `sendToAi`'s `writePin` —
     a stale pin can't linger forever, just past the user's next
     decision.
-- **Pin clearing** — closed tabs, disabled providers, and off-host
-  navigations clear the pin lazily on the next `resolveAsk`.
-- **Fallback** — first enabled provider's "newTab" entry, used when
-  there's no pin or the pin is dead. "First" is registry order in
-  `ASK_PROVIDERS` (Claude → Gemini → ChatGPT today), so adding a
-  provider above an existing one in the array would change which
-  provider plain-Ask picks for first-time users.
+- **Pin clearing** — closed tabs, statically-disabled providers, and
+  off-host navigations clear the pin lazily on the next `resolveAsk`.
+  When the *user* disables the pinned provider on the Options page,
+  the pin is cleared **eagerly** by `clearPinIfProviderDisabled` in
+  `src/background.ts`, listening on `chrome.storage.onChanged` for
+  the `askProviderSettings` key — so the toolbar Pin/Unpin entry
+  doesn't keep saying "Unpin" for a pin that won't be honored.
+- **Fallback** — the user's configured **default provider** (Options
+  page → Ask AI providers), opened in a new tab. Used when there's no
+  pin or the pin is dead. The default lives in `askProviderSettings`
+  in `chrome.storage.local`; the SW's `normalizeAskProviderSettings`
+  guarantees it always points at a user-enabled provider, or is null
+  when every provider is disabled. Null fallback means plain-Ask
+  resolves to "no destination" and the Capture-page button is
+  disabled with the "No Ask providers enabled" tooltip — see
+  [Provider settings](#provider-settings) below.
 
 `sendToAi` writes the pin on every successful send, including
 new-tab opens (so the freshly-created tab gets reused next time).
@@ -161,6 +170,36 @@ by `refreshPinAskTargetMenu` and `togglePinAskTarget` in
   re-resolve the provider at click time rather than trusting the
   cached title, so a stale entry can't pin an already-excluded
   page or refuse to clear a now-excluded pin.
+
+### Provider settings
+
+The Options page surfaces an **Ask button settings** section with
+one row per registered provider, two columns of controls:
+
+- **Enabled** — checkbox; user-disabled providers don't appear in
+  the Ask menu, can't be pinned via the toolbar entry, and aren't
+  used as the fallback default. If the active pin happens to be on
+  a now-disabled provider, `resolveAsk` clears it lazily.
+- **Default** — radio button; picks which enabled provider plain-Ask
+  opens when there's no pin (or the pin is dead). When the user
+  disables the current default, the page rotates the radio to the
+  next enabled provider in label order (ChatGPT → Claude → Gemini,
+  wrapping). When all providers are disabled, every radio is greyed;
+  re-enabling any one of them re-elects it as the default.
+
+Storage:
+
+- Key: `askProviderSettings` in `chrome.storage.local`.
+- Shape: `{ enabled: { claude, gemini, chatgpt }, default | null }`.
+- Factory defaults: all enabled, default = Claude.
+- `normalizeAskProviderSettings` is applied on every read AND write
+  so a partial / never-saved object lands on the factory defaults
+  and a default that points at a disabled provider gets shifted.
+
+The Capture page also listens for `chrome.storage.onChanged` on this
+key so changes made on the Options page (e.g. disabling every
+provider) flip the Ask button's disabled state and tooltip live —
+no page reload needed.
 
 ### Status line
 

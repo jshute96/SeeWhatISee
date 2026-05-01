@@ -40,12 +40,22 @@ interface CaptureDetailsDefaults {
   };
 }
 
+interface OptionsAskProvider {
+  id: string;
+  label: string;
+}
+interface OptionsAskProviderSettings {
+  enabled: Record<string, boolean>;
+  default: string | null;
+}
+
 interface OptionsFactoryDefaults {
   clickWithoutId: string;
   clickWithId: string;
   dblWithoutId: string;
   dblWithId: string;
   capturePageDefaults: CaptureDetailsDefaults;
+  askProviderSettings: OptionsAskProviderSettings;
 }
 interface OptionsData {
   actions: OptionsActionRow[];
@@ -56,6 +66,8 @@ interface OptionsData {
   dblWithoutId: string;
   dblWithId: string;
   capturePageDefaults: CaptureDetailsDefaults;
+  askProviders: OptionsAskProvider[];
+  askProviderSettings: OptionsAskProviderSettings;
   shortcuts: Record<string, string>;
   executeActionShortcut: string | null;
   factoryDefaults: OptionsFactoryDefaults;
@@ -68,6 +80,7 @@ const COL_WITHOUT_CLICK = 'without-click';
 const COL_WITHOUT_DBL = 'without-dbl';
 const COL_WITH_CLICK = 'with-click';
 const COL_WITH_DBL = 'with-dbl';
+const ASK_DEFAULT_GROUP = 'ask-default';
 
 const SHORTCUTS_URL = 'chrome://extensions/shortcuts';
 
@@ -139,6 +152,7 @@ async function sendSetOptions(payload: {
   dblWithId: string;
   dblWithoutId: string;
   capturePageDefaults: CaptureDetailsDefaults;
+  askProviderSettings: OptionsAskProviderSettings;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
@@ -346,11 +360,172 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
   };
 }
 
+/**
+ * Pick the next enabled provider in the rendered (alphabetical-by-
+ * label) order, starting one slot after `from` and wrapping. Returns
+ * null when no provider is enabled. Mirrors `pickNextEnabledDefault`
+ * in `src/background/ask/settings.ts` so the page's local default-
+ * shifting matches what the SW normalizer would do on save.
+ *
+ * Drift hazard: the page sorts by label, the SW uses a hard-coded
+ * id rotation. They match today because the labels happen to be
+ * alphabetical-by-id (ChatGPT, Claude, Gemini). Renaming a provider
+ * to something that re-orders alphabetically would split the two —
+ * the page would shift one way visually and the SW would re-shift
+ * to a different default on save. If we add provider labels that
+ * don't match alphabetical id order, both sides need to converge
+ * (e.g. SW returns the rotation order in `OptionsData`).
+ */
+function pickNextEnabledAskDefault(
+  from: string | null,
+  orderedIds: string[],
+  enabled: Record<string, boolean>,
+): string | null {
+  const startIdx =
+    from === null ? 0 : Math.max(0, orderedIds.indexOf(from) + 1);
+  for (let i = 0; i < orderedIds.length; i++) {
+    const id = orderedIds[(startIdx + i) % orderedIds.length];
+    if (enabled[id]) return id;
+  }
+  return null;
+}
+
+function sortedAskProviders(
+  providers: OptionsAskProvider[],
+): OptionsAskProvider[] {
+  return [...providers].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Build the rows of the Ask AI providers table from `data`. Stamps
+ * each row with `data-provider="<id>"` so `readOptionsAskProviderSettings`
+ * can read the current state straight off the DOM. Wires checkbox
+ * changes to the page-local default-shift logic — disabling the
+ * current default rotates to the next enabled provider; enabling
+ * any provider when none was enabled re-elects it as default.
+ */
+function renderAskProvidersTable(data: OptionsData): void {
+  const tbody = $('#ask-providers-rows');
+  tbody.innerHTML = '';
+  const providers = sortedAskProviders(data.askProviders);
+  for (const provider of providers) {
+    const tr = document.createElement('tr');
+    tr.dataset.provider = provider.id;
+    td(tr, 'action-cell').textContent = provider.label;
+
+    const enabledCell = td(tr, 'checkbox-cell');
+    const enabledBox = document.createElement('input');
+    enabledBox.type = 'checkbox';
+    enabledBox.dataset.askEnabled = provider.id;
+    // The SW's normalizer guarantees every PROVIDER_IDS entry is
+    // present in `enabled`, so a missing key here means the page got
+    // a provider id the SW's settings module hasn't been taught about
+    // yet — log it so the drift is visible in the SW console rather
+    // than silently rendering the row as unchecked.
+    if (!(provider.id in data.askProviderSettings.enabled)) {
+      console.warn(
+        `[SeeWhatISee] options: provider "${provider.id}" missing from askProviderSettings.enabled — defaulting to unchecked. Update PROVIDER_IDS in src/background/ask/settings.ts.`,
+      );
+    }
+    enabledBox.checked = data.askProviderSettings.enabled[provider.id] ?? false;
+    enabledBox.addEventListener('change', () => {
+      onAskEnabledChange(provider.id);
+    });
+    enabledCell.appendChild(enabledBox);
+
+    const defaultCell = td(tr, 'radio-cell');
+    const defaultRadio = document.createElement('input');
+    defaultRadio.type = 'radio';
+    defaultRadio.name = ASK_DEFAULT_GROUP;
+    defaultRadio.value = provider.id;
+    defaultRadio.dataset.askDefault = provider.id;
+    defaultRadio.checked = data.askProviderSettings.default === provider.id;
+    defaultRadio.disabled = !enabledBox.checked;
+    defaultCell.appendChild(defaultRadio);
+
+    tbody.appendChild(tr);
+  }
+}
+
+function readAskProvidersFromDom(): {
+  orderedIds: string[];
+  enabled: Record<string, boolean>;
+  defaultId: string | null;
+} {
+  const rows = Array.from(
+    document.querySelectorAll('#ask-providers-rows tr'),
+  ) as HTMLTableRowElement[];
+  const orderedIds: string[] = [];
+  const enabled: Record<string, boolean> = {};
+  let defaultId: string | null = null;
+  for (const tr of rows) {
+    const id = tr.dataset.provider;
+    if (!id) continue;
+    orderedIds.push(id);
+    const box = tr.querySelector(
+      'input[type=checkbox][data-ask-enabled]',
+    ) as HTMLInputElement | null;
+    enabled[id] = !!box?.checked;
+    const radio = tr.querySelector(
+      'input[type=radio][data-ask-default]',
+    ) as HTMLInputElement | null;
+    if (radio?.checked) defaultId = id;
+  }
+  return { orderedIds, enabled, defaultId };
+}
+
+/**
+ * Sync the Default-radio column with the current Enabled-checkbox
+ * column. Called whenever the user toggles a row's checkbox:
+ *
+ *   - If the toggled row is the default and was just disabled,
+ *     advance the default to the next enabled row (wrapping).
+ *   - If no provider was the default (all-disabled state) and the
+ *     user just enabled this one, elect it as the new default.
+ *   - In any case, every radio's `disabled` flag is set to match its
+ *     row's checkbox so disabled providers can't be picked.
+ */
+function onAskEnabledChange(toggledId: string): void {
+  const { orderedIds, enabled, defaultId } = readAskProvidersFromDom();
+  let newDefault = defaultId;
+  if (!enabled[toggledId] && toggledId === defaultId) {
+    newDefault = pickNextEnabledAskDefault(toggledId, orderedIds, enabled);
+  } else if (enabled[toggledId] && defaultId === null) {
+    newDefault = toggledId;
+  }
+  applyAskRadioState(orderedIds, enabled, newDefault);
+}
+
+function applyAskRadioState(
+  orderedIds: string[],
+  enabled: Record<string, boolean>,
+  defaultId: string | null,
+): void {
+  for (const id of orderedIds) {
+    const row = document.querySelector(
+      `#ask-providers-rows tr[data-provider="${id}"]`,
+    );
+    if (!row) continue;
+    const radio = row.querySelector(
+      'input[type=radio][data-ask-default]',
+    ) as HTMLInputElement | null;
+    if (!radio) continue;
+    radio.disabled = !enabled[id];
+    radio.checked = id === defaultId;
+  }
+}
+
+function readOptionsAskProviderSettings(): OptionsAskProviderSettings {
+  const { enabled, defaultId } = readAskProvidersFromDom();
+  return { enabled, default: defaultId };
+}
+
 function renderForm(data: OptionsData): void {
   renderHotkeySection(data);
   renderWithoutTable(data);
   renderWithTable(data);
   renderCaptureDetailsDefaults(data);
+  renderAskProvidersTable(data);
 }
 
 function renderAll(data: OptionsData): void {
@@ -452,6 +627,7 @@ async function onSave(): Promise<void> {
       dblWithoutId,
       dblWithId,
       capturePageDefaults: readCaptureDetailsDefaults(),
+      askProviderSettings: readOptionsAskProviderSettings(),
     });
     // Re-fetch so the page reflects any normalization the SW applied
     // (e.g. capture-page-defaults format snapped back to a valid
@@ -485,6 +661,7 @@ function onDefaults(): void {
     dblWithoutId: fd.dblWithoutId,
     dblWithId: fd.dblWithId,
     capturePageDefaults: fd.capturePageDefaults,
+    askProviderSettings: fd.askProviderSettings,
   });
   setStatus('Default options applied above but not saved.');
 }

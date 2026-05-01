@@ -19,6 +19,7 @@ import {
   type AskProvider,
   type AskProviderId,
 } from './providers.js';
+import { getAskProviderSettings } from './settings.js';
 
 export type AskDestination =
   | { kind: 'newTab'; provider: AskProviderId }
@@ -138,8 +139,10 @@ export async function findProviderForTab(
   url: string,
 ): Promise<AskProvider | null> {
   if (!url) return null;
+  const settings = await getAskProviderSettings();
   for (const provider of ASK_PROVIDERS) {
     if (!provider.enabled) continue;
+    if (!settings.enabled[provider.id]) continue;
     // Delegate `urlPatterns` matching to Chrome (its match-pattern
     // grammar isn't a simple glob — see the AskProvider jsdoc) by
     // scoping a `tabs.query` to this provider's patterns and
@@ -183,16 +186,31 @@ export interface AskResolution {
  *   render a greyed check on that row.
  */
 export async function resolveAsk(): Promise<AskResolution> {
-  const fallback = ASK_PROVIDERS.find((p) => p.enabled);
+  const settings = await getAskProviderSettings();
+  // Fallback target: the user's configured default if it's still an
+  // effective-enabled provider (adapter built AND user-enabled). The
+  // settings normalizer guarantees `settings.default` either points
+  // at a user-enabled provider or is null, so we only need to verify
+  // the static `provider.enabled` here.
+  let fallbackProvider: AskProvider | null = null;
+  if (settings.default) {
+    const candidate = ASK_PROVIDERS.find((p) => p.id === settings.default);
+    if (candidate && candidate.enabled) fallbackProvider = candidate;
+  }
   const fallbackResolution: AskResolution = {
-    destination: fallback ? { kind: 'newTab', provider: fallback.id } : null,
+    destination: fallbackProvider
+      ? { kind: 'newTab', provider: fallbackProvider.id }
+      : null,
   };
 
   const pin = await readPin();
   if (!pin) return fallbackResolution;
 
   const provider = ASK_PROVIDERS.find((p) => p.id === pin.provider);
-  if (!provider || !provider.enabled) {
+  if (!provider || !provider.enabled || !settings.enabled[provider.id]) {
+    // Pinned provider is gone, statically disabled, or has been
+    // user-disabled. Drop the pin so the next resolve uses the
+    // configured default cleanly.
     await writePin(null);
     return fallbackResolution;
   }
@@ -242,8 +260,16 @@ export async function resolveAsk(): Promise<AskResolution> {
 }
 
 export async function listAskProviders(): Promise<AskProviderListing[]> {
+  const settings = await getAskProviderSettings();
   const out: AskProviderListing[] = [];
   for (const provider of ASK_PROVIDERS) {
+    // User-disabled providers are dropped entirely from the listing —
+    // the Ask menu treats them as if they weren't registered, so no
+    // "New window in <X>" row, no existing tabs surfaced. Static
+    // disabled-but-registered providers (no adapter built yet) still
+    // appear here with `enabled: false` so the menu can render the
+    // "(coming soon)" row — that decision is the page's, not ours.
+    if (!settings.enabled[provider.id]) continue;
     const tabs = provider.enabled
       ? await chrome.tabs.query({ url: provider.urlPatterns })
       : [];
@@ -315,6 +341,13 @@ export async function sendToAi(
   const provider = getAskProvider(destination.provider);
   if (!provider.enabled) {
     return { ok: false, error: `${provider.label} is not yet supported` };
+  }
+  const settings = await getAskProviderSettings();
+  if (!settings.enabled[provider.id]) {
+    return {
+      ok: false,
+      error: `${provider.label} is disabled; enable it on the Options page`,
+    };
   }
 
   let tabId: number;

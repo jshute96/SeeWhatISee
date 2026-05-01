@@ -4,6 +4,13 @@
 // its own listener so the message-type union doesn't have to share a
 // discriminator with the unrelated Capture-page traffic in
 // `capture-details.ts` — Chrome dispatches to all registered listeners.
+import { ASK_PROVIDERS } from './ask/providers.js';
+import {
+  DEFAULT_ASK_PROVIDER_SETTINGS,
+  getAskProviderSettings,
+  setAskProviderSettings,
+  type AskProviderSettings,
+} from './ask/settings.js';
 import { CAPTURE_ACTIONS } from './capture-actions.js';
 import {
   DEFAULT_CAPTURE_DETAILS_DEFAULTS,
@@ -45,12 +52,18 @@ interface OptionsActionRow {
   delaySec: number;
   isSelection: boolean;
 }
+/** Provider entry exposed to the Options page. */
+interface OptionsAskProvider {
+  id: string;
+  label: string;
+}
 interface OptionsFactoryDefaults {
   clickWithoutId: string;
   clickWithId: string;
   dblWithoutId: string;
   dblWithId: string;
   capturePageDefaults: CaptureDetailsDefaults;
+  askProviderSettings: AskProviderSettings;
 }
 interface OptionsData {
   actions: OptionsActionRow[];
@@ -61,6 +74,10 @@ interface OptionsData {
   dblWithoutId: string;
   dblWithId: string;
   capturePageDefaults: CaptureDetailsDefaults;
+  /** Registered Ask providers — Options page filters by static
+   *  `provider.enabled` separately if it ever needs to. */
+  askProviders: OptionsAskProvider[];
+  askProviderSettings: AskProviderSettings;
   shortcuts: Record<string, string>;
   executeActionShortcut: string | null;
   factoryDefaults: OptionsFactoryDefaults;
@@ -79,6 +96,7 @@ export function installOptionsMessageHandlers(): void {
           dblWithId,
           dblWithoutId,
           capturePageDefaults,
+          askProviderSettings,
           commands,
         ] = await Promise.all([
           getDefaultWithSelectionId(),
@@ -86,6 +104,7 @@ export function installOptionsMessageHandlers(): void {
           getDefaultDblWithSelectionId(),
           getDefaultDblWithoutSelectionId(),
           getCaptureDetailsDefaults(),
+          getAskProviderSettings(),
           chrome.commands.getAll(),
         ]);
         const shortcutMap = commandsToShortcutMap(commands);
@@ -106,6 +125,8 @@ export function installOptionsMessageHandlers(): void {
           dblWithoutId,
           dblWithId,
           capturePageDefaults,
+          askProviders: ASK_PROVIDERS.map((p) => ({ id: p.id, label: p.label })),
+          askProviderSettings,
           shortcuts,
           executeActionShortcut: shortcutMap.get('_execute_action') ?? null,
           factoryDefaults: {
@@ -114,6 +135,7 @@ export function installOptionsMessageHandlers(): void {
             dblWithoutId: DEFAULT_DBL_WITHOUT_SELECTION_ID,
             dblWithId: DEFAULT_DBL_WITH_SELECTION_ID,
             capturePageDefaults: DEFAULT_CAPTURE_DETAILS_DEFAULTS,
+            askProviderSettings: DEFAULT_ASK_PROVIDER_SETTINGS,
           },
         };
         sendResponse(data);
@@ -133,6 +155,7 @@ export function installOptionsMessageHandlers(): void {
           dblWithId?: unknown;
           dblWithoutId?: unknown;
           capturePageDefaults?: unknown;
+          askProviderSettings?: unknown;
         };
         const errors: string[] = [];
         const trySetString = async (
@@ -154,6 +177,18 @@ export function installOptionsMessageHandlers(): void {
           try {
             await setCaptureDetailsDefaults(
               m.capturePageDefaults as CaptureDetailsDefaults,
+            );
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+        if (
+          m.askProviderSettings
+          && typeof m.askProviderSettings === 'object'
+        ) {
+          try {
+            await setAskProviderSettings(
+              m.askProviderSettings as AskProviderSettings,
             );
           } catch (err) {
             errors.push(err instanceof Error ? err.message : String(err));

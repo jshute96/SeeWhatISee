@@ -61,6 +61,35 @@ interface CaptureDetailsDefaults {
 - The setter re-normalizes on write so a partial / dirty input from
   the Options page can't put a malformed object into storage.
 
+### Ask provider settings
+
+```ts
+interface AskProviderSettings {
+  enabled: { claude: boolean; gemini: boolean; chatgpt: boolean };
+  default: 'claude' | 'gemini' | 'chatgpt' | null;
+}
+```
+
+- Storage key: `askProviderSettings`.
+- Implementation: `src/background/ask/settings.ts`.
+- Fresh-install defaults: all enabled, default Claude.
+- Read on every Ask resolution (`resolveAsk`, `listAskProviders`,
+  `findProviderForTab`, `sendToAi`) so disabling a provider takes
+  effect immediately without any reload.
+- Two invariants are enforced on every read AND write by
+  `normalizeAskProviderSettings`:
+  1. `enabled` always has a boolean for every registered provider id.
+  2. `default` is either null or the id of an enabled provider — if
+     the stored value points at a disabled provider, normalize
+     auto-shifts it to the next enabled provider in label-order
+     (ChatGPT → Claude → Gemini, wrapping); if no provider is
+     enabled, default becomes null.
+- Pin lifecycle: a `chrome.storage.onChanged` listener in
+  `src/background.ts` clears `askPin` when the pinned provider
+  becomes user-disabled (`clearPinIfProviderDisabled`), then refreshes
+  the toolbar Pin/Unpin entry. `resolveAsk` also clears stale pins
+  lazily on the next resolve.
+
 ## Toolbar dispatch (`handleActionClick`)
 
 Reads all four stored ids up front, then picks a path:
@@ -185,6 +214,19 @@ Sections are rendered top-to-bottom in this order:
   `WITH_SELECTION_CHOICES` action ids
   (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
   plus the `ignore-selection` sentinel. Same column shape.
+- **Ask button settings** — table over registered Ask providers in
+  alphabetical-by-label order (ChatGPT, Claude, Gemini). Columns:
+  Provider, Enabled (checkbox), Default (radio).
+  - Toggling a checkbox immediately greys / re-enables that row's
+    Default radio. If the toggled checkbox was the current default
+    and was just unchecked, the page rotates the default to the
+    next enabled provider in row order (wrapping). If no provider
+    was the default and the user just enabled one, that row
+    becomes the new default.
+  - A page-local helper (`pickNextEnabledAskDefault` in
+    `src/options.ts`) mirrors the SW's
+    `pickNextEnabledDefault` so the radio always reflects what the
+    SW will accept on save.
 
 ### Footer buttons
 
@@ -194,16 +236,17 @@ mid-save would otherwise be silently overwritten by the post-save
 re-render, and a second Save click would race two concurrent
 round-trips.
 
-- **Save** — persists the four click/dbl ids and the
-  `capturePageDefaults` object.
+- **Save** — persists the four click/dbl ids, the
+  `capturePageDefaults` object, and the `askProviderSettings` object.
   - Status: "Settings saved." (or "Save failed: …" on error).
 - **Undo changes** — re-renders the form from the most recently
   saved state (the `latest` cache, refreshed after every Save).
   - Discards unsaved edits without round-tripping the SW.
   - Status: "Restored saved settings."
 - **Defaults** — re-renders the form with `OptionsData.factoryDefaults`.
-  - Sourced from `DEFAULT_*_ID` constants in `default-action.ts`
-    and `DEFAULT_CAPTURE_DETAILS_DEFAULTS` in `capture-page-defaults.ts`.
+  - Sourced from `DEFAULT_*_ID` constants in `default-action.ts`,
+    `DEFAULT_CAPTURE_DETAILS_DEFAULTS` in `capture-page-defaults.ts`,
+    and `DEFAULT_ASK_PROVIDER_SETTINGS` in `ask/settings.ts`.
   - Does **not** save; the user must hit Save to persist.
   - Status: "Default options applied above but not saved."
 
@@ -226,13 +269,15 @@ call replaces whatever's there.
 Messages handled in `background/options.ts`:
 
 - `getOptionsData` — returns the action catalog, the stored click/dbl
-  ids, the current `capturePageDefaults`, the bound hotkey map, and
-  a `factoryDefaults` block consumed by the Defaults button.
+  ids, the current `capturePageDefaults`, the registered Ask
+  providers + their stored `askProviderSettings`, the bound hotkey
+  map, and a `factoryDefaults` block consumed by the Defaults button.
 - `setOptions` — accepts new ids for any of the click/dbl slots plus
-  a `capturePageDefaults` object. Each setter is wrapped
-  independently so a stale value in one slot doesn't block the
-  others. The action setters call `refreshMenusAndTooltip`,
-  resyncing the context-menu labels and the toolbar tooltip.
+  a `capturePageDefaults` object and an `askProviderSettings` object.
+  Each setter is wrapped independently so a stale value in one slot
+  doesn't block the others. The action setters call
+  `refreshMenusAndTooltip`, resyncing the context-menu labels and the
+  toolbar tooltip.
 
 ### Hotkey refresh
 

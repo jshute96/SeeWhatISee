@@ -183,6 +183,13 @@ export function installAskTestHooks(): void {
     // since closed) would still be the "pin" and resolveDefault would
     // chase a dead tab before falling through.
     await sw.evaluate(() => chrome.storage.session.remove('askPin'));
+    // Drop any persisted Ask provider settings so a test that toggles
+    // an enabled/default flag can't leak into the next test. The
+    // SW's `normalizeAskProviderSettings` returns factory defaults
+    // (all enabled, Claude default) when the key is absent.
+    await sw.evaluate(() =>
+      chrome.storage.local.remove('askProviderSettings'),
+    );
   });
 }
 

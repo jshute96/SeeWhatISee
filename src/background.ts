@@ -73,6 +73,7 @@ import {
   setAskPin,
 } from './background/ask/index.js';
 import { ASK_PROVIDERS, _setAskProvidersForTest } from './background/ask/providers.js';
+import { getAskProviderSettings } from './background/ask/settings.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`
@@ -160,7 +161,26 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'session' && changes['askPin']) {
     void refreshPinAskTargetMenu();
   }
+  // User toggled an Ask provider's enabled state on the Options page:
+  // the toolbar Pin/Unpin entry's eligibility on the active tab may
+  // have flipped (a provider just became disabled or re-enabled).
+  // Also drop the pin eagerly if its provider just became disabled —
+  // resolveAsk would do this lazily on the next resolve, but clearing
+  // it here keeps the toolbar entry's "Unpin" wording from lingering
+  // on a pin that won't be honored anyway.
+  if (area === 'local' && changes['askProviderSettings']) {
+    void clearPinIfProviderDisabled().then(() => refreshPinAskTargetMenu());
+  }
 });
+
+async function clearPinIfProviderDisabled(): Promise<void> {
+  const pin = await getAskPin();
+  if (!pin) return;
+  const settings = await getAskProviderSettings();
+  if (!settings.enabled[pin.provider]) {
+    await setAskPin(null);
+  }
+}
 
 // Sync the Pin Ask target entry whenever the user is likely to
 // open the action menu next. Chrome doesn't expose an `onShown`

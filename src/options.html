@@ -64,6 +64,11 @@
   tbody td.radio-cell {
     text-align: center;
   }
+  /* Ask-providers section: same checkbox/radio layout as the
+     capture-defaults fieldsets, just inside a regular table. */
+  tbody td.checkbox-cell {
+    text-align: center;
+  }
   /*
    * Section divider rows — visually split each table into delay
    * groupings ("Immediate", "Delayed N seconds"). Rendered as a thin
@@ -249,6 +254,25 @@
       </tr>
     </thead>
     <tbody id="with-rows"></tbody>
+  </table>
+</section>
+
+<section>
+  <h1>Ask button settings</h1>
+  <p class="info-list" style="padding-left:0;">
+    Choose the default provider used when opening new browswer windows with the
+    Ask button.<br>
+    Disabled providers don't appear in the Ask menu.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Enabled</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody id="ask-providers-rows"></tbody>
   </table>
 </section>
 
