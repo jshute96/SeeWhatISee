@@ -33,10 +33,13 @@ export default defineConfig({
   testDir: './tests/e2e-live',
   fullyParallel: false,
   workers: 1,
-  // Live tests cross the network and Claude's UI can be slow on a
-  // fresh page load — give them more headroom than the deterministic
-  // e2e suite.
-  timeout: 90_000,
+  // Live tests cross the network. 20s is enough for the slowest
+  // case (image upload + prompt typing + submit + post-submit
+  // composer-clear poll) without wasting minutes on a stuck test.
+  // The deterministic e2e suite (`playwright.config.ts`) is much
+  // tighter; bump only this when adding a new test that legitimately
+  // needs more time.
+  timeout: 20_000,
   reporter: 'list',
   use: {
     trace: 'retain-on-failure',
@@ -45,6 +48,10 @@ export default defineConfig({
     {
       name: 'claude',
       testMatch: /claude\.live\.spec\.ts$/,
+    },
+    {
+      name: 'claude-code',
+      testMatch: /claude-code\.live\.spec\.ts$/,
     },
     {
       name: 'gemini',

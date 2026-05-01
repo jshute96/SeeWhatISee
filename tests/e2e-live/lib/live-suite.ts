@@ -112,6 +112,15 @@ async function getSharedProviderPage(
 const TINY_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==';
 
+/** Whether the provider's composer accepts the given kind at
+ *  `newTabUrl`. `undefined` means no restriction, which the shared
+ *  suite reads as "accept everything." */
+function accepts(provider: LiveProvider, kind: 'image' | 'text'): boolean {
+  const allowed = provider.acceptedAttachmentKinds;
+  if (!allowed || allowed.length === 0) return true;
+  return allowed.includes(kind);
+}
+
 // Mirror of the AskAttachment interface in `src/ask-inject.ts`. Kept
 // as a separate copy because ask-inject.ts is a self-contained IIFE
 // (no exports — it's loaded via `executeScript` as a classic script).
@@ -186,6 +195,11 @@ export function runLiveSuite(provider: LiveProvider): void {
     // would leak state across the suite.
     await page.goto(provider.newTabUrl, { waitUntil: 'domcontentloaded' });
     await provider.waitForComposerReady(page);
+    // Optional provider-specific extra cleanup. Used by destinations
+    // where `goto(newTabUrl)` doesn't actually reset the composer
+    // — Claude Code's `/code` redirects to the last session and
+    // preserves any queued prompt + attachment pills.
+    if (provider.resetPage) await provider.resetPage(page);
     return page;
   }
 
@@ -220,22 +234,29 @@ export function runLiveSuite(provider: LiveProvider): void {
 
   test(`${provider.label}: selectors match the real DOM`, async () => {
     const page = await openFreshProviderPage();
-    // The first selector in each list is the most-specific one and
-    // is the one we expect to match in steady state. Failure here
-    // means upstream changed its DOM hooks — update
-    // src/background/ask/<provider>.ts (and the mirror in this file).
-    //
     // For providers that surface their file input only after a click
     // chain (Gemini), check the FIRST preFileInputClicks selector
-    // instead — that's the runtime's actual entry point. The runtime
-    // itself polls for fileInput after clicking, so we don't need to
-    // verify the input is in the initial DOM.
+    // — that's the runtime's actual entry point. Otherwise walk the
+    // ranked fileInput list and require *some* selector to match,
+    // mirroring how the runtime itself searches: providers that
+    // share the Claude adapter (Claude + Claude Code) carry
+    // selectors that are most-specific for one and irrelevant for
+    // the other, so a strict `[0]` check would fail half the time.
     const preClicks = provider.selectors.preFileInputClicks ?? [];
-    const fileEntrySelector =
-      preClicks.length > 0 ? preClicks[0] : provider.selectors.fileInput[0];
-    await expect(page.locator(fileEntrySelector)).toBeAttached({
-      timeout: 5_000,
-    });
+    if (preClicks.length > 0) {
+      await expect(page.locator(preClicks[0])).toBeAttached({
+        timeout: 5_000,
+      });
+    } else {
+      let fileFound = false;
+      for (const sel of provider.selectors.fileInput) {
+        if ((await page.locator(sel).count()) > 0) {
+          fileFound = true;
+          break;
+        }
+      }
+      expect(fileFound, 'no file-input selector matched').toBe(true);
+    }
     await expect(page.locator(provider.selectors.textInput[0])).toBeVisible();
 
     // Some providers (e.g. Claude) only render the Send button into
@@ -258,18 +279,27 @@ export function runLiveSuite(provider: LiveProvider): void {
 
   // ─── No-submit multi-file attach ───────────────────────────────
 
-  test(`${provider.label}: image + html + selection attach, no submit`, async () => {
+  // For text-rejecting providers we drop the text attachments and
+  // run the test as "two images attach, no submit" — still verifies
+  // multi-file dispatch in one runtime call, which is the test's
+  // primary purpose. The "image + html + selection" name stays so
+  // the description reads consistently across providers.
+  const noSubmitTitle = accepts(provider, 'text')
+    ? `${provider.label}: image + html + selection attach, no submit`
+    : `${provider.label}: two images attach, no submit`;
+  test(noSubmitTitle, async () => {
     const page = await openFreshProviderPage();
     await loadAskRuntime(page);
-    const result = await callAskRuntime(
-      page,
-      [
-        {
-          data: TINY_PNG_DATA_URL,
-          kind: 'image',
-          mimeType: 'image/png',
-          filename: 'test.png',
-        },
+    const attachments: AskAttachment[] = [
+      {
+        data: TINY_PNG_DATA_URL,
+        kind: 'image',
+        mimeType: 'image/png',
+        filename: 'test.png',
+      },
+    ];
+    if (accepts(provider, 'text')) {
+      attachments.push(
         {
           data: '<html><body><p>fixture html for live test</p></body></html>',
           kind: 'text',
@@ -282,24 +312,37 @@ export function runLiveSuite(provider: LiveProvider): void {
           mimeType: 'text/markdown',
           filename: 'selection.md',
         },
-      ],
-      '',
-      false,
-    );
+      );
+    } else {
+      attachments.push({
+        data: TINY_PNG_DATA_URL,
+        kind: 'image',
+        mimeType: 'image/png',
+        filename: 'extra.png',
+      });
+    }
+    const result = await callAskRuntime(page, attachments, '', false);
     expect(result.ok, result.error).toBe(true);
 
     // 1) Image preview attached.
     await expect(provider.imageAttachmentLocator(page, 'test.png')).toBeVisible({
       timeout: 10_000,
     });
-    // 2) Both non-image thumbnails attached (filename match — confirms
-    //    the right files made it through, not just any two file blobs).
-    await expect(
-      provider.fileAttachmentLocator(page, 'contents.html'),
-    ).toBeVisible({ timeout: 10_000 });
-    await expect(
-      provider.fileAttachmentLocator(page, 'selection.md'),
-    ).toBeVisible({ timeout: 10_000 });
+    // 2) The other attachments. Branch shape mirrors the payload
+    //    branch above so each provider only asserts on what it
+    //    actually got.
+    if (accepts(provider, 'text')) {
+      await expect(
+        provider.fileAttachmentLocator!(page, 'contents.html'),
+      ).toBeVisible({ timeout: 10_000 });
+      await expect(
+        provider.fileAttachmentLocator!(page, 'selection.md'),
+      ).toBeVisible({ timeout: 10_000 });
+    } else {
+      await expect(
+        provider.imageAttachmentLocator(page, 'extra.png'),
+      ).toBeVisible({ timeout: 10_000 });
+    }
 
     // 3) Composer was NOT submitted.
     await expect(provider.userMessageLocator(page, RUN_TAG)).toHaveCount(0);
@@ -367,26 +410,34 @@ export function runLiveSuite(provider: LiveProvider): void {
 
     // Second call with a different file. Most providers' onChange
     // appends to the existing list (same as picking a second file
-    // via the paperclip).
-    const r2 = await callAskRuntime(
-      page,
-      [
-        {
+    // via the paperclip). For image-only destinations we use a
+    // second image so the test still exercises accumulation.
+    const secondAttachment: AskAttachment = accepts(provider, 'text')
+      ? {
           data: '## second\n\nadded in a separate call',
           kind: 'text',
           mimeType: 'text/markdown',
           filename: 'second.md',
-        },
-      ],
-      '',
-      false,
-    );
+        }
+      : {
+          data: TINY_PNG_DATA_URL,
+          kind: 'image',
+          mimeType: 'image/png',
+          filename: 'second.png',
+        };
+    const r2 = await callAskRuntime(page, [secondAttachment], '', false);
     expect(r2.ok, r2.error).toBe(true);
 
     await expect(provider.imageAttachmentLocator(page, 'first.png')).toBeVisible();
-    await expect(provider.fileAttachmentLocator(page, 'second.md')).toBeVisible({
-      timeout: 10_000,
-    });
+    if (accepts(provider, 'text')) {
+      await expect(provider.fileAttachmentLocator!(page, 'second.md')).toBeVisible({
+        timeout: 10_000,
+      });
+    } else {
+      await expect(provider.imageAttachmentLocator(page, 'second.png')).toBeVisible({
+        timeout: 10_000,
+      });
+    }
     await expect(provider.allAttachmentsLocator(page)).toHaveCount(2);
 
     await expect(provider.userMessageLocator(page, RUN_TAG)).toHaveCount(0);
@@ -394,24 +445,30 @@ export function runLiveSuite(provider: LiveProvider): void {
 
   // ─── Auto-submit end-to-end (the ONE submitting test) ──────────
   //
-  // Sends a tagged message + the same three attachment types so a
-  // single token-consuming run verifies the full submit pipeline
-  // (file pipe → typing → Send click → conversation update). Keep
-  // the prompt short so the response is small.
-
-  test(`${provider.label}: image + html + selection + prompt → message submitted`, async () => {
+  // Sends a tagged message verifying the full submit pipeline
+  // (file pipe → typing → Send click → conversation update). For
+  // text-accepting providers the payload is image + html + selection;
+  // image-only destinations get just the image (HTML / selection
+  // would be refused by the SW filter the suite mirrors here).
+  // Title and payload shift accordingly. Keep the prompt short so
+  // the response is small — token-consuming run.
+  const submitTitle = accepts(provider, 'text')
+    ? `${provider.label}: image + html + selection + prompt → message submitted`
+    : `${provider.label}: image + prompt → message submitted`;
+  test(submitTitle, async () => {
     const page = await openFreshProviderPage();
     await loadAskRuntime(page);
     const ORIGINAL_PROMPT_MARKER = 'PRE-SUBMIT-please-reply-OK';
-    const result = await callAskRuntime(
-      page,
-      [
-        {
-          data: TINY_PNG_DATA_URL,
-          kind: 'image',
-          mimeType: 'image/png',
-          filename: 'test.png',
-        },
+    const submitAttachments: AskAttachment[] = [
+      {
+        data: TINY_PNG_DATA_URL,
+        kind: 'image',
+        mimeType: 'image/png',
+        filename: 'test.png',
+      },
+    ];
+    if (accepts(provider, 'text')) {
+      submitAttachments.push(
         {
           data: '<html><body><p>fixture html for live test</p></body></html>',
           kind: 'text',
@@ -424,7 +481,11 @@ export function runLiveSuite(provider: LiveProvider): void {
           mimeType: 'text/markdown',
           filename: 'selection.md',
         },
-      ],
+      );
+    }
+    const result = await callAskRuntime(
+      page,
+      submitAttachments,
       `${RUN_TAG} ${ORIGINAL_PROMPT_MARKER}.`,
       true,
     );

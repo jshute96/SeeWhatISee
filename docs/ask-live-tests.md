@@ -98,11 +98,18 @@ Leave the browser running.
 ## Running
 
 ```bash
-npm run test:live-claude     # just Claude
-npm run test:live-gemini     # just Gemini
-npm run test:live-chatgpt    # just ChatGPT
-npm run test:live            # all enabled providers
+npm run test:live-claude        # just Claude
+npm run test:live-claude-code   # just Claude Code (claude.ai/code)
+npm run test:live-gemini        # just Gemini
+npm run test:live-chatgpt       # just ChatGPT
+npm run test:live               # all enabled providers
 ```
+
+The Claude Code project requires that the test browser's profile
+have already selected a repo at least once on `claude.ai/code` —
+the Send button stays disabled until that's done. A scratch repo
+is fine; once selected, `claude.ai/code` redirects to the most
+recent `/code/session_<id>` on each goto.
 
 If the browser isn't running, you'll get a clear error pointing
 at the launch script.
@@ -224,6 +231,19 @@ Each provider runs the same five-test set, defined once in
 | Two prompt-only calls accumulate | No | Calling the runtime twice with text but no submit appends — pins the additive contract used by repeat-Ask flows. |
 | Two file-attach calls accumulate | No | Calling the runtime twice with files but no submit shows both attachments — same contract on the upload side. |
 | Multi-file + prompt → submit | **Yes** | Same payload + tagged prompt; provider-specific user-message locator sees the tag in the conversation. Then a follow-up call confirms the composer was reset and the runtime works against a fresh editor. |
+
+For destinations that accept only a subset of attachment kinds
+(Claude Code is image-only via `LiveProvider.acceptedAttachmentKinds`),
+the multi-file tests automatically swap text payloads for an extra
+image so each test still exercises multi-file dispatch. The titles
+shift accordingly (e.g. "image + html + selection attach, no submit"
+becomes "two images attach, no submit").
+
+A provider can also supply a `resetPage` hook that runs after the
+goto + composer-ready wait. Used by Claude Code, where the goto
+redirects to the last session and preserves any queued prompt /
+attachment pills — the hook clears those in-place so each test
+starts from a known-clean state.
 
 ## Troubleshooting
 

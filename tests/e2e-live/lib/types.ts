@@ -14,17 +14,31 @@
 // vary across providers.
 
 import type { Locator, Page } from '@playwright/test';
-import type { AskInjectSelectors } from '../../../src/background/ask/providers.js';
+import type {
+  AskAttachmentKind,
+  AskInjectSelectors,
+} from '../../../src/background/ask/providers.js';
 
 export interface LiveProvider {
   /** Stable id, used in fixture filenames and run-tag prefixes. */
-  id: 'claude' | 'gemini' | 'chatgpt';
+  id: 'claude' | 'claude-code' | 'gemini' | 'chatgpt';
   /** Display name used in test descriptions. */
   label: string;
   /** Page opened for each test. */
   newTabUrl: string;
   /** Selectors imported from `src/background/ask/<provider>.ts`. */
   selectors: AskInjectSelectors;
+  /**
+   * Attachment kinds the destination's composer actually accepts at
+   * `newTabUrl`. Mirrors `resolveAcceptedKinds` semantics: omit (or
+   * leave undefined) for full-featured providers (all kinds); set to
+   * a narrower list (e.g. `['image']` for Claude Code) and the shared
+   * suite either swaps non-image attachments for extra images or
+   * skips the case outright. Without this the multi-file / submit
+   * tests would dispatch HTML / `.md` payloads the destination would
+   * silently drop, hiding regressions.
+   */
+  acceptedAttachmentKinds?: AskAttachmentKind[];
 
   /**
    * Wait for the composer to be ready to accept input. Lets the
@@ -33,6 +47,17 @@ export interface LiveProvider {
    * with a generous timeout.
    */
   waitForComposerReady: (page: Page) => Promise<void>;
+
+  /**
+   * Optional extra cleanup run AFTER the shared suite's
+   * `goto(newTabUrl)` + `waitForComposerReady`. Used by destinations
+   * where the goto doesn't actually wipe composer state — Claude
+   * Code's `/code` redirects back to the last session and preserves
+   * any queued prompt plus attachment pills. Implementations should
+   * leave the page on the same URL with an empty composer and no
+   * attachments, so each test starts from a known-clean state.
+   */
+  resetPage?: (page: Page) => Promise<void>;
 
   /**
    * Locator for the in-composer preview of an attached image with the
@@ -45,9 +70,13 @@ export interface LiveProvider {
    * Locator for the in-composer thumbnail of a non-image file with
    * the given filename. Note this is filename-tagged, not filename-
    * containing — pass the literal filename and the helper picks the
-   * right matching strategy for the provider.
+   * right matching strategy for the provider. Required only on
+   * providers whose `acceptedAttachmentKinds` includes `'text'`;
+   * image-only destinations (Claude Code) leave it undefined and
+   * the shared suite skips its call sites under the same
+   * `accepts(provider, 'text')` guard that swaps the payload.
    */
-  fileAttachmentLocator: (page: Page, filename: string) => Locator;
+  fileAttachmentLocator?: (page: Page, filename: string) => Locator;
 
   /**
    * Count of all file/image attachments currently in the composer.
