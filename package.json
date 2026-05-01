@@ -31,6 +31,7 @@
     "@types/chrome": "^0.0.287",
     "@types/node": "^22.10.0",
     "@types/pngjs": "^6.0.5",
+    "chrome-remote-interface": "^0.34.0",
     "codejar": "^4.3.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.2",

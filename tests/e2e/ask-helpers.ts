@@ -74,6 +74,17 @@ export interface OverrideOpts {
     textInput?: string[];
     submitButton?: string[];
   };
+  /**
+   * URL-variant overrides — same shape as `AskProvider.urlVariants`.
+   * Used by the Claude Code spec to simulate the `/code` image-only
+   * sub-page rule against the fake fixture. `pattern` is matched as a
+   * `*`-glob against the destination tab's URL.
+   */
+  urlVariants?: Array<{
+    pattern: string;
+    label?: string;
+    acceptedAttachmentKinds: ('image' | 'text')[];
+  }>;
 }
 
 /**
@@ -89,7 +100,7 @@ export async function overrideAskProviders(
   opts: OverrideOpts = {},
 ): Promise<void> {
   await sw.evaluate(
-    ({ urlPattern, newTabUrl, excludes, selectorOverrides }) => {
+    ({ urlPattern, newTabUrl, excludes, selectorOverrides, urlVariants }) => {
       const api = (
         self as unknown as {
           SeeWhatISee: {
@@ -105,6 +116,7 @@ export async function overrideAskProviders(
           excludeUrlPatterns: excludes,
           newTabUrl,
           enabled: true,
+          urlVariants,
           selectors: {
             fileInput: selectorOverrides.fileInput ?? [
               'input[data-testid="file-upload"]',
@@ -124,6 +136,7 @@ export async function overrideAskProviders(
       newTabUrl: `${baseUrl}/fake-claude.html`,
       excludes: opts.excludeUrlPatterns ?? [],
       selectorOverrides: opts.selectors ?? {},
+      urlVariants: opts.urlVariants ?? [],
     },
   );
 }

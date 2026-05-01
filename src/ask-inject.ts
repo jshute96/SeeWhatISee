@@ -233,24 +233,19 @@
         await delay(POLL_INTERVAL_MS);
       }
 
-      // For providers with preClicks, the file input may not be in
-      // the DOM yet — poll for it. We deliberately pick the LAST
-      // matching element on the page, not the first: when Ask is
-      // called twice in a row, the previous call's input may still
-      // be in the DOM (now stale, with files already attached). The
-      // freshly-created input is the one most recently inserted, so
-      // in document order it's last among its siblings of the same
-      // selector. For Claude (no preClicks) the first selector
-      // matches immediately and there's only one.
-      if (preClicks.length > 0) {
-        input = await waitForRankedLast<HTMLInputElement>(
-          'fileInput',
-          selectors.fileInput,
-          3000,
-        );
-      } else {
-        input = findRanked<HTMLInputElement>('fileInput', selectors.fileInput);
-      }
+      // Poll for the file input — even providers without preClicks
+      // can render their input lazily after navigation completes
+      // (e.g. claude.ai/code mounts its composer a beat later than
+      // claude.ai). Picks the LAST matching element on the page, so
+      // a stale input from a previous Ask call (in the preClicks
+      // flow) doesn't get reused. For providers where the input is
+      // already in the initial DOM the first poll iteration matches
+      // and the timeout never kicks in.
+      input = await waitForRankedLast<HTMLInputElement>(
+        'fileInput',
+        selectors.fileInput,
+        3000,
+      );
       if (!input) throw new Error('Could not find the file-upload input');
 
       const dt = new DataTransfer();
@@ -374,37 +369,93 @@
   async function clickSubmit(selectors: AskSelectors): Promise<void> {
     const start = Date.now();
     const deadline = start + SUBMIT_ENABLE_TIMEOUT_MS;
-    log('clickSubmit: waiting for submit button to enable');
+    log('clickSubmit: waiting for an enabled submit button to appear');
     let polls = 0;
-    // The first findRanked call logs which selector matched. Subsequent
-    // re-queries inside the poll loop go straight through `document.
-    // querySelector` so the console isn't spammed with one
-    // `submitButton: matched …` line per poll while uploads finish.
-    let btn = findRanked<HTMLButtonElement>('submitButton', selectors.submitButton);
+    let logged = false;
     while (Date.now() < deadline) {
-      if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
-        log(`clickSubmit: clicking after ${Date.now() - start}ms (${polls} poll(s))`);
-        btn.click();
+      const found = findEnabledSubmit(selectors.submitButton);
+      if (found) {
+        if (!logged) {
+          log(
+            `submitButton: matched ${found.selector}` +
+              (found.matchCount > 1
+                ? ` (picking first enabled of ${found.matchCount})`
+                : ''),
+          );
+          logged = true;
+        }
+        log(`clickSubmit: firing click on submit after ${Date.now() - start}ms (${polls} poll(s))`);
+        fireClick(found.btn);
         return;
       }
       polls++;
       await delay(POLL_INTERVAL_MS);
-      // Re-query without logging — Claude can re-mount the button
-      // while uploads are processing, so a cached reference can go
-      // stale. Quiet path keeps the diagnostic log readable.
-      btn = quietQuery<HTMLButtonElement>(selectors.submitButton);
     }
     throw new Error('Submit button stayed disabled — uploads may still be processing');
   }
 
-  function quietQuery<T extends Element = HTMLElement>(
-    selectors: string[],
-  ): T | null {
-    for (const sel of selectors) {
-      const el = document.querySelector<T>(sel);
-      if (el) return el;
+  /**
+   * Find the FIRST submit button that's currently enabled.
+   *
+   * Claude Code renders TWO `aria-label="Send"` buttons in its
+   * composer (one per mode), and only the active mode's button
+   * enables once the prompt is non-empty. The naive
+   * `document.querySelector(sel)` picks the first match in document
+   * order — which is the dormant one — and clickSubmit then waits
+   * forever for it to enable. By scanning all matches per selector
+   * and returning the first enabled one we tolerate that layout.
+   *
+   * Selectors are walked in declaration order so a page-specific
+   * selector (e.g. `aria-label="Send Message"`) still wins over a
+   * looser fallback when both happen to match. Returns `null` while
+   * no enabled match exists, letting the poll loop keep waiting.
+   */
+  function findEnabledSubmit(
+    selectorList: string[],
+  ): { btn: HTMLButtonElement; selector: string; matchCount: number } | null {
+    for (const sel of selectorList) {
+      const matches = document.querySelectorAll<HTMLButtonElement>(sel);
+      for (const btn of Array.from(matches)) {
+        if (!btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+          return { btn, selector: sel, matchCount: matches.length };
+        }
+      }
     }
     return null;
+  }
+
+  /**
+   * Click a button with the full pointer-event sequence a real mouse
+   * would generate. Plain `.click()` (or a bare `MouseEvent`) is
+   * sometimes ignored by React handlers that listen for
+   * `onPointerDown` / `onPointerUp` instead — Claude Code's send
+   * button is one such case (it stays "ready" but never actually
+   * dispatches the message). Firing pointerdown→pointerup→click in
+   * order matches what an OS-level click does and exercises both
+   * legacy mouse-event and modern pointer-event paths so both the
+   * old composer (regular Claude) and the new one (Claude Code)
+   * accept the synthetic gesture.
+   */
+  function fireClick(btn: HTMLButtonElement): void {
+    const rect = btn.getBoundingClientRect();
+    const clientX = rect.left + rect.width / 2;
+    const clientY = rect.top + rect.height / 2;
+    const pointerInit: PointerEventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+      clientX,
+      clientY,
+    };
+    btn.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
+    btn.dispatchEvent(new MouseEvent('mousedown', { ...pointerInit, buttons: 1 }));
+    btn.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit, buttons: 0 }));
+    btn.dispatchEvent(new MouseEvent('mouseup', { ...pointerInit, buttons: 0 }));
+    btn.click();
   }
 
   async function run(

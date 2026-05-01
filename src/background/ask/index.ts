@@ -16,10 +16,48 @@
 import {
   ASK_PROVIDERS,
   getAskProvider,
+  type AskAttachmentKind,
   type AskProvider,
   type AskProviderId,
 } from './providers.js';
 import { getAskProviderSettings } from './settings.js';
+
+/**
+ * Effective accepted attachment kinds for a destination (provider +
+ * URL). Walks `provider.urlVariants` in declaration order, returning
+ * the first match; falls back to `provider.acceptedAttachmentKinds`,
+ * and finally to `null` meaning "no restriction — accept everything."
+ *
+ * Used both at send time (to filter the payload) and at resolve time
+ * (so the Capture page can pre-validate the user's checkbox state
+ * before round-tripping to the SW).
+ */
+export function resolveAcceptedKinds(
+  provider: AskProvider,
+  url: string,
+): AskAttachmentKind[] | null {
+  for (const variant of provider.urlVariants ?? []) {
+    if (globMatch(url, variant.pattern)) return variant.acceptedAttachmentKinds;
+  }
+  return provider.acceptedAttachmentKinds ?? null;
+}
+
+/**
+ * User-facing destination name. Returns the matching variant's
+ * `label` when one applies (e.g. "Claude Code" on `claude.ai/code`),
+ * otherwise the provider's own `label`. Used in pre-send error text
+ * so a refused payload reads "Claude Code only accepts images" rather
+ * than the less specific "Claude only accepts images."
+ */
+export function resolveDestinationLabel(
+  provider: AskProvider,
+  url: string,
+): string {
+  for (const variant of provider.urlVariants ?? []) {
+    if (globMatch(url, variant.pattern) && variant.label) return variant.label;
+  }
+  return provider.label;
+}
 
 export type AskDestination =
   | { kind: 'newTab'; provider: AskProviderId }
@@ -43,6 +81,16 @@ export interface AskResult {
   ok: boolean;
   error?: string;
   tabId?: number;
+  /**
+   * Filenames that didn't match the destination's accepted-kinds
+   * list (e.g. `contents.html`, `selection.md` when sending to
+   * Claude Code). Only set when `ok: false` — we refuse outright
+   * rather than silently filtering, so successful sends never
+   * carry a skipped list. The Capture-page toast appends these to
+   * the error message so the user sees which files were the
+   * problem.
+   */
+  skipped?: string[];
 }
 
 /** Tab listing item used to render the "Existing window in <provider>" group. */
@@ -58,12 +106,34 @@ export interface AskTabSummary {
    * provider but isn't a valid Ask target.
    */
   excluded?: boolean;
+  /**
+   * Effective accepted attachment kinds at this URL. `undefined`
+   * means "no restriction — provider accepts everything." Set when
+   * the URL hits one of the provider's `urlVariants` (e.g. Claude on
+   * `/code` returns `['image']`). Used by the Capture page to
+   * pre-validate the user's checkbox state before sending.
+   */
+  acceptedAttachmentKinds?: AskAttachmentKind[];
+  /**
+   * Display name for this tab in pre-send error text — variant label
+   * when one applies (e.g. "Claude Code"), provider label otherwise.
+   * The Capture page uses this so the refusal reads "Claude Code only
+   * accepts images" instead of the less specific "Claude only…".
+   */
+  destinationDisplayName: string;
 }
 
 export interface AskProviderListing {
   id: AskProviderId;
   label: string;
   enabled: boolean;
+  /**
+   * Provider-default accepted kinds for "New window in <X>" rows.
+   * `undefined` means "no restriction." Mirrors the per-tab
+   * `acceptedAttachmentKinds` so the page-side check is the same
+   * shape regardless of menu row type.
+   */
+  newTabAcceptedAttachmentKinds?: AskAttachmentKind[];
   /** Empty when no tabs match the provider's URL patterns. */
   existingTabs: AskTabSummary[];
 }
@@ -166,6 +236,18 @@ export async function findProviderForTab(
 export interface AskResolution {
   destination: AskDestination | null;
   staleTabPin?: { provider: AskProviderId; tabId: number };
+  /**
+   * Accepted attachment kinds at the resolved destination (provider
+   * default for `newTab`, URL-variant aware for `existingTab`).
+   * `undefined` means "no restriction." Used by the Capture page to
+   * pre-validate the user's checkbox state before sending so the
+   * "image-only Claude Code" path can refuse to send a payload that
+   * has HTML / selection checked.
+   */
+  destinationAcceptedAttachmentKinds?: AskAttachmentKind[];
+  /** Display name (variant label or provider label) for the resolved
+   *  default destination. Set whenever `destination` is non-null. */
+  destinationDisplayName?: string;
 }
 
 /**
@@ -201,6 +283,13 @@ export async function resolveAsk(): Promise<AskResolution> {
     destination: fallbackProvider
       ? { kind: 'newTab', provider: fallbackProvider.id }
       : null,
+    destinationAcceptedAttachmentKinds: fallbackProvider
+      ? resolveAcceptedKinds(fallbackProvider, fallbackProvider.newTabUrl)
+        ?? undefined
+      : undefined,
+    destinationDisplayName: fallbackProvider
+      ? resolveDestinationLabel(fallbackProvider, fallbackProvider.newTabUrl)
+      : undefined,
   };
 
   const pin = await readPin();
@@ -249,13 +338,21 @@ export async function resolveAsk(): Promise<AskResolution> {
     // existing-tab row to mark — visually fine, and the next menu
     // open's `tabs.get` will throw and clear the pin properly.
     return {
-      destination: fallbackResolution.destination,
+      // Spread `fallbackResolution` (rather than rebuilding) so the
+      // pre-computed `destinationAcceptedAttachmentKinds` /
+      // `destinationDisplayName` for the fallback newTab destination
+      // ride along — without this the page-side pre-send guard goes
+      // dark on the stale-pin path.
+      ...fallbackResolution,
       staleTabPin: { provider: pin.provider, tabId: pin.tabId },
     };
   }
 
   return {
     destination: { kind: 'existingTab', provider: pin.provider, tabId: pin.tabId },
+    destinationAcceptedAttachmentKinds:
+      resolveAcceptedKinds(provider, tab.url) ?? undefined,
+    destinationDisplayName: resolveDestinationLabel(provider, tab.url),
   };
 }
 
@@ -278,19 +375,22 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
       id: provider.id,
       label: provider.label,
       enabled: provider.enabled,
+      newTabAcceptedAttachmentKinds:
+        resolveAcceptedKinds(provider, provider.newTabUrl) ?? undefined,
       existingTabs: tabs
         .filter((t): t is chrome.tabs.Tab & { id: number } => t.id !== undefined)
-        // Tabs on excluded URLs (settings, library, recents, etc.)
-        // still appear in the menu but flagged so the page renders
-        // them disabled with a "(Wrong page)" suffix —
-        // `chrome.tabs.query` only takes positive match patterns,
-        // so we evaluate excludes post-query.
-        .map((t) => ({
-          tabId: t.id,
-          title: t.title ?? t.url ?? `Tab ${t.id}`,
-          url: t.url ?? '',
-          excluded: matchesAny(t.url ?? '', excludes),
-        })),
+        .map((t) => {
+          const url = t.url ?? '';
+          const kinds = resolveAcceptedKinds(provider, url);
+          return {
+            tabId: t.id,
+            title: t.title ?? url ?? `Tab ${t.id}`,
+            url,
+            excluded: matchesAny(url, excludes),
+            acceptedAttachmentKinds: kinds ?? undefined,
+            destinationDisplayName: resolveDestinationLabel(provider, url),
+          };
+        }),
     });
   }
   return out;
@@ -350,11 +450,50 @@ export async function sendToAi(
     };
   }
 
+  // Resolve the effective accepted kinds at the destination URL —
+  // for `existingTab`, we look up the live tab's URL so a Claude
+  // `/code` tab gets the image-only variant; for `newTab` we use the
+  // provider's `newTabUrl` (so e.g. claude.ai/new gets the full
+  // provider-level kinds, even though /code on the same provider
+  // would be image-only).
+  let destinationUrl = provider.newTabUrl;
+  if (destination.kind === 'existingTab') {
+    try {
+      const tab = await chrome.tabs.get(destination.tabId);
+      destinationUrl = tab.url ?? provider.newTabUrl;
+    } catch {
+      // Tab gone; let resolveTab below produce the user-visible error.
+    }
+  }
+  const acceptedKinds = resolveAcceptedKinds(provider, destinationUrl);
+  const destinationLabel = resolveDestinationLabel(provider, destinationUrl);
+
+  // Refuse outright if any attachment doesn't match the destination's
+  // accepted kinds. The Capture page's pre-send guard already catches
+  // this in normal flow, so reaching here means the page's cached
+  // accepted-kinds was stale (Pin/Unpin from the toolbar, a tab
+  // navigation, or an Options-page change between cache load and
+  // click). Treating it as an error rather than silently filtering
+  // matches the user's expectation: the payload they checked is what
+  // gets sent, full stop. The page-side error suffix names which
+  // files would have been dropped so the user can act.
+  const filtered = filterAttachmentsByKinds(payload.attachments, acceptedKinds);
+  if (filtered.skipped.length > 0) {
+    return {
+      ok: false,
+      error: `${destinationLabel} only accepts ${formatKindList(acceptedKinds)} attachments; uncheck other items`,
+      skipped: filtered.skipped.map((a) => a.filename),
+    };
+  }
+
   let tabId: number;
   try {
     tabId = await resolveTab(provider, destination);
   } catch (err) {
-    return { ok: false, error: `Could not open ${provider.label}: ${describe(err)}` };
+    return {
+      ok: false,
+      error: `Could not open ${provider.label}: ${describe(err)}`,
+    };
   }
 
   // Best-effort focus. If this fails we still try to inject — the
@@ -407,6 +546,42 @@ export async function sendToAi(
       tabId,
     };
   }
+}
+
+/**
+ * Friendly join of accepted-kind tokens for an error message — turns
+ * `['image']` into `"image"` and `['image', 'text']` into
+ * `"image and text"`. Caller adds the trailing word "attachments" so
+ * the result reads naturally in the surrounding sentence.
+ */
+export function formatKindList(kinds: AskAttachmentKind[] | null): string {
+  if (!kinds || kinds.length === 0) return '';
+  if (kinds.length === 1) return kinds[0];
+  if (kinds.length === 2) return `${kinds[0]} and ${kinds[1]}`;
+  return `${kinds.slice(0, -1).join(', ')}, and ${kinds[kinds.length - 1]}`;
+}
+
+/**
+ * Split `attachments` into kept vs. skipped according to the
+ * provided accepted-kinds list. `null` means "no restriction" — every
+ * attachment is kept. Used by `sendToAi`'s refusal check; an empty
+ * `skipped` array means the payload is clean for this destination.
+ */
+function filterAttachmentsByKinds(
+  attachments: AskAttachment[],
+  acceptedKinds: AskAttachmentKind[] | null,
+): { kept: AskAttachment[]; skipped: AskAttachment[] } {
+  if (!acceptedKinds || acceptedKinds.length === 0) {
+    return { kept: attachments, skipped: [] };
+  }
+  const allow = new Set<AskAttachmentKind>(acceptedKinds);
+  const kept: AskAttachment[] = [];
+  const skipped: AskAttachment[] = [];
+  for (const a of attachments) {
+    if (allow.has(a.kind)) kept.push(a);
+    else skipped.push(a);
+  }
+  return { kept, skipped };
 }
 
 // Runs in MAIN world via executeScript({ func }). Kept as a named
@@ -514,6 +689,9 @@ export function installAskMessageHandler(): void {
               providers,
               defaultDestination: resolution.destination,
               staleTabPin: resolution.staleTabPin,
+              defaultAcceptedAttachmentKinds:
+                resolution.destinationAcceptedAttachmentKinds,
+              defaultDestinationDisplayName: resolution.destinationDisplayName,
             }),
         );
         return true;

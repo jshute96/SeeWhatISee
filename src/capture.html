@@ -738,12 +738,14 @@
     word-wrap: break-word;
     overflow-wrap: anywhere;
   }
-  #ask-status.error {
-    color: #b00;
-  }
-  #ask-status.ok {
-    color: #060;
-  }
+  /* Status colours used by `#ask-status` for the flat single-segment
+     state AND by the success+skipped two-span state in
+     `setAskSentWithSkipped`. Defined on standalone classes (rather
+     than `#ask-status.ok`) so the same colour values can apply to
+     either the wrapper or its child spans without duplicating the
+     hex codes in JS. */
+  .ask-status-ok    { color: #060; }
+  .ask-status-error { color: #b00; }
   .highlight-bar {
     margin: 0 0 8px 0;
     display: flex;

@@ -2,8 +2,9 @@
 
 The "Ask AI" button on the Capture page sends the currently-staged
 artifacts (screenshot, HTML snapshot, optional selection, prompt) to
-an AI web UI in another tab. Ships with Claude, Gemini, and ChatGPT;
-the provider-adapter layout makes additional providers additive.
+an AI web UI in another tab. Ships with Claude (including Claude Code,
+which can only take image uploads), Gemini, and ChatGPT; the
+provider-adapter layout makes additional providers additive.
 
 ## Goals
 
@@ -245,6 +246,8 @@ type AskProvider = {
   excludeUrlPatterns?: string[];// glob excludes filtered post-query
   newTabUrl: string;            // opened for "New window in <X>"
   enabled: boolean;             // false = "coming soon" in the menu
+  acceptedAttachmentKinds?: ('image' | 'text')[]; // provider-wide; omit = all
+  urlVariants?: AskUrlVariant[];                  // per-URL overrides
   selectors: AskInjectSelectors;
 };
 ```
@@ -298,6 +301,72 @@ For the duration of the click chain the runtime patches
 Claude's adapter omits `preFileInputClicks`; the runtime takes the
 fast path (a single `findRanked` call against `fileInput`) and the
 override never installs.
+
+### `acceptedAttachmentKinds` and `urlVariants` (Claude Code)
+
+Some composers reject attachments their file input would otherwise
+take via `DataTransfer`:
+
+- Claude on `/code` (Claude Code) is the v1 case — same host as
+  full-featured Claude, but the agentic-coding composer accepts
+  images only and silently drops HTML / selection.
+- Without filtering, the SW would inject everything, the AI tab would
+  discard most of it, and the Capture page would still report
+  "Sent." — none of which the user can act on.
+
+Two cooperating fields live on `AskProvider`:
+
+- `acceptedAttachmentKinds?: ('image' | 'text')[]` — provider-wide
+  default. Omit (or leave undefined) to mean "no restriction." Today
+  no provider sets this at the top level; everyone uses URL variants
+  instead.
+- `urlVariants?: AskUrlVariant[]` — per-URL overrides. Each entry has
+  `pattern` (a `*`-glob, same grammar as `excludeUrlPatterns`) and
+  `acceptedAttachmentKinds`. The first variant whose pattern matches
+  the destination URL wins.
+
+`resolveAcceptedKinds(provider, url)` — exported from
+`src/background/ask/index.ts` — walks the variant list and falls back
+to the provider-level default. Used in three places:
+
+- `listAskProviders` populates per-tab `acceptedAttachmentKinds` on
+  each `AskTabSummary`. The Capture page leans on the existing tab
+  title to disambiguate sub-products — Claude Code's title is
+  literally "Claude Code", so no extra suffix is rendered.
+- `resolveAsk` sets `destinationAcceptedAttachmentKinds` on the
+  resolved default destination so the Capture page can pre-validate
+  the user's checkbox state before round-tripping to the SW.
+- `sendToAi` resolves kinds at send time and refuses (with
+  `ok: false`) if any attachment's kind isn't accepted at the
+  destination, returning the offending filenames in `AskResult.skipped`.
+  We deliberately don't silently filter — the user should always see
+  "the payload I checked is what got sent." Reaching this branch
+  implies a stale page-side cache; normal flow catches it upstream
+  in the pre-send guard.
+
+Pre-send guard on the Capture page:
+
+- `checkDestinationAcceptsCheckedBoxes` runs before every send (plain
+  Ask click and per-menu-row pick).
+- If the user has checked Save rows whose kind isn't in the
+  destination's accepted list, the status line names the destination
+  via the variant `label` and lists the offending Save rows
+  (`"Claude Code only accepts image attachments; uncheck Save HTML
+  and Save selection."`), and the send is aborted.
+- The SW's matching refusal at send time is the safety net for stale
+  page state (toolbar Pin/Unpin or tab-navigation races where the
+  cached accepted-kinds doesn't match what the destination actually
+  accepts now). Its error message has the same shape, with
+  `Skipped: …` appended naming the dropped filenames.
+
+We deliberately don't offer a "New window in Claude Code" entry —
+Claude Code requires repo-selection setup before any prompt makes
+sense, so opening a fresh tab from Ask would dump the user on a
+screen that can't accept the payload yet. The Ask menu only surfaces
+`/code` tabs that already exist (the user pinned or set up).
+
+`ask-inject.ts` is unchanged by all of this — filtering happens in
+the SW so the runtime stays selector-driven and provider-agnostic.
 
 ### Adding a new provider
 

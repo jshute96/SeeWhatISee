@@ -2392,12 +2392,18 @@ interface AskTabSummary {
    *  library, recents, etc.) — rendered disabled with a "(Wrong
    *  page)" suffix. */
   excluded?: boolean;
+  /** URL-aware accepted-kinds list. `undefined` = no restriction. */
+  acceptedAttachmentKinds?: ('image' | 'text')[];
+  /** Display name used in pre-send error text (variant label or the
+   *  provider's own label). Always set by the SW. */
+  destinationDisplayName: string;
 }
 interface AskProviderListing {
   id: AskProviderId;
   label: string;
   enabled: boolean;
   existingTabs: AskTabSummary[];
+  newTabAcceptedAttachmentKinds?: ('image' | 'text')[];
 }
 type AskDestination =
   | { kind: 'newTab'; provider: AskProviderId }
@@ -2430,6 +2436,13 @@ async function fetchAskState(): Promise<{
    *  on that row alongside the regular green check on whatever
    *  `defaultDestination` resolved to instead. */
   staleTabPin: AskStatePin | null;
+  /** Effective accepted attachment kinds at the resolved default
+   *  destination, or `undefined` for "no restriction." Used by plain
+   *  Ask's pre-send check. */
+  defaultAcceptedKinds: ('image' | 'text')[] | undefined;
+  /** Display name (variant label or provider label) of the resolved
+   *  default destination — used in the pre-send refusal message. */
+  defaultDestinationDisplayName: string | undefined;
 }> {
   try {
     const response = (await chrome.runtime.sendMessage({
@@ -2439,17 +2452,38 @@ async function fetchAskState(): Promise<{
           providers: AskProviderListing[];
           defaultDestination: AskDestination | null;
           staleTabPin?: AskStatePin;
+          defaultAcceptedAttachmentKinds?: ('image' | 'text')[];
+          defaultDestinationDisplayName?: string;
         }
       | undefined;
     return {
       providers: response?.providers ?? [],
       defaultDestination: response?.defaultDestination ?? null,
       staleTabPin: response?.staleTabPin ?? null,
+      defaultAcceptedKinds: response?.defaultAcceptedAttachmentKinds,
+      defaultDestinationDisplayName: response?.defaultDestinationDisplayName,
     };
   } catch {
-    return { providers: [], defaultDestination: null, staleTabPin: null };
+    return {
+      providers: [],
+      defaultDestination: null,
+      staleTabPin: null,
+      defaultAcceptedKinds: undefined,
+      defaultDestinationDisplayName: undefined,
+    };
   }
 }
+
+/**
+ * Cached accepted-kinds list + display name for the default
+ * destination. Populated by `refreshAskTargetLabel` and consulted by
+ * `runAskDefault` so we can pre-validate the user's checkbox state
+ * before round-tripping to the SW. `undefined` kinds means "no
+ * restriction" (the common case); the only restricted destination
+ * today is Claude on `/code`.
+ */
+let currentDefaultAcceptedKinds: ('image' | 'text')[] | undefined;
+let currentDefaultDisplayName: string | undefined;
 
 // Sync the "Ask <provider>" button label + tooltip to the resolved
 // default destination. Called at page load and after every Ask
@@ -2457,7 +2491,14 @@ async function fetchAskState(): Promise<{
 // here are silent — the static HTML default ("Ask Claude") is a
 // safe fallback.
 async function refreshAskTargetLabel(): Promise<void> {
-  const { providers, defaultDestination } = await fetchAskState();
+  const {
+    providers,
+    defaultDestination,
+    defaultAcceptedKinds,
+    defaultDestinationDisplayName,
+  } = await fetchAskState();
+  currentDefaultAcceptedKinds = defaultAcceptedKinds;
+  currentDefaultDisplayName = defaultDestinationDisplayName;
   // `listAskProviders` already filters out user-disabled providers,
   // so an empty (or all-statically-disabled) listing means the user
   // has nothing to Ask. Block both halves of the split button until
@@ -2500,22 +2541,32 @@ async function refreshAskTargetLabel(): Promise<void> {
 }
 void refreshAskTargetLabel();
 
-// Re-render the Ask label/disabled state when the user changes
-// provider settings on the Options page in another tab. The pin
-// session-storage key isn't watched here — those flips happen via
-// the SW after an Ask, and we already re-call refreshAskTargetLabel
-// after each runAskWithMessage.
+// Re-render the Ask label/disabled state on external state changes:
+//
+// - `local.askProviderSettings` — flipped from the Options page in
+//   another tab.
+// - `session.askPin` — the toolbar context-menu Pin/Unpin entry
+//   writes here (without going through `runAskWithMessage`), so
+//   without this listener the cached `currentDefaultAcceptedKinds`
+//   would go stale and the page-side pre-send guard would miss the
+//   newly-restricted destination (e.g. a freshly-pinned `/code`
+//   tab). Post-Ask refreshes are still handled inline by
+//   `runAskWithMessage`.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['askProviderSettings']) {
+    void refreshAskTargetLabel();
+    return;
+  }
+  if (area === 'session' && changes['askPin']) {
     void refreshAskTargetLabel();
   }
 });
 
 function setAskStatus(text: string, kind: 'ok' | 'error' | 'info'): void {
   askStatus.textContent = text;
-  askStatus.classList.remove('ok', 'error');
-  if (kind === 'ok') askStatus.classList.add('ok');
-  else if (kind === 'error') askStatus.classList.add('error');
+  askStatus.classList.remove('ask-status-ok', 'ask-status-error');
+  if (kind === 'ok') askStatus.classList.add('ask-status-ok');
+  else if (kind === 'error') askStatus.classList.add('ask-status-error');
 }
 
 // Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
@@ -2694,7 +2745,11 @@ async function openAskMenu(): Promise<void> {
         onClick: provider.enabled
           ? () => {
               closeAskMenu();
-              void runAsk(dest);
+              void runAsk(
+                dest,
+                provider.newTabAcceptedAttachmentKinds,
+                provider.label,
+              );
             }
           : undefined,
       }),
@@ -2721,6 +2776,7 @@ async function openAskMenu(): Promise<void> {
         provider: provider.id,
         tabId: tab.tabId,
       };
+      const tabKinds = tab.acceptedAttachmentKinds;
       askMenuList.appendChild(
         renderAskMenuItem({
           label: tab.title || tab.url || `Tab ${tab.tabId}`,
@@ -2728,11 +2784,10 @@ async function openAskMenu(): Promise<void> {
           // the provider's host but aren't a valid Ask target. Show
           // them disabled so the user can see the tab is recognised
           // — just not pickable — and explain why with the suffix.
-          // Append the URL's first path segment when we can derive
-          // one so the user sees *which* sub-page the tab is on.
-          suffix: tab.excluded
-            ? excludedSuffix(tab.url)
-            : undefined,
+          // For valid targets we leave the suffix off; the page
+          // title already disambiguates sub-products like Claude
+          // Code, which sets `<title>Claude Code</title>`.
+          suffix: tab.excluded ? excludedSuffix(tab.url) : undefined,
           title: tab.url,
           isDefault: !tab.excluded
             && isSameDestination(defaultDestination, dest),
@@ -2746,7 +2801,7 @@ async function openAskMenu(): Promise<void> {
             ? undefined
             : () => {
                 closeAskMenu();
-                void runAsk(dest);
+                void runAsk(dest, tabKinds, tab.destinationDisplayName);
               },
         }),
       );
@@ -2869,14 +2924,24 @@ async function runAskWithMessage(message: {
   setAskStatus('Sending…', 'info');
   try {
     const response = (await chrome.runtime.sendMessage(message)) as
-      | { ok: boolean; error?: string }
+      | { ok: boolean; error?: string; skipped?: string[] }
       | undefined;
     if (!response) {
       setAskStatus('No response from background.', 'error');
       return;
     }
     if (!response.ok) {
-      setAskStatus(response.error ?? 'Ask failed.', 'error');
+      // The SW refuses payloads with attachments the destination
+      // doesn't accept and reports them in `skipped` — append them
+      // to the error so the user sees which files were the problem.
+      // Normal flow catches this upstream in the page-side guard;
+      // this path fires only when the page's cached accepted-kinds
+      // was stale (toolbar Pin/Unpin or tab-navigation race).
+      const skippedSuffix =
+        response.skipped && response.skipped.length > 0
+          ? ` Skipped: ${response.skipped.join(', ')}.`
+          : '';
+      setAskStatus((response.error ?? 'Ask failed.') + skippedSuffix, 'error');
       return;
     }
     setAskStatus('Sent.', 'ok');
@@ -2902,16 +2967,96 @@ async function runAskWithMessage(message: {
   }
 }
 
-async function runAsk(destination: AskDestination): Promise<void> {
+async function runAsk(
+  destination: AskDestination,
+  acceptedKinds: ('image' | 'text')[] | undefined,
+  displayName: string | undefined,
+): Promise<void> {
+  if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAi', destination, payload });
 }
 
 async function runAskDefault(): Promise<void> {
+  if (
+    !checkDestinationAcceptsCheckedBoxes(
+      currentDefaultAcceptedKinds,
+      currentDefaultDisplayName,
+    )
+  ) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAiDefault', payload });
+}
+
+/**
+ * Pre-send guard: refuse to send when the destination's composer
+ * doesn't accept one of the kinds the user has checked. Today this
+ * only fires for Claude on `/code` (image-only), but the check is
+ * generic — any future image-only or text-only sub-page will benefit.
+ *
+ * On a mismatch we display an error naming the destination by its
+ * variant label (e.g. "Claude Code") and the specific Save rows the
+ * user needs to uncheck, and return false so the caller bails. The
+ * SW runs the same check at send time and refuses outright (with
+ * `Skipped: …` in the error) if anything slips through — covers
+ * stale-cache races (toolbar Pin/Unpin or tab navigation between
+ * cache load and click). `displayName` falls back to a generic
+ * "Destination" if the SW didn't provide one (defensive — in
+ * practice the listing always fills it in alongside any non-null
+ * `acceptedKinds`).
+ */
+function checkDestinationAcceptsCheckedBoxes(
+  acceptedKinds: ('image' | 'text')[] | undefined,
+  displayName: string | undefined,
+): boolean {
+  if (!acceptedKinds || acceptedKinds.length === 0) return true;
+  const allow = new Set(acceptedKinds);
+  const offending: string[] = [];
+  if (
+    htmlBox.checked
+    && !htmlBox.disabled
+    && captured.html
+    && !allow.has('text')
+  ) {
+    offending.push('Save HTML');
+  }
+  // Mirror buildAskAttachments's `body.trim().length > 0` gate — if
+  // the selection radio is checked but the captured body is empty,
+  // no attachment would be sent, so don't flag it as offending.
+  const fmt = selectedSelectionFormat();
+  if (fmt && !allow.has('text')) {
+    const body = captured[SELECTION_WIRE_KIND[fmt]];
+    if (body && body.trim().length > 0) offending.push('Save selection');
+  }
+  if (
+    screenshotBox.checked
+    && !screenshotBox.disabled
+    && !allow.has('image')
+  ) {
+    offending.push('Save screenshot');
+  }
+  if (offending.length === 0) return true;
+  const list = offending.length === 1
+    ? offending[0]
+    : `${offending.slice(0, -1).join(', ')} and ${offending[offending.length - 1]}`;
+  const kindList = formatAcceptedKinds(acceptedKinds);
+  const name = displayName ?? 'Destination';
+  setAskStatus(
+    `${name} only accepts ${kindList} attachments; uncheck ${list}.`,
+    'error',
+  );
+  return false;
+}
+
+/** Friendly join of accepted-kind tokens for the pre-send error
+ *  ("image" / "image and text" / "image, text, and …"). Mirrors the
+ *  SW's `formatKindList` so the page-side and SW-side wording match. */
+function formatAcceptedKinds(kinds: ('image' | 'text')[]): string {
+  if (kinds.length === 1) return kinds[0];
+  if (kinds.length === 2) return `${kinds[0]} and ${kinds[1]}`;
+  return `${kinds.slice(0, -1).join(', ')}, and ${kinds[kinds.length - 1]}`;
 }
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then

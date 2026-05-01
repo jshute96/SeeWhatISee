@@ -15,6 +15,41 @@ import { geminiProvider } from './gemini.js';
 
 export type AskProviderId = 'claude' | 'gemini' | 'chatgpt';
 
+/** Attachment categories an Ask provider's composer accepts. */
+export type AskAttachmentKind = 'image' | 'text';
+
+/**
+ * Per-URL override for {@link AskProvider.acceptedAttachmentKinds}.
+ * Lets one provider entry cover sub-pages whose composer accepts a
+ * narrower set than the provider as a whole — Claude on `/code`, for
+ * instance, where the file input is image-only even though regular
+ * Claude takes any file. Variants are matched in declaration order
+ * against the destination tab's URL using the same `*`-glob grammar
+ * as `excludeUrlPatterns`; the first match wins, otherwise we fall
+ * back to the provider-level default.
+ */
+export interface AskUrlVariant {
+  /** `*`-glob pattern; case-insensitive. See `excludeUrlPatterns` jsdoc. */
+  pattern: string;
+  /**
+   * Optional display name for the variant (e.g. "Claude Code"),
+   * used in the user-facing error message when the page's pre-send
+   * guard refuses a payload (e.g. "Claude Code only accepts image
+   * attachments — uncheck …"). Not rendered as a menu suffix; the
+   * page title already disambiguates rows.
+   */
+  label?: string;
+  /**
+   * Kinds the destination's composer accepts at this URL. Must be
+   * non-empty — `[]` is treated as "no restriction" downstream
+   * (`filterAttachmentsByKinds` short-circuits, the pre-send guard
+   * lets everything through), which would silently turn an
+   * "accept-nothing" intent into the opposite. If you want a real
+   * "block everything" gate, omit the variant entirely.
+   */
+  acceptedAttachmentKinds: AskAttachmentKind[];
+}
+
 /**
  * One ranked list per role. The injected runtime tries each entry
  * in order and uses the first match. Multiple selectors per role
@@ -122,6 +157,22 @@ export interface AskProvider {
    * the menu offering broken paths.
    */
   enabled: boolean;
+  /**
+   * Attachment kinds the provider's composer will actually accept.
+   * Omit (or leave undefined) to mean "all kinds" — the default for
+   * full-featured chat providers. Set to a narrower list to have the
+   * SW filter the payload before injection so the user sees a clear
+   * "Skipped X" note in the Capture-page status instead of a
+   * silently-dropped upload.
+   */
+  acceptedAttachmentKinds?: AskAttachmentKind[];
+  /**
+   * URL-keyed overrides of `acceptedAttachmentKinds` for sub-pages
+   * whose composer behaves differently. Used today for Claude's
+   * `/code` (Claude Code) — same provider, image-only composer.
+   * Matched in declaration order against the destination tab's URL.
+   */
+  urlVariants?: AskUrlVariant[];
 }
 
 export const ASK_PROVIDERS: AskProvider[] = [
