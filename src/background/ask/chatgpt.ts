@@ -56,5 +56,14 @@ export const chatgptProvider: AskProvider = {
       'button[aria-label="Send prompt"]',
       'button[aria-label*="send" i]',
     ],
+    // Verifies each attached file showed up as a chip after the
+    // settle. Without this, a logged-out ChatGPT silently rejects
+    // non-image uploads with a toast and we falsely report Sent.
+    // Single canonical wrapper, one match per attachment — the same
+    // selector the live test uses (`tests/e2e-live/chatgpt.live.spec.ts`).
+    // Listing only the wrapper avoids double-counting (a chip also
+    // contains a Remove button, an inner thumb, etc.) which would
+    // mask partial-reject scenarios.
+    attachmentPreview: ['div[class*="group/file-tile"]'],
   },
 };

@@ -53,6 +53,12 @@
   // signal in the no-autoSubmit path; for autoSubmit the longer
   // submit-enable poll picks up where this leaves off.
   const FILE_SETTLE_DELAY_MS = 1500;
+  // After the settle, wait this long for `attachmentPreview` chips
+  // to appear before declaring the upload rejected. Only consulted
+  // when the provider opts in via `selectors.attachmentPreview`.
+  // Sized to cover slow networks while staying well under the
+  // submit-enable budget.
+  const PREVIEW_CONFIRM_TIMEOUT_MS = 8000;
   const POLL_INTERVAL_MS = 150;
 
   // Test-only tuning hook. If the target page sets
@@ -65,6 +71,7 @@
   interface AskTuning {
     fileSettleMs?: number;
     preSubmitSettleMs?: number;
+    previewConfirmTimeoutMs?: number;
   }
   function tuning(): AskTuning {
     return (
@@ -182,6 +189,22 @@
     return new File([bytes as BlobPart], filename, { type: mime });
   }
 
+  /**
+   * Count `attachmentPreview` matches across the selector list. Each
+   * matching DOM node is one chip — we sum across selectors so a
+   * provider can list both image-thumb and file-pill selectors and
+   * have them tally together. Returns 0 when the field is undefined
+   * or empty (the verification step then short-circuits).
+   */
+  function countPreviews(selectors: string[] | undefined): number {
+    if (!selectors || selectors.length === 0) return 0;
+    let total = 0;
+    for (const sel of selectors) {
+      total += document.querySelectorAll(sel).length;
+    }
+    return total;
+  }
+
   async function attachFiles(
     files: File[],
     selectors: AskSelectors,
@@ -190,6 +213,15 @@
       `attachFiles: ${files.length} file(s)`,
       files.map((f) => `${f.name} (${f.type}, ${f.size} bytes)`),
     );
+
+    // Baseline preview count, taken BEFORE dispatching change so we
+    // can verify that `files.length` new chips appeared (rather than
+    // a total count, which would false-positive on leftover chips
+    // from a previous Ask call into the same tab).
+    const baselinePreviews = countPreviews(selectors.attachmentPreview);
+    if (selectors.attachmentPreview?.length) {
+      log(`attachFiles: baseline preview count = ${baselinePreviews}`);
+    }
 
     // Some providers (Gemini today) don't expose a file input in
     // their initial DOM — it's added only after the user opens an
@@ -258,16 +290,59 @@
       if (didOverride) HTMLInputElement.prototype.click = origClick;
     }
 
-    // No DOM-based confirmation: AI sites' attachment-preview
-    // selectors are too brittle to maintain across UI changes, and
-    // false-positive matches in unrelated page chrome made our
-    // count-based wait unreliable. The submit-enable poll in
-    // clickSubmit() is the authoritative "uploads finished" gate
-    // for the auto-submit path; this fixed settle delay only
-    // protects the typing step from a transient composer reset.
+    // Settle delay protects the typing step from a transient
+    // composer reset while the site ingests the upload.
     const settle = tuning().fileSettleMs ?? FILE_SETTLE_DELAY_MS;
     log(`attachFiles: settling for ${settle}ms`);
     await delay(settle);
+
+    // Per-provider attachment-preview verification. Opt-in via
+    // `selectors.attachmentPreview`: when defined, we poll for the
+    // preview count to rise by `files.length` (i.e. one chip per
+    // file we sent). The delta is what matters — counting against
+    // a baseline tolerates any pre-existing chips from a previous
+    // Ask call in the same tab and avoids false positives from
+    // unrelated page chrome that happens to match the selectors.
+    //
+    // This catches the case where the destination ACCEPTED the
+    // file-input dispatch but server-rejected the upload (e.g.
+    // ChatGPT logged-out: image uploads work, others surface a
+    // "File type must be one of …" toast). Without this check we'd
+    // happily proceed to typing + submit and report success even
+    // though the attachment never landed.
+    if (selectors.attachmentPreview?.length && files.length > 0) {
+      const expectedDelta = files.length;
+      const expectedTotal = baselinePreviews + expectedDelta;
+      const timeout = tuning().previewConfirmTimeoutMs ?? PREVIEW_CONFIRM_TIMEOUT_MS;
+      const deadline = Date.now() + timeout;
+      let last = countPreviews(selectors.attachmentPreview);
+      while (last < expectedTotal && Date.now() < deadline) {
+        await delay(POLL_INTERVAL_MS);
+        last = countPreviews(selectors.attachmentPreview);
+      }
+      const seenDelta = Math.max(0, last - baselinePreviews);
+      if (seenDelta < expectedDelta) {
+        // Distinguish "selectors never matched anything" (probably
+        // selector drift after a UI change on the destination) from
+        // "some chips appeared but fewer than we sent" (the real
+        // partial-reject signal). The first case shouldn't blame the
+        // user for being logged out.
+        if (last === 0 && baselinePreviews === 0) {
+          throw new Error(
+            `Could not verify attachment delivery. ` +
+              `Check the conversation manually; the upload may have succeeded.`,
+          );
+        }
+        throw new Error(
+          seenDelta === 0
+            ? `No attachments were accepted by the destination.`
+            : `Only ${seenDelta} of ${expectedDelta} attachments were accepted by the destination.`,
+        );
+      }
+      log(
+        `attachFiles: confirmed ${seenDelta}/${expectedDelta} preview chip(s) appeared`,
+      );
+    }
   }
 
   async function typePrompt(

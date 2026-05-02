@@ -73,6 +73,13 @@ export interface OverrideOpts {
     fileInput?: string[];
     textInput?: string[];
     submitButton?: string[];
+    /**
+     * Per-attachment chip selectors. Setting this opts the runtime
+     * into post-attach count verification — see
+     * `AskInjectSelectors.attachmentPreview` jsdoc. Used by tests
+     * that assert the runtime refuses when chips don't appear.
+     */
+    attachmentPreview?: string[];
   };
   /**
    * URL-variant overrides — same shape as `AskProvider.urlVariants`.
@@ -127,6 +134,7 @@ export async function overrideAskProviders(
             submitButton: selectorOverrides.submitButton ?? [
               'button[aria-label="Send message"]',
             ],
+            attachmentPreview: selectorOverrides.attachmentPreview,
           },
         },
       ]);

@@ -274,11 +274,54 @@ type AskProvider = {
   because `chrome.tabs.query` doesn't accept negative patterns.
 
 `AskInjectSelectors` has four ranked lists: `fileInput`,
-`textInput`, `submitButton`, `attachmentPreview` (vestigial, kept
-for future preview-confirmation work). The injected runtime walks
-each list in order and uses the first match. There's also an
-optional `preFileInputClicks` list for providers (Gemini today)
-whose file input only appears after a click chain — see below.
+`textInput`, `submitButton`, and the optional `attachmentPreview`
+(see below). The injected runtime walks each list in order and uses
+the first match. There's also an optional `preFileInputClicks` list
+for providers (Gemini today) whose file input only appears after a
+click chain — see below.
+
+### `attachmentPreview` (chip-count verification)
+
+Opt-in per provider. When set, `attachFiles` in `src/ask-inject.ts`:
+
+- Counts matching chips BEFORE dispatching the `change` event
+  (`baselinePreviews`) — using a delta, not an absolute total,
+  tolerates leftover chips from a previous Ask call in the same tab
+  and ignores false-positive matches in unrelated page chrome.
+- After the existing settle, polls up to `PREVIEW_CONFIRM_TIMEOUT_MS`
+  (8 s by default; tunable from the page via
+  `__seeWhatISeeAskTuning.previewConfirmTimeoutMs` for tests) for the
+  count to reach `baseline + files.length`.
+- If the deadline elapses with fewer chips, refuses with
+  `"Only K of N attachments were accepted by the destination."`
+  (or `"No attachments were accepted by the destination."` when
+  `K === 0`) — surfaced on the Capture page status line BEFORE
+  typing or submit.
+
+This catches the case where the destination accepts the file-input
+dispatch but server-rejects the upload — most visible on ChatGPT
+when logged out, where image uploads succeed but everything else
+gets a "File type must be one of …" toast and would otherwise be
+silently reported as Sent.
+
+Selector list rules:
+
+- Counts sum across all selectors, so list overlapping selectors only
+  if each match is a distinct DOM node — duplicates (e.g. a wrapper +
+  its child Remove button) double-count and mask partial-reject
+  scenarios. Prefer a single canonical wrapper per file.
+- Selectors should target the chip ELEMENT (one match per file), not
+  a parent container (always 1) or descendants (over-count).
+- Providers without `attachmentPreview` skip verification — the
+  runtime falls back to its previous "settle and continue" behavior,
+  so adding the field is non-breaking.
+
+If the selectors don't match anything at all (probably drift after a
+destination UI change), the runtime surfaces a softer
+`"Could not verify attachment delivery. Check the conversation
+manually; the upload may have succeeded."` message instead of the
+partial-reject one — so the user isn't told their upload was
+rejected when the real problem is our stale selectors.
 
 ### `preFileInputClicks` (Gemini)
 

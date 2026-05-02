@@ -76,12 +76,22 @@ export interface AskInjectSelectors {
   textInput: string[];
   submitButton: string[];
   /**
-   * Element that appears once an attached file has been accepted by
-   * the AI's UI. Reserved for future DOM-based upload confirmation
-   * — currently unused: the submit-enable poll in `ask-inject.ts`
-   * is the authoritative "uploads finished" gate. Optional so
-   * provider data files don't need to write `attachmentPreview: []`
-   * boilerplate while it's vestigial.
+   * Optional per-provider list of selectors that match in-composer
+   * attachment chips (one DOM node per attached file). When set, the
+   * inject runtime takes a baseline count before dispatching the
+   * `change` event on the file input and refuses the send if fewer
+   * than `files.length` new chips appear within the verification
+   * window — catches the case where the site's UI accepts the
+   * dispatch but the server-side upload is rejected (e.g. ChatGPT
+   * logged-out: only image uploads succeed).
+   *
+   * Counts are summed across all selectors so a provider can list
+   * image-thumb and file-pill selectors separately and have them
+   * tally together. Omit (or pass an empty list) to skip the
+   * verification step — the runtime falls back to its previous
+   * "settle and continue" behavior. Selectors should target the
+   * chip element itself (one match per file), not its parent
+   * container (would always be 1) or descendants (would over-count).
    */
   attachmentPreview?: string[];
 }

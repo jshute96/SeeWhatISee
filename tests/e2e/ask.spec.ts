@@ -640,6 +640,162 @@ test('ask error: missing prompt-input selector → status reports the failure', 
   await openerPage.close();
 });
 
+test('ask: attachment-preview verification confirms each chip appeared', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Opt the runtime into preview-count verification with the fixture's
+  // per-file `<span data-testid="attachment-pill">` selector.
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: {
+      attachmentPreview: ['span[data-testid="attachment-pill"]'],
+    },
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  // Two attachments → two chips → no error.
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'happy verification',
+  });
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+
+  await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
+    timeout: 10_000,
+  });
+  const state = await fakeClaudeState(claudePage);
+  expect(state.attachedFiles).toHaveLength(2);
+  expect(state.submitClicks).toBe(1);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('ask error: destination silently drops non-image attachment → status names the count', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Mirrors the ChatGPT-logged-out case: file input accepts the
+  // dispatch, image chip appears, HTML chip never does. The runtime's
+  // attachment-preview verification should refuse before submit.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: {
+      attachmentPreview: ['span[data-testid="attachment-pill"]'],
+    },
+  });
+  // Open fake-Claude with `?reject=non-image` so only image files
+  // get a preview chip rendered.
+  const claudePage = await extensionContext.newPage();
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?reject=non-image`);
+  await claudePage.waitForFunction(() =>
+    Boolean((window as unknown as { __seeFakeClaude?: unknown }).__seeFakeClaude),
+  );
+  // Shorten the verification window so the test isn't slow.
+  await claudePage.evaluate(() => {
+    (
+      window as unknown as { __seeWhatISeeAskTuning?: Record<string, number> }
+    ).__seeWhatISeeAskTuning = {
+      fileSettleMs: 50,
+      preSubmitSettleMs: 50,
+      previewConfirmTimeoutMs: 800,
+    };
+  });
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'will be rejected',
+  });
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'Only 1 of 2 attachments were accepted',
+    { timeout: 10_000 },
+  );
+  // Submit must not have fired — verification refuses before clickSubmit.
+  const state = await fakeClaudeState(claudePage);
+  expect(state.submitClicks).toBe(0);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('ask error: preview selectors that match nothing → "could not verify" message', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Simulates selector drift: provider declares `attachmentPreview`
+  // but no selector matches anything on the destination. The runtime
+  // should surface a soft "Could not verify attachment delivery"
+  // message instead of blaming the user for being logged out.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: {
+      // Selector that won't match anything on fake-Claude.
+      attachmentPreview: ['div.nonexistent-chip'],
+    },
+  });
+  const claudePage = await extensionContext.newPage();
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html`);
+  await claudePage.waitForFunction(() =>
+    Boolean((window as unknown as { __seeFakeClaude?: unknown }).__seeFakeClaude),
+  );
+  await claudePage.evaluate(() => {
+    (
+      window as unknown as { __seeWhatISeeAskTuning?: Record<string, number> }
+    ).__seeWhatISeeAskTuning = {
+      fileSettleMs: 50,
+      preSubmitSettleMs: 50,
+      previewConfirmTimeoutMs: 600,
+    };
+  });
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'cannot verify',
+  });
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'Could not verify attachment delivery',
+    { timeout: 10_000 },
+  );
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
 test('ask error: target tab closed between menu render and click', async ({
   extensionContext,
   fixtureServer,

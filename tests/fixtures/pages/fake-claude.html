@@ -96,6 +96,13 @@
       submitBtn.disabled = !(hasText || hasFiles);
     }
 
+    // `?reject=non-image` simulates the ChatGPT-logged-out failure
+    // mode: the file input still accepts the dispatch, but only
+    // image files get a chip rendered. The inject runtime's
+    // attachment-preview verification should refuse and surface
+    // "Only K of N attachments were accepted …".
+    const rejectMode = new URLSearchParams(location.search).get('reject');
+
     fileInput.addEventListener('change', () => {
       const files = fileInput.files ? Array.from(fileInput.files) : [];
       for (const f of files) {
@@ -109,14 +116,20 @@
         if (f.type === 'text/html' || f.type === 'text/plain' || f.type === 'text/markdown') {
           f.text().then(function (text) { entry.content = text; });
         }
+        // Preview chip — one element per accepted file. Match the
+        // `[data-testid="attachment-pill"]` selector the test
+        // override hands the inject runtime. In `reject=non-image`
+        // mode, only image files get a chip (mirrors a destination
+        // that silently drops non-image uploads).
+        const isImage = (f.type || '').startsWith('image/');
+        if (rejectMode !== 'non-image' || isImage) {
+          const pill = document.createElement('span');
+          pill.setAttribute('data-testid', 'attachment-pill');
+          pill.dataset.filename = f.name;
+          pill.textContent = f.name;
+          attachedList.appendChild(pill);
+        }
       }
-      // Visible bookkeeping so a screenshot of the page during a
-      // failed test shows what the runtime actually delivered.
-      attachedList.textContent =
-        'attached: ' +
-        window.__seeFakeClaude.attachedFiles
-          .map((f) => f.name + ' (' + f.type + ', ' + f.size + 'B)')
-          .join(', ');
       refreshSubmit();
     });
 
