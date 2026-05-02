@@ -262,6 +262,11 @@ type AskProvider = {
   targets — settings, projects index, login, recents.
 - Excluded tabs are also rejected by `resolveAsk`
   so plain Ask can never resolve to one.
+- `sendToAi` re-validates the destination tab's URL at send time
+  (closed / off-provider / excluded) before any inject attempt, so a
+  tab that closes or navigates between menu open and item click
+  surfaces a clear status-line error instead of a late-stage
+  "Could not find file-upload input" from `ask-inject.ts`.
 - Syntax is a simpler `*`-glob (case-insensitive) — see the jsdoc
   on `AskProvider.excludeUrlPatterns` for the full grammar and
   pitfalls.

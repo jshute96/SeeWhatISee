@@ -664,17 +664,99 @@ test('ask error: target tab closed between menu render and click', async ({
   await waitForAskMenuReady(capturePage);
 
   // Close the fake-Claude tab between menu render and item click.
-  // resolveTab in background/ask/index.ts catches the rejection and
-  // surfaces "Could not open Claude: …" via the Capture page status.
+  // sendToAi's pre-send URL guard catches the missing tab and
+  // surfaces "Tab is no longer open; …" before any inject attempt.
   await claudePage.close();
 
   await clickExistingFakeClaudeItem(capturePage);
 
   await expect(capturePage.locator('#ask-status')).toContainText(
-    'Could not open Claude',
+    'Claude tab is no longer open',
     { timeout: 10_000 },
   );
 
+  await openerPage.close();
+});
+
+test('ask error: target tab navigated off provider between menu render and click', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'to a navigated tab',
+  });
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+
+  // Navigate the fake-Claude tab to a non-provider URL between menu
+  // render and item click. The pre-send URL guard should refuse
+  // before any inject attempt.
+  await claudePage.goto(`${fixtureServer.baseUrl}/green.html`);
+
+  await clickExistingFakeClaudeItem(capturePage);
+
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'Tab is no longer on Claude',
+    { timeout: 10_000 },
+  );
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('ask error: target tab navigated to an excluded URL between menu render and click', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Mark `?excluded` URLs on the fake-Claude page as non-chat (mirrors
+  // real Claude's settings/library/recents exclusion list).
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    excludeUrlPatterns: ['*excluded*'],
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'to an excluded url',
+  });
+
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+
+  // Navigate within the same fake-Claude origin to a URL that matches
+  // the exclude pattern. The guard's "still on provider but excluded"
+  // branch should report a different error than the off-provider case.
+  await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+
+  await clickExistingFakeClaudeItem(capturePage);
+
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'no longer on a Claude chat page',
+    { timeout: 10_000 },
+  );
+
+  await claudePage.close();
   await openerPage.close();
 });
 

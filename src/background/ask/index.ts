@@ -456,14 +456,41 @@ export async function sendToAi(
   // provider's `newTabUrl` (so e.g. claude.ai/new gets the full
   // provider-level kinds, even though /code on the same provider
   // would be image-only).
+  //
+  // For `existingTab` we also verify the tab is still on the
+  // provider's domain and not on an excluded page — without this we'd
+  // happily inject Claude selectors into whatever the user navigated
+  // to since the menu was opened, surfacing as a confusing "Could not
+  // find file-upload input" error from `ask-inject.ts`. A pre-send
+  // refusal with a clear message is friendlier.
   let destinationUrl = provider.newTabUrl;
   if (destination.kind === 'existingTab') {
+    let tab: chrome.tabs.Tab;
     try {
-      const tab = await chrome.tabs.get(destination.tabId);
-      destinationUrl = tab.url ?? provider.newTabUrl;
+      tab = await chrome.tabs.get(destination.tabId);
     } catch {
-      // Tab gone; let resolveTab below produce the user-visible error.
+      return {
+        ok: false,
+        error: `${provider.label} tab is no longer open; pick a different destination`,
+      };
     }
+    const url = tab.url ?? '';
+    const matches = await chrome.tabs.query({ url: provider.urlPatterns });
+    const stillProvider = matches.some((t) => t.id === destination.tabId);
+    if (!stillProvider) {
+      return {
+        ok: false,
+        error: `Tab is no longer on ${provider.label}; pick a different destination`,
+      };
+    }
+    const excluded = matchesAny(url, provider.excludeUrlPatterns ?? []);
+    if (excluded) {
+      return {
+        ok: false,
+        error: `Tab is no longer on a ${provider.label} chat page; navigate back or pick a different destination`,
+      };
+    }
+    destinationUrl = url || provider.newTabUrl;
   }
   const acceptedKinds = resolveAcceptedKinds(provider, destinationUrl);
   const destinationLabel = resolveDestinationLabel(provider, destinationUrl);
@@ -486,14 +513,23 @@ export async function sendToAi(
     };
   }
 
+  // For `existingTab` the pre-send guard above already confirmed the
+  // tab exists, is on the provider, and isn't excluded — skip the
+  // redundant `chrome.tabs.get` so a tab close in the intervening
+  // microseconds still surfaces our clean guard message rather than
+  // a legacy "Could not open <Provider>: …" path.
   let tabId: number;
-  try {
-    tabId = await resolveTab(provider, destination);
-  } catch (err) {
-    return {
-      ok: false,
-      error: `Could not open ${provider.label}: ${describe(err)}`,
-    };
+  if (destination.kind === 'existingTab') {
+    tabId = destination.tabId;
+  } else {
+    try {
+      tabId = await openNewProviderTab(provider);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Could not open ${provider.label}: ${describe(err)}`,
+      };
+    }
   }
 
   // Best-effort focus. If this fails we still try to inject — the
@@ -594,16 +630,7 @@ function invokeRuntime(selectors: unknown, payload: unknown): unknown {
   return fn(selectors, payload);
 }
 
-async function resolveTab(
-  provider: AskProvider,
-  destination: AskDestination,
-): Promise<number> {
-  if (destination.kind === 'existingTab') {
-    // Verify the tab still exists; throws if it's been closed.
-    const tab = await chrome.tabs.get(destination.tabId);
-    if (tab.id === undefined) throw new Error('Tab has no id');
-    return tab.id;
-  }
+async function openNewProviderTab(provider: AskProvider): Promise<number> {
   const created = await chrome.tabs.create({
     url: provider.newTabUrl,
     active: true,
