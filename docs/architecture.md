@@ -625,20 +625,32 @@ sub-modules above.
 - **Captured-page card** — bordered strip showing the capture's
   page metadata.
   - Title row: clickable link with the captured tab's title (falls
-    back to the URL when the title is empty); pill badge on the right
-    reads `HTML · <size>` via `formatBytes(new Blob([html]).size)`.
-  - URL row: monospace blue link with a trailing external-link glyph;
-    same `href` as the title.
-  - Trailing **Copy URL** button writes the URL string to the
-    clipboard (separate from the per-artifact Copy buttons, which
-    materialize a file and copy its absolute path).
+    back to the URL when the title is empty); two pill badges
+    right-aligned via `margin-left: auto` on the first.
+    - `HTML · <size>` — `formatBytes(new Blob([html]).size)`.
+    - `Selection · <size>` — byte count of the format the
+      Selection pill is currently showing (the checked radio when
+      the master is on; the sticky last-picked format otherwise).
+      Describes *what was captured and is available to save*, NOT
+      what's being saved — so unchecking the master Save-selection
+      checkbox leaves the pill visible (parallel to the HTML pill
+      not hiding when Save-HTML is unchecked). Hidden only when no
+      selection was captured at all.
+    - Both pills update on every Edit-dialog save (HTML + each
+      selection format) so the displayed bytes track the live
+      `captured` body. The Selection pill also updates whenever the
+      user picks a different format radio.
+  - URL row: monospace blue link with a trailing external-link glyph,
+    followed inline by a 22px Copy URL button matching the per-row
+    `.copy-btn` chrome elsewhere on the page.
   - When the captured URL isn't linkable (empty, or a non-http(s)
     scheme like `chrome://` / `file://` / `data:`) both rows lose
     their `href` and render as plain black text; the URL row's blue
     is overridden and the trailing external-link glyph is hidden.
     Copy URL stays enabled whenever the URL string is non-empty (so
-    you can copy `chrome://...` to the clipboard); it disables only
-    when the URL is empty.
+    you can copy `chrome://...` to the clipboard); it follows the
+    `.copy-btn:disabled { display: none }` rule and vanishes when
+    the URL is empty.
   - When HTML capture failed the size pill is hidden outright rather
     than showing a misleading `0 B`.
 - **Save checkboxes** — pick any of screenshot, HTML, selection

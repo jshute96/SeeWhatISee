@@ -149,6 +149,7 @@ const capturedTitleLink = document.getElementById('captured-title') as HTMLAncho
 const capturedUrlLink = document.getElementById('captured-url') as HTMLAnchorElement;
 const capturedUrlText = document.getElementById('captured-url-text') as HTMLSpanElement;
 const htmlSizeBadge = document.getElementById('html-size-badge') as HTMLSpanElement;
+const selectionSizeBadge = document.getElementById('selection-size-badge') as HTMLSpanElement;
 const copyUrlBtn = document.getElementById('copy-url-btn') as HTMLButtonElement;
 /**
  * Captured page URL, kept in module scope so `buildPreviewHtml`'s
@@ -275,6 +276,7 @@ function wireSelectionControls(): void {
         selectionBox.checked = true;
         defaultSelectionFormat = format;
       }
+      updateSelectionSizeBadge();
     });
   }
   selectionBox.addEventListener('change', () => {
@@ -290,7 +292,7 @@ function wireSelectionControls(): void {
       for (const format of pickFrom) {
         if (!selectionRows[format].radio.disabled) {
           selectionRows[format].radio.checked = true;
-          return;
+          break;
         }
       }
       // No enabled formats — leave master checked but nothing
@@ -300,9 +302,45 @@ function wireSelectionControls(): void {
         selectionRows[format].radio.checked = false;
       }
     }
+    // Single tail call: the badge's format-of-display falls back to
+    // `defaultSelectionFormat` when no radio is checked, so the
+    // displayed size is the same before and after the radio toggles
+    // above — only a from-empty initial paint or a body edit
+    // changes it. Easier to read than scattering the call across
+    // each branch.
+    updateSelectionSizeBadge();
   });
 }
 wireSelectionControls();
+
+/**
+ * Refresh the Selection size badge. The pill describes what was
+ * captured and is available to save — mirroring the HTML pill — so
+ * its visibility is gated on "did we capture any selection?", NOT
+ * on whether the master "Save selection" checkbox is currently on.
+ * Format-of-display: the radio that's checked when the master is
+ * on, else the sticky last-picked format (`defaultSelectionFormat`),
+ * so unchecking the master leaves the pill showing the same size it
+ * had a moment earlier. Hidden only when no selection was captured
+ * at all (no format had saveable content), in which case
+ * `defaultSelectionFormat` is still its initial `null`.
+ *
+ * Called on every selection-format change, master toggle, and
+ * Edit-selection-* save — the body in `captured` is always the
+ * live, post-edit value, so the byte count tracks user edits
+ * without a separate cache.
+ */
+function updateSelectionSizeBadge(): void {
+  const radioFormat = SELECTION_FORMATS.find((f) => selectionRows[f].radio.checked);
+  const format = radioFormat ?? defaultSelectionFormat;
+  if (format === null) {
+    selectionSizeBadge.hidden = true;
+    return;
+  }
+  const body = captured[SELECTION_WIRE_KIND[format]];
+  selectionSizeBadge.hidden = false;
+  selectionSizeBadge.textContent = `Selection · ${formatBytes(new Blob([body]).size)}`;
+}
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -1628,6 +1666,13 @@ async function loadData(): Promise<void> {
     applyDefaultButtonHighlight(cdd.defaultButton);
     currentPromptEnter = cdd.promptEnter;
 
+    // Initial Selection-size badge population. The radio's `change`
+    // event doesn't fire when we set `.checked` programmatically
+    // above, so wire up the first paint manually here. After this
+    // point user-driven radio + master changes update the badge via
+    // the listeners installed in `wireSelectionControls`.
+    updateSelectionSizeBadge();
+
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
     // popping in a frame later). `complete` is false for a freshly-
@@ -1907,12 +1952,19 @@ const EDIT_KINDS: EditKindSpec[] = [
     title: 'Selection HTML',
     openBtn: selectionRows.html.editBtn,
     preview: 'html',
+    // Each selection edit-save updates the live `captured.selection*`
+    // body before this hook runs, so `updateSelectionSizeBadge` reads
+    // the post-edit byte count when the active format matches the
+    // edited kind. Editing a non-active format leaves the badge
+    // unchanged until the user clicks that format's radio.
+    onSaved: () => updateSelectionSizeBadge(),
   },
   {
     kind: 'selectionText',
     domSlug: 'selection-text',
     title: 'Edit selection text',
     openBtn: selectionRows.text.editBtn,
+    onSaved: () => updateSelectionSizeBadge(),
   },
   {
     kind: 'selectionMarkdown',
@@ -1920,6 +1972,7 @@ const EDIT_KINDS: EditKindSpec[] = [
     title: 'Selection markdown',
     openBtn: selectionRows.markdown.editBtn,
     preview: 'markdown',
+    onSaved: () => updateSelectionSizeBadge(),
   },
 ];
 

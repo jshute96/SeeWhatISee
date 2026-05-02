@@ -60,38 +60,41 @@
     cursor: pointer;
   }
   /*
-   * Captured-page card: bordered light-grey strip showing the
-   * captured tab's title (clickable, opens the source in a new tab),
-   * the URL on a second line in monospace blue with a trailing
-   * external-link glyph, an HTML-size pill on the right, and a Copy
-   * URL button after a divider. The whole card is one rounded box;
-   * `overflow: hidden` clips the divider's left border to the card's
-   * rounded corner so the seam reads cleanly.
+   * Captured-page card: bordered light-grey strip laid out as a
+   * two-column flex row.
+   *   Left  (.capture-card-body)  — title on top, URL row below
+   *                                 (URL anchor + Copy URL button
+   *                                  packed inline right after it).
+   *   Right (.capture-card-pills) — vertical stack of size pills
+   *                                 (HTML on top, Selection below),
+   *                                 right-justified. Sits in the
+   *                                 right column so the pills don't
+   *                                 add height to the title row.
+   * `overflow: hidden` clips long content to the card's rounded
+   * corner so the seam reads cleanly.
    */
   .capture-card {
     display: flex;
-    align-items: stretch;
+    align-items: flex-start;
+    gap: 12px;
     margin: 0 0 16px 0;
+    padding: 8px 12px;
     border: 1px solid #bbb;
     border-radius: 4px;
     background: #f5f5f5;
     overflow: hidden;
   }
-  /* Body holds the two text rows. `min-width: 0` lets the long-line
-   * children's `text-overflow: ellipsis` actually trigger inside the
-   * flex item (a flex child's default min-width is its intrinsic
-   * content size, which would push the card past the viewport). */
+  /* `min-width: 0` is load-bearing: a flex child's default min-width
+   * is its intrinsic content size, which would push the card past
+   * the viewport on long titles / URLs. The text-overflow ellipsis
+   * inside the title and URL only triggers once the parent allows
+   * shrinking past intrinsic. */
   .capture-card-body {
     flex: 1;
     min-width: 0;
-    padding: 8px 12px;
-  }
-  .capture-card-title-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
   }
   .capture-card-title {
+    display: block;
     font-size: 14px;
     font-weight: 600;
     color: #222;
@@ -103,12 +106,22 @@
   .capture-card-title:hover {
     text-decoration: underline;
   }
-  /* HTML-size pill — white background, light border, small grey text.
-   * `margin-left: auto` parks it at the row's right edge regardless
-   * of how short the title is. `flex-shrink: 0` keeps it whole; the
-   * title ellipsises first when the card gets tight. */
+  /* Right-side column holding the size pills, vertically stacked.
+   * `align-items: flex-end` right-justifies each pill against the
+   * column edge, regardless of which one is wider. `flex: 0 0 auto`
+   * keeps the column at its content width so the body column gets
+   * everything else. */
+  .capture-card-pills {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  /* Size pill — white background, light border, small grey text.
+   * `flex: 0 0 auto` is harmless on a column-flex child but keeps
+   * the rule consistent if the parent ever switches to row mode. */
   .capture-card-badge {
-    margin-left: auto;
     flex: 0 0 auto;
     padding: 1px 8px;
     font-size: 11px;
@@ -118,11 +131,25 @@
     border-radius: 10px;
     white-space: nowrap;
   }
-  .capture-card-url {
+  /* URL row — URL anchor on the left, Copy URL button packed inline
+   * right after it. The anchor uses `flex: 0 1 auto` (shrink-only)
+   * so on a short URL the button sits snug next to the link rather
+   * than floating at the far right of the card; on a long URL the
+   * anchor takes the available width and ellipsises while the
+   * button stays put at the right of whatever the URL consumed. */
+  .capture-card-url-row {
     display: flex;
     align-items: center;
     gap: 4px;
     margin-top: 2px;
+    min-width: 0;
+  }
+  .capture-card-url {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
     color: #0645ad;
@@ -160,34 +187,6 @@
   }
   .capture-card-url:not([href]) .ext-icon {
     display: none;
-  }
-  /* Copy URL button — mirrors the per-row `.copy-btn` look in width
-   * and icon size, but has its own border-left to act as a divider
-   * inside the card. `align-self: stretch` (via the parent's
-   * `align-items: stretch`) makes the button fill the card's height
-   * even though its content is centred. */
-  .capture-card-copy {
-    width: 36px;
-    border: none;
-    border-left: 1px solid #ddd;
-    background: #f5f5f5;
-    cursor: pointer;
-    color: #555;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .capture-card-copy:hover {
-    background: #eee;
-    color: #222;
-  }
-  .capture-card-copy:disabled {
-    cursor: not-allowed;
-    opacity: 0.4;
-  }
-  .capture-card-copy svg {
-    width: 14px;
-    height: 14px;
   }
   /*
    * Controls-row layout. This block is intentionally NOT a grid —
@@ -1128,23 +1127,43 @@
   -->
   <div class="capture-card">
     <div class="capture-card-body">
-      <div class="capture-card-title-row">
-        <a id="captured-title" class="capture-card-title"
-           target="_blank" rel="noreferrer noopener"></a>
-        <span id="html-size-badge" class="capture-card-badge"></span>
+      <a id="captured-title" class="capture-card-title"
+         target="_blank" rel="noreferrer noopener"></a>
+      <!--
+        URL row: the captured URL as a clickable monospace-blue link
+        with a trailing external-link glyph, followed inline by a
+        Copy URL button styled like the per-row Copy buttons
+        elsewhere on the page. The anchor uses `flex: 0 1 auto` so
+        the button packs against the URL on short links rather than
+        floating at the far right of the card.
+      -->
+      <div class="capture-card-url-row">
+        <a id="captured-url" class="capture-card-url"
+           target="_blank" rel="noreferrer noopener">
+          <span id="captured-url-text" class="capture-card-url-text"></span>
+          <svg class="ext-icon" aria-hidden="true">
+            <use href="#external-link-icon"></use>
+          </svg>
+        </a>
+        <button type="button" id="copy-url-btn" class="copy-btn"
+                title="Copy URL" aria-label="Copy URL">
+          <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+        </button>
       </div>
-      <a id="captured-url" class="capture-card-url"
-         target="_blank" rel="noreferrer noopener">
-        <span id="captured-url-text" class="capture-card-url-text"></span>
-        <svg class="ext-icon" aria-hidden="true">
-          <use href="#external-link-icon"></use>
-        </svg>
-      </a>
     </div>
-    <button type="button" id="copy-url-btn" class="capture-card-copy"
-            title="Copy URL" aria-label="Copy URL">
-      <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
-    </button>
+    <!--
+      Right-side column with the size pills, vertically stacked
+      (HTML on top, Selection below), right-justified. capture-page.ts
+      toggles each `hidden` and updates `textContent` on edit-saves
+      and selection-format radio changes — see
+      `updateSelectionSizeBadge` for the per-format wiring. The
+      column sits outside `.capture-card-body` so the pills don't
+      push the title row's height when both are visible.
+    -->
+    <div class="capture-card-pills">
+      <span id="html-size-badge" class="capture-card-badge" hidden></span>
+      <span id="selection-size-badge" class="capture-card-badge" hidden></span>
+    </div>
   </div>
 
   <div class="controls">

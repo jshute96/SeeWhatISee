@@ -184,6 +184,68 @@ test('details: whitespace-only selection disables the whole Save selection group
   await openerPage.close();
 });
 
+test('details: size badges track edit changes (HTML + Selection)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+
+  // Both pills paint with their initial sizes — HTML from the page
+  // scrape, Selection from whichever format `loadData` picked first.
+  // `[1-9]\d*` (instead of `\d+`) catches a degenerate empty seed
+  // that would otherwise pass as `0 B`.
+  await expect(capturePage.locator('#html-size-badge'))
+    .toHaveText(/^HTML · [1-9]\d*\s*\S+$/);
+  await expect(capturePage.locator('#selection-size-badge'))
+    .toHaveText(/^Selection · [1-9]\d*\s*\S+$/);
+
+  // Selection pill describes what was *captured*, not what's being
+  // saved — toggling the master "Save selection" off should leave
+  // the pill visible with its previous size (mirrors the HTML pill,
+  // which doesn't hide when "Save HTML" is unchecked).
+  const beforeUncheck = await capturePage.locator('#selection-size-badge').innerText();
+  await capturePage.locator('#cap-selection').uncheck();
+  await expect(capturePage.locator('#selection-size-badge')).toBeVisible();
+  await expect(capturePage.locator('#selection-size-badge')).toHaveText(beforeUncheck);
+  await capturePage.locator('#cap-selection').check();
+
+  // Editing the HTML body updates the HTML pill to the new byte
+  // count. The Edit dialog's Save commits `captured.html`, which
+  // the badge's `formatBytes(...)` then reads on the post-save hook.
+  const EDITED_HTML = '<!doctype html><html><body>x</body></html>';
+  await capturePage.locator('#edit-html').click();
+  await setEditorCode(capturePage.locator('#edit-html-textarea'), EDITED_HTML);
+  await capturePage.locator('#edit-html-save').click();
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
+  await expect(capturePage.locator('#html-size-badge'))
+    .toHaveText(`HTML · ${EDITED_HTML.length} B`);
+
+  // Switch to the text radio so the Selection-text edit below is the
+  // *active* format — the badge mirrors whichever radio is currently
+  // checked, so editing a non-active format wouldn't move the
+  // displayed value.
+  await capturePage.locator('#cap-selection-text').check();
+
+  // Editing the active selection body updates the Selection pill.
+  // A single-character body gives a deterministic "1 B" target.
+  await capturePage.locator('#edit-selection-text-btn').click();
+  await setEditorCode(capturePage.locator('#edit-selection-text-textarea'), 'A');
+  await capturePage.locator('#edit-selection-text-save').click();
+  await expect(capturePage.locator('#edit-selection-text-dialog'))
+    .toHaveJSProperty('open', false);
+  await expect(capturePage.locator('#selection-size-badge'))
+    .toHaveText('Selection · 1 B');
+
+  await openerPage.close();
+});
+
 test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is no-op', async ({
   extensionContext,
   fixtureServer,
