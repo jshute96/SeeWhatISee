@@ -119,6 +119,32 @@ Even with `activeTab` granted, Chrome refuses to let an extension
 screenshot the CWS page itself. That's a Chrome policy limit, not
 something the manifest can fix — just something to warn users about.
 
+### Ask flow uses dynamic injection (no `content_scripts`)
+
+The Ask button on the Capture page sends artifacts to a third-party
+AI tab (claude.ai, gemini.google.com, or chatgpt.com). Two design
+choices fall out of the permissions we already have:
+
+- **No `content_scripts` declaration.** The manifest does not list
+  AI-site URLs — `chrome.scripting.executeScript` covers it on
+  demand, so the extension runs zero code on AI sites until the user
+  actually clicks Ask.
+- **MAIN world execution.** `src/ask-inject.ts` is loaded with
+  `world: 'MAIN'` so it can dispatch `change` / `input` /
+  `beforeinput` events that the AI site's composer actually listens
+  to (Claude and ChatGPT use ProseMirror, Gemini uses Quill — all
+  ignore `.value =` writes and only respond to real input pipeline
+  events).
+  An isolated-world script fires events into a separate JS realm
+  and the page never sees them.
+
+The two-step injection — `executeScript({ files: ['ask-inject.js'] })`
+to register `window.__seeWhatISeeAsk`, then a second
+`executeScript({ func, args })` to invoke it — keeps the file
+self-contained (no `import`/`export`, runs as a classic script) and
+lets retries land in the same MAIN-world realm without re-loading
+the bundle.
+
 ## Error reporting: from invisible to visible
 
 ### Before
@@ -480,8 +506,22 @@ This section is split by topic:
   initially; on each `input` event we set `style.height = 'auto'`
   then `style.height = scrollHeight + 'px'`. Once `scrollHeight`
   exceeds the cap we flip `overflow-y` from `hidden` to `auto` so
-  the scrollbar only appears when needed. Plain Enter submits;
-  Shift+Enter inserts a newline.
+  the scrollbar only appears when needed.
+- **Enter-key routing** — the keydown handler reads two stored
+  `capturePageDefaults` fields:
+  - `promptEnter` (`'send'` | `'newline'`): plain Enter follows this
+    radio. Default `'send'`.
+  - `defaultButton` (`'capture'` | `'ask'`): when an Enter press
+    submits, it clicks whichever button (`#capture` or `#ask-btn`)
+    the user picked as default. Default `'capture'`. Same routing is
+    used by the SW's `triggerCapture` toolbar-icon hand-off.
+  - Shift+Enter always inserts a newline.
+  - Ctrl+Enter always submits via the chosen default button —
+    overrides `promptEnter='newline'` so a user with that setting
+    can still send without clicking.
+  - The chosen default button also gets a `.is-default` highlight
+    ring in the UI so it reads as "primary" before the user focuses
+    anything.
 - **Smart paste** — Ctrl+V on the prompt or an edit dialog routes
   rich-text content to the right format for the target surface
   (markdown / HTML source / plain text). Ctrl+Shift+V always

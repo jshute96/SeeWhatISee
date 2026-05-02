@@ -42,7 +42,7 @@ All keys live in `chrome.storage.local`.
   older builds (they would just error on every click without a
   selection).
 
-### Capture-page Save defaults
+### Capture-page settings
 
 ```ts
 interface CaptureDetailsDefaults {
@@ -50,6 +50,8 @@ interface CaptureDetailsDefaults {
   withSelection:    { screenshot: boolean; html: boolean;
                       selection: boolean;
                       format: 'html' | 'text' | 'markdown' };
+  defaultButton:    'capture' | 'ask';
+  promptEnter:      'send' | 'newline';
 }
 ```
 
@@ -58,8 +60,58 @@ interface CaptureDetailsDefaults {
 - Fresh-install defaults:
   - `withoutSelection`: screenshot only.
   - `withSelection`: selection only, as markdown.
+  - `defaultButton`: `capture` (the Capture page's main button).
+  - `promptEnter`: `send` (Enter on the Prompt fires the default).
+- `defaultButton` drives three things on the Capture page:
+  - which of the two main buttons (Capture or the Ask split widget)
+    gets the highlight ring.
+  - which one fires when the user presses Enter on the Prompt.
+  - which one fires when the toolbar icon is clicked while the
+    Capture page is already open (the SW's `triggerCapture`
+    hand-off).
+- `promptEnter` only steers the un-modified Enter key in the Prompt
+  textarea. Shift+Enter always inserts a newline; Ctrl+Enter always
+  fires the default button.
+- Degraded-state fallback: if `defaultButton='ask'` but the Ask
+  split is disabled (no provider enabled, mid-Ask round-trip),
+  Enter / `triggerCapture` falls through to `#capture` rather than
+  silently dropping the user's keystroke.
+- **Live updates.** The Capture page's `chrome.storage.onChanged`
+  listener picks up `defaultButton` / `promptEnter` changes the
+  moment the Options page Saves — no reload needed. The
+  Save-checkbox defaults are seed-only (re-applying them mid-session
+  would clobber the user's in-progress checkbox edits).
 - The setter re-normalizes on write so a partial / dirty input from
   the Options page can't put a malformed object into storage.
+
+### Ask provider settings
+
+```ts
+interface AskProviderSettings {
+  enabled: { claude: boolean; gemini: boolean; chatgpt: boolean };
+  default: 'claude' | 'gemini' | 'chatgpt' | null;
+}
+```
+
+- Storage key: `askProviderSettings`.
+- Implementation: `src/background/ask/settings.ts`.
+- Fresh-install defaults: all enabled, default Claude.
+- Read on every Ask resolution (`resolveAsk`, `listAskProviders`,
+  `findProviderForTab`, `sendToAi`) so disabling a provider takes
+  effect immediately without any reload.
+- Two invariants are enforced on every read AND write by
+  `normalizeAskProviderSettings`:
+  1. `enabled` always has a boolean for every registered provider id.
+  2. `default` is either null or the id of an enabled provider — if
+     the stored value points at a disabled provider, normalize
+     auto-shifts it to the next enabled provider in label-order
+     (ChatGPT → Claude → Gemini, wrapping); if no provider is
+     enabled, default becomes null.
+- Pin lifecycle: a `chrome.storage.onChanged` listener in
+  `src/background.ts` clears `askPin` when the pinned provider
+  becomes user-disabled (`clearPinIfProviderDisabled`), then refreshes
+  the toolbar Pin/Unpin entry. `resolveAsk` also clears stale pins
+  lazily on the next resolve.
 
 ## Toolbar dispatch (`handleActionClick`)
 
@@ -157,18 +209,42 @@ full tab.
 
 Sections are rendered top-to-bottom in this order:
 
-- **Default action hotkey** — two-row table:
-  - `Default action` (same as click on toolbar icon) → shows the
-    `_execute_action` shortcut.
-  - `Secondary action` (same as double-click) → shows the
-    `secondary-action` shortcut.
-  - Read-only — Chrome has no API to bind hotkeys. An inline "Chrome
-    extension settings page" button opens
-    `chrome://extensions/shortcuts`.
+- **Ask button AI providers** (`<h1>`) — table over registered Ask
+  providers in alphabetical-by-label order (ChatGPT, Claude, Gemini).
+  Columns: Provider, Enabled (checkbox), Default (radio).
+  - Toggling a checkbox immediately greys / re-enables that row's
+    Default radio. If the toggled checkbox was the current default
+    and was just unchecked, the page rotates the default to the
+    next enabled provider in row order (wrapping). If no provider
+    was the default and the user just enabled one, that row
+    becomes the new default.
+  - A page-local helper (`pickNextEnabledAskDefault` in
+    `src/options.ts`) mirrors the SW's
+    `pickNextEnabledDefault` so the radio always reflects what the
+    SW will accept on save.
+- ***Capture* page *Prompt* box settings** (`<h1>`) — two
+  side-by-side `<h2>` blocks (no fieldset border) inside a
+  `.side-by-side` flex wrapper:
+  - *Enter behavior in Prompt* table — columns `Enter key` /
+    `Action`. Three rows:
+    - `Enter` → Submit prompt / Add newline radios (the `promptEnter`
+      setting; defaults to *Submit prompt*).
+    - `Shift+Enter` → fixed `Add newline`.
+    - `Ctrl+Enter` → fixed `Submit prompt`.
+  - *Default submit button* table — columns `Button` / `Description`.
+    The Button cell renders each option as a `.btn-mock` span styled
+    to look like the actual Capture-page button (1px dark border,
+    light background, 4px radius). Two rows of radios for the
+    `defaultButton` setting:
+    - *Capture* — *Save to files*.
+    - *Ask <provider>* — *Send to provider web page*. The provider
+      label is appended live from the Ask-providers table above
+      (e.g. *Ask Claude*) so it always mirrors the Capture page's
+      `#ask-target-label`. Falls back to *Ask AI* when no provider
+      is enabled (matches the Capture page's `AI` fallback).
 - **Default items to save on *Capture* page and in *Save default
-  items*** — two side-by-side fieldsets that mirror `capture.html`.
-  Sits second so users configuring the `save-defaults` shortcut see
-  what it will write before picking it as a default action.
+  items*** (`<h1>`) — two side-by-side fieldsets that mirror
+  `capture.html`.
   - *Without selection*: Save screenshot, Save HTML.
   - *With selection*: Save screenshot, Save HTML, Save selection
     master + nested format radios (`as HTML / as text / as markdown`).
@@ -176,15 +252,65 @@ Sections are rendered top-to-bottom in this order:
     format radios are independent — the format radios persist the
     *default* `as`-mode for whenever Save selection is on, so they
     stay enabled even when Save selection is off.
-- **Default actions with no text selection** — table over every
-  non-selection `CAPTURE_ACTIONS` entry. Columns: Click radio,
-  Double-click radio, Action, Hotkey. Rows are bucketed by delay
-  value under static section-row labels (`Capture immediately`,
-  `Capture after 2 second delay`, `Capture after 5 second delay`).
-- **Default actions with text selected** — table over the five
-  `WITH_SELECTION_CHOICES` action ids
-  (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
-  plus the `ignore-selection` sentinel. Same column shape.
+- **Toolbar icon click and context menu** (`<h1>`) — wrapper
+  heading; the actual settings are in the `<h2>` sub-sections below.
+  - **Keyboard hotkeys for icon click** (`<h2>`) — two-row table:
+    - `Default action` (same as click on toolbar icon) → shows the
+      `_execute_action` shortcut.
+    - `Secondary action` (same as double-click) → shows the
+      `secondary-action` shortcut.
+    - Read-only — Chrome has no API to bind hotkeys. An inline
+      "Chrome extension settings page" button opens
+      `chrome://extensions/shortcuts`.
+  - **Default action with no text selection** (`<h2>`) and
+    **Default action with text selected** (`<h2>`) — wrapped in a
+    `.side-by-side` flex container so they sit beside each other when
+    the viewport has room and stack on narrow viewports. Columns:
+    Click radio, Double-click radio, Action, Hotkey. Per-row hotkey
+    cells composed by `composeRowHotkey` (see "Hotkey-cell display"
+    below). The without-selection table is bucketed by delay value
+    under section-row labels (`Capture immediately`, `Capture after
+    N second delay`); the delay groups are collapsible (see
+    "Collapsible delay groups" below). The with-selection table
+    covers `WITH_SELECTION_CHOICES`
+    (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
+    plus the `ignore-selection` sentinel.
+
+### Hotkey-cell display
+
+Each per-row hotkey cell can show up to three stacked lines, one per
+applicable hotkey:
+
+1. The Default-action hotkey (`_execute_action`) when this row is
+   the currently-picked Click action.
+2. The Secondary-action hotkey when this row is the currently-picked
+   Double-click action.
+3. The action's own bound keyboard shortcut, if any.
+
+"Currently-picked" is the live DOM radio state, so the cell updates
+the moment the user clicks a Click / Double-click radio — no Save
+round-trip required. Implemented by `composeRowHotkey` (joins
+applicable shortcuts with `\n`) and `recomputeHotkeyCells`
+(re-paints every row in both action tables); the hotkey-cell CSS
+uses `white-space: pre-line` and `line-height: 1.5` so the joined
+string renders as readable separate lines.
+
+### Collapsible delay groups
+
+Each `Capture after N second delay` section row in the no-selection
+table is collapsible, with a triangle caret toggle next to the label
+(rotated 90° via CSS when `aria-expanded="true"`).
+
+- Initial state per group is **auto-expanded** if any row in the
+  group is the saved Click / Double-click default OR has a bound
+  keyboard shortcut. Otherwise it auto-collapses so rarely-used
+  delayed actions don't dominate the page.
+- The user's manual toggle (clicking the caret) is recorded in a
+  module-level `userDelayGroupState` map so a subsequent re-render
+  (Save / Undo / Defaults / radio-driven `refreshHotkeys`) preserves
+  the user's choice instead of snapping the section back to its
+  auto-computed state. Cleared on full page reload.
+- "Capture immediately" is a plain section row, not collapsible.
 
 ### Footer buttons
 
@@ -194,16 +320,17 @@ mid-save would otherwise be silently overwritten by the post-save
 re-render, and a second Save click would race two concurrent
 round-trips.
 
-- **Save** — persists the four click/dbl ids and the
-  `capturePageDefaults` object.
+- **Save** — persists the four click/dbl ids, the
+  `capturePageDefaults` object, and the `askProviderSettings` object.
   - Status: "Settings saved." (or "Save failed: …" on error).
 - **Undo changes** — re-renders the form from the most recently
   saved state (the `latest` cache, refreshed after every Save).
   - Discards unsaved edits without round-tripping the SW.
   - Status: "Restored saved settings."
 - **Defaults** — re-renders the form with `OptionsData.factoryDefaults`.
-  - Sourced from `DEFAULT_*_ID` constants in `default-action.ts`
-    and `DEFAULT_CAPTURE_DETAILS_DEFAULTS` in `capture-page-defaults.ts`.
+  - Sourced from `DEFAULT_*_ID` constants in `default-action.ts`,
+    `DEFAULT_CAPTURE_DETAILS_DEFAULTS` in `capture-page-defaults.ts`,
+    and `DEFAULT_ASK_PROVIDER_SETTINGS` in `ask/settings.ts`.
   - Does **not** save; the user must hit Save to persist.
   - Status: "Default options applied above but not saved."
 
@@ -226,13 +353,15 @@ call replaces whatever's there.
 Messages handled in `background/options.ts`:
 
 - `getOptionsData` — returns the action catalog, the stored click/dbl
-  ids, the current `capturePageDefaults`, the bound hotkey map, and
-  a `factoryDefaults` block consumed by the Defaults button.
+  ids, the current `capturePageDefaults`, the registered Ask
+  providers + their stored `askProviderSettings`, the bound hotkey
+  map, and a `factoryDefaults` block consumed by the Defaults button.
 - `setOptions` — accepts new ids for any of the click/dbl slots plus
-  a `capturePageDefaults` object. Each setter is wrapped
-  independently so a stale value in one slot doesn't block the
-  others. The action setters call `refreshMenusAndTooltip`,
-  resyncing the context-menu labels and the toolbar tooltip.
+  a `capturePageDefaults` object and an `askProviderSettings` object.
+  Each setter is wrapped independently so a stale value in one slot
+  doesn't block the others. The action setters call
+  `refreshMenusAndTooltip`, resyncing the context-menu labels and the
+  toolbar tooltip.
 
 ### Hotkey refresh
 

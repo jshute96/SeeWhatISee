@@ -7,6 +7,10 @@
 // route each click to the right action.
 
 import {
+  findProviderForTab,
+  getAskPin,
+} from './ask/index.js';
+import {
   DOWNLOAD_SUBDIR,
   LOG_STORAGE_KEY,
   type CaptureRecord,
@@ -41,6 +45,15 @@ export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
 export const COPY_LAST_SCREENSHOT_MENU_ID = 'copy-last-screenshot';
 export const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
 export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
+
+// Toolbar entry that pins (or unpins) the current tab as the Ask
+// target. Title flips between "Pin tab as Ask target" and
+// "Unpin tab as Ask target" depending on whether the active tab
+// is already the pin; greyed out when the tab isn't on an enabled
+// AI provider. Sync is driven by `refreshPinAskTargetMenu` from
+// background.ts's tab/window listeners so the entry reflects the
+// current page by the time the user opens the menu.
+export const PIN_ASK_TARGET_MENU_ID = 'pin-ask-target';
 
 // Keyboard shortcuts declared in manifest.json's `commands` block.
 // Command names carry a two-digit ordering prefix (`NN-`) because
@@ -451,6 +464,9 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //   Capture...
 //   Save screenshot
 //   Save HTML contents
+//   Pin tab as Ask target            (greyed unless current tab is a provider;
+//                                      flips to "Unpin tab…" when the tab is
+//                                      already the pin)
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Capture... in 2s
 //       • Save default items in 2s
@@ -485,10 +501,9 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
 // items in the action context menu. Overflow fails silently via
 // `chrome.runtime.lastError`, so a careless addition silently drops
-// a previously-working entry. The menu above has 5 top-level
-// entries (3 undelayed + 2 submenu parents). One slot is free; the
-// "Set default click action" submenu used to occupy it but the
-// Options page is now the canonical place to set defaults.
+// a previously-working entry. The menu above has 6 top-level
+// entries (3 undelayed + 2 submenu parents + Pin Ask target) — at
+// the cap. Adding a 7th top-level entry will silently drop one.
 //
 // In-submenu separators are free (they don't count against the
 // top-level cap) so we use them to group "Capture with delay" by
@@ -577,6 +592,21 @@ export async function installContextMenu(): Promise<void> {
       contexts: ['action'],
     });
   }
+
+  // ── "Pin tab as Ask target" entry ──────────────────────────
+  // Title and enabled state are kept in sync by
+  // `refreshPinAskTargetMenu` from background.ts whenever the
+  // active tab changes — so by the time the user opens this menu,
+  // the entry reflects the current tab. Defaults are set here as
+  // the safe pre-refresh state ("Pin", disabled): users on a
+  // non-provider tab will see the disabled state during the
+  // momentary gap between install and the first refresh.
+  chrome.contextMenus.create({
+    id: PIN_ASK_TARGET_MENU_ID,
+    title: 'Pin tab as Ask target',
+    enabled: false,
+    contexts: ['action'],
+  });
 
   // ── "Capture with delay" submenu ──────────────────────────────
   // One parent row; Chrome renders the ▸ because it has children
@@ -702,4 +732,56 @@ export async function installContextMenu(): Promise<void> {
   // After all entries exist, sync the Copy-last-… enable state to
   // whatever the most recent capture record looks like.
   await refreshCopyMenuState();
+  // Same for the Pin Ask target entry's title + enabled state —
+  // there's no point waiting for a tab event to arrive before the
+  // menu reflects the current page.
+  await refreshPinAskTargetMenu();
+}
+
+/**
+ * Sync the Pin/Unpin entry to the active tab. Three states:
+ *
+ *   1. Tab *is* the current pin → "Unpin tab as Ask target",
+ *      enabled. We allow this even when the tab's URL is no longer
+ *      a valid Ask target (e.g. user pinned a Claude conversation
+ *      then navigated to /settings) — otherwise the user would be
+ *      stranded with no way to clear the stale pin from the page
+ *      they're on.
+ *   2. Tab is *not* the pin and is on an enabled provider (and not
+ *      excluded) → "Pin tab as Ask target", enabled.
+ *   3. Tab is *not* the pin and isn't a valid target → "Pin tab as
+ *      Ask target", disabled.
+ *
+ * Best-effort: missing active tab leaves the entry in state 3.
+ * `chrome.contextMenus.update` silently drops updates against
+ * unknown ids, so a call before `installContextMenu` finishes is
+ * harmless.
+ */
+export async function refreshPinAskTargetMenu(): Promise<void> {
+  let title = 'Pin tab as Ask target';
+  let enabled = false;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id !== undefined) {
+      const pin = await getAskPin();
+      if (pin && pin.tabId === tab.id) {
+        // State 1: this tab is the pin. Always offer Unpin.
+        title = 'Unpin tab as Ask target';
+        enabled = true;
+      } else if (await findProviderForTab(tab.id, tab.url ?? '')) {
+        // State 2: not the pin but a valid target — offer Pin.
+        enabled = true;
+      }
+      // State 3: defaults already match (Pin, disabled).
+    }
+  } catch {
+    // Permission errors / restricted URLs leave the entry disabled
+    // with the Pin wording — same effect as "no eligible tab".
+  }
+  try {
+    await chrome.contextMenus.update(PIN_ASK_TARGET_MENU_ID, { title, enabled });
+  } catch {
+    // The entry might not exist yet (e.g. refresh fired before
+    // install finished). Subsequent refreshes will pick it up.
+  }
 }

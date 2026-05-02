@@ -22,6 +22,8 @@
 // because the default extension-page CSP forbids inline scripts.
 
 import { htmlToMarkdown, looksLikeMarkdownSource } from './markdown.js';
+import { excludedSuffix } from './url-helpers.js';
+import type { AskProviderId } from './background/ask/providers.js';
 
 /**
  * Three-value `SelectionFormat` literal union, duplicated here for
@@ -95,6 +97,14 @@ interface DetailsData {
       selection: boolean;
       format: SelectionFormat;
     };
+    /** Which of the two main page buttons is the "default" — drives
+     *  the highlight ring and routes Enter on the prompt + the
+     *  background's `triggerCapture` toolbar-icon hand-off. */
+    defaultButton: 'capture' | 'ask';
+    /** Plain-Enter behaviour in the Prompt textarea: 'send' fires the
+     *  default button, 'newline' inserts a newline. Shift+Enter is
+     *  always newline; Ctrl+Enter is always send. */
+    promptEnter: 'send' | 'newline';
   };
 }
 
@@ -536,11 +546,78 @@ function attachHtmlAwarePaste(
 
 attachHtmlAwarePaste(promptInput, 'asMarkdown');
 
-promptInput.addEventListener('keydown', (e) => {
-  // Shift+Enter inserts a newline; plain Enter submits.
-  if (e.key === 'Enter' && !e.shiftKey && !captureBtn.disabled) {
-    e.preventDefault();
+// Which page button (Capture or Ask) is currently the user's "default"
+// for the Capture page — drives the highlight ring and routes
+// Enter-on-prompt + the SW's `triggerCapture` hand-off. Seeded from
+// `capturePageDefaults.defaultButton` in `loadData()`; falls back to
+// 'capture' for first paint before the round-trip resolves.
+let currentDefaultButton: 'capture' | 'ask' = 'capture';
+
+// Plain-Enter behaviour in the Prompt textarea — 'send' fires the
+// default button, 'newline' lets the textarea insert the newline
+// natively. Shift+Enter and Ctrl+Enter ignore this and always do
+// newline / send respectively.
+let currentPromptEnter: 'send' | 'newline' = 'send';
+
+/**
+ * Apply / refresh the `.is-default` class so exactly one of the
+ * Capture button or the Ask split widget shows the "default action"
+ * highlight ring. Looking up the .ask-split element lazily so this
+ * helper is safe to call before that node is queried into a const.
+ */
+function applyDefaultButtonHighlight(which: 'capture' | 'ask'): void {
+  currentDefaultButton = which;
+  captureBtn.classList.toggle('is-default', which === 'capture');
+  const askSplit = document.querySelector('.ask-split');
+  askSplit?.classList.toggle('is-default', which === 'ask');
+}
+
+/**
+ * Fire whichever of the two main buttons is the current default.
+ * Returns true if a click was dispatched — Enter / triggerCapture
+ * branches use the return to decide whether to preventDefault. A
+ * disabled target is a no-op so a double-press can't re-submit while
+ * a save is in flight.
+ *
+ * The Ask path clicks `#ask-btn` (send-to-default) rather than
+ * `#ask-caret` (open menu) — the user has already made a steering
+ * decision via Options, so honouring that without forcing a menu pick
+ * keeps the keyboard path symmetric with Capture's.
+ *
+ * Degraded-state fallback: if the user picked `defaultButton='ask'`
+ * but the Ask split widget is disabled (no provider enabled, mid-Ask
+ * round-trip, etc.), fall through to Capture rather than no-op'ing
+ * — better to do *something* obvious than to silently drop the user's
+ * Enter.
+ */
+function clickDefaultPageButton(): boolean {
+  if (currentDefaultButton === 'ask') {
+    const askBtnEl = document.getElementById('ask-btn') as HTMLButtonElement | null;
+    if (askBtnEl && !askBtnEl.disabled) {
+      askBtnEl.click();
+      return true;
+    }
+  }
+  if (!captureBtn.disabled) {
     captureBtn.click();
+    return true;
+  }
+  return false;
+}
+
+promptInput.addEventListener('keydown', (e) => {
+  // Three Enter variants — fixed to avoid mode confusion:
+  //   - Shift+Enter: always newline. Wins over Ctrl+Shift+Enter too —
+  //     we treat any Shift hold as "user wants a literal newline".
+  //   - Ctrl+Enter (no Shift): always send.
+  //   - Plain Enter: follows the user's `promptEnter` setting; defaults
+  //     to send. When set to 'newline' we fall through to native
+  //     textarea handling.
+  if (e.key !== 'Enter') return;
+  if (e.shiftKey) return;
+  const sendIntent = e.ctrlKey || currentPromptEnter === 'send';
+  if (sendIntent) {
+    if (clickDefaultPageButton()) e.preventDefault();
   }
 });
 
@@ -548,16 +625,20 @@ document.addEventListener('keydown', (e) => {
   // Suspend the page-wide hotkeys while any edit dialog is up —
   // e.g. Alt+H in the HTML dialog should type `h`, not silently
   // flip the Save HTML checkbox behind the modal.
+  // Note: this listener references `askBtn` which is declared
+  // further down the file. Safe because the listener fires on user
+  // input — long after all top-level `const`s have initialised.
   if (anyEditDialogOpen()) return;
   if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
-  // Alt+C clicks the Capture button. Alt+S / Alt+H toggle the
-  // screenshot / HTML checkboxes. Alt+N toggles the master "Save
-  // selection" checkbox. Alt+L / Alt+T / Alt+M pick one of the three
-  // format radios (and auto-check the master via the change listener
-  // wired in wireSelectionControls). Each is a no-op when its
-  // control is disabled so the hotkey matches what's on screen. The
-  // label underlines in capture.html mirror these keys.
+  // Alt+C clicks the Capture button. Alt+A opens the Ask menu.
+  // Alt+S / Alt+H toggle the screenshot / HTML checkboxes. Alt+N
+  // toggles the master "Save selection" checkbox. Alt+L / Alt+T /
+  // Alt+M pick one of the three format radios (and auto-check the
+  // master via the change listener wired in wireSelectionControls).
+  // Each is a no-op when its control is disabled so the hotkey
+  // matches what's on screen. The label underlines in capture.html
+  // mirror these keys.
   const selectionFormat: Partial<Record<string, SelectionFormat>> = {
     l: 'html', t: 'text', m: 'markdown',
   };
@@ -568,6 +649,16 @@ document.addEventListener('keydown', (e) => {
     if (captureBtn.disabled) return;
     e.preventDefault();
     captureBtn.click();
+  } else if (key === 'a') {
+    // Alt+A opens the Ask menu (or closes it if already open). The
+    // keyboard path opens the menu rather than firing the default
+    // send so the user gets a chance to pick a different target —
+    // mirrors the behaviour the menu had before pinning landed. No-
+    // op while the caret is disabled (in-flight Ask) so a double-
+    // press doesn't queue a second send.
+    if (askCaret.disabled) return;
+    e.preventDefault();
+    askCaret.click();
   } else if (key === 's') {
     if (screenshotBox.disabled) return;
     e.preventDefault();
@@ -1427,6 +1518,10 @@ async function loadData(): Promise<void> {
     if (useWithSelection) {
       selectionBox.checked = cdd.withSelection.selection;
     }
+    // Apply the user's chosen "default button" highlight and rebind
+    // the Enter / triggerCapture routing in one shot.
+    applyDefaultButtonHighlight(cdd.defaultButton);
+    currentPromptEnter = cdd.promptEnter;
 
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
@@ -2346,10 +2441,726 @@ captureBtn.addEventListener('click', () => {
 // (e.g. when the user clicks the toolbar icon while this page is
 // already open).
 chrome.runtime.onMessage.addListener((msg: { action: string }) => {
-  if (msg.action === 'triggerCapture' && !captureBtn.disabled) {
-    captureBtn.click();
+  // The message name predates the Capture/Ask default-button toggle
+  // — keep the wire name but route through the helper so the SW's
+  // hand-off respects the user's chosen default.
+  if (msg.action === 'triggerCapture') {
+    clickDefaultPageButton();
   }
 });
+
+// ─── Ask flow ─────────────────────────────────────────────────────
+//
+// Two click targets in the Ask split widget:
+//   - `#ask-btn`   → resolve default destination via the SW (pinned
+//                    tab if alive, else "new window in" the first
+//                    enabled provider) and send straight to it. No
+//                    menu.
+//   - `#ask-caret` → fetch the providers + their open tabs + the
+//                    same resolved default → render the menu with a
+//                    leading check on whichever item plain-Ask would
+//                    have hit. Picking an item sends to it.
+//
+// In both paths the payload is built from the Capture-page state the
+// Capture button reads. The SW handles tab focus + script injection,
+// and pins the chosen destination so the next plain-Ask reuses the
+// same tab.
+
+interface AskTabSummary {
+  tabId: number;
+  title: string;
+  url: string;
+  /** Tab is on the provider's host but on a non-chat page (settings,
+   *  library, recents, etc.) — rendered disabled with a "(Wrong
+   *  page)" suffix. */
+  excluded?: boolean;
+  /** URL-aware accepted-kinds list. `undefined` = no restriction. */
+  acceptedAttachmentKinds?: ('image' | 'text')[];
+  /** Display name used in pre-send error text (variant label or the
+   *  provider's own label). Always set by the SW. */
+  destinationDisplayName: string;
+}
+interface AskProviderListing {
+  id: AskProviderId;
+  label: string;
+  enabled: boolean;
+  existingTabs: AskTabSummary[];
+  newTabAcceptedAttachmentKinds?: ('image' | 'text')[];
+}
+type AskDestination =
+  | { kind: 'newTab'; provider: AskProviderId }
+  | { kind: 'existingTab'; provider: AskProviderId; tabId: number };
+
+const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
+const askCaret = document.getElementById('ask-caret') as HTMLButtonElement;
+const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
+const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
+const askStatus = document.getElementById('ask-status') as HTMLDivElement;
+const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
+
+/**
+ * Read the providers + the resolved default destination from the
+ * SW. The default is what plain-Ask will target right now (pinned
+ * tab if alive, else the first enabled provider's new tab). One
+ * round-trip serves both menu rendering and label refreshes; the
+ * menu open path keeps the providers and the simpler refreshes
+ * just look at `defaultDestination`.
+ */
+interface AskStatePin {
+  provider: AskProviderId;
+  tabId: number;
+}
+async function fetchAskState(): Promise<{
+  providers: AskProviderListing[];
+  defaultDestination: AskDestination | null;
+  /** Pin landed on a tab that's still alive on the provider's host
+   *  but on a wrong (excluded) page. The menu greys-out the check
+   *  on that row alongside the regular green check on whatever
+   *  `defaultDestination` resolved to instead. */
+  staleTabPin: AskStatePin | null;
+  /** Effective accepted attachment kinds at the resolved default
+   *  destination, or `undefined` for "no restriction." Used by plain
+   *  Ask's pre-send check. */
+  defaultAcceptedKinds: ('image' | 'text')[] | undefined;
+  /** Display name (variant label or provider label) of the resolved
+   *  default destination — used in the pre-send refusal message. */
+  defaultDestinationDisplayName: string | undefined;
+}> {
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      action: 'askListProviders',
+    })) as
+      | {
+          providers: AskProviderListing[];
+          defaultDestination: AskDestination | null;
+          staleTabPin?: AskStatePin;
+          defaultAcceptedAttachmentKinds?: ('image' | 'text')[];
+          defaultDestinationDisplayName?: string;
+        }
+      | undefined;
+    return {
+      providers: response?.providers ?? [],
+      defaultDestination: response?.defaultDestination ?? null,
+      staleTabPin: response?.staleTabPin ?? null,
+      defaultAcceptedKinds: response?.defaultAcceptedAttachmentKinds,
+      defaultDestinationDisplayName: response?.defaultDestinationDisplayName,
+    };
+  } catch {
+    return {
+      providers: [],
+      defaultDestination: null,
+      staleTabPin: null,
+      defaultAcceptedKinds: undefined,
+      defaultDestinationDisplayName: undefined,
+    };
+  }
+}
+
+/**
+ * Cached accepted-kinds list + display name for the default
+ * destination. Populated by `refreshAskTargetLabel` and consulted by
+ * `runAskDefault` so we can pre-validate the user's checkbox state
+ * before round-tripping to the SW. `undefined` kinds means "no
+ * restriction" (the common case); the only restricted destination
+ * today is Claude on `/code`.
+ */
+let currentDefaultAcceptedKinds: ('image' | 'text')[] | undefined;
+let currentDefaultDisplayName: string | undefined;
+
+// Sync the "Ask <provider>" button label + tooltip to the resolved
+// default destination. Called at page load and after every Ask
+// (since pin-on-success can swap the active provider). Failures
+// here are silent — the static HTML default ("Ask Claude") is a
+// safe fallback.
+async function refreshAskTargetLabel(): Promise<void> {
+  const {
+    providers,
+    defaultDestination,
+    defaultAcceptedKinds,
+    defaultDestinationDisplayName,
+  } = await fetchAskState();
+  currentDefaultAcceptedKinds = defaultAcceptedKinds;
+  currentDefaultDisplayName = defaultDestinationDisplayName;
+  // `listAskProviders` already filters out user-disabled providers,
+  // so an empty (or all-statically-disabled) listing means the user
+  // has nothing to Ask. Block both halves of the split button until
+  // they re-enable a provider on the Options page.
+  const enabled = providers.filter((p) => p.enabled);
+  const noProvidersTooltip = 'No Ask providers enabled; Update in Options';
+  if (enabled.length === 0) {
+    askBtn.disabled = true;
+    askCaret.disabled = true;
+    askBtn.title = noProvidersTooltip;
+    askCaret.title = noProvidersTooltip;
+    askTargetLabel.textContent = 'AI';
+    return;
+  }
+  // At least one provider is available — re-enable the split button
+  // (a previous "all disabled" render may have disabled it) and pick
+  // a label/tooltip from the resolved default.
+  askBtn.disabled = false;
+  askCaret.disabled = false;
+  askCaret.title = '';
+  if (defaultDestination) {
+    const provider = providers.find((p) => p.id === defaultDestination.provider);
+    if (provider) {
+      askTargetLabel.textContent = provider.label;
+      const verb = defaultDestination.kind === 'existingTab'
+        ? 'Send to existing'
+        : 'Send to new';
+      askBtn.title = `${verb} ${provider.label} window`;
+      return;
+    }
+  }
+  // No default available — fall back to a generic label.
+  if (enabled.length === 1) {
+    askTargetLabel.textContent = enabled[0].label;
+    askBtn.title = `Send to ${enabled[0].label} on web`;
+  } else {
+    askTargetLabel.textContent = 'AI';
+    askBtn.title = 'Send to an AI on web';
+  }
+}
+void refreshAskTargetLabel();
+
+// Re-render parts of the page on external state changes from other
+// tabs / the SW:
+//
+// - `local.askProviderSettings` — flipped from the Options page in
+//   another tab. Refreshes the Ask label + disabled state.
+// - `session.askPin` — the toolbar context-menu Pin/Unpin entry
+//   writes here (without going through `runAskWithMessage`), so
+//   without this listener the cached `currentDefaultAcceptedKinds`
+//   would go stale and the page-side pre-send guard would miss the
+//   newly-restricted destination (e.g. a freshly-pinned `/code`
+//   tab). Post-Ask refreshes are still handled inline by
+//   `runAskWithMessage`.
+// - `local.capturePageDefaults` — flipped from the Options page in
+//   another tab. Live-applies `defaultButton` (highlight ring +
+//   Enter / triggerCapture routing) and `promptEnter`. The
+//   Save-checkbox state in the same blob is intentionally NOT
+//   re-applied — those are seeded once on first paint; clobbering
+//   the user's in-progress checkbox edits mid-session would be
+//   jarring. `defaultButton` and `promptEnter` have no equivalent
+//   in-page edit surface, so live-updating them has no conflict.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes['askProviderSettings']) {
+    void refreshAskTargetLabel();
+    return;
+  }
+  if (area === 'session' && changes['askPin']) {
+    void refreshAskTargetLabel();
+    return;
+  }
+  if (area === 'local' && changes['capturePageDefaults']) {
+    const next = changes['capturePageDefaults'].newValue as
+      | { defaultButton?: 'capture' | 'ask'; promptEnter?: 'send' | 'newline' }
+      | undefined;
+    if (next?.defaultButton === 'capture' || next?.defaultButton === 'ask') {
+      applyDefaultButtonHighlight(next.defaultButton);
+    }
+    if (next?.promptEnter === 'send' || next?.promptEnter === 'newline') {
+      currentPromptEnter = next.promptEnter;
+    }
+  }
+});
+
+function setAskStatus(text: string, kind: 'ok' | 'error' | 'info'): void {
+  askStatus.textContent = text;
+  askStatus.classList.remove('ask-status-ok', 'ask-status-error');
+  if (kind === 'ok') askStatus.classList.add('ask-status-ok');
+  else if (kind === 'error') askStatus.classList.add('ask-status-error');
+}
+
+// Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
+// closeAskMenu() clears it so a close that happens *before* the timer
+// fires doesn't leak listener attaches against an already-hidden menu.
+let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
+
+function closeAskMenu(): void {
+  askMenu.hidden = true;
+  askCaret.setAttribute('aria-expanded', 'false');
+  if (askListenerAttachTimer !== null) {
+    clearTimeout(askListenerAttachTimer);
+    askListenerAttachTimer = null;
+  }
+  document.removeEventListener('click', onDocumentClickWhileAskOpen, true);
+  document.removeEventListener('keydown', onKeydownWhileAskOpen, true);
+}
+
+function onDocumentClickWhileAskOpen(e: MouseEvent): void {
+  // Outside-click dismiss. Clicks inside the menu still bubble through
+  // to their item-handler (registered on each <li>) — closeAskMenu()
+  // there happens *after* the click handler runs. The main Ask
+  // button is *not* an outside-click here either: clicking it is a
+  // direct send (which closes the menu via the explicit handler).
+  const target = e.target as Node | null;
+  if (
+    askMenu.contains(target) ||
+    askCaret.contains(target) ||
+    askBtn.contains(target)
+  ) return;
+  closeAskMenu();
+}
+
+function onKeydownWhileAskOpen(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeAskMenu();
+    askCaret.focus();
+  }
+}
+
+/**
+ * Render a `<li>` for one menu pick. The first column is a fixed-
+ * width check slot — `is-default` toggles whether the check glyph
+ * is visible. Putting the slot on every item (rather than only on
+ * the default one) keeps labels vertically aligned across the menu.
+ */
+function renderAskMenuItem(opts: {
+  label: string;
+  /** Italic text appended after the label — used to annotate why a
+   *  disabled item is disabled (e.g. "(Wrong page)"). */
+  suffix?: string;
+  title?: string;
+  /** Indicator-slot glyph for the active states (`isDefault` /
+   *  `isStale`). `'pin'` (default) for an existing pinned-tab row;
+   *  `'new-window'` for the "New window in <provider>" row. The
+   *  stale variant is always pin-off, regardless of this hint. */
+  glyph?: 'pin' | 'new-window';
+  isDefault: boolean;
+  /** Marks a row whose tab used to be the pin but has since
+   *  navigated to a wrong page. Renders the `pin-off` glyph in
+   *  grey, so the user sees where the pin *was* alongside where
+   *  Ask is going *now*. Mutually exclusive with `isDefault` in
+   *  practice (a stale pin can't also be the resolved default). */
+  isStale?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'ask-menu-item';
+  if (opts.isDefault) li.classList.add('is-default');
+  if (opts.isStale) li.classList.add('is-stale');
+  li.setAttribute('role', 'menuitem');
+  if (opts.title) li.title = opts.title;
+  const check = document.createElement('span');
+  check.className = 'ask-menu-check';
+  check.setAttribute('aria-hidden', 'true');
+  // Glyph picked by row kind: existing-tab "default" rows show a
+  // pin (the tab is pinned); "stale" rows show a crossed-out pin;
+  // new-window default rows show a new-window glyph instead, since
+  // those rows are an action ("open a new window") rather than a
+  // pinned target. `glyph` defaults to `'pin'` so call sites that
+  // don't care (the check is hidden via CSS unless is-default or
+  // is-stale anyway) can omit it.
+  const symbolId = opts.isStale
+    ? 'pin-off-icon'
+    : `${opts.glyph ?? 'pin'}-icon`;
+  check.innerHTML = `<svg><use href="#${symbolId}"></use></svg>`;
+  const labelEl = document.createElement('span');
+  labelEl.className = 'ask-menu-label';
+  labelEl.textContent = opts.label;
+  li.append(check, labelEl);
+  if (opts.suffix) {
+    const suffixEl = document.createElement('span');
+    suffixEl.className = 'ask-menu-suffix';
+    suffixEl.textContent = ` ${opts.suffix}`;
+    li.appendChild(suffixEl);
+  }
+  if (opts.disabled) {
+    li.setAttribute('aria-disabled', 'true');
+  } else {
+    li.tabIndex = 0;
+    if (opts.onClick) li.addEventListener('click', opts.onClick);
+  }
+  return li;
+}
+
+function isSameDestination(
+  a: AskDestination | null,
+  b: AskDestination,
+): boolean {
+  if (!a) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.provider !== b.provider) return false;
+  if (a.kind === 'existingTab' && b.kind === 'existingTab') {
+    return a.tabId === b.tabId;
+  }
+  return true;
+}
+
+async function openAskMenu(): Promise<void> {
+  if (!askMenu.hidden) {
+    closeAskMenu();
+    return;
+  }
+  askMenuList.replaceChildren();
+  const loading = document.createElement('li');
+  loading.className = 'ask-menu-heading';
+  loading.textContent = 'Loading…';
+  askMenuList.appendChild(loading);
+  askMenu.hidden = false;
+  askCaret.setAttribute('aria-expanded', 'true');
+  // Defer listener attach so the click that opened the menu doesn't
+  // immediately close it on the same event-loop tick. Track the timer
+  // and check `askMenu.hidden` at fire time so a close-before-fire
+  // (Escape, programmatic toggle, etc.) doesn't leave dangling
+  // listeners — closeAskMenu() also clears the pending timer.
+  askListenerAttachTimer = setTimeout(() => {
+    askListenerAttachTimer = null;
+    if (askMenu.hidden) return;
+    document.addEventListener('click', onDocumentClickWhileAskOpen, true);
+    document.addEventListener('keydown', onKeydownWhileAskOpen, true);
+  }, 0);
+
+  const { providers, defaultDestination, staleTabPin } = await fetchAskState();
+  // Bail if the user already closed the menu while we were waiting.
+  if (askMenu.hidden) return;
+
+  askMenuList.replaceChildren();
+  if (providers.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'ask-menu-heading';
+    empty.textContent = 'No providers configured';
+    askMenuList.appendChild(empty);
+    return;
+  }
+
+  // Section 1: "New window in <provider>" — one entry per registered
+  // provider, including disabled ones (rendered as "coming soon").
+  const newHeading = document.createElement('li');
+  newHeading.className = 'ask-menu-heading';
+  newHeading.textContent = 'New window in';
+  askMenuList.appendChild(newHeading);
+  for (const provider of providers) {
+    const dest: AskDestination = { kind: 'newTab', provider: provider.id };
+    askMenuList.appendChild(
+      renderAskMenuItem({
+        label: provider.enabled
+          ? provider.label
+          : `${provider.label} (coming soon)`,
+        glyph: 'new-window',
+        isDefault: provider.enabled
+          ? isSameDestination(defaultDestination, dest)
+          : false,
+        disabled: !provider.enabled,
+        onClick: provider.enabled
+          ? () => {
+              closeAskMenu();
+              void runAsk(
+                dest,
+                provider.newTabAcceptedAttachmentKinds,
+                provider.label,
+              );
+            }
+          : undefined,
+      }),
+    );
+  }
+
+  // Section 2..N: "Existing window in <provider>" — only rendered for
+  // providers with at least one matching tab open. Each section gets
+  // a horizontal separator before its heading so the menu visually
+  // segments into "new windows" vs. each "existing windows" group.
+  for (const provider of providers) {
+    if (!provider.enabled || provider.existingTabs.length === 0) continue;
+    const sep = document.createElement('li');
+    sep.className = 'ask-menu-separator';
+    sep.setAttribute('role', 'separator');
+    askMenuList.appendChild(sep);
+    const heading = document.createElement('li');
+    heading.className = 'ask-menu-heading';
+    heading.textContent = `Existing window in ${provider.label}`;
+    askMenuList.appendChild(heading);
+    for (const tab of provider.existingTabs) {
+      const dest: AskDestination = {
+        kind: 'existingTab',
+        provider: provider.id,
+        tabId: tab.tabId,
+      };
+      const tabKinds = tab.acceptedAttachmentKinds;
+      askMenuList.appendChild(
+        renderAskMenuItem({
+          label: tab.title || tab.url || `Tab ${tab.tabId}`,
+          // Excluded tabs (settings, library, recents, etc.) live on
+          // the provider's host but aren't a valid Ask target. Show
+          // them disabled so the user can see the tab is recognised
+          // — just not pickable — and explain why with the suffix.
+          // For valid targets we leave the suffix off; the page
+          // title already disambiguates sub-products like Claude
+          // Code, which sets `<title>Claude Code</title>`.
+          suffix: tab.excluded ? excludedSuffix(tab.url) : undefined,
+          title: tab.url,
+          isDefault: !tab.excluded
+            && isSameDestination(defaultDestination, dest),
+          // Pin used to point here but the tab navigated to a wrong
+          // page. Both checks (greyed-here, fresh-on-the-fallback)
+          // appear together so the user can see what just happened.
+          isStale: staleTabPin?.provider === provider.id
+            && staleTabPin.tabId === tab.tabId,
+          disabled: tab.excluded,
+          onClick: tab.excluded
+            ? undefined
+            : () => {
+                closeAskMenu();
+                void runAsk(dest, tabKinds, tab.destinationDisplayName);
+              },
+        }),
+      );
+    }
+  }
+}
+
+askCaret.addEventListener('click', () => {
+  void openAskMenu();
+});
+
+askBtn.addEventListener('click', () => {
+  // Close the menu if it happens to be open (e.g. user opened via
+  // the caret then changed their mind and hit the main button).
+  if (!askMenu.hidden) closeAskMenu();
+  void runAskDefault();
+});
+
+interface AskAttachment {
+  data: string;
+  kind: 'image' | 'text';
+  mimeType: string;
+  filename: string;
+}
+
+const SELECTION_FILE_META: Record<
+  SelectionFormat,
+  { filename: string; mimeType: string }
+> = {
+  html: { filename: 'selection.html', mimeType: 'text/html' },
+  text: { filename: 'selection.txt', mimeType: 'text/plain' },
+  markdown: { filename: 'selection.md', mimeType: 'text/markdown' },
+};
+
+function buildAskAttachments(): AskAttachment[] {
+  const out: AskAttachment[] = [];
+  if (screenshotBox.checked && !screenshotBox.disabled) {
+    // Bake current edits into the PNG when there are any — Ask uses
+    // the same on-screen state the user is looking at, mirroring the
+    // Capture button's bake-on-save policy.
+    const data = hasBakeableEdits() ? renderHighlightedPng() : previewImg.src;
+    out.push({
+      data,
+      kind: 'image',
+      mimeType: 'image/png',
+      filename: 'screenshot.png',
+    });
+  }
+  if (htmlBox.checked && !htmlBox.disabled && captured.html) {
+    out.push({
+      data: captured.html,
+      kind: 'text',
+      mimeType: 'text/html',
+      // `contents.html` matches the Save-to-disk filename prefix
+      // (`contents-<timestamp>.html`) so the HTML attachment in
+      // the AI tab and the saved-on-disk file share a name.
+      filename: 'contents.html',
+    });
+  }
+  const fmt = selectedSelectionFormat();
+  if (fmt) {
+    const body = captured[SELECTION_WIRE_KIND[fmt]];
+    if (body && body.trim().length > 0) {
+      const meta = SELECTION_FILE_META[fmt];
+      out.push({
+        data: body,
+        kind: 'text',
+        mimeType: meta.mimeType,
+        filename: meta.filename,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Build the Ask payload from current Capture-page state. Returns
+ * `null` (with a status message already shown) when the user has
+ * neither a prompt nor any checked Save row to send — guards against
+ * silently focusing the AI tab and doing nothing. The caller skips
+ * the SW round-trip in that case.
+ */
+function buildAskPayload(): {
+  attachments: AskAttachment[];
+  promptText: string;
+  autoSubmit: boolean;
+} | null {
+  const promptText = promptInput.value.trim();
+  const attachments = buildAskAttachments();
+  if (attachments.length === 0 && promptText.length === 0) {
+    setAskStatus(
+      'Nothing to send — check at least one box or type a prompt.',
+      'error',
+    );
+    return null;
+  }
+  return {
+    attachments,
+    promptText,
+    // Empty prompt → user wants to set up the conversation and keep
+    // typing on the AI side. Non-empty → fire it off.
+    autoSubmit: promptText.length > 0,
+  };
+}
+
+/**
+ * Send the assembled payload via the SW and reflect the outcome
+ * in the Ask status line. Disables both halves of the split button
+ * while in flight so a double-press can't queue a second send. On
+ * success, refresh the button label since the SW may have just
+ * pinned a different destination.
+ */
+async function runAskWithMessage(message: {
+  action: 'askAi' | 'askAiDefault';
+  destination?: AskDestination;
+  payload: NonNullable<ReturnType<typeof buildAskPayload>>;
+}): Promise<void> {
+  askBtn.disabled = true;
+  askCaret.disabled = true;
+  setAskStatus('Sending…', 'info');
+  try {
+    const response = (await chrome.runtime.sendMessage(message)) as
+      | { ok: boolean; error?: string; skipped?: string[] }
+      | undefined;
+    if (!response) {
+      setAskStatus('No response from background.', 'error');
+      return;
+    }
+    if (!response.ok) {
+      // The SW refuses payloads with attachments the destination
+      // doesn't accept and reports them in `skipped` — append them
+      // to the error so the user sees which files were the problem.
+      // Normal flow catches this upstream in the page-side guard;
+      // this path fires only when the page's cached accepted-kinds
+      // was stale (toolbar Pin/Unpin or tab-navigation race).
+      const skippedSuffix =
+        response.skipped && response.skipped.length > 0
+          ? ` Skipped: ${response.skipped.join(', ')}.`
+          : '';
+      setAskStatus((response.error ?? 'Ask failed.') + skippedSuffix, 'error');
+      return;
+    }
+    setAskStatus('Sent.', 'ok');
+    // Refresh after success: a "New window in X" pick just turned
+    // into a pin against the freshly-created tab, so the next plain
+    // Ask should target it. The label needs to reflect that.
+    void refreshAskTargetLabel();
+  } catch (err) {
+    setAskStatus(
+      `Ask failed: ${err instanceof Error ? err.message : String(err)}`,
+      'error',
+    );
+  } finally {
+    askBtn.disabled = false;
+    askCaret.disabled = false;
+    // Re-resolve the disabled state from the latest provider settings
+    // so a mid-Ask Options-page change (e.g. user disabled every
+    // provider while we were waiting on the SW) doesn't leave the
+    // buttons re-enabled. The `chrome.storage.onChanged` listener
+    // would also catch this on the next tick, but doing it here
+    // closes the brief "buttons clickable but no providers" window.
+    void refreshAskTargetLabel();
+  }
+}
+
+async function runAsk(
+  destination: AskDestination,
+  acceptedKinds: ('image' | 'text')[] | undefined,
+  displayName: string | undefined,
+): Promise<void> {
+  if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
+  const payload = buildAskPayload();
+  if (!payload) return;
+  await runAskWithMessage({ action: 'askAi', destination, payload });
+}
+
+async function runAskDefault(): Promise<void> {
+  if (
+    !checkDestinationAcceptsCheckedBoxes(
+      currentDefaultAcceptedKinds,
+      currentDefaultDisplayName,
+    )
+  ) return;
+  const payload = buildAskPayload();
+  if (!payload) return;
+  await runAskWithMessage({ action: 'askAiDefault', payload });
+}
+
+/**
+ * Pre-send guard: refuse to send when the destination's composer
+ * doesn't accept one of the kinds the user has checked. Today this
+ * only fires for Claude on `/code` (image-only), but the check is
+ * generic — any future image-only or text-only sub-page will benefit.
+ *
+ * On a mismatch we display an error naming the destination by its
+ * variant label (e.g. "Claude Code") and the specific Save rows the
+ * user needs to uncheck, and return false so the caller bails. The
+ * SW runs the same check at send time and refuses outright (with
+ * `Skipped: …` in the error) if anything slips through — covers
+ * stale-cache races (toolbar Pin/Unpin or tab navigation between
+ * cache load and click). `displayName` falls back to a generic
+ * "Destination" if the SW didn't provide one (defensive — in
+ * practice the listing always fills it in alongside any non-null
+ * `acceptedKinds`).
+ */
+function checkDestinationAcceptsCheckedBoxes(
+  acceptedKinds: ('image' | 'text')[] | undefined,
+  displayName: string | undefined,
+): boolean {
+  if (!acceptedKinds || acceptedKinds.length === 0) return true;
+  const allow = new Set(acceptedKinds);
+  const offending: string[] = [];
+  if (
+    htmlBox.checked
+    && !htmlBox.disabled
+    && captured.html
+    && !allow.has('text')
+  ) {
+    offending.push('Save HTML');
+  }
+  // Mirror buildAskAttachments's `body.trim().length > 0` gate — if
+  // the selection radio is checked but the captured body is empty,
+  // no attachment would be sent, so don't flag it as offending.
+  const fmt = selectedSelectionFormat();
+  if (fmt && !allow.has('text')) {
+    const body = captured[SELECTION_WIRE_KIND[fmt]];
+    if (body && body.trim().length > 0) offending.push('Save selection');
+  }
+  if (
+    screenshotBox.checked
+    && !screenshotBox.disabled
+    && !allow.has('image')
+  ) {
+    offending.push('Save screenshot');
+  }
+  if (offending.length === 0) return true;
+  const list = offending.length === 1
+    ? offending[0]
+    : `${offending.slice(0, -1).join(', ')} and ${offending[offending.length - 1]}`;
+  const kindList = formatAcceptedKinds(acceptedKinds);
+  const name = displayName ?? 'Destination';
+  setAskStatus(
+    `${name} only accepts ${kindList} attachments; uncheck ${list}.`,
+    'error',
+  );
+  return false;
+}
+
+/** Friendly join of accepted-kind tokens for the pre-send error
+ *  ("image" / "image and text" / "image, text, and …"). Mirrors the
+ *  SW's `formatKindList` so the page-side and SW-side wording match. */
+function formatAcceptedKinds(kinds: ('image' | 'text')[]): string {
+  if (kinds.length === 1) return kinds[0];
+  if (kinds.length === 2) return `${kinds[0]} and ${kinds[1]}`;
+  return `${kinds.slice(0, -1).join(', ')}, and ${kinds[kinds.length - 1]}`;
+}
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then
 // internally calls fitImage. That first fitImage runs before the

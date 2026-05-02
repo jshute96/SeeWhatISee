@@ -31,7 +31,12 @@
     margin-bottom: 24px;
   }
   section h1 {
-    font-size: 15px;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+  }
+  section h2 {
+    font-size: 16px;
     font-weight: 600;
     margin: 0 0 8px 0;
   }
@@ -43,7 +48,7 @@
     background: #f5f5f5;
     border: 1px solid #ddd;
     padding: 6px 10px;
-    text-align: center;
+    text-align: left;
     font-weight: 600;
     white-space: nowrap;
   }
@@ -59,9 +64,26 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px;
     color: #555;
-    white-space: nowrap;
+    /* `pre-line` so the `\n`-joined string from `composeRowHotkey`
+       renders as separate visual lines (one per applicable hotkey:
+       default-action, secondary-action, the row's own shortcut).
+       `line-height: 1.5` adds breathing room between stacked hotkeys
+       so two-/three-line cells don't read as a single dense run.
+       `vertical-align: top` keeps the first hotkey line aligned with
+       its row's action label even when neighbouring rows have a
+       single-line hotkey-cell — without this the table looks ragged
+       because `tbody td`'s default `vertical-align: middle` centers
+       the stacked block. */
+    white-space: pre-line;
+    line-height: 1.5;
+    vertical-align: top;
   }
   tbody td.radio-cell {
+    text-align: center;
+  }
+  /* Ask-providers section: same checkbox/radio layout as the
+     capture-defaults fieldsets, just inside a regular table. */
+  tbody td.checkbox-cell {
     text-align: center;
   }
   /*
@@ -74,25 +96,56 @@
     background: #fafafa;
     color: #666;
     font-style: italic;
-    font-size: 12px;
+    font-size: 14px;
     padding: 4px 10px;
     border-left: 1px solid #ddd;
     border-right: 1px solid #ddd;
   }
-  ul.info-list {
+  /* Collapsible delay-group section row + its expand/collapse caret.
+     The caret glyph follows the button's `aria-expanded` so the JS
+     handler only flips that attribute and CSS does the rest. */
+  tbody tr.section-expandable td {
+    cursor: default;
+  }
+  .expand-toggle {
+    font: inherit;
+    font-style: normal;
+    background: transparent;
+    border: none;
+    padding: 0 4px;
+    cursor: pointer;
+    color: #444;
+    line-height: 1;
+  }
+  .expand-toggle::before {
+    content: '▶';
+    display: inline-block;
+    font-size: 10px;
+    transition: transform 120ms ease;
+  }
+  .expand-toggle[aria-expanded="true"]::before {
+    transform: rotate(90deg);
+  }
+  /* Data rows hidden when their delay group is collapsed. */
+  tbody tr.is-collapsed {
+    display: none;
+  }
+  .info-list {
     margin: 8px 0 0 0;
     padding-left: 20px;
-    font-size: 13px;
+    font-size: 14px;
     color: #444;
   }
-  ul.info-list li {
+  .info-list li {
     margin: 4px 0;
   }
-  ul.info-list button {
+  .info-list button {
     /*
      * Inline button rendered to look like a normal page control while
      * sitting mid-sentence — the link styling would imply a regular
-     * <a href> instead of "opens chrome://extensions/shortcuts".
+     * <a href> instead of "opens chrome://extensions/shortcuts". Keeps
+     * `font: inherit` so it stays at the surrounding prose's size
+     * regardless of the global `button { font-size: ... }` rule.
      */
     font: inherit;
     padding: 1px 6px;
@@ -133,20 +186,81 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  /* Roomier vertical rhythm for the Enter-behavior table's stacked
+     radio rows — same `line-height: 1.5` the hotkey-cell uses to space
+     out its multi-line hotkey stacks. Without this the two radios
+     visually crowd each other inside the cell. */
+  .enter-behavior-table tbody td {
+    line-height: 1.5;
+  }
+  /* Radios in these tables sit inside <label> wrappers next to bare
+     text. The browser default `vertical-align: baseline` on the radio
+     drops the line so the radio's bottom sits on the row's baseline,
+     pushing the label text noticeably below the plain-text cells in
+     the same row. `middle` realigns the radio (and therefore the
+     surrounding label text) to the row's vertical centre, matching
+     what the `.cd-defaults` ruleset does for fieldset-style radios. */
+  .enter-behavior-table input[type="radio"],
+  .default-button-table input[type="radio"] {
+    vertical-align: middle;
+  }
+  /* Static "looks like a button" mock used in the Default-submit-
+     button table so the user sees the actual button visual next to
+     each radio rather than just the bare label text. Matches
+     `button#capture` / `#ask-btn` in capture.html (1px dark border,
+     light background, 4px radius, weight 500) so what the user picks
+     here reads as the same chrome as the Capture page renders. */
+  .default-button-table .btn-mock {
+    display: inline-block;
+    padding: 4px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid #555;
+    background: #f5f5f5;
+    border-radius: 4px;
+    vertical-align: middle;
+  }
+  /* Inline code spans (e.g. `/see-what-i-see` skill names) — render
+     in monospace + purple so they're visually distinct from the
+     surrounding prose. Subtle background tint for the same reason. */
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    color: #6f42c1;
+    background: #f3eefb;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
   .footer {
     display: flex;
     align-items: center;
     gap: 12px;
     margin-top: 16px;
   }
+  /*
+   * Side-by-side container for the two "Default action" sections.
+   * Wraps to a single column when the viewport is too narrow for both
+   * tables (each table is ~content-width; flex-wrap kicks in if either
+   * doesn't fit). The child <section> elements drop their bottom
+   * margin since the container provides the spacing.
+   */
+  .side-by-side {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 48px;
+  }
+  .side-by-side > section {
+    margin-bottom: 0;
+  }
   button {
-    font: inherit;
+    font-family: inherit;
+    font-size: 14px;
     padding: 6px 14px;
     cursor: pointer;
   }
   #status {
     color: #555;
-    font-size: 13px;
+    font-size: 14px;
   }
   #status.error { color: #b00020; }
 </style>
@@ -157,37 +271,90 @@
   <span>SeeWhatISee — Options</span>
 </header>
 
+<br><hr><br>
 <section>
-  <h1>Default action hotkey</h1>
+  <h1>Ask button AI providers</h1>
+  <p class="info-list" style="padding-left:0;">
+    Choose the default provider used when opening new browser windows with the
+    Ask button (on the Capture page).<br>
+    Disabled providers don't appear in the Ask menu.
+  </p>
+  <br>
   <table>
     <thead>
       <tr>
-        <th>Action</th>
-        <th>Hotkey</th>
+        <th>Provider</th>
+        <th>Enabled</th>
+        <th>Default</th>
       </tr>
     </thead>
-    <tbody>
-      <tr>
-        <td class="action-cell">Default action (same as click on toolbar icon)</td>
-        <td id="default-action-hotkey-cell" class="hotkey-cell"></td>
-      </tr>
-      <tr>
-        <td class="action-cell">Secondary action (same as double-click)</td>
-        <td id="secondary-action-hotkey-cell" class="hotkey-cell"></td>
-      </tr>
-    </tbody>
+    <tbody id="ask-providers-rows"></tbody>
   </table>
-  <p class="info-list" style="padding-left:0;">
-    Update hotkey settings on the
-    <button id="edit-shortcuts" type="button">Chrome extension settings page</button>
-  </p>
 </section>
 
+<br><hr><br><br>
+<section>
+  <h1><i>Capture</i> page <i>Prompt</i> box settings</h1>
+  <div class="side-by-side">
+    <div>
+      <h2>Enter behavior in <i>Prompt</i></h2>
+      <table class="enter-behavior-table">
+        <thead>
+          <tr>
+            <th>Enter key</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="hotkey-cell">Enter</td>
+            <td>
+              <div><label><input type="radio" name="cp-enter-key" value="send" id="cp-enter-key-send" checked> Submit prompt</label></div>
+              <div><label><input type="radio" name="cp-enter-key" value="newline" id="cp-enter-key-newline"> Add newline</label></div>
+            </td>
+          </tr>
+          <tr>
+            <td class="hotkey-cell">Shift+Enter</td>
+            <td>Add newline</td>
+          </tr>
+          <tr>
+            <td class="hotkey-cell">Ctrl+Enter</td>
+            <td>Submit prompt</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h2>Default submit button</h2>
+      <table class="default-button-table">
+        <thead>
+          <tr>
+            <th>Button</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><label><input type="radio" name="cp-default-button" value="capture" id="cp-default-button-capture" checked> <span class="btn-mock">Capture</span></label></td>
+            <td>Save to files <i>(Then collect in CLI agents with <code>/see-what-i-see</code> skills)</i></td>
+          </tr>
+          <tr>
+            <td><label><input type="radio" name="cp-default-button" value="ask" id="cp-default-button-ask"> <span class="btn-mock">Ask <span id="cp-default-button-ask-target"></span></span></label></td>
+            <td>Send to provider web page</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<br><hr><br><br>
 <section>
   <h1>Default items to save on <i>Capture</i> page and in <i>Save default items</i></h1>
   <p class="info-list" style="padding-left:0;">
     These are the defaults for the <i>Save</i> checkboxes on the <i>Capture</i> page, and the items saved by <i>Save default items</i>.
   </p>
+  <br>
   <div class="cd-defaults">
     <fieldset>
       <legend>Without selection</legend>
@@ -222,35 +389,73 @@
   </div>
 </section>
 
+<br><hr><br><br>
 <section>
-  <h1>Default actions with no text selection</h1>
+  <h1>Toolbar icon click and context menu</h1>
+  <h2>Keyboard hotkeys for icon click</h2>
+  <p class="info-list" style="padding-left:0;">
+    Toolbar click actions can be set below to different actions when text is
+    selected or not.
+  </p>
   <table>
     <thead>
       <tr>
-        <th>Click</th>
-        <th>Double-click</th>
         <th>Action</th>
         <th>Hotkey</th>
       </tr>
     </thead>
-    <tbody id="without-rows"></tbody>
+    <tbody>
+      <tr>
+        <td class="action-cell">Default action <i>(same as click on toolbar icon)</i></td>
+        <td id="default-action-hotkey-cell" class="hotkey-cell"></td>
+      </tr>
+      <tr>
+        <td class="action-cell">Secondary action <i>(same as double-click)</i></td>
+        <td id="secondary-action-hotkey-cell" class="hotkey-cell"></td>
+      </tr>
+    </tbody>
   </table>
+  <br><br>
+  <h2>Keyboard hotkeys for other actions</h2>
+  <p class="info-list" style="padding-left:0;">
+    Update on the
+    <button id="edit-shortcuts" type="button">Chrome extension settings page</button>, displayed below.
+  </p>
 </section>
 
-<section>
-  <h1>Default actions with text selected</h1>
-  <table>
-    <thead>
-      <tr>
-        <th>Click</th>
-        <th>Double-click</th>
-        <th>Action</th>
-        <th>Hotkey</th>
-      </tr>
-    </thead>
-    <tbody id="with-rows"></tbody>
-  </table>
-</section>
+<div class="side-by-side">
+  <section>
+    <h2>Default action <i>with no text selection</i></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Click</th>
+          <th>Double-click</th>
+          <th>Action</th>
+          <th>Hotkey</th>
+        </tr>
+      </thead>
+      <tbody id="without-rows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Default action <i>with text selected</i></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Click</th>
+          <th>Double-click</th>
+          <th>Action</th>
+          <th>Hotkey</th>
+        </tr>
+      </thead>
+      <tbody id="with-rows"></tbody>
+    </table>
+  </section>
+</div>
+
+<br><br><hr><br>
 
 <div class="footer">
   <button id="save" type="button">Save</button>

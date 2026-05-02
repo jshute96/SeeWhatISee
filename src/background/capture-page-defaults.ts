@@ -1,13 +1,30 @@
-// Stored "Default items to save on Capture page" preferences. Owns the
-// `capturePageDefaults` storage key + a getter / setter that
-// normalizes the shape so callers can trust every field is present and
-// well-typed even if storage holds a partial / legacy object.
+// Stored Capture-page preferences. Owns the `capturePageDefaults`
+// storage key + a getter / setter that normalizes the shape so callers
+// can trust every field is present and well-typed even if storage holds
+// a partial / legacy object.
 //
-// The Capture page (`capture-page.ts`) reads these to seed its Save
-// checkboxes on first paint, and the options page reads / writes them
-// via the SW message handlers in `background/options.ts`.
+// Today this covers two things:
+//   - Save-checkbox defaults (per with/without-selection branch).
+//   - Which of the two main page buttons (Capture or Ask) is the
+//     "default" — drives the highlight ring, the Enter-on-prompt
+//     submit, and the `triggerCapture` toolbar-icon path.
+//
+// The Capture page (`capture-page.ts`) reads these on first paint, and
+// the options page reads / writes them via the SW message handlers in
+// `background/options.ts`.
 
 import type { SelectionFormat } from '../capture.js';
+
+export type CapturePageDefaultButton = 'capture' | 'ask';
+/**
+ * Behavior of plain Enter in the Capture-page Prompt textarea.
+ *   - 'send'    → fire the chosen default button (Capture or Ask).
+ *   - 'newline' → insert a newline (default browser behaviour).
+ *
+ * Shift+Enter always inserts a newline and Ctrl+Enter always sends —
+ * the radio only steers the un-modified Enter key.
+ */
+export type CapturePagePromptEnter = 'send' | 'newline';
 
 export interface CaptureDetailsWithoutSelectionDefaults {
   screenshot: boolean;
@@ -24,6 +41,8 @@ export interface CaptureDetailsWithSelectionDefaults {
 export interface CaptureDetailsDefaults {
   withoutSelection: CaptureDetailsWithoutSelectionDefaults;
   withSelection: CaptureDetailsWithSelectionDefaults;
+  defaultButton: CapturePageDefaultButton;
+  promptEnter: CapturePagePromptEnter;
 }
 
 const CAPTURE_DETAILS_DEFAULTS_KEY = 'capturePageDefaults';
@@ -36,19 +55,35 @@ const CAPTURE_DETAILS_DEFAULTS_KEY = 'capturePageDefaults';
 export const DEFAULT_CAPTURE_DETAILS_DEFAULTS: CaptureDetailsDefaults = {
   withoutSelection: { screenshot: true, html: false },
   withSelection: { screenshot: false, html: false, selection: true, format: 'markdown' },
+  defaultButton: 'capture',
+  promptEnter: 'send',
 };
 
 const VALID_FORMATS: ReadonlySet<SelectionFormat> = new Set(['html', 'text', 'markdown']);
+const VALID_DEFAULT_BUTTONS: ReadonlySet<CapturePageDefaultButton> = new Set(['capture', 'ask']);
+const VALID_PROMPT_ENTERS: ReadonlySet<CapturePagePromptEnter> = new Set(['send', 'newline']);
 
 function normalize(raw: unknown): CaptureDetailsDefaults {
   if (!raw || typeof raw !== 'object') return DEFAULT_CAPTURE_DETAILS_DEFAULTS;
   const r = raw as {
     withoutSelection?: Partial<CaptureDetailsWithoutSelectionDefaults>;
     withSelection?: Partial<CaptureDetailsWithSelectionDefaults>;
+    defaultButton?: unknown;
+    promptEnter?: unknown;
   };
   const wos = r.withoutSelection ?? {};
   const ws = r.withSelection ?? {};
   return {
+    defaultButton:
+      typeof r.defaultButton === 'string'
+      && VALID_DEFAULT_BUTTONS.has(r.defaultButton as CapturePageDefaultButton)
+        ? (r.defaultButton as CapturePageDefaultButton)
+        : DEFAULT_CAPTURE_DETAILS_DEFAULTS.defaultButton,
+    promptEnter:
+      typeof r.promptEnter === 'string'
+      && VALID_PROMPT_ENTERS.has(r.promptEnter as CapturePagePromptEnter)
+        ? (r.promptEnter as CapturePagePromptEnter)
+        : DEFAULT_CAPTURE_DETAILS_DEFAULTS.promptEnter,
     withoutSelection: {
       screenshot: typeof wos.screenshot === 'boolean'
         ? wos.screenshot

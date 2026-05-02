@@ -72,11 +72,93 @@
     background: #f5f5f5;
     color: #222;
   }
+  /*
+   * Controls-row layout. This block is intentionally NOT a grid —
+   * here's why the structure looks the way it does. Read top to
+   * bottom before changing it; each piece is load-bearing.
+   *
+   *   .controls (flex row)
+   *     .checkboxes              [col 1: Save-row controls]
+   *     .left-stack (flex col)   [col 2]
+   *       .left-stack-row        [row 1: buttons | "Prompt:" label]
+   *         .button-stack          [Capture / Ask Claude buttons]
+   *         <label for="prompt-text">
+   *       #ask-status            [row 2: spans the row above; wraps]
+   *     <textarea id="prompt-text">  [col 3: independent height]
+   *
+   * Three intents the structure is built around:
+   *
+   * (1) "Status sits directly under the buttons+label, NOT under
+   *     the textarea." The status is a child of `.left-stack`
+   *     (row 2 of the column). It is *not* in any grid that the
+   *     textarea participates in. Consequence: a tall textarea
+   *     grows in its own flex cell and doesn't push the status
+   *     down. If you ever try to put the textarea inside
+   *     `.left-stack` (or make .controls a grid where status spans
+   *     under the textarea), the status will move with the
+   *     textarea's height — that's the bug we keep landing on.
+   *
+   * (2) "A long error message wraps; it does NOT widen the column
+   *     or squash the textarea." The status's rendered width must
+   *     equal the buttons+label row's natural width — but the
+   *     status's *content* must not influence that width. We get
+   *     this via `width: 0; min-width: 100%` on `#ask-status`
+   *     (see below). `width: 0` removes the status from
+   *     `.left-stack`'s intrinsic-size calculation; `min-width:
+   *     100%` then renders it at the column's post-layout width
+   *     (= the row's max-content). Removing either one breaks
+   *     this — a CSS-grid spanning approach would also break it
+   *     because spanning items expand `max-content` tracks.
+   *
+   * (3) "Asymmetric gaps without spacer columns." `.controls` has
+   *     a uniform `gap: 24px` (checkboxes ↔ left-stack ↔
+   *     textarea), but the visual gap between the "Prompt:" label
+   *     and the textarea should be 8px to match the original
+   *     design. We cancel 16px of the 24px gap with
+   *     `margin-left: -16px` on the textarea so the effective
+   *     space is 8px. Inside `.left-stack-row`, the
+   *     button-stack ↔ label gap is its own `gap: 24px`.
+   */
   .controls {
+    /* --controls-gap is referenced by the negative-margin trick on
+     * the textarea below (intent 3). Define once, use in both
+     * places so the math stays in sync if the spacing is retuned. */
+    --controls-gap: 24px;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--controls-gap);
+    /* On a narrow viewport, prefer wrapping the buttons-and-label
+     * row to a new line over overflowing past the page edge. The
+     * textarea's `flex: 1` keeps it greedy on wide viewports. */
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  /* Column holding the buttons+label row on top of the Ask status
+   * line. Column width is set by `.left-stack-row` only — see (2)
+   * above for why `#ask-status` is excluded from that calc. */
+  .left-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  /* Top row of `.left-stack`: buttons on the left, "Prompt:" label
+   * on the right. Sized to the natural width of its content; the
+   * status row below inherits this width as its render target. */
+  .left-stack-row {
     display: flex;
     align-items: flex-start;
     gap: 24px;
-    margin-bottom: 16px;
+  }
+  /* Textarea sits as a plain flex sibling of `.left-stack`. Its
+   * height is therefore independent of the column's row heights —
+   * intent (1) above. The negative margin cancels (parent gap −
+   * 8px) of the parent's `gap`, netting an 8px visual gap between
+   * the "Prompt:" label and the textarea — intent (3). The math
+   * is keyed to `--controls-gap` so retuning the parent gap
+   * automatically retunes this. */
+  .controls > #prompt-text {
+    flex: 1;
+    margin-left: calc(-1 * var(--controls-gap) + 8px);
   }
   /*
    * Single grid for every Save row (screenshot / HTML / selection
@@ -418,19 +500,14 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  .prompt {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    flex: 1;
-  }
-  .prompt label {
+  /* "Prompt:" label lives in `.left-stack-row` next to the buttons.
+   * Textarea is a flex sibling of `.left-stack` inside `.controls`. */
+  .left-stack-row > label[for="prompt-text"] {
     font-size: 14px;
     font-weight: bold;
     padding-top: 7px;
   }
-  .prompt textarea {
-    flex: 1;
+  #prompt-text {
     padding: 6px 8px;
     font-size: 14px;
     font-family: inherit;
@@ -442,19 +519,253 @@
     overflow-y: hidden;
     box-sizing: border-box;
   }
-  button#capture {
+  button#capture,
+  button#ask-btn,
+  button#ask-caret {
     padding: 8px 16px;
     font-size: 14px;
     font-weight: 500;
     border: 1px solid #555;
-    border-radius: 4px;
     background: #f5f5f5;
     cursor: pointer;
   }
-  button#capture:disabled {
+  /* width:100% paired with the .button-stack grid below makes the
+   * buttons render at the widest button's natural width, regardless
+   * of which label is longer. The Ask split's outer wrapper takes
+   * the column width and divides it between #ask-btn and #ask-caret. */
+  button#capture {
+    width: 100%;
+    border-radius: 4px;
+  }
+  /*
+   * Default-button highlight — the user picks Capture or Ask as the
+   * "default" in Options; whichever wins gets `.is-default` from
+   * capture-page.ts and shows a subtle outer ring so it reads as
+   * "primary" even when nothing on the page has focus. Using box-shadow
+   * (not a thicker border) keeps geometry identical to its sibling so
+   * the two buttons still align in the .button-stack column.
+   *
+   * `.ask-split.is-default` rings the whole split widget (main label
+   * + caret) so the highlight reads as one button rather than ringing
+   * just the left half.
+   */
+  button#capture.is-default,
+  .ask-split.is-default {
+    /* The split-button's inner buttons each round their outer corners
+     * to 4px; matching that here so the ring traces the visible
+     * outline rather than a bigger square around it. */
+    border-radius: 4px;
+    box-shadow: 0 0 0 2px rgba(0, 95, 204, 0.35);
+  }
+  /*
+   * Split button: main "Ask <provider>" label on the left flexes to
+   * fill, caret button on the right is a fixed-width chevron. They
+   * share a continuous border by joining at a common edge — the
+   * caret's left-border is dropped, the main button's right-border
+   * is still drawn so the join reads as a divider. Outer radii at
+   * the start of the main button and the end of the caret only.
+   */
+  .ask-split {
+    display: flex;
+    width: 100%;
+  }
+  button#ask-btn {
+    flex: 1;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+  }
+  button#ask-caret {
+    /* Squarish target sized to the chevron glyph; mirrors the
+     * 8px vertical padding of the main button so they line up. */
+    padding: 8px 10px;
+    border-left: none;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+  }
+  button#ask-caret svg {
+    width: 10px;
+    height: 10px;
+    display: block;
+  }
+  button#capture:disabled,
+  button#ask-btn:disabled,
+  button#ask-caret:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
+  /*
+   * Single-column grid sized to max-content of its widest item.
+   * Both buttons stretch (via width:100% above) to that cell width,
+   * so Capture and "Ask <provider>" stay aligned even as the Ask
+   * label grows ("Ask Claude" → "Ask ChatGPT" → etc.).
+   */
+  .button-stack {
+    display: grid;
+    grid-template-columns: max-content;
+    gap: 8px;
+  }
+  /*
+   * Wrap so the popup menu can position itself relative to the Ask
+   * button without escaping the layout. `display: block` (rather
+   * than inline-block) so the wrap fills its grid cell, letting the
+   * inner button's width:100% match the wider button.
+   */
+  .ask-wrap {
+    position: relative;
+    display: block;
+  }
+  /*
+   * Anchored popup. Hidden by default; capture-page.ts unhides it
+   * after rebuilding the contents on each Ask click. Outside-click
+   * and Escape both dismiss it.
+   */
+  .ask-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    z-index: 10;
+    min-width: 240px;
+    max-width: 360px;
+    padding: 6px 0;
+    border: 1px solid #888;
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font-size: 13px;
+  }
+  .ask-menu[hidden] {
+    display: none;
+  }
+  .ask-menu ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ask-menu .ask-menu-heading {
+    /* Headings sit flush with the menu's left edge (matching item
+     * padding only — no indent for the row's leading indicator
+     * slot). Reads as a separator strip introducing each group
+     * rather than as a label aligned with the items. */
+    padding: 6px 12px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #666;
+  }
+  .ask-menu .ask-menu-item {
+    /* Two-column row: [indicator slot 16px][label flexes].
+     * The indicator slot is always reserved (even on items that
+     * aren't the current default) so labels stay vertically aligned
+     * across the menu and the pin / pin-off / new-window glyph
+     * appearing/disappearing doesn't shift neighbouring rows. */
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .ask-menu .ask-menu-item .ask-menu-check {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #060;
+  }
+  .ask-menu .ask-menu-item .ask-menu-check svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* Hide the pin glyph when the row is neither the resolved default
+   * (green pin) nor a stale pin (grey crossed-out pin). The slot
+   * itself stays width-allocated so labels remain aligned. */
+  .ask-menu .ask-menu-item:not(.is-default):not(.is-stale)
+      .ask-menu-check svg {
+    visibility: hidden;
+  }
+  /* Stale pin: a crossed-out pin in the muted #888 we use elsewhere
+   * for disabled labels (matches the `aria-disabled` row colour the
+   * excluded items already pick up). Communicates "pin used to
+   * point here" without competing visually with the green pin on
+   * the live default. */
+  .ask-menu .ask-menu-item.is-stale .ask-menu-check {
+    color: #888;
+  }
+  .ask-menu .ask-menu-item .ask-menu-label {
+    /* Don't claim the row's whole flex space — let the suffix sit
+     * inline next to the label. flex-shrink:1 + min-width:0 lets a
+     * long title give way and ellipsise instead of pushing the
+     * suffix off the row's edge when the menu is at its 360px max
+     * width. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Italic annotation appended after the label — used today to
+   * mark excluded tabs as "(Wrong page: /<segment>)". The
+   * suffix is always one short string (segment is truncated past
+   * 20 chars in capture-page.ts), so flex-shrink:0 keeps it whole;
+   * the label ellipsises first when the row is tight. */
+  .ask-menu .ask-menu-item .ask-menu-suffix {
+    flex: 0 0 auto;
+    font-style: italic;
+    color: #888;
+  }
+  .ask-menu .ask-menu-item:hover,
+  .ask-menu .ask-menu-item:focus {
+    background: #eef;
+    outline: none;
+  }
+  .ask-menu .ask-menu-item[aria-disabled="true"] {
+    color: #888;
+    cursor: not-allowed;
+  }
+  .ask-menu .ask-menu-item[aria-disabled="true"]:hover {
+    background: transparent;
+  }
+  /*
+   * Visual divider between the "New window in" block and each
+   * "Existing window in <provider>" block. Rendered as an empty
+   * <li> so the parent <ul>'s structure stays valid; the line
+   * itself comes from a top border, not an <hr>.
+   */
+  .ask-menu .ask-menu-separator {
+    margin: 4px 0;
+    border-top: 1px solid #ddd;
+    height: 0;
+    padding: 0;
+  }
+  /*
+   * Result line for the last Ask attempt. Sits in row 2 of
+   * `.left-stack`. The `width: 0` + `min-width: 100%` pair is
+   * load-bearing — see intent (2) on the `.controls` block above.
+   * `overflow-wrap: anywhere` handles long unbreakable tokens
+   * (e.g. URLs in error messages) so they wrap mid-word instead
+   * of forcing horizontal overflow that would still squash the
+   * textarea.
+   */
+  #ask-status {
+    width: 0;
+    min-width: 100%;
+    font-size: 13px;
+    min-height: 1em;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  /* Status colours used by `#ask-status` for the flat single-segment
+     state AND by the success+skipped two-span state in
+     `setAskSentWithSkipped`. Defined on standalone classes (rather
+     than `#ask-status.ok`) so the same colour values can apply to
+     either the wrapper or its child spans without duplicating the
+     hex codes in JS. */
+  .ask-status-ok    { color: #060; }
+  .ask-status-error { color: #b00; }
   .highlight-bar {
     margin: 0 0 8px 0;
     display: flex;
@@ -546,6 +857,41 @@
         <path d="M14 6l4 4"
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+      <!-- Down-chevron glyph for the Ask split-button caret. -->
+      <symbol id="caret-down-icon" viewBox="0 0 24 24">
+        <path d="M6 9l6 6 6-6"
+              fill="none" stroke="currentColor" stroke-width="3"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+      <!-- Indicator glyphs for the Ask menu's leading slot. From
+           Google Material Symbols (outlined variant), Apache 2.0
+           license. Source:
+             symbols/web/push_pin/materialsymbolsoutlined
+             symbols/web/keep_off/materialsymbolsoutlined
+             symbols/web/new_window/materialsymbolsoutlined
+           Different viewBoxes (24×24 vs 960×960 -y origin) reflect
+           Material's two design grids; SVG `<symbol>` scales each
+           independently, so they still render at the same visual
+           size in the 14×14 menu slot.
+           - `pin-icon` marks the existing-tab row plain-Ask is
+             pinned to (`is-default` on an existing tab).
+           - `pin-off-icon` marks a stale-pin row (`is-stale`).
+           - `new-window-icon` marks the "New window in <provider>"
+             row plain-Ask will hit (`is-default` on a new-tab row).
+             "Pin" doesn't fit here — it's an action row, not a
+             pinned target. -->
+      <symbol id="pin-icon" viewBox="0 0 24 24">
+        <path fill="currentColor"
+              d="m16 12 2 2v2h-5v6l-1 1-1-1v-6H6v-2l2-2V5H7V3h10v2h-1Zm-7.15 2h6.3L14 12.85V5h-4v7.85ZM12 14Z"/>
+      </symbol>
+      <symbol id="pin-off-icon" viewBox="0 -960 960 960">
+        <path fill="currentColor"
+              d="M680-840v80h-40v327l-80-80v-247H400v87l-87-87-33-33v-47h400ZM480-40l-40-40v-240H240v-80l80-80v-46L56-792l56-56 736 736-58 56-264-264h-6v240l-40 40ZM354-400h92l-44-44-2-2-46 46Zm126-193Zm-78 149Z"/>
+      </symbol>
+      <symbol id="new-window-icon" viewBox="0 -960 960 960">
+        <path fill="currentColor"
+              d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h240v80H200v560h560v-240h80v240q0 33-23.5 56.5T760-120H200Zm440-400v-120H520v-80h120v-120h80v120h120v80H720v120h-80Z"/>
       </symbol>
       <!-- Download glyph — arrow into a tray. Shown on the per-row
            "Save as…" buttons that open a native save dialog with the
@@ -742,11 +1088,69 @@
         </div>
       </div>
     </div>
-    <button id="capture"><u>C</u>apture</button>
-    <div class="prompt">
-      <label for="prompt-text">Prompt:</label>
-      <textarea id="prompt-text" rows="1"></textarea>
+    <!--
+      Left stack: buttons + "Prompt:" label on row 1, Ask status
+      directly under them on row 2. The textarea is intentionally
+      a *sibling* of this stack (not a child) so its height is
+      independent — a tall prompt does not push the status away
+      from the buttons. The status's width tracks the row above
+      it and wraps long messages instead of stretching the column.
+      Full design rationale lives on `.controls` in the CSS above
+      (intents 1–3); change that block alongside any restructure
+      here so the comment stays the source of truth.
+    -->
+    <div class="left-stack">
+      <div class="left-stack-row">
+        <!--
+          Both buttons live inside a single-column grid (.button-stack)
+          whose column is sized to max-content of its widest child.
+          Combined with `width: 100%` on each button, that pins them
+          to the same width regardless of label length — "Capture" vs
+          "Ask Claude" / "Ask Gemini" / "Ask ChatGPT".
+        -->
+        <div class="button-stack">
+          <button id="capture"
+                  title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
+          <!--
+            Split "Ask" widget. Two buttons sharing a single visual
+            chrome:
+              - #ask-btn   sends straight to the resolved default
+                           destination — the pinned tab from the last
+                           Ask if it still exists, otherwise a new
+                           window in the first enabled provider.
+              - #ask-caret opens the menu of providers + matching
+                           open tabs. The menu marks (with a leading
+                           check) whichever item plain-Ask would have
+                           targeted, so the user always sees what the
+                           main button is about to do.
+            The trailing #ask-target-label and the button's tooltip
+            track the resolved default — they show "Ask Claude" while
+            the pin lives on a Claude tab, "Ask ChatGPT" once the user
+            picks a ChatGPT tab from the menu, and so on. Alt+A is
+            wired to the caret (open the menu) so the keyboard path
+            still gives the user a chance to pick a different target.
+          -->
+          <div class="ask-wrap">
+            <div class="ask-split">
+              <button id="ask-btn" type="button"
+                      title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span></button>
+              <button id="ask-caret" type="button"
+                      aria-haspopup="menu" aria-expanded="false"
+                      aria-controls="ask-menu"
+                      aria-label="Choose Ask target">
+                <svg aria-hidden="true"><use href="#caret-down-icon"></use></svg>
+              </button>
+            </div>
+            <div id="ask-menu" class="ask-menu" role="menu" hidden>
+              <ul></ul>
+            </div>
+          </div>
+        </div>
+        <label for="prompt-text">Prompt:</label>
+      </div>
+      <div id="ask-status" role="status" aria-live="polite"></div>
     </div>
+    <textarea id="prompt-text" rows="1"></textarea>
   </div>
 
   <!--

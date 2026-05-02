@@ -46,6 +46,7 @@ import {
   COPY_LAST_HTML_MENU_ID,
   COPY_LAST_SCREENSHOT_MENU_ID,
   COPY_LAST_SELECTION_MENU_ID,
+  PIN_ASK_TARGET_MENU_ID,
   SNAPSHOTS_DIR_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
@@ -55,6 +56,7 @@ import {
   refreshActionTooltip,
   refreshCopyMenuState,
   refreshMenusIfHotkeysChanged,
+  refreshPinAskTargetMenu,
 } from './background/context-menu.js';
 import {
   ensureHtmlDownloaded,
@@ -64,6 +66,14 @@ import {
   startCaptureWithDetails,
 } from './background/capture-details.js';
 import { installOptionsMessageHandlers } from './background/options.js';
+import {
+  findProviderForTab,
+  getAskPin,
+  installAskMessageHandler,
+  setAskPin,
+} from './background/ask/index.js';
+import { ASK_PROVIDERS, _setAskProvidersForTest } from './background/ask/providers.js';
+import { getAskProviderSettings } from './background/ask/settings.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`
@@ -72,6 +82,7 @@ import { installOptionsMessageHandlers } from './background/options.js';
 installUnhandledRejectionHandler();
 installDetailsMessageHandlers();
 installOptionsMessageHandlers();
+installAskMessageHandler();
 
 chrome.action.onClicked.addListener(() => {
   // Fire-and-forget refresh so any hotkey edit since our last
@@ -143,9 +154,85 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[LOG_STORAGE_KEY]) {
     void refreshCopyMenuState();
   }
+  // Pin entry's title depends on the `askPin` session-storage key:
+  // when `sendToAi` writes a pin or another path clears it, the
+  // entry's "Pin"/"Unpin" wording for the active tab can flip
+  // without any tab event firing.
+  if (area === 'session' && changes['askPin']) {
+    void refreshPinAskTargetMenu();
+  }
+  // User toggled an Ask provider's enabled state on the Options page:
+  // the toolbar Pin/Unpin entry's eligibility on the active tab may
+  // have flipped (a provider just became disabled or re-enabled).
+  // Also drop the pin eagerly if its provider just became disabled —
+  // resolveAsk would do this lazily on the next resolve, but clearing
+  // it here keeps the toolbar entry's "Unpin" wording from lingering
+  // on a pin that won't be honored anyway.
+  if (area === 'local' && changes['askProviderSettings']) {
+    void clearPinIfProviderDisabled().then(() => refreshPinAskTargetMenu());
+  }
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
+async function clearPinIfProviderDisabled(): Promise<void> {
+  const pin = await getAskPin();
+  if (!pin) return;
+  const settings = await getAskProviderSettings();
+  if (!settings.enabled[pin.provider]) {
+    await setAskPin(null);
+  }
+}
+
+// Sync the Pin Ask target entry whenever the user is likely to
+// open the action menu next. Chrome doesn't expose an `onShown`
+// hook for the action context, so we keep the entry's state ahead
+// of the user by refreshing on every relevant tab/window event.
+//   - `tabs.onActivated`: switched the active tab in a window.
+//   - `tabs.onUpdated` (status: 'complete'): a navigation finished —
+//     URL or title may have changed enough to flip eligibility.
+//   - `windows.onFocusChanged`: focused a different window, which
+//     changes the "current" tab even though no tab event fires.
+chrome.tabs.onActivated.addListener(() => {
+  void refreshPinAskTargetMenu();
+});
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.status === 'complete' || changeInfo.url) {
+    void refreshPinAskTargetMenu();
+  }
+});
+chrome.windows.onFocusChanged.addListener(() => {
+  void refreshPinAskTargetMenu();
+});
+
+/**
+ * Pin/unpin the given tab as the Ask target. Wired to the
+ * "Pin tab as Ask target" / "Unpin tab…" toolbar entry. We
+ * re-resolve at click time (rather than trusting the entry's
+ * cached state) so a stale title can't make us pin an
+ * already-excluded page or refuse to clear a now-excluded pin.
+ *
+ * Two click paths:
+ *   - Tab is the current pin → clear the pin, regardless of URL.
+ *     Mirrors the menu's "show Unpin even on a wrong-page tab"
+ *     rule so the user can always cancel a pin from the tab it
+ *     points at.
+ *   - Tab is not the pin → only proceed if the URL is a valid
+ *     Ask target (enabled provider, not excluded). Otherwise no-op.
+ */
+async function togglePinAskTarget(
+  tab: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  if (!tab || tab.id === undefined) return;
+  const pin = await getAskPin();
+  if (pin && pin.tabId === tab.id) {
+    await setAskPin(null);
+    return;
+  }
+  const provider = await findProviderForTab(tab.id, tab.url ?? '');
+  if (!provider) return;
+  await setAskPin({ provider: provider.id, tabId: tab.id });
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Fire-and-forget refresh so any hotkey edit the user made since
   // our last render propagates to the menu before the next open.
   // Not awaited: the click itself shouldn't block on a menu-title
@@ -193,6 +280,23 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   }
   if (id === COPY_LAST_SELECTION_MENU_ID) {
     await runWithErrorReporting(() => copyLastSelectionFilename());
+    return;
+  }
+
+  // Toggle the Ask pin on/off for the active tab. The menu's title
+  // and enabled state are kept in sync by `refreshPinAskTargetMenu`,
+  // so by the time the user clicks here the entry reflects what
+  // the click will actually do — but we still re-resolve the
+  // provider here to avoid acting on stale state if the listeners
+  // haven't fired yet.
+  if (id === PIN_ASK_TARGET_MENU_ID) {
+    await runWithErrorReporting(() => togglePinAskTarget(tab));
+    // The storage-change listener fires on the `askPin` write
+    // inside togglePinAskTarget and will also call refreshPinAskTargetMenu.
+    // This explicit refresh is a belt-and-suspenders sync — covers
+    // edge cases where session storage is unavailable and the
+    // toggle didn't actually emit a change event.
+    void refreshPinAskTargetMenu();
     return;
   }
 
@@ -246,4 +350,16 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   setDefaultDblWithSelectionId,
   setDefaultDblWithoutSelectionId,
   refreshActionTooltip,
+  // Toolbar Pin/Unpin entry — exposed so the e2e suite can
+  // exercise the same code paths the user hits on right-click.
+  refreshPinAskTargetMenu,
+  togglePinAskTarget,
+  findProviderForTab,
+  getAskPin,
+  setAskPin,
+  // Test seams. Used by tests/e2e/ask-*.spec.ts to swap providers
+  // for a fixture page; ASK_PROVIDERS is exported (read-only) so
+  // tests can snapshot the originals before mutating.
+  ASK_PROVIDERS,
+  _setAskProvidersForTest,
 };
