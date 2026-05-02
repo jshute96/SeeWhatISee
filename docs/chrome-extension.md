@@ -467,11 +467,18 @@ This section is split by topic:
 
 ### Page contents
 
-- **Captured URL** — read-only single-line input (monospace,
-  horizontal scroll for long URLs).
-- **HTML byte size** — `new Blob([html]).size`, formatted as
-  `B` / `KB` / `MB` / `GB` / `TB` so the user can sanity-check
-  before saving.
+- **Captured-page card** — bordered strip with two text rows + a
+  Copy URL button.
+  - Top row: page title as a clickable link (`target="_blank"`),
+    plus a pill badge reading `HTML · <size>` on the right.
+  - Bottom row: URL in monospace blue with a trailing external-link
+    glyph. Same `href` as the title.
+  - Non-linkable URLs (empty, or non-http(s) schemes like
+    `chrome://`) strip the `href`: rows render as plain black text
+    and the external-link glyph hides. Copy URL stays enabled when
+    the URL is non-empty; it disables only when the URL is empty.
+  - HTML scrape failures hide the size pill rather than printing a
+    misleading `0 B`.
 - **Save checkboxes** — pick screenshot, HTML, both, or neither.
   Capture stays enabled even with neither ticked; a neither-save
   still writes a log record with just the URL (and any prompt),

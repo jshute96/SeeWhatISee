@@ -1,4 +1,4 @@
-The JSON record contains `{timestamp, url}` plus any of:
+The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `filename` — absolute path.
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.

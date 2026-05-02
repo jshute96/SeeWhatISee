@@ -232,8 +232,20 @@ export interface CaptureRecord {
    * implies there is something to act on.
    */
   prompt?: string;
-  /** URL of the captured tab, or empty string if unavailable. */
+  /**
+   * URL of the captured tab. Empty string is treated as "unavailable"
+   * — `serializeRecord` omits the field from `log.json` rather than
+   * writing `"url": ""`. Write paths always assign a string (possibly
+   * empty); presence in the JSON output therefore implies a known URL.
+   */
   url: string;
+  /**
+   * Title of the captured tab (`chrome.tabs.Tab.title`). Same omit-
+   * when-empty contract as `url` — `serializeRecord` skips the field
+   * when the value is empty so an absent title doesn't appear as
+   * `"title": ""` in `log.json`.
+   */
+  title: string;
 }
 
 export interface CaptureResult extends CaptureRecord {
@@ -303,7 +315,7 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
   if (!active) throw new Error('No active tab found to capture');
 
   const dataUrl = await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
-  return saveCapture(dataUrl, active.url ?? '');
+  return saveCapture(dataUrl, active.url ?? '', active.title ?? '');
 }
 
 /**
@@ -342,6 +354,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
     timestamp: now.toISOString(),
     contents: { filename },
     url: active.url ?? '',
+    title: active.title ?? '',
   };
 
   // Save the HTML first. The metadata files are downstream and
@@ -499,6 +512,7 @@ export async function captureSelection(
     timestamp: now.toISOString(),
     selection: { filename, format },
     url: active.url ?? '',
+    title: active.title ?? '',
   };
 
   // Reuse the Capture page flow helper so the trailing-newline logic
@@ -509,6 +523,7 @@ export async function captureSelection(
     screenshotDataUrl: '',
     html: '',
     url: record.url,
+    title: record.title,
     timestamp: record.timestamp,
     screenshotFilename: '',
     contentsFilename: '',
@@ -537,6 +552,13 @@ export interface InMemoryCapture {
    */
   html: string;
   url: string;
+  /**
+   * Title of the captured tab (`chrome.tabs.Tab.title`) at capture
+   * time, or empty string if unavailable. Pinned with the rest of
+   * the snapshot so the Capture page shows the title that was live
+   * when the user clicked, even if the tab navigates afterwards.
+   */
+  title: string;
   /**
    * ISO 8601 UTC timestamp of the moment the capture was taken
    * (right after `chrome.tabs.captureVisibleTab` returned). Pinning
@@ -691,6 +713,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotDataUrl,
     html,
     url: active.url ?? '',
+    title: active.title ?? '',
     timestamp: now.toISOString(),
     screenshotFilename: `screenshot-${ts}.png`,
     contentsFilename: `contents-${ts}.html`,
@@ -974,6 +997,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   const record: CaptureRecord = {
     timestamp: opts.capture.timestamp,
     url: opts.capture.url,
+    title: opts.capture.title,
   };
   if (opts.includeScreenshot) {
     record.screenshot = screenshotArtifact(opts.capture.screenshotFilename, {
@@ -1005,7 +1029,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   return record;
 }
 
-async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult> {
+async function saveCapture(dataUrl: string, url: string, title: string): Promise<CaptureResult> {
   // Compute one Date and derive both the filename's compact timestamp and
   // the record's ISO timestamp from it, so the two can never drift.
   const now = new Date();
@@ -1017,6 +1041,7 @@ async function saveCapture(dataUrl: string, url: string): Promise<CaptureResult>
     timestamp: now.toISOString(),
     screenshot: { filename },
     url,
+    title,
   };
 
   // Save the screenshot first. The metadata files are downstream and
@@ -1121,7 +1146,16 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   if (r.contents !== undefined) ordered.contents = r.contents;
   if (r.selection !== undefined) ordered.selection = r.selection;
   if (r.prompt !== undefined) ordered.prompt = r.prompt;
-  ordered.url = r.url;
+  // `url` / `title` are typed as required `string` on the in-memory
+  // record (write paths always assign one — possibly empty), but
+  // we only *emit* them when non-empty so an unavailable URL or
+  // title is absent from `log.json` rather than serialised as `""`.
+  // Keeps the JSON schema honest: presence implies "we have it".
+  // Records persisted in `chrome.storage.local` before these fields
+  // existed surface here as `undefined`; the truthiness check elides
+  // them the same way.
+  if (r.url) ordered.url = r.url;
+  if (r.title) ordered.title = r.title;
   return JSON.stringify(ordered, null, indent);
 }
 

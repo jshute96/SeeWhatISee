@@ -6,8 +6,8 @@
 //      capture.html in that tab.
 //   2. On load we ask background for our pre-captured data via a
 //      runtime message. background reads it from session storage and
-//      sends it back; we show the screenshot, the captured URL, and
-//      the HTML byte size.
+//      sends it back; we render the page-card (title, URL,
+//      HTML-size badge), the screenshot preview, and the Save state.
 //   3. User picks which artifacts to save (checkboxes), types an
 //      optional prompt, optionally draws highlights over the preview
 //      (rectangles and lines — all in a single undo stack), and
@@ -52,6 +52,13 @@ interface DetailsData {
   screenshotDataUrl: string;
   html: string;
   url: string;
+  /**
+   * Captured tab title, pinned at capture time. Rendered as the
+   * primary line in the page-card (clickable link), with the URL on
+   * a secondary monospace line underneath. Falls back to the URL
+   * when empty.
+   */
+  title: string;
   /**
    * Captured selection bodies, one per storage format. Present iff
    * the SW saw a selection on the active tab at capture time; each
@@ -138,8 +145,19 @@ const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
 const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElement;
 const previewImg = document.getElementById('preview') as HTMLImageElement;
-const capturedUrlInput = document.getElementById('captured-url') as HTMLInputElement;
-const htmlSizeEl = document.getElementById('html-size') as HTMLSpanElement;
+const capturedTitleLink = document.getElementById('captured-title') as HTMLAnchorElement;
+const capturedUrlLink = document.getElementById('captured-url') as HTMLAnchorElement;
+const capturedUrlText = document.getElementById('captured-url-text') as HTMLSpanElement;
+const htmlSizeBadge = document.getElementById('html-size-badge') as HTMLSpanElement;
+const copyUrlBtn = document.getElementById('copy-url-btn') as HTMLButtonElement;
+/**
+ * Captured page URL, kept in module scope so `buildPreviewHtml`'s
+ * `<base href>` can resolve relative resources against the source
+ * page's origin without re-reading the anchor's `href` (which
+ * normalises and would echo `chrome-extension://…` when we're in the
+ * inert / no-URL state).
+ */
+let capturedUrl = '';
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const screenshotRow = document.getElementById('row-screenshot') as HTMLDivElement;
@@ -1440,7 +1458,38 @@ async function loadData(): Promise<void> {
     });
     if (!response) return;
     previewImg.src = response.screenshotDataUrl;
-    capturedUrlInput.value = response.url;
+    capturedUrl = response.url;
+    // Title falls back to the URL when no title was captured (covers
+    // restricted pages, scrape failures, and the rare untitled tab).
+    // The native `title` attribute mirrors the displayed text so
+    // hovering an ellipsised row reveals the full string. The hover
+    // tooltip on the URL row stays the URL itself even when the title
+    // is showing the URL — readers expect the URL there.
+    const titleText = response.title || response.url || '(no URL)';
+    capturedTitleLink.textContent = titleText;
+    capturedTitleLink.title = titleText;
+    capturedUrlText.textContent = response.url;
+    capturedUrlLink.title = response.url;
+    // Only http(s) URLs get a live `href` — `chrome://`,
+    // `chrome-extension://`, `file://`, `data:`, and `javascript:`
+    // either can't be navigated to from an extension page or
+    // shouldn't be made click-affordant. The rows still render the
+    // captured string and the Copy URL button still works on any
+    // non-empty value (copying `chrome://...` is legitimately useful).
+    const linkable = response.url && /^https?:/i.test(response.url);
+    if (linkable) {
+      capturedTitleLink.href = response.url;
+      capturedUrlLink.href = response.url;
+    } else {
+      // Keep the markup but inert. The CSS `:not([href])` rule strips
+      // the click affordance (cursor + pointer-events), overrides the
+      // URL row's blue back to #222 so the text reads as plain text,
+      // and hides the trailing external-link glyph since there's
+      // nowhere to navigate.
+      capturedTitleLink.removeAttribute('href');
+      capturedUrlLink.removeAttribute('href');
+    }
+    copyUrlBtn.disabled = !response.url;
 
     if (response.screenshotError) {
       screenshotBox.checked = false;
@@ -1456,18 +1505,18 @@ async function loadData(): Promise<void> {
       screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
     }
 
-    // Apply per-artifact error states first so the HTML size readout
-    // below reflects the right value (a dash placeholder rather than
-    // the empty-string byte count of a failed scrape).
+    // Apply per-artifact error states first so the HTML size badge
+    // below reflects the right value (hidden rather than a misleading
+    // "0 B" pill when the scrape failed).
     if (response.htmlError) {
       // HTML couldn't be scraped (restricted URL, blocked injection,
       // etc.). Disable + uncheck Save HTML, hide its Copy / Edit
       // buttons, and flag the row with a hoverable error icon so the
       // user understands why it's greyed out — while still letting
       // them use the rest of the capture flow. The reason itself
-      // lives on the row's error-icon tooltip; the size field just
-      // gets a dash so the layout stays stable without restating the
-      // same message twice.
+      // lives on the row's error-icon tooltip; the size pill is hidden
+      // outright so the card row doesn't show a confusing "HTML · 0 B"
+      // when no HTML was captured.
       htmlBox.checked = false;
       htmlBox.disabled = true;
       copyHtmlBtn.disabled = true;
@@ -1475,12 +1524,16 @@ async function loadData(): Promise<void> {
       downloadHtmlBtn.disabled = true;
       htmlRow.classList.add('has-error');
       htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
-      htmlSizeEl.textContent = '—';
+      htmlSizeBadge.hidden = true;
     } else {
       captured.html = response.html;
       // True UTF-8 byte count of the captured HTML, not the JS string
-      // length (which counts UTF-16 code units).
-      htmlSizeEl.textContent = formatBytes(new Blob([captured.html]).size);
+      // length (which counts UTF-16 code units). Explicit `hidden =
+      // false` is defensive — `loadData` only runs once today, but a
+      // future re-load (e.g. retry-on-error) shouldn't inherit the
+      // error branch's `hidden = true` state.
+      htmlSizeBadge.hidden = false;
+      htmlSizeBadge.textContent = `HTML · ${formatBytes(new Blob([captured.html]).size)}`;
     }
     if (response.selectionError && !response.htmlError) {
       // Selection couldn't be scraped *independently* of HTML. In
@@ -1616,6 +1669,14 @@ async function loadData(): Promise<void> {
 // Extension pages have direct access to `navigator.clipboard.writeText`
 // under a user gesture — no offscreen helper needed (unlike the SW's
 // Copy-last-… menu entries).
+
+// Page-card Copy URL button — copies the captured URL string itself
+// (not a filename or a download path), separate from the per-artifact
+// Copy buttons which materialize a file and copy its absolute path.
+copyUrlBtn.addEventListener('click', () => {
+  if (!capturedUrl) return;
+  void navigator.clipboard.writeText(capturedUrl);
+});
 
 copyScreenshotBtn.addEventListener('click', () => {
   void copyArtifactPath('screenshot');
@@ -1834,7 +1895,10 @@ const EDIT_KINDS: EditKindSpec[] = [
     openBtn: editHtmlBtn,
     preview: 'html',
     onSaved: (v) => {
-      htmlSizeEl.textContent = formatBytes(new Blob([v]).size);
+      // Only reachable when the original HTML scrape succeeded —
+      // `loadData` disables `editHtmlBtn` whenever `htmlError` is set,
+      // so the badge here is always populated and visible.
+      htmlSizeBadge.textContent = `HTML · ${formatBytes(new Blob([v]).size)}`;
     },
   },
   {
@@ -2208,7 +2272,7 @@ function bindEditDialog(spec: EditKindSpec): void {
       if (spec.preview === 'markdown') {
         htmlBody = renderMarkdown(htmlBody);
       }
-      const html = buildPreviewHtml(htmlBody, capturedUrlInput.value);
+      const html = buildPreviewHtml(htmlBody, capturedUrl);
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       previewBlobUrl = URL.createObjectURL(blob);
       parts.previewIframe.src = previewBlobUrl;

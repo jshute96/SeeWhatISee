@@ -23,7 +23,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 
 ## Process each snapshot
 
-1. The JSON record contains `{timestamp, url}` plus any of:
+1. The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `filename` — absolute path.
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.

@@ -60,6 +60,7 @@ test('details: png only, no prompt, no highlights', async ({
   expect(record.prompt).toBeUndefined();
   expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  expect(record.title).toBe('purple');
 
   // The PNG should exist and be non-empty.
   const pngPath = await findCapturedDownload(sw, '.png');
@@ -90,6 +91,7 @@ test('details: html only with prompt', async ({
   expect(record.contents?.filename).toMatch(CONTENTS_PATTERN);
   expect(record.prompt).toBe('find the bug');
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  expect(record.title).toBe('purple');
 
   // The HTML file should contain the fixture page's marker.
   const contentsPath = await findCapturedDownload(sw, '.html');
@@ -156,6 +158,7 @@ test('details: url-only (no screenshot, no html) with prompt', async ({
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBe('what runs on this host?');
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  expect(record.title).toBe('purple');
 
   await openerPage.close();
 });
@@ -183,6 +186,7 @@ test('details: url-only with no prompt', async ({
   expect(record.contents).toBeUndefined();
   expect(record.prompt).toBeUndefined();
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  expect(record.title).toBe('purple');
 
   await openerPage.close();
 });

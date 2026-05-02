@@ -90,9 +90,9 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
     'open',
     false,
   );
-  // The HTML-size readout reflects the new (much shorter) body.
-  const sizeText = await capturePage.locator('#html-size').innerText();
-  expect(sizeText).toMatch(/^\d+ B$/);
+  // The HTML-size badge reflects the new (much shorter) body.
+  const sizeText = await capturePage.locator('#html-size-badge').innerText();
+  expect(sizeText).toMatch(/^HTML · \d+ B$/);
 
   // Step 3: Copy again *after* editing. The edit invalidated the
   // cache, so the SW re-downloads — count goes to 2. The two

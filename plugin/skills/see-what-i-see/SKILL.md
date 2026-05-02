@@ -16,7 +16,7 @@ You can't run this autonomously since it requires the user to have just clicked 
   - If the script fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
   - The JSON output has absolute paths already filled in for `screenshot`, `contents`, and `selection`.
 
-2. The JSON record contains `{timestamp, url}` plus any of:
+2. The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `filename` — absolute path.
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.

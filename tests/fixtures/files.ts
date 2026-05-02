@@ -120,7 +120,12 @@ export async function verifyHtmlCapture(
   const expectedRecord: CaptureRecord = {
     timestamp: result.timestamp,
     contents: result.contents,
-    url: result.url,
+    // `serializeRecord` omits `url` / `title` from the JSON output
+    // when empty, so only include them in the expected literal when
+    // the result actually has a value — otherwise `toEqual` would
+    // mismatch (`title: ''` vs. no `title` key at all).
+    ...(result.url ? { url: result.url } : {}),
+    ...(result.title ? { title: result.title } : {}),
   };
 
   const logLines = fs.readFileSync(logPath, 'utf8').split('\n');
@@ -181,7 +186,12 @@ export async function verifyCapture(
   const expectedRecord: CaptureRecord = {
     timestamp: result.timestamp,
     screenshot: result.screenshot,
-    url: result.url,
+    // `serializeRecord` omits `url` / `title` from the JSON output
+    // when empty, so only include them in the expected literal when
+    // the result actually has a value — otherwise `toEqual` would
+    // mismatch (`title: ''` vs. no `title` key at all).
+    ...(result.url ? { url: result.url } : {}),
+    ...(result.title ? { title: result.title } : {}),
   };
 
   // log.json: NDJSON. Always check the trailing newline + last record.

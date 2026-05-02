@@ -622,9 +622,25 @@ sub-modules above.
 
 ### What the page shows
 
-- **Captured URL** — read-only single-line monospace input.
-- **HTML byte size** — `formatBytes(new Blob([html]).size)` →
-  `B` / `KB` / `MB` / `GB` / `TB`.
+- **Captured-page card** — bordered strip showing the capture's
+  page metadata.
+  - Title row: clickable link with the captured tab's title (falls
+    back to the URL when the title is empty); pill badge on the right
+    reads `HTML · <size>` via `formatBytes(new Blob([html]).size)`.
+  - URL row: monospace blue link with a trailing external-link glyph;
+    same `href` as the title.
+  - Trailing **Copy URL** button writes the URL string to the
+    clipboard (separate from the per-artifact Copy buttons, which
+    materialize a file and copy its absolute path).
+  - When the captured URL isn't linkable (empty, or a non-http(s)
+    scheme like `chrome://` / `file://` / `data:`) both rows lose
+    their `href` and render as plain black text; the URL row's blue
+    is overridden and the trailing external-link glyph is hidden.
+    Copy URL stays enabled whenever the URL string is non-empty (so
+    you can copy `chrome://...` to the clipboard); it disables only
+    when the URL is empty.
+  - When HTML capture failed the size pill is hidden outright rather
+    than showing a misleading `0 B`.
 - **Save checkboxes** — pick any of screenshot, HTML, selection
   (one format), or none (URL-only record).
   - Save selection is a master checkbox (`Save selection`) plus a

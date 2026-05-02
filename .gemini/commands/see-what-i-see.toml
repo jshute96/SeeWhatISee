@@ -9,7 +9,7 @@ prompt = """
 1. Read this JSON object:
 !{$HOME/.gemini/scripts/copy-last-snapshot.sh}
 
-2. The JSON record contains `{timestamp, url}` plus any of:
+2. The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `filename` — absolute path.
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.

@@ -25,8 +25,9 @@
     color: #222;
     /*
      * Hidden at first paint. capture-page.ts flips visibility back
-     * to `visible` inside loadData once all fields (URL, HTML size,
-     * preview image, Save selection state) have been populated.
+     * to `visible` inside loadData once the page-card fields (title,
+     * URL, HTML-size badge), preview image, and Save selection state
+     * have all been populated.
      * Avoids the user watching values fill in one at a time during
      * the SW round-trip.
      */
@@ -58,26 +59,135 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  .capture-info {
+  /*
+   * Captured-page card: bordered light-grey strip showing the
+   * captured tab's title (clickable, opens the source in a new tab),
+   * the URL on a second line in monospace blue with a trailing
+   * external-link glyph, an HTML-size pill on the right, and a Copy
+   * URL button after a divider. The whole card is one rounded box;
+   * `overflow: hidden` clips the divider's left border to the card's
+   * rounded corner so the seam reads cleanly.
+   */
+  .capture-card {
+    display: flex;
+    align-items: stretch;
     margin: 0 0 16px 0;
-    font-size: 14px;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 4px 8px;
-    align-items: center;
-  }
-  .capture-info .label {
-    font-weight: 600;
-  }
-  .capture-info #captured-url {
-    min-width: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 13px;
-    padding: 4px 6px;
     border: 1px solid #bbb;
     border-radius: 4px;
     background: #f5f5f5;
+    overflow: hidden;
+  }
+  /* Body holds the two text rows. `min-width: 0` lets the long-line
+   * children's `text-overflow: ellipsis` actually trigger inside the
+   * flex item (a flex child's default min-width is its intrinsic
+   * content size, which would push the card past the viewport). */
+  .capture-card-body {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+  }
+  .capture-card-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .capture-card-title {
+    font-size: 14px;
+    font-weight: 600;
     color: #222;
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .capture-card-title:hover {
+    text-decoration: underline;
+  }
+  /* HTML-size pill — white background, light border, small grey text.
+   * `margin-left: auto` parks it at the row's right edge regardless
+   * of how short the title is. `flex-shrink: 0` keeps it whole; the
+   * title ellipsises first when the card gets tight. */
+  .capture-card-badge {
+    margin-left: auto;
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    font-size: 11px;
+    color: #666;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+  .capture-card-url {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: #0645ad;
+    text-decoration: none;
+    overflow: hidden;
+  }
+  .capture-card-url:hover .capture-card-url-text {
+    text-decoration: underline;
+  }
+  .capture-card-url-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Trailing external-link glyph sized to the URL row's font; the
+   * fixed `flex: 0 0 auto` keeps it from getting squeezed when the
+   * URL is long. */
+  .capture-card-url .ext-icon {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+  }
+  /* When the captured URL isn't linkable (empty, or a non-http(s)
+   * scheme like chrome://) we strip the `href` and demote the rows
+   * to plain text. The text stays full-contrast (the title's #222 is
+   * already inherited; the URL row gets its blue overridden back to
+   * #222 here) so it remains readable — only the click affordance
+   * goes away. The trailing external-link glyph also hides since
+   * there's nowhere to navigate. */
+  .capture-card-title:not([href]),
+  .capture-card-url:not([href]) {
+    color: #222;
+    cursor: default;
+    pointer-events: none;
+  }
+  .capture-card-url:not([href]) .ext-icon {
+    display: none;
+  }
+  /* Copy URL button — mirrors the per-row `.copy-btn` look in width
+   * and icon size, but has its own border-left to act as a divider
+   * inside the card. `align-self: stretch` (via the parent's
+   * `align-items: stretch`) makes the button fill the card's height
+   * even though its content is centred. */
+  .capture-card-copy {
+    width: 36px;
+    border: none;
+    border-left: 1px solid #ddd;
+    background: #f5f5f5;
+    cursor: pointer;
+    color: #555;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .capture-card-copy:hover {
+    background: #eee;
+    color: #222;
+  }
+  .capture-card-copy:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+  .capture-card-copy svg {
+    width: 14px;
+    height: 14px;
   }
   /*
    * Controls-row layout. This block is intentionally NOT a grid —
@@ -941,6 +1051,12 @@
         <line x1="3" y1="13" x2="21" y2="3"
               stroke="red" stroke-width="2" stroke-linecap="round"></line>
       </symbol>
+      <!-- External-link glyph for the Captured-page card's URL row. -->
+      <symbol id="external-link-icon" viewBox="0 0 24 24">
+        <path d="M14 4h6v6M20 4l-9 9M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
       <!-- Down-chevron glyph for the Ask split-button caret. -->
       <symbol id="caret-down-icon" viewBox="0 0 24 24">
         <path d="M6 9l6 6 6-6"
@@ -999,11 +1115,36 @@
     <button type="button" id="options-btn" class="btn">Options</button>
   </header>
 
-  <div class="capture-info">
-    <label class="label" for="captured-url">Captured URL:</label>
-    <input type="text" id="captured-url" readonly value="">
-    <span class="label">HTML size:</span>
-    <span id="html-size"></span>
+  <!--
+    Captured-page card. Visual: bordered strip with the page title on
+    top (clickable, opens the source page in a new tab), the URL
+    underneath in monospace blue with a trailing external-link glyph,
+    an HTML-size pill on the right side of the title row, and a Copy
+    URL button at the far right. Both links share a single `href` to
+    the captured URL — the title text is the human-readable label,
+    the URL row is the verbatim address. capture-page.ts populates
+    title text + href in `loadData`; restricted / unavailable URLs
+    drop the `href` so the rows render as inert grey text.
+  -->
+  <div class="capture-card">
+    <div class="capture-card-body">
+      <div class="capture-card-title-row">
+        <a id="captured-title" class="capture-card-title"
+           target="_blank" rel="noreferrer noopener"></a>
+        <span id="html-size-badge" class="capture-card-badge"></span>
+      </div>
+      <a id="captured-url" class="capture-card-url"
+         target="_blank" rel="noreferrer noopener">
+        <span id="captured-url-text" class="capture-card-url-text"></span>
+        <svg class="ext-icon" aria-hidden="true">
+          <use href="#external-link-icon"></use>
+        </svg>
+      </a>
+    </div>
+    <button type="button" id="copy-url-btn" class="capture-card-copy"
+            title="Copy URL" aria-label="Copy URL">
+      <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
+    </button>
   </div>
 
   <div class="controls">

@@ -207,8 +207,8 @@ of recent captures.
 
 ### `log.json` record schema
 
-Every record has `timestamp` and `url`. The remaining fields are optional, and only
-present when that action was included.
+Every record has `timestamp`. The remaining fields are optional, and only
+present when that item was included or available.
 
 - `timestamp` — ISO 8601 UTC timestamp of the capture.
 - `screenshot` — present when a PNG screenshot was saved.
@@ -225,7 +225,8 @@ present when that action was included.
     - `isEdited` — `true` if the user edited the captured body before saving.
 - `prompt` — user-entered prompt from the *Capture* page
   flow, giving instructions for agents on what to do with this capture.
-- `url` — URL of the captured tab, or `""` if unavailable.
+- `url` — URL of the captured page.
+- `title` — Title of the captured page.
 
 `filename` fields have file basenames in `log.json` in the `Downloads` folder.
 The scripts that extract these records to pass to agents expand `filename` to hold absolute paths.

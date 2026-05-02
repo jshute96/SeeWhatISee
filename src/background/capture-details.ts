@@ -656,6 +656,7 @@ export function installDetailsMessageHandlers(): void {
           html: session.capture.html,
           selections: session.capture.selections,
           url: session.capture.url,
+          title: session.capture.title,
           htmlError: session.capture.htmlError,
           selectionError: session.capture.selectionError,
           screenshotError: session.capture.screenshotError,
