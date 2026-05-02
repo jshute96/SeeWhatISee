@@ -12,8 +12,9 @@
 // Run with `npm run build`. Pass --watch to keep tsc running.
 //
 // Note on watch mode: only TypeScript is watched. If you edit
-// src/manifest.json, src/capture.html, or swap out icon files,
-// re-run `npm run build`.
+// src/manifest.json, src/capture.html, src/options.html,
+// src/shared-styles.css, or swap out icon files, re-run
+// `npm run build`.
 
 import { rm, mkdir, cp, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
@@ -51,6 +52,12 @@ await cp(resolve(root, 'src/options.html'), resolve(dist, 'options.html'));
 //     TypeScript (src/offscreen.ts) is picked up by tsc; the HTML
 //     just hosts a <script> tag pointing at the compiled offscreen.js.
 await cp(resolve(root, 'src/offscreen.html'), resolve(dist, 'offscreen.html'));
+
+// 3c-ii. Copy the shared CSS chrome (`.btn` press-look) used by both
+//        capture.html and options.html via `<link rel="stylesheet">`.
+//        See `src/shared-styles.css` for the design rationale on what
+//        is and isn't in this file.
+await cp(resolve(root, 'src/shared-styles.css'), resolve(dist, 'shared-styles.css'));
 
 // 3d. Copy the marked UMD bundle into dist/. capture.html loads it via
 //     a classic <script> tag before capture-page.js so the markdown

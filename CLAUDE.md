@@ -14,6 +14,7 @@ repository. See `README.md` for setup instructions and available commands.
     - If a doc section grows past ~8 lines, give it sub-headings.
     - Prefer bullets to paragraphs; prefer short bullets to long bullets.
   - When adding a new feature, you can add new sections in the relevant design doc rather than appending to an existing one.
+  - **Avoid stating counts of list elements in comments or docs.** If there are more than 2-3 items, don't say the count before listing them. That requires unnecessary edits when the list changes.
 - **Commit Preparation**:
   - Ensure `README.md` is updated if setup, commands, or user-visible features change.
     - `README.md` is most user-facing documentation. Keep it concise and focus on briefly listing what users can do, without a lot of technical details.

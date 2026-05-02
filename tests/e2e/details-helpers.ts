@@ -277,6 +277,70 @@ export async function waitForClipboardWrites(page: Page, n: number): Promise<voi
   );
 }
 
+// ─── Image-clipboard spy (palette Copy button) ───────────────────
+//
+// `navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`
+// is a different API surface from the `writeText` covered by
+// `installClipboardSpy`. The image-spy stubs `clipboard.write`,
+// reads each ClipboardItem's blobs synchronously, and stores the
+// bytes as base64 strings (the only blob shape Playwright's
+// eval boundary serialises cleanly).
+export interface ClipboardWriteEntry {
+  /** ClipboardItem.types as reported at write time. */
+  types: string[];
+  /** Per-type blob bytes, base64-encoded. Use `Buffer.from(.., 'base64')`. */
+  blobs: Record<string, string>;
+}
+
+export async function installClipboardWriteSpy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface Entry { types: string[]; blobs: Record<string, string> }
+    interface SpyState { __seeClipWrites?: Entry[] }
+    const g = self as unknown as SpyState;
+    g.__seeClipWrites = [];
+    // Unlike `installClipboardSpy` (which calls through to the real
+    // `writeText`), this spy intentionally does NOT call the original
+    // `clipboard.write` — `image/png` writes need a focused window
+    // and clean user-activation that the headless test browser doesn't
+    // always produce, and the test only cares which bytes the page
+    // tried to write. Call-through would buy nothing here and would
+    // make the spy flaky on focus loss.
+    (navigator.clipboard as { write: (items: ClipboardItem[]) => Promise<void> }).write =
+      async (items: ClipboardItem[]) => {
+        for (const item of items) {
+          const blobs: Record<string, string> = {};
+          for (const type of item.types) {
+            const blob = await item.getType(type);
+            const buf = await blob.arrayBuffer();
+            // Build a binary string then btoa — Playwright's
+            // page.evaluate can return primitives but not ArrayBuffer,
+            // so the test side decodes from base64 instead.
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            blobs[type] = btoa(bin);
+          }
+          g.__seeClipWrites!.push({ types: [...item.types], blobs });
+        }
+      };
+  });
+}
+
+export async function readClipboardWriteSpy(page: Page): Promise<ClipboardWriteEntry[]> {
+  return await page.evaluate(
+    () => (self as unknown as { __seeClipWrites?: ClipboardWriteEntry[] }).__seeClipWrites ?? [],
+  );
+}
+
+export async function waitForClipboardWriteSpy(page: Page, n: number): Promise<void> {
+  await page.waitForFunction(
+    (count) =>
+      ((self as unknown as { __seeClipWrites?: unknown[] }).__seeClipWrites?.length ?? 0) >= count,
+    n,
+    { timeout: 5000 },
+  );
+}
+
 // Count the screenshot / HTML downloads recorded in the SW spy
 // (installed by `openDetailsFlow`). Used to assert the per-tab cache
 // short-circuits — i.e. after the first Copy on each kind, neither a

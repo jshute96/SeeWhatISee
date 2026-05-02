@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <title>SeeWhatISee — Options</title>
+<!--
+  Shared `.btn` chrome (raised look + hover/active/.pressed flash +
+  disabled) used by the footer Save / Undo / Defaults buttons.
+  Per-page sizing/padding/border still lives in the inline <style>.
+-->
+<link rel="stylesheet" href="shared-styles.css">
 <style>
   /*
    * Sticky-shell layout: body is a full-height flex column with a
@@ -279,6 +285,16 @@
     padding: 6px 14px;
     cursor: pointer;
   }
+  /* Footer Save / Undo / Defaults — full button chrome (border +
+   * raised background + radius) so they read as primary controls
+   * rather than inheriting the bare `button` base used by the
+   * inline `#edit-shortcuts` link-style button. */
+  .footer button {
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+  }
+  /* `.btn` shared chrome lives in src/shared-styles.css — linked above. */
   #status {
     color: #555;
     font-size: 14px;
@@ -478,9 +494,9 @@
 </main>
 
 <div class="footer">
-  <button id="save" type="button">Save</button>
-  <button id="undo" type="button">Undo changes</button>
-  <button id="defaults" type="button">Defaults</button>
+  <button id="save" type="button" class="btn">Save</button>
+  <button id="undo" type="button" class="btn">Undo changes</button>
+  <button id="defaults" type="button" class="btn">Defaults</button>
   <span id="status" aria-live="polite"></span>
 </div>
 

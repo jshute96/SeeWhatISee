@@ -675,10 +675,13 @@ draws annotations with a *modal* tool palette. Exactly one of four
 tool buttons is selected at a time; a left-button drag commits an
 edit of that tool's kind. There's no right-click drawing.
 
-- **Tool palette** — Box / Line / Crop / Redact, plus separated
-  Undo / Clear actions. The Box and Line buttons render an icon of
-  what they draw; Crop and Redact use text labels. Selected = a
-  pushed-down style on the active button. Default tool is Box.
+- **Tool palette** — Box / Line / Crop / Redact tool selectors,
+  then separated Undo / Clear (edit-stack actions) and Copy / Save
+  (image-level actions: Copy puts the *current* PNG bytes on the
+  clipboard, Save opens the native save-as dialog with the same
+  bytes). The Box and Line buttons render an icon of what they
+  draw; the rest use text labels. Selected = a pushed-down style on
+  the active tool button. Default tool is Box.
 - **Box tool** — drag commits a 3px-bordered red rectangle.
 - **Line tool** — drag commits a 3px red diagonal line.
 - **Crop tool** — drag paints the live cropped preview (dim frame

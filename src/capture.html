@@ -11,6 +11,13 @@
   page's light background.
 -->
 <link rel="stylesheet" href="highlight-theme.css">
+<!--
+  Shared `.btn` chrome (raised look + hover/active/.pressed flash +
+  disabled) used by every primary button on the page. Per-page
+  sizing/padding/border still lives in the per-button rules in the
+  inline <style> below.
+-->
+<link rel="stylesheet" href="shared-styles.css">
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -553,9 +560,14 @@
   .ask-split.is-default {
     /* The split-button's inner buttons each round their outer corners
      * to 4px; matching that here so the ring traces the visible
-     * outline rather than a bigger square around it. */
+     * outline rather than a bigger square around it. Uses `outline`
+     * (not `box-shadow`) so the ring stays independent of `.btn`'s
+     * raised drop shadow + the inset pressed shadow — multiple
+     * `box-shadow` sources don't stack across CSS rules, but
+     * `outline` is its own property. */
     border-radius: 4px;
-    box-shadow: 0 0 0 2px rgba(0, 95, 204, 0.35);
+    outline: 2px solid rgba(0, 95, 204, 0.35);
+    outline-offset: 0;
   }
   /*
    * Split button: main "Ask <provider>" label on the left flexes to
@@ -822,9 +834,10 @@
   /*
    * `width: fit-content` shrinks the column to the widest button's
    * intrinsic width; the column-flex default `align-items: stretch`
-   * then stretches the narrower siblings to that same width — so all
-   * six buttons (4 tool-selectors + Undo + Clear) end up sized to
-   * the longest label without us having to hardcode a width.
+   * then stretches the narrower siblings to that same width — so
+   * every palette button (tool selectors, Undo/Clear, Copy/Save)
+   * ends up sized to the longest label without us having to
+   * hardcode a width.
    */
   .highlight-buttons {
     display: flex;
@@ -840,9 +853,8 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  .highlight-buttons button:disabled {
-    opacity: 0.5;
-  }
+  /* `.btn` shared chrome (raised look + hover/active/.pressed flash +
+   * disabled) lives in src/shared-styles.css — linked above. */
   /* Icon-only tool buttons (Box, Line). The SVG glyph centers
    * horizontally in the wider button slot (sized by Crop/Redact). */
   .tool-btn-icon svg {
@@ -860,10 +872,11 @@
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
-  /* Visual gap between the four tool-selection buttons and the
-   * Undo/Clear action buttons below them. Larger than the regular
-   * 6px row gap so the two groups read as separate clusters. */
-  .highlight-buttons #undo {
+  /* Visual gaps between the three palette clusters: tool selectors
+   * → Undo/Clear → Copy/Download image. Larger than the regular
+   * 6px row gap so each group reads as its own cluster. */
+  .highlight-buttons #undo,
+  .highlight-buttons #copy-image-btn {
     margin-top: 14px;
   }
   #overlay {
@@ -983,7 +996,7 @@
   <header>
     <img src="icons/icon-48.png" alt="">
     <span>SeeWhatISee: Capture screenshot or contents</span>
-    <button type="button" id="options-btn">Options</button>
+    <button type="button" id="options-btn" class="btn">Options</button>
   </header>
 
   <div class="capture-info">
@@ -1179,7 +1192,7 @@
           "Ask Claude" / "Ask Gemini" / "Ask ChatGPT".
         -->
         <div class="button-stack">
-          <button id="capture"
+          <button id="capture" class="btn"
                   title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
           <!--
             Split "Ask" widget. Two buttons sharing a single visual
@@ -1202,9 +1215,9 @@
           -->
           <div class="ask-wrap">
             <div class="ask-split">
-              <button id="ask-btn" type="button"
+              <button id="ask-btn" type="button" class="btn"
                       title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span></button>
-              <button id="ask-caret" type="button"
+              <button id="ask-caret" type="button" class="btn"
                       aria-haspopup="menu" aria-expanded="false"
                       aria-controls="ask-menu"
                       aria-label="Choose Ask target">
@@ -1245,30 +1258,43 @@
         from the tool group by an extra top-margin on #undo.
       -->
       <div class="highlight-buttons">
-        <button id="tool-box" class="tool-btn tool-btn-icon selected"
+        <button id="tool-box" class="tool-btn tool-btn-icon btn selected"
                 type="button" data-tool="rect"
                 title="Draw box" aria-label="Draw box"
                 aria-pressed="true">
           <svg aria-hidden="true"><use href="#draw-box-icon"></use></svg>
         </button>
-        <button id="tool-line" class="tool-btn tool-btn-icon"
+        <button id="tool-line" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="line"
                 title="Draw line" aria-label="Draw line"
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-line-icon"></use></svg>
         </button>
-        <button id="tool-crop" class="tool-btn"
+        <button id="tool-crop" class="tool-btn btn"
                 type="button" data-tool="crop"
-                title="Drag to crop the screenshot to a region"
+                title="Drag to crop to a region"
                 aria-pressed="false">Crop</button>
-        <button id="tool-redact" class="tool-btn"
+        <button id="tool-redact" class="tool-btn btn"
                 type="button" data-tool="redact"
                 title="Drag to add a black redaction box"
                 aria-pressed="false">Redact</button>
-        <button id="undo" disabled
+        <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
-        <button id="clear" disabled
+        <button id="clear" class="btn" disabled
                 title="Clear all edits">Clear</button>
+        <!--
+          Image-level Copy + Save. Mirror the per-row Copy / Save-as
+          buttons next to the Save-screenshot checkbox above, but
+          live in the palette next to the image. Copy puts the PNG
+          bytes (with current edits baked in) on the clipboard;
+          Save opens the native download dialog seeded with
+          `screenshot.png`. Both are disabled when the screenshot
+          capture errored, same as the per-row buttons.
+        -->
+        <button id="copy-image-btn" type="button" class="btn"
+                title="Copy screenshot to clipboard">Copy</button>
+        <button id="download-image-btn" type="button" class="btn"
+                title="Save screenshot">Save</button>
       </div>
     </div>
     <div class="image-box">
@@ -1318,7 +1344,7 @@
           than the committed `captured[kind]` body — so the user can
           export an experimental edit without first clicking Save.
         -->
-        <button type="button" class="edit-dialog-download"
+        <button type="button" class="edit-dialog-download btn"
                 title="Download this file">
           <svg aria-hidden="true"><use href="#download-icon"></use></svg>
           Download
@@ -1371,8 +1397,8 @@
       -->
       <p class="edit-dialog-error dialog-error" role="alert" hidden></p>
       <div class="dialog-actions">
-        <button type="button" class="edit-dialog-cancel">Cancel</button>
-        <button type="button" class="edit-dialog-save"
+        <button type="button" class="edit-dialog-cancel btn">Cancel</button>
+        <button type="button" class="edit-dialog-save btn"
                 title="Commit these changes">Save</button>
       </div>
     </dialog>

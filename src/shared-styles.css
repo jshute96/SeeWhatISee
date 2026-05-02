@@ -1,0 +1,46 @@
+/*
+ * Shared chrome for every extension page (Capture page, Options
+ * page, any future page). Linked from each HTML's <head> via
+ * `<link rel="stylesheet" href="shared-styles.css">`. Build copies
+ * this file verbatim into dist/.
+ *
+ * Per-page sizing/padding/border still lives next to each button's
+ * own selectors — the rules below add only the *feedback* layer
+ * (raised look + hover/active/.pressed flash + disabled) so each
+ * call site keeps its visual hierarchy.
+ *
+ * Intentionally NOT applied to:
+ *   - `.copy-btn` (tiny per-row icon buttons; intentionally subtle)
+ *   - `.edit-dialog-mode-toggle button` (segmented control with
+ *     joined borders; the press translateY would unhinge the joint)
+ *   - `.ask-menu` items (popup menu rows, not raised buttons)
+ *   - `#edit-shortcuts` on options.html (inline link-style button
+ *     that sits mid-prose)
+ */
+
+.btn {
+  /* Subtle outer shadow gives the button an obvious raised look so
+   * the user reads it as clickable before they hover. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.btn:hover:not(:disabled) {
+  background: #e9eef2;
+  border-color: #2b3a44;
+}
+/* Clicked / pushed look — `:active` fires while the mouse is held
+ * down and the `.pressed` class persists for ~140 ms after mouseup
+ * so a fast click still registers visibly (page controllers add and
+ * auto-remove `.pressed` on every `.btn` click). Inset shadow +
+ * darker face mirror the tool-btn `.selected` style so every
+ * pressed-look on the page shares one visual vocabulary. */
+.btn:active:not(:disabled),
+.btn.pressed:not(:disabled) {
+  background: #cfd6dc;
+  border-color: #2b3a44;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}

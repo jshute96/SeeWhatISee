@@ -552,14 +552,27 @@ tool's kind. There's no right-click drawing, and no in-place
 - Bold "Edit image" header (matches the "Prompt:" label's
   weight/size so the two field titles read as siblings) sits above
   the column.
-- Six buttons, all the same width, in a vertical column: Box, Line,
-  Crop, Redact, then a 14px gap, then Undo / Clear. Box / Line use
-  red icons (rectangle outline, diagonal line); Crop / Redact use
-  text labels. Default selected tool is Box.
+- Buttons stack vertically, all sized to the widest label. The
+  column has clusters separated by 14px gaps:
+  - Box, Line, Crop, Redact (tool selectors).
+  - Undo, Clear (edit-stack actions).
+  - Copy, Save (image-level actions — Copy puts the *current* PNG
+    bytes on the clipboard; Save opens the native save-as dialog).
+- Box / Line use red icons (rectangle outline, diagonal line);
+  the rest use text labels. Default selected tool is Box.
 - Selected button gets `.selected` (darker face + inset shadow) and
-  `aria-pressed="true"`. Clicking another tool toggles the class
-  and aria across the group so exactly one is pushed-down.
-- Undo / Clear are *actions*, not modes — they never get `.selected`.
+  `aria-pressed="true"`. Tool selection fires on `mousedown` (not
+  `click`) so the previously-selected tool deselects the moment the
+  user presses a new one — otherwise both old `.selected` and new
+  `:active` paint at once.
+- Action buttons (Undo / Clear / Copy / Save) are *actions*, not
+  modes — they never get `.selected`. They share a `.btn` press-look
+  with every other primary button on the page (header Options,
+  Capture, Ask, edit-dialog Cancel/Save/Download), so all
+  click-feedback uses one shared visual vocabulary.
+- Copy / Save disable when the screenshot capture errored — same
+  gate as the per-row `.copy-btn` / `#download-screenshot-btn` next
+  to the Save-screenshot checkbox above.
 
 #### Drawing tools
 

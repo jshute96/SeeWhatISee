@@ -292,6 +292,8 @@ wireSelectionControls();
 const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
+const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
+const downloadImageBtn = document.getElementById('download-image-btn') as HTMLButtonElement;
 const toolButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('.tool-btn'),
 );
@@ -1363,6 +1365,22 @@ clearBtn.addEventListener('click', () => {
   render();
 });
 
+// Click-flash for every `.btn` on the page (palette buttons, header
+// Options, Capture / Ask split, edit-dialog actions). `:active`
+// only paints while the mouse is physically down, which is
+// invisibly brief for a fast click — `.pressed` extends the same
+// pressed-look styling for ~140 ms so every click registers
+// visibly. Document-level capture-phase listener so it covers
+// dynamically-cloned buttons (e.g. the per-kind edit dialog
+// templates) without needing to re-wire each instance.
+const PRESS_FLASH_MS = 140;
+document.addEventListener('click', (e) => {
+  const target = (e.target as Element | null)?.closest<HTMLButtonElement>('button.btn');
+  if (!target || target.disabled) return;
+  target.classList.add('pressed');
+  setTimeout(() => target.classList.remove('pressed'), PRESS_FLASH_MS);
+}, true);
+
 // Tool selection. Each `.tool-btn` carries `data-tool` matching one
 // of `Tool`'s string values. Clicking a button updates `selectedTool`
 // and toggles the `.selected` / `aria-pressed` state across the
@@ -1376,7 +1394,14 @@ function setSelectedTool(tool: Tool): void {
   }
 }
 for (const btn of toolButtons) {
-  btn.addEventListener('click', () => {
+  // Switch on mousedown (not click) so the previously-selected tool
+  // loses its `.selected` look the moment the user presses a new
+  // one. Otherwise the old tool stays highlighted alongside the new
+  // tool's `:active` press feedback for the entire mousedown→mouseup
+  // window — two pressed-looking buttons at once. Filter to button 0
+  // so a stray right-click doesn't switch tools.
+  btn.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
     const tool = btn.dataset.tool as Tool | undefined;
     if (tool) setSelectedTool(tool);
   });
@@ -1422,6 +1447,11 @@ async function loadData(): Promise<void> {
       screenshotBox.disabled = true;
       copyScreenshotBtn.disabled = true;
       downloadScreenshotBtn.disabled = true;
+      // Image-level Copy / Save-as in the drawing palette write the
+      // *same* PNG as the per-row buttons, so they're meaningless
+      // without a successful capture either.
+      copyImageBtn.disabled = true;
+      downloadImageBtn.disabled = true;
       screenshotRow.classList.add('has-error');
       screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
     }
@@ -1616,6 +1646,33 @@ for (const format of SELECTION_FORMATS) {
 downloadScreenshotBtn.addEventListener('click', () => {
   void downloadAs('screenshot');
 });
+
+// Image-level Copy / Save-as in the drawing palette. Both reuse the
+// per-row screenshot logic — the Save-as is identical, and the Copy
+// puts the same PNG bytes onto the clipboard as image data (vs. the
+// per-row Copy, which copies the *filename* as text).
+copyImageBtn.addEventListener('click', () => {
+  void copyImageToClipboard();
+});
+downloadImageBtn.addEventListener('click', () => {
+  void downloadAs('screenshot');
+});
+
+async function copyImageToClipboard(): Promise<void> {
+  // `renderHighlightedPng` short-circuits to the original
+  // `previewImg.src` data URL when no edits need baking, so the
+  // bytes here are always either the original captureVisibleTab
+  // output or a freshly-baked render — never a re-fetch from the
+  // source page. The `fetch()` call is on the data URL (local
+  // base64 decode), not a network request.
+  const url = renderHighlightedPng();
+  try {
+    const blob = await (await fetch(url)).blob();
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  } catch (err) {
+    console.warn('[SeeWhatISee] copy image to clipboard failed:', err);
+  }
+}
 downloadHtmlBtn.addEventListener('click', () => {
   void downloadAs('html');
 });
@@ -1640,7 +1697,9 @@ async function downloadAs(
   kind: 'screenshot' | EditableArtifactKind,
 ): Promise<void> {
   if (kind === 'screenshot') {
-    const url = hasBakeableEdits() ? renderHighlightedPng() : previewImg.src;
+    // `renderHighlightedPng` short-circuits to the original capture's
+    // data URL when no edits need baking — see its docstring.
+    const url = renderHighlightedPng();
     // Screenshot is a data: URL — nothing to revoke. The other kinds
     // use blob URLs (built from the editable body) and route through
     // `downloadEditableAs`, which handles its own revocation.
@@ -2300,7 +2359,14 @@ async function copyArtifactPath(
 // region (not the full image) and every edit's coordinates are
 // translated into the cropped frame so the bake-in output shows
 // exactly what the user saw through the dim overlay.
+//
+// Short-circuits to `previewImg.src` (the original captureVisibleTab
+// data URL) when there are no bake-able edits — same pixels, but
+// avoids the 30–100ms canvas re-encode AND preserves byte identity
+// with the original capture. Callers can therefore always invoke
+// this without first guarding on `hasBakeableEdits()`.
 function renderHighlightedPng(): string {
+  if (!hasBakeableEdits()) return previewImg.src;
   const natW = previewImg.naturalWidth;
   const natH = previewImg.naturalHeight;
   const crop = activeCrop();
@@ -2965,8 +3031,10 @@ function buildAskAttachments(): AskAttachment[] {
   if (screenshotBox.checked && !screenshotBox.disabled) {
     // Bake current edits into the PNG when there are any — Ask uses
     // the same on-screen state the user is looking at, mirroring the
-    // Capture button's bake-on-save policy.
-    const data = hasBakeableEdits() ? renderHighlightedPng() : previewImg.src;
+    // Capture button's bake-on-save policy. `renderHighlightedPng`
+    // short-circuits to the original capture's data URL when no
+    // edits need baking.
+    const data = renderHighlightedPng();
     out.push({
       data,
       kind: 'image',

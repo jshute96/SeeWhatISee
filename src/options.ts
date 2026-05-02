@@ -959,6 +959,18 @@ function onDefaults(): void {
   setStatus('Default options applied above but not saved.');
 }
 
+// `.pressed` flash for every `.btn` — same convention as
+// capture-page.ts. `:active` is too brief on a fast click; the
+// 140ms class extends the pressed look. Document-level capture-phase
+// so future buttons that pick up `.btn` are covered automatically.
+const PRESS_FLASH_MS = 140;
+document.addEventListener('click', (e) => {
+  const target = (e.target as Element | null)?.closest<HTMLButtonElement>('button.btn');
+  if (!target || target.disabled) return;
+  target.classList.add('pressed');
+  setTimeout(() => target.classList.remove('pressed'), PRESS_FLASH_MS);
+}, true);
+
 async function init(): Promise<void> {
   const editBtn = $('#edit-shortcuts');
   editBtn.addEventListener('click', () => {

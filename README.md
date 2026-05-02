@@ -79,6 +79,7 @@ On this page, you can:
   - **Crop** — drag a rectangular region — image will be cropped to that region. Drag borders to resize.
   - **Redact** — draw a black box to hide part of the image.
   - **Undo** / **Clear** — roll back the most recent edit, or all edits.
+  - **Copy** / **Save** — copy the edited image to the clipboard, or download it.
 - Format conversion in **Paste**
   - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
   - In the HTML editors, the HTML source is pasted.

@@ -21,9 +21,28 @@ import {
   configureAndCapture,
   dragRect,
   findCapturedDownload,
+  installClipboardWriteSpy,
+  installPageDownloadSpy,
   openDetailsFlow,
+  readClipboardWriteSpy,
   readLatestRecord,
+  readPageDownloads,
+  waitForClipboardWriteSpy,
+  waitForPageDownloads,
 } from './details-helpers';
+
+// Sample the drawn-rect's red stroke at x≈20%, y≈30% of the PNG and
+// assert it's red (high R, low G/B). Shared between the palette
+// Save / Copy tests since both round-trip the same edited PNG bytes.
+function expectRedAtRectEdge(buf: Buffer): void {
+  const png = PNG.sync.read(buf);
+  const x = Math.round(png.width * 0.2);
+  const y = Math.round(png.height * 0.3);
+  const i = (y * png.width + x) * 4;
+  expect(png.data[i]).toBeGreaterThan(200);
+  expect(png.data[i + 1]).toBeLessThan(60);
+  expect(png.data[i + 2]).toBeLessThan(60);
+}
 
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
 // Every test here issues one capture via startCaptureWithDetails;
@@ -666,6 +685,121 @@ test('drawing: Crop tool drag below MIN_CROP_PCT is discarded', async ({
     { xPct: 0.7, yPct: 0.7 },
   );
   expect(await readEditKinds(capturePage)).toEqual(['crop']);
+
+  await openerPage.close();
+});
+
+// ─── Palette Copy / Save buttons ─────────────────────────────────
+
+test('drawing: palette Save writes the edited PNG via the save-as dialog', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installPageDownloadSpy(capturePage);
+
+  // Draw a red rectangle, then click the palette's Save button. The
+  // save-as dialog should be invoked with the *edited* PNG bytes,
+  // not the original capture.
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
+  await capturePage.locator('#download-image-btn').click();
+  await waitForPageDownloads(capturePage, 1);
+
+  const dls = await readPageDownloads(capturePage);
+  expect(dls).toHaveLength(1);
+  expect(dls[0].filename).toBe('screenshot.png');
+  expect(dls[0].saveAs).toBe(true);
+  expect(dls[0].mime).toMatch(/^image\/png/);
+
+  // Spy's `bytes` field is a UTF-8 decode of binary PNG (lossy), so
+  // decode the data: URL directly to get clean bytes for pngjs.
+  const m = dls[0].url.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+  expect(m).not.toBeNull();
+  expectRedAtRectEdge(Buffer.from(m![1], 'base64'));
+
+  await openerPage.close();
+});
+
+test('drawing: palette Copy puts the edited PNG bytes on the clipboard', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installClipboardWriteSpy(capturePage);
+
+  // Draw a red rectangle, then click the palette's Copy button. The
+  // clipboard.write call should carry an `image/png` ClipboardItem
+  // whose blob bytes contain the *edited* PNG (red stroke baked in).
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.4, yPct: 0.4 },
+  );
+  await capturePage.locator('#copy-image-btn').click();
+  await waitForClipboardWriteSpy(capturePage, 1);
+
+  const writes = await readClipboardWriteSpy(capturePage);
+  expect(writes).toHaveLength(1);
+  expect(writes[0].types).toEqual(['image/png']);
+
+  expectRedAtRectEdge(Buffer.from(writes[0].blobs['image/png']!, 'base64'));
+
+  await openerPage.close();
+});
+
+test('drawing: palette Copy + Save with no edits still write the original capture', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The Copy / Save handlers branch on `hasBakeableEdits()`. The two
+  // tests above cover the with-edits path (renderHighlightedPng);
+  // this one covers the no-edits path (`previewImg.src` direct), so
+  // a future change that breaks one branch can't silently slip past.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installPageDownloadSpy(capturePage);
+  await installClipboardWriteSpy(capturePage);
+
+  // No drag — both buttons fire from a clean capture.
+  await capturePage.locator('#download-image-btn').click();
+  await waitForPageDownloads(capturePage, 1);
+  await capturePage.locator('#copy-image-btn').click();
+  await waitForClipboardWriteSpy(capturePage, 1);
+
+  const dls = await readPageDownloads(capturePage);
+  expect(dls).toHaveLength(1);
+  expect(dls[0].filename).toBe('screenshot.png');
+  expect(dls[0].url).toMatch(/^data:image\/png;base64,/);
+
+  const writes = await readClipboardWriteSpy(capturePage);
+  expect(writes).toHaveLength(1);
+  expect(writes[0].types).toEqual(['image/png']);
+  // PNG magic header bytes (the first 8 are 89 50 4E 47 0D 0A 1A 0A)
+  // — assert we round-tripped a real PNG, not an empty/garbage blob.
+  const buf = Buffer.from(writes[0].blobs['image/png']!, 'base64');
+  expect(buf.length).toBeGreaterThan(8);
+  expect(buf[0]).toBe(0x89);
+  expect(buf[1]).toBe(0x50);
+  expect(buf[2]).toBe(0x4e);
+  expect(buf[3]).toBe(0x47);
 
   await openerPage.close();
 });
