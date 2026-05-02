@@ -72,7 +72,7 @@ On this page, you can:
 - Copy saved filenames to the clipboard with the copy icon ![icon](docs/images/copy-icon.png).
 - View or edit the captured HTML or selection before saving with the pencil icon ![icon](docs/images/edit-icon.png).
 - **Save individual artifacts** to a custom location with the download icon ![icon](docs/images/download-icon.png).
-- Add an optional **Prompt**. (Enter submits, Shift+Enter inserts a newline.)
+- Add an optional **Prompt**. (Enter submits; Shift+Enter or `\`+Enter inserts a newline.)
 - Annotate the screenshot with red **highlights**:
   - **Click-drag** to draw a red box.
   - **Right-click-drag** to draw a red line.

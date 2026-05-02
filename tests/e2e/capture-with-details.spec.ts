@@ -293,6 +293,47 @@ test('details: prompt paste strips browser-added inline styles + bare spans', as
   await openerPage.close();
 });
 
+// ─── Prompt keyboard behaviour ────────────────────────────────────
+
+test('details: backslash + Enter inserts a newline instead of submitting', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  // Type "abc\" then press Enter — the trailing backslash should be
+  // consumed and replaced with a newline (mirrors CLI coding agents).
+  await prompt.pressSequentially('abc\\');
+  await prompt.press('Enter');
+
+  const afterEnter = await prompt.evaluate(
+    (el) => (el as HTMLTextAreaElement).value,
+  );
+  expect(afterEnter).toBe('abc\n');
+  // The Capture page is still open — Enter did not submit.
+  expect(capturePage.isClosed()).toBe(false);
+
+  // Now type another backslash and press Shift+Enter — the backslash
+  // is preserved (Shift+Enter is a native newline insert and is not
+  // intercepted).
+  await prompt.pressSequentially('\\');
+  await prompt.press('Shift+Enter');
+  const afterShift = await prompt.evaluate(
+    (el) => (el as HTMLTextAreaElement).value,
+  );
+  expect(afterShift).toBe('abc\n\\\n');
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
 // ─── Tab lifecycle ────────────────────────────────────────────────
 
 test('details: tab opens next to opener and returns focus on close', async ({

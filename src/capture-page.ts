@@ -617,6 +617,19 @@ promptInput.addEventListener('keydown', (e) => {
   if (e.shiftKey) return;
   const sendIntent = e.ctrlKey || currentPromptEnter === 'send';
   if (sendIntent) {
+    // Backslash + Enter (in send mode): erase the backslash and
+    // insert a newline, matching CLI coding agents. Requires a
+    // collapsed caret with `\` immediately to its left. Shift+Enter
+    // (returned above) and 'newline' mode (skipped below) already
+    // give a literal newline without consuming a backslash.
+    const start = promptInput.selectionStart ?? 0;
+    const end = promptInput.selectionEnd ?? 0;
+    if (start === end && start > 0 && promptInput.value[start - 1] === '\\') {
+      e.preventDefault();
+      promptInput.setRangeText('\n', start - 1, end, 'end');
+      promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
     if (clickDefaultPageButton()) e.preventDefault();
   }
 });
