@@ -298,11 +298,13 @@ Opt-in per provider. When set, `attachFiles` in `src/ask-inject.ts`:
   `K === 0`) — surfaced on the Capture page status line BEFORE
   typing or submit.
 
-This catches the case where the destination accepts the file-input
-dispatch but server-rejects the upload — most visible on ChatGPT
-when logged out, where image uploads succeed but everything else
-gets a "File type must be one of …" toast and would otherwise be
-silently reported as Sent.
+Why this matters:
+
+- The destination can accept the file-input `change` dispatch but
+  still server-reject the upload.
+- Most visible on ChatGPT when logged out: image uploads succeed,
+  everything else gets a "File type must be one of …" toast.
+- Without the chip-count gate we'd silently report Sent.
 
 Selector list rules:
 
@@ -316,12 +318,16 @@ Selector list rules:
   runtime falls back to its previous "settle and continue" behavior,
   so adding the field is non-breaking.
 
-If the selectors don't match anything at all (probably drift after a
-destination UI change), the runtime surfaces a softer
-`"Could not verify attachment delivery. Check the conversation
-manually; the upload may have succeeded."` message instead of the
-partial-reject one — so the user isn't told their upload was
-rejected when the real problem is our stale selectors.
+Drift fallback:
+
+- When `last === 0 && baseline === 0` (no selector ever matched)
+  the runtime surfaces `"Could not verify attachment delivery.
+  Check the conversation manually; the upload may have succeeded."`
+- This is the soft path: the user isn't told their upload was
+  rejected when the real problem is our stale selectors.
+- Heuristic is intentionally asymmetric — drift on a tab that
+  already had leftover chips falls into the regular partial-reject
+  branch instead. Fresh tabs are the dominant case.
 
 ### `preFileInputClicks` (Gemini)
 

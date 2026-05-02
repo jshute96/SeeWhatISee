@@ -107,8 +107,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/ask/settings.ts` | User-facing Ask provider preferences — per-provider enabled flags + default provider; normalize/get/set with auto-shift on disable |
 | `src/background/ask/claude.ts` | Claude provider data — URLs, ranked selectors, and a `urlVariants` entry for the image-only `/code` (Claude Code) sub-page |
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
-| `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; ProseMirror composer reuses Claude's typing path |
-| `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit; runs `preFileInputClicks` with the OS picker suppressed |
+| `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; declares `attachmentPreview` for chip-count verification |
+| `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit; optional `attachmentPreview` chip-count gate verifies the upload landed |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |

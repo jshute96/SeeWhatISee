@@ -320,6 +320,10 @@
         await delay(POLL_INTERVAL_MS);
         last = countPreviews(selectors.attachmentPreview);
       }
+      // Clamp negatives to 0: a destination that pruned older chips
+      // during the settle leaves `last < baselinePreviews`, which is
+      // still a "no new attachments accepted" outcome from the user's
+      // perspective — not a count to display as a negative number.
       const seenDelta = Math.max(0, last - baselinePreviews);
       if (seenDelta < expectedDelta) {
         // Distinguish "selectors never matched anything" (probably
@@ -327,6 +331,12 @@
         // "some chips appeared but fewer than we sent" (the real
         // partial-reject signal). The first case shouldn't blame the
         // user for being logged out.
+        //
+        // The drift heuristic is intentionally asymmetric: it only
+        // fires on a fresh tab where baseline is 0. If selectors drift
+        // on a tab that already had leftover chips, this falls into
+        // the "no attachments accepted" branch instead. That's the
+        // common-case tradeoff — fresh tabs are the dominant pattern.
         if (last === 0 && baselinePreviews === 0) {
           throw new Error(
             `Could not verify attachment delivery. ` +
