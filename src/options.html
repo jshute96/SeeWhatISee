@@ -4,10 +4,20 @@
 <meta charset="UTF-8">
 <title>SeeWhatISee — Options</title>
 <style>
+  /*
+   * Sticky-shell layout: body is a full-height flex column with a
+   * fixed-height header on top, the scrollable content in the middle,
+   * and the Save/Undo/Defaults footer pinned to the bottom. Long pages
+   * (e.g. the toolbar-icon hotkey table) scroll inside <main> while
+   * the page title and action buttons stay on screen.
+   */
+  html, body { height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    margin: 24px;
+    margin: 0;
     color: #222;
+    display: flex;
+    flex-direction: column;
     /*
      * Hidden until options.ts has finished its first render — avoids
      * a flash of "no radios checked" while the storage round-trip
@@ -16,12 +26,20 @@
     visibility: hidden;
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 16px 24px;
     font-size: 20px;
     font-weight: 600;
-    margin-bottom: 16px;
+    border-bottom: 2px solid #bbb;
+    background: #f8f8f8;
+  }
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
   }
   header img {
     width: 28px;
@@ -232,10 +250,13 @@
     border-radius: 3px;
   }
   .footer {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: 16px;
+    padding: 12px 24px;
+    border-top: 2px solid #bbb;
+    background: #f8f8f8;
   }
   /*
    * Side-by-side container for the two "Default action" sections.
@@ -271,7 +292,7 @@
   <span>SeeWhatISee — Options</span>
 </header>
 
-<br><hr><br>
+<main>
 <section>
   <h1>Ask button AI providers</h1>
   <p class="info-list" style="padding-left:0;">
@@ -454,8 +475,7 @@
     </table>
   </section>
 </div>
-
-<br><br><hr><br>
+</main>
 
 <div class="footer">
   <button id="save" type="button">Save</button>
