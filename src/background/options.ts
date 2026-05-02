@@ -18,7 +18,11 @@ import {
   setCaptureDetailsDefaults,
   type CaptureDetailsDefaults,
 } from './capture-page-defaults.js';
-import { commandsToShortcutMap } from './context-menu.js';
+import {
+  commandsToShortcutMap,
+  refreshMenusAndTooltip,
+  refreshMenusIfHotkeysChanged,
+} from './context-menu.js';
 import {
   DEFAULT_CLICK_WITH_SELECTION_ID,
   DEFAULT_CLICK_WITHOUT_SELECTION_ID,
@@ -107,6 +111,15 @@ export function installOptionsMessageHandlers(): void {
           getAskProviderSettings(),
           chrome.commands.getAll(),
         ]);
+        // Hotkey edits at chrome://extensions/shortcuts fire no
+        // Chrome event, so the toolbar tooltip + menu labels would
+        // otherwise stay stale until the next user interaction.
+        // Opening / returning to the Options page is a natural
+        // refresh point: the user is right next to the shortcut
+        // settings, often coming back from editing them. The diff
+        // is cheap (fingerprint compare) and a no-op when nothing
+        // changed.
+        await refreshMenusIfHotkeysChanged(commands);
         const shortcutMap = commandsToShortcutMap(commands);
         const shortcuts: Record<string, string> = {};
         for (const [id, sc] of shortcutMap) shortcuts[id] = sc;
@@ -140,6 +153,17 @@ export function installOptionsMessageHandlers(): void {
         };
         sendResponse(data);
       })();
+      return true;
+    }
+
+    if (action === 'refreshHotkeys') {
+      // Sent by `options.ts`'s `refreshHotkeys` (window focus/blur,
+      // radio click) so the toolbar tooltip + context-menu labels
+      // resync against any shortcut edit the user just made at
+      // chrome://extensions/shortcuts. Page-side already refreshed
+      // its own hotkey column; this hooks up the SW-side surface.
+      // No response payload — fire-and-forget from the page.
+      void refreshMenusIfHotkeysChanged().then(() => sendResponse({ ok: true }));
       return true;
     }
 
@@ -178,6 +202,14 @@ export function installOptionsMessageHandlers(): void {
             await setCaptureDetailsDefaults(
               m.capturePageDefaults as CaptureDetailsDefaults,
             );
+            // The toolbar tooltip's `save-defaults` line expands
+            // against `capturePageDefaults` (e.g. `Save screenshot,
+            // selection markdown`), so a checkbox change here has
+            // to refresh the tooltip even when the click/dbl ids
+            // didn't move. The action setters above self-refresh,
+            // but `setCaptureDetailsDefaults` deliberately doesn't
+            // (avoiding a circular import) — so we drive it here.
+            await refreshMenusAndTooltip();
           } catch (err) {
             errors.push(err instanceof Error ? err.message : String(err));
           }

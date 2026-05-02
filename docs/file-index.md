@@ -98,6 +98,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/error-reporting.ts` | Icon/tooltip error surface: `runWithErrorReporting`, `reportCaptureError`, `clearCaptureError`, unhandled-rejection suppression |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts, delay/title helpers |
 | `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
+| `src/background/tooltip.ts` | Pure toolbar-tooltip layout — `buildTooltip` + per-row Case 1–4 algorithm, factored out so the logic is unit-testable |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` artifact cache, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
@@ -163,6 +164,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for the icon-swap / tooltip error surface |
+| `tests/e2e/options-refresh.spec.ts` | E2E test for the Options-page hotkey-refresh hook — opening Options resyncs the toolbar tooltip when shortcut bindings have changed |
 | `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime, Alt+A keyboard binding |
 | `tests/e2e/ask-pinned-tabs.spec.ts` | E2E tests for target-window pinning — pin lifecycle, dead/navigated/disabled-provider invalidation, plain-Ask reuse |
 | `tests/e2e/ask-toolbar-pin.spec.ts` | E2E tests for the toolbar context-menu Pin/Unpin entry — eligibility, "Pin"/"Unpin" title flip, toggle behavior |
@@ -185,6 +187,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/background/ask/index.ts` (`globMatch` / `matchesAny`) |
 | `tests/unit/ask-settings.test.mjs` | Unit tests for the Ask provider settings normalizer + default-rotation helper |
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
+| `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — covers all Case 1–4 paths, hotkey suffix, save-defaults expansion |
 
 ## Design Docs (`docs/`)
 

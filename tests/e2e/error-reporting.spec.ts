@@ -27,24 +27,25 @@ import { test, expect } from '../fixtures/extension';
 // Default tooltip on the `save-screenshot` click action. The background
 // script derives the toolbar title from the four stored defaults;
 // the tests here pin them in beforeEach so the expected baseline is
-// stable. Layout:
+// stable. Layout (per the algorithm in src/background/tooltip.ts):
 //
 //   SeeWhatISee
 //   <blank>
-//   Click: Save screenshot
-//   Double-click: Capture...
-//   With selection click: Save as HTML
-//   With selection double-click: Capture...
+//   Click:                                                (Case 2 row, header)
+//     Save screenshot                                     (Case 2 row, primary)
+//     (or selection HTML)                                 (Case 2 row, addendum)
+//   Double-click: Capture...                              (Case 1, single line)
 //   <blank trailing line>
 //
-// The blanks bracket the action block so it has breathing room from
-// the header above and from Chrome's appended "Wants access to this
-// site" permission line below.
+// The Click row's with-sel slot is `save-selection-html` (set in
+// beforeEach), so the algorithm renders a 3-line block. Both
+// Double-click slots are `capture`, so that row collapses to a
+// single line.
 const ACTION_LINES = [
-  'Click: Save screenshot',
+  'Click:',
+  '  Save screenshot',
+  '  (or selection HTML)',
   'Double-click: Capture...',
-  'With selection click: Save as HTML',
-  'With selection double-click: Capture...',
 ];
 const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');
 

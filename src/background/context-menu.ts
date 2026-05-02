@@ -186,9 +186,9 @@ export async function refreshMenusAndTooltip(
  * Run `refreshMenusAndTooltip` only when `chrome.commands.getAll()`
  * returns a different binding set than last time we rendered.
  * Called from every user-interaction path (toolbar click, menu
- * item click, keyboard command) so shortcut edits made at
- * `chrome://extensions/shortcuts` propagate to menu labels and the
- * toolbar tooltip at the next click — Chrome has no event for
+ * item click, keyboard command) and on Options-page load so
+ * shortcut edits made at `chrome://extensions/shortcuts` propagate
+ * to menu labels and the toolbar tooltip — Chrome has no event for
  * those edits.
  *
  * Fire-and-forget at callsites: the current interaction runs at
@@ -196,9 +196,15 @@ export async function refreshMenusAndTooltip(
  * labels get fixed before the user opens the menu again. The diff
  * is cheap (one `getAll()` + string compare) and, in the common
  * no-change case, skips the whole update sweep.
+ *
+ * `preloadedCommands` lets a caller that already has a
+ * `chrome.commands.getAll()` snapshot (e.g. the Options-page
+ * `getOptionsData` handler) avoid a redundant API call.
  */
-export async function refreshMenusIfHotkeysChanged(): Promise<void> {
-  const commands = await chrome.commands.getAll();
+export async function refreshMenusIfHotkeysChanged(
+  preloadedCommands?: chrome.commands.Command[],
+): Promise<void> {
+  const commands = preloadedCommands ?? (await chrome.commands.getAll());
   const fingerprint = shortcutFingerprint(commands);
   if (cachedShortcutFingerprint === fingerprint) return;
   await refreshMenusAndTooltip(commands);

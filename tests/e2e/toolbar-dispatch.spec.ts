@@ -221,25 +221,19 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
   });
 
   // Tooltip layout (bracketed by blank lines above and below the
-  // action block — see `getDefaultActionTooltip`):
-  //
-  //   SeeWhatISee
-  //   <blank>
-  //   Click: <…>
-  //   Double-click: <…>
-  //   With selection click: <…>
-  //   With selection double-click: <…>
-  //   <blank trailing line>
-  const withSelClickLine = 'With selection click: Save as HTML';
-  const withSelDblLine = 'With selection double-click: Capture...';
+  // action block — see `src/background/tooltip.ts`). With these
+  // pinned defaults:
+  //   - Click row: with-sel = save-selection-html → Case 2 renders
+  //     the row as a 3-line block (label header + primary + addendum).
+  //   - Double-click row: both slots = capture → Case 1 single line.
   const expected = (click: string): string =>
     [
       'SeeWhatISee',
       '',
-      `Click: ${click}`,
+      'Click:',
+      `  ${click}`,
+      '  (or selection HTML)',
       'Double-click: Capture...',
-      withSelClickLine,
-      withSelDblLine,
       '',
     ].join('\n');
   expect(titles.a).toBe(expected('Save screenshot'));

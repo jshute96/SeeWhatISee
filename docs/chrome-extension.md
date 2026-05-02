@@ -291,18 +291,21 @@ showed the global title. We don't use per-tab titles.
 ### Our tooltip strategy
 
 - **Default tooltip.** `refreshActionTooltip()` calls
-  `getDefaultActionTooltip()`, which composes the tooltip from
-  pre-authored `tooltipFragment` fields on the click / double-click
-  `CaptureAction` and the with-selection `WITH_SELECTION_CHOICES`
-  entry. Runs on preference change, `onInstalled`, and `onStartup`.
-- **Layout.** Four lines, bracketed by blanks:
-  `SeeWhatISee` / blank / `Click: …` / `Double-click: …` /
-  `With selection: …` / trailing blank. The trailing blank
-  separates our content from Chrome's appended "Wants access to
-  this site" permission line.
-- **With-selection omission.** The `With selection: …` line is
-  dropped entirely for the `ignore-selection` choice, since the
-  click then behaves identically with or without a selection.
+  `getDefaultActionTooltip()`, which snapshots the four stored
+  defaults + `capturePageDefaults` + the bound shortcuts and feeds
+  them into `buildTooltip` (in `src/background/tooltip.ts` — pure
+  logic, unit-tested). Runs on preference change, `onInstalled`, and
+  `onStartup`.
+- **Layout.** Header (`SeeWhatISee`) + optional `ERROR: …` block + a
+  Click row + a Double-click row + trailing blank. Each row is one
+  or two lines depending on whether the with-selection slot
+  collapses. Full algorithm + Case 1–4 rules in
+  [`docs/options-and-settings.md`](options-and-settings.md#toolbar-tooltip).
+- **Hotkeys folded in.** `_execute_action` and `secondary-action`
+  shortcuts (when bound) attach to the row's first line — at the end
+  on Case-1 (single-line) rows, inside the label header
+  (`Click [<key>]:`) on Case-2/3/4 rows. Never on a continuation
+  line: the same hotkey fires both branches of the row.
 - **Error tooltip.** `reportCaptureError()` passes the error
   message into `getDefaultActionTooltip(message)`, which slots
   `ERROR: <message>` between the app title and the action block

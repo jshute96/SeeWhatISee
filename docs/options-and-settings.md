@@ -136,29 +136,68 @@ to `false` so the click still runs the without-selection action.
 
 ## Toolbar tooltip
 
-Built by `getDefaultActionTooltip`. Layout:
+Built by `getDefaultActionTooltip`, with the layout/algorithm in
+`src/background/tooltip.ts` (`buildTooltip`) — pure logic so it can
+be unit-tested without spinning up a service worker.
+
+### Overall layout
 
 ```
 SeeWhatISee
 [blank]
-[ERROR: <msg>]                              (only when an error is pending)
+[ERROR: <msg>]              (only when an error is pending)
 [blank]
-Click: <click-no-sel.tooltipFragment>
-Double-click: <dbl-no-sel.tooltipFragment>
-With selection click: <click-with-sel.tooltipFragment>          (if not ignore-selection)
-With selection double-click: <dbl-with-sel.tooltipFragment>     (if not ignore-selection)
+<Click row>                 (1 or 2 lines)
+<Double-click row>          (1 or 2 lines)
 [blank]
 ```
 
-- `_execute_action` hotkey, when bound, is folded into the `Click:`
-  label as `Click, <key>:` rather than adding another line.
-- The two `With selection …` lines drop independently when their
-  stored choice is `ignore-selection` (its `tooltipFragment` is
-  `null`) — that branch then behaves identically with or without a
-  selection, so the line would just be noise.
-- The trailing blank entry separates the action block from whatever
-  Chrome appends below (the "Wants access to this site" permission
-  line, for example).
+- The trailing blank separates the action block from whatever Chrome
+  appends below (the "Wants access to this site" permission line, for
+  example).
+
+### Per-row algorithm
+
+Each row is computed once from a no-selection action `N` and a
+with-selection choice `W`:
+
+- The **primary fragment** is `N`'s `tooltipFragment`. If `N.baseId
+  === 'save-defaults'`, the placeholder `Save default items` is
+  expanded to a comma-separated list of the actual artifacts the
+  no-sel branch of `capturePageDefaults` saves
+  (`screenshot`, `HTML`, `selection <fmt>`).
+- The **with-selection slot** picks one of four cases:
+  1. **Same effective behaviour** (action ids match AND, for
+     `save-defaults`, the expanded artifact set matches), or `W` is
+     `ignore-selection`. → single-line row, no continuation.
+  2. **`W` saves only a selection** (literal `save-selection-<fmt>`,
+     OR `save-defaults` configured selection-only). →
+     `(or selection <fmt>)`.
+  3. **Both slots are `save-defaults` and `W`'s expansion equals
+     `N`'s expansion plus exactly one `selection <fmt>`**. →
+     `(plus selection <fmt>)`.
+  4. **Anything else.** → `With selection: <frag(W)>`.
+- **Row shapes**:
+  - Case 1: `<Label>: <frag>  [<key>]` — single line.
+  - Cases 2–4 render as a 3-line block so the two action lines
+    line up under a clean header:
+    ```
+    <Label> [<key>]:
+      <no-sel frag>
+      <continuation>
+    ```
+- The **hotkey** is folded into the label `[<key>]:` on multi-line
+  rows (so the colon sits at the end of the header) and trails the
+  fragment as `  [<key>]` on single-line rows. The same hotkey fires
+  both branches of a row, so it never appears on a continuation
+  line.
+
+### Hotkey wiring
+
+- `_execute_action` → Click row.
+- `secondary-action` → Double-click row (the `01-` prefix from the
+  manifest is stripped by `commandsToShortcutMap`).
+- An unbound shortcut is omitted entirely (no empty `[]` left over).
 
 ## Capture-page first-paint pre-checks
 
@@ -356,6 +395,16 @@ Messages handled in `background/options.ts`:
   ids, the current `capturePageDefaults`, the registered Ask
   providers + their stored `askProviderSettings`, the bound hotkey
   map, and a `factoryDefaults` block consumed by the Defaults button.
+  Also runs `refreshMenusIfHotkeysChanged` against the snapshot it
+  just took, so opening / returning to the Options page resyncs the
+  toolbar tooltip + context-menu labels with whatever bindings the
+  user just edited at `chrome://extensions/shortcuts` (Chrome fires
+  no event for those edits).
+- `refreshHotkeys` — fire-and-forget signal sent by the page's
+  `refreshHotkeys()` (window focus/blur, radio click). The SW just
+  forwards it to `refreshMenusIfHotkeysChanged()` so an in-page
+  resync picks the SW-side tooltip up too — without making the page
+  re-fetch the whole `getOptionsData` payload on every focus.
 - `setOptions` — accepts new ids for any of the click/dbl slots plus
   a `capturePageDefaults` object and an `askProviderSettings` object.
   Each setter is wrapped independently so a stale value in one slot
@@ -366,7 +415,19 @@ Messages handled in `background/options.ts`:
 ### Hotkey refresh
 
 Chrome fires no event when the user edits a shortcut at
-`chrome://extensions/shortcuts`. The page resyncs the hotkey column
-on `window` focus / blur and on every radio click — three coarse
-signals that catch most "user just came back from the editor" cases
-without needing an event.
+`chrome://extensions/shortcuts`. Two refresh hooks cover the cases
+the user is likely to hit:
+
+- **Options page hotkey column.** The page resyncs on `window` focus
+  / blur and on every radio click — three coarse signals that catch
+  most "user just came back from the editor" cases without needing
+  an event. After updating its own UI, the page sends a
+  `refreshHotkeys` message to the SW so the toolbar tooltip picks
+  up the same change.
+- **Toolbar tooltip + context-menu labels.** The SW's
+  `refreshMenusIfHotkeysChanged` runs on every user interaction
+  (toolbar click, menu open, keyboard command), inside
+  `getOptionsData` (Options page load), and on every
+  `refreshHotkeys` ping (Options page focus/blur/radio click). All
+  call sites share the `cachedShortcutFingerprint`, so a no-op
+  repeat costs one `chrome.commands.getAll()` and a string compare.

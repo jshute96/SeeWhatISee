@@ -856,6 +856,19 @@ async function refreshHotkeys(): Promise<void> {
     // waiting for a Save round-trip. The radio column DOM stays
     // intact so any in-progress (unsaved) radio picks survive.
     recomputeHotkeyCells();
+
+    // Tell the SW about the refresh so the toolbar tooltip +
+    // context-menu labels resync too. Chrome fires no event for
+    // shortcut edits at chrome://extensions/shortcuts, so any time
+    // we notice (window focus / radio click) is the SW's chance
+    // to catch up. Fire-and-forget — the page UI is already up to
+    // date from the local `chrome.commands.getAll()` call above.
+    chrome.runtime.sendMessage({ action: 'refreshHotkeys' }).catch(() => {
+      // SW may be napping; the next user interaction will
+      // re-trigger refreshMenusIfHotkeysChanged via the toolbar
+      // path, so a dropped message here just means the tooltip
+      // updates one click later than ideal.
+    });
   } catch (err) {
     console.warn('[SeeWhatISee] options: failed to refresh hotkeys:', err);
   }

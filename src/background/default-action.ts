@@ -10,9 +10,11 @@ import {
   CAPTURE_ACTIONS,
   type CaptureAction,
 } from './capture-actions.js';
+import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 import { runWithErrorReporting } from './error-reporting.js';
 import { detailsStorageKey } from './capture-details.js';
 import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js';
+import { buildTooltip } from './tooltip.js';
 
 // The default click and double-click actions are each split in two
 // (with-selection / without-selection) so the toolbar behaves
@@ -240,71 +242,42 @@ export async function setDefaultDblWithSelectionId(id: string): Promise<void> {
 /**
  * Build the toolbar icon tooltip from the four stored defaults.
  *
- * Every fragment is authored on the action / with-selection choice
- * itself (see `baseTooltipFragment` on `BASE_CAPTURE_ACTIONS` and
- * `tooltipFragment` on `WITH_SELECTION_CHOICES`), so this function
- * does no string manipulation — it just reads storage state and
- * concatenates the pre-built pieces. Layout is:
+ * The actual layout/algorithm lives in `tooltip.ts` (`buildTooltip`)
+ * as pure logic so it's unit-testable; this function just snapshots
+ * the live storage + shortcut state and hands it over. See that
+ * module's header for the per-row Case 1–4 rules and the full
+ * layout diagram.
  *
- *   SeeWhatISee
- *   <blank>                                       (only when errorMessage !== undefined)
- *   ERROR: <errorMessage>                         (only when errorMessage !== undefined)
- *   <blank>
- *   Click: <click-no-sel.tooltipFragment>
- *   Double-click: <dbl-no-sel.tooltipFragment>
- *   With selection click: <click-with-sel.tooltipFragment>          (if not ignore-selection)
- *   With selection double-click: <dbl-with-sel.tooltipFragment>     (if not ignore-selection)
- *   <blank>
- *
- * The blanks give each block breathing room — bracketing the ERROR
- * line when present, bracketing the action block always, and
- * separating the trailing action line from whatever Chrome appends
- * below (the "Wants access to this site" permission line, for
- * example).
- *
- * The two `With selection …` lines are independently omitted when
- * the corresponding stored choice is `ignore-selection` (its
- * `tooltipFragment` is `null`) — that branch then behaves identically
- * with or without a selection, so the extra line would be noise.
+ * Hotkeys folded in: `_execute_action` on the Click row,
+ * `secondary-action` on the Double-click row (`01-` prefix stripped
+ * by `commandsToShortcutMap`). Both sit at the end of the row's
+ * first line as `  [<key>]` and are omitted entirely when unbound.
  */
 export async function getDefaultActionTooltip(errorMessage?: string): Promise<string> {
   const click = await getDefaultWithoutSelectionAction();
   const dblWithoutId = await getDefaultDblWithoutSelectionId();
   const doubleClick = findCaptureAction(dblWithoutId) ?? CAPTURE_ACTIONS[0]!;
-  const clickWithChoice = findWithSelectionChoice(await getDefaultWithSelectionId());
-  const dblWithChoice = findWithSelectionChoice(await getDefaultDblWithSelectionId());
-  // The `_execute_action` hotkey — when bound — is equivalent to
-  // clicking the toolbar icon, so we fold it into the `Click:`
-  // label rather than adding another action line. When unbound
-  // (fresh install / no user binding) the label stays the plain
-  // `Click:` so users who haven't touched shortcuts don't see
-  // empty-looking hints.
+  const clickWithId = await getDefaultWithSelectionId();
+  const dblWithId = await getDefaultDblWithSelectionId();
+  const captureDefaults = await getCaptureDetailsDefaults();
+
   const commands = await chrome.commands.getAll();
-  const execHotkey = commandsToShortcutMap(commands).get('_execute_action');
-  const clickLabel = execHotkey ? `Click, ${execHotkey}` : 'Click';
-  const lines: string[] = ['SeeWhatISee'];
-  if (errorMessage !== undefined) lines.push('', `ERROR: ${errorMessage}`);
-  lines.push(
-    '',
-    `${clickLabel}: ${click.tooltipFragment}`,
-    `Double-click: ${doubleClick.tooltipFragment}`,
-  );
-  // The with-selection lines are omitted when the corresponding
-  // choice is `ignore-selection` — its `tooltipFragment` is `null`
-  // precisely so the line drops, since a click with selection then
-  // behaves identically to a click without one and the line would
-  // just be noise.
-  if (clickWithChoice && clickWithChoice.tooltipFragment !== null) {
-    lines.push(`With selection click: ${clickWithChoice.tooltipFragment}`);
-  }
-  if (dblWithChoice && dblWithChoice.tooltipFragment !== null) {
-    lines.push(`With selection double-click: ${dblWithChoice.tooltipFragment}`);
-  }
-  // Trailing empty entry → one trailing `\n` after `join('\n')`,
-  // which Chrome's tooltip renderer shows as one blank line below
-  // the action block.
-  lines.push('');
-  return lines.join('\n');
+  const shortcuts = commandsToShortcutMap(commands);
+
+  // `findCaptureAction` returns `undefined` for the `ignore-selection`
+  // sentinel and for any unrecognized id — `buildRow` treats both as
+  // "no with-selection continuation," so we don't need a separate
+  // flag to distinguish them.
+  return buildTooltip({
+    click,
+    clickWithSel: findCaptureAction(clickWithId),
+    doubleClick,
+    dblWithSel: findCaptureAction(dblWithId),
+    captureDefaults,
+    clickHotkey: shortcuts.get('_execute_action'),
+    dblHotkey: shortcuts.get('secondary-action'),
+    errorMessage,
+  });
 }
 
 /**

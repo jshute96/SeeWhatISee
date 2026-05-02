@@ -350,6 +350,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   setDefaultDblWithSelectionId,
   setDefaultDblWithoutSelectionId,
   refreshActionTooltip,
+  refreshMenusIfHotkeysChanged,
   // Toolbar Pin/Unpin entry — exposed so the e2e suite can
   // exercise the same code paths the user hits on right-click.
   refreshPinAskTargetMenu,
