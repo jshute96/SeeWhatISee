@@ -614,22 +614,31 @@ promptInput.addEventListener('keydown', (e) => {
   //     to send. When set to 'newline' we fall through to native
   //     textarea handling.
   if (e.key !== 'Enter') return;
+  // IME commit-Enter: don't intercept. The composition needs the keystroke
+  // to commit, and the destructive `\` branch below would otherwise eat
+  // a literal `\` that was never meant as a line-continuation marker.
+  if (e.isComposing) return;
   if (e.shiftKey) return;
-  const sendIntent = e.ctrlKey || currentPromptEnter === 'send';
-  if (sendIntent) {
-    // Backslash + Enter (in send mode): erase the backslash and
-    // insert a newline, matching CLI coding agents. Requires a
-    // collapsed caret with `\` immediately to its left. Shift+Enter
-    // (returned above) and 'newline' mode (skipped below) already
-    // give a literal newline without consuming a backslash.
+  // Backslash + Enter on plain Enter in send mode: erase the trailing
+  // `\` and insert a newline, matching CLI coding agents. Skipped for
+  // Ctrl+Enter (always submits) and 'newline' mode (plain Enter already
+  // inserts a newline natively).
+  if (!e.ctrlKey && currentPromptEnter === 'send') {
     const start = promptInput.selectionStart ?? 0;
     const end = promptInput.selectionEnd ?? 0;
     if (start === end && start > 0 && promptInput.value[start - 1] === '\\') {
       e.preventDefault();
-      promptInput.setRangeText('\n', start - 1, end, 'end');
-      promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+      // Select just the trailing `\` and replace it via execCommand so
+      // the swap lands on the textarea's native undo stack — Ctrl+Z
+      // restores the backslash. setRangeText would do the right text
+      // replace but bypass undo entirely.
+      promptInput.setSelectionRange(start - 1, end);
+      document.execCommand('insertText', false, '\n');
       return;
     }
+  }
+  const sendIntent = e.ctrlKey || currentPromptEnter === 'send';
+  if (sendIntent) {
     if (clickDefaultPageButton()) e.preventDefault();
   }
 });

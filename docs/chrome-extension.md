@@ -516,9 +516,13 @@ This section is split by topic:
     the user picked as default. Default `'capture'`. Same routing is
     used by the SW's `triggerCapture` toolbar-icon hand-off.
   - Shift+Enter always inserts a newline.
-  - `\` + Enter (in `promptEnter='send'` mode) consumes the trailing
-    backslash and inserts a newline — same shortcut CLI coding
-    agents use, so reaching for it lands the right behavior.
+  - `\` + Enter (in `promptEnter='send'` mode) consumes the `\`
+    immediately to the left of the caret (anywhere in the buffer,
+    not just end-of-text) and inserts a newline. Mirrors CLI coding
+    agents so the familiar shortcut lands the expected behavior.
+    The swap goes through `execCommand('insertText')` so Ctrl+Z
+    restores the backslash. Skipped in `'newline'` mode (plain
+    Enter is already a newline) and on Ctrl+Enter (always submits).
   - Ctrl+Enter always submits via the chosen default button —
     overrides `promptEnter='newline'` so a user with that setting
     can still send without clicking.

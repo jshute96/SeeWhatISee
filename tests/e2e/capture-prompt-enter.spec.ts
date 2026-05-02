@@ -202,6 +202,160 @@ test('Ctrl+Enter on prompt always submits, even when promptEnter=newline', async
   await openerPage.close();
 });
 
+// ─── Backslash + Enter (CLI-agent-style line continuation) ────────
+
+test('\\+Enter on prompt (promptEnter=send) erases the backslash and inserts a newline', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installButtonClickSpy(capturePage);
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  await capturePage.keyboard.type('abc\\');
+  await capturePage.keyboard.press('Enter');
+  await capturePage.keyboard.type('def');
+  await expect(prompt).toHaveValue('abc\ndef');
+  expect(await readButtonClickSpy(capturePage)).toEqual([]);
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('\\+Enter triggers mid-string when the caret is between `\\` and following text', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Intentional: the trigger is "`\` immediately to the left of the
+  // caret", not "trailing `\` at end of text". A user editing in the
+  // middle of a buffer should still get the line-continuation shortcut.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installButtonClickSpy(capturePage);
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  // Type `ab\cd`, then move the caret two left so it sits between `\`
+  // and `c` (i.e. `ab\|cd`).
+  await capturePage.keyboard.type('ab\\cd');
+  await capturePage.keyboard.press('ArrowLeft');
+  await capturePage.keyboard.press('ArrowLeft');
+  await capturePage.keyboard.press('Enter');
+  await expect(prompt).toHaveValue('ab\ncd');
+  expect(await readButtonClickSpy(capturePage)).toEqual([]);
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('\\+Enter swap is undoable (Ctrl+Z restores the backslash)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The implementation uses execCommand('insertText') so the swap lands
+  // on the textarea's native undo stack — Ctrl+Z must give the `\` back.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  await capturePage.keyboard.type('abc\\');
+  await capturePage.keyboard.press('Enter');
+  await expect(prompt).toHaveValue('abc\n');
+  await capturePage.keyboard.press('Control+Z');
+  await expect(prompt).toHaveValue('abc\\');
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('Ctrl+Enter on text ending in `\\` always submits (does not eat the backslash)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression guard: a previous version put the `\`-eating branch
+  // inside `if (sendIntent)`, so Ctrl+Enter on `foo\` would silently
+  // insert a newline instead of submitting. Ctrl+Enter must always
+  // submit, regardless of trailing-backslash state.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    undefined,
+    seed({ promptEnter: 'newline' }),
+  );
+  await installButtonClickSpy(capturePage);
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  await capturePage.keyboard.type('foo\\');
+  await capturePage.keyboard.press('Control+Enter');
+  expect(await readButtonClickSpy(capturePage)).toEqual(['capture']);
+  // Backslash is preserved — Ctrl+Enter just submits.
+  await expect(prompt).toHaveValue('foo\\');
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('Shift+Enter on text ending in `\\` keeps the backslash and inserts a literal newline', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Shift+Enter is the native-newline override and runs before the
+  // `\`-eating branch — the backslash must survive.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  await capturePage.keyboard.type('abc\\');
+  await capturePage.keyboard.press('Shift+Enter');
+  await capturePage.keyboard.type('d');
+  await expect(prompt).toHaveValue('abc\\\nd');
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('Plain Enter on text ending in `\\` with promptEnter=newline inserts native newline (keeps the backslash)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // In 'newline' mode, plain Enter is already a newline — the
+  // `\`-eating branch is skipped (it's only useful in 'send' mode
+  // where it gives users an escape hatch around the submit).
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    undefined,
+    seed({ promptEnter: 'newline' }),
+  );
+  await installButtonClickSpy(capturePage);
+  const prompt = capturePage.locator('#prompt-text');
+  await prompt.focus();
+  await capturePage.keyboard.type('abc\\');
+  await capturePage.keyboard.press('Enter');
+  await capturePage.keyboard.type('d');
+  await expect(prompt).toHaveValue('abc\\\nd');
+  expect(await readButtonClickSpy(capturePage)).toEqual([]);
+  await capturePage.close();
+  await openerPage.close();
+});
+
 // ─── triggerCapture toolbar-icon hand-off ─────────────────────────
 //
 // The SW sends a `triggerCapture` runtime message to the Capture
