@@ -205,11 +205,11 @@ interface SaveDetailsMessage {
   selectionFormat: SelectionFormat | null;
   prompt: string;
   /**
-   * True when at least one un-converted red rectangle or line is on
-   * the preview. Causes the saved record's screenshot artifact to
-   * carry `hasHighlights: true` (only when `screenshot` is also
-   * true — see capture.ts). Rectangles the user converted to
-   * redactions / crops don't count — those get their own flags.
+   * True when at least one red rectangle or line (from the Box /
+   * Line tools) is on the preview. Causes the saved record's
+   * screenshot artifact to carry `hasHighlights: true` (only when
+   * `screenshot` is also true — see capture.ts). Redactions / crops
+   * are separate edit kinds and get their own flags.
    */
   highlights: boolean;
   /**

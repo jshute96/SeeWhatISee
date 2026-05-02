@@ -11,8 +11,8 @@
 //   - `capture-paste.spec.ts`        — rich-text paste handling
 //     (html→markdown / html-source routing, source-view short-
 //     circuit, real CodeJar copy/paste round-trips).
-//   - `capture-drawing.spec.ts`     — drawing overlay (boxes, lines,
-//     Redact, Crop, Undo, Clear, drag-to-crop, bake-in).
+//   - `capture-drawing.spec.ts`     — drawing tool palette
+//     (Box/Line/Crop/Redact + Undo/Clear, crop-edge resize, bake-in).
 //   - `toolbar-dispatch.spec.ts`    — toolbar `handleActionClick`,
 //     click-with-selection routing, default-id migration,
 //     copyLastSelectionFilename.

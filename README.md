@@ -73,14 +73,12 @@ On this page, you can:
 - View or edit the captured HTML or selection before saving with the pencil icon ![icon](docs/images/edit-icon.png).
 - **Save individual artifacts** to a custom location with the download icon ![icon](docs/images/download-icon.png).
 - Add an optional **Prompt**. (Enter submits; Shift+Enter or `\`+Enter inserts a newline.)
-- Annotate the screenshot with red **highlights**:
-  - **Click-drag** to draw a red box.
-  - **Right-click-drag** to draw a red line.
-  - **Redact** turns the most recent red box into an opaque black box that hides whatever was underneath.
-  - **Cropping** the saved PNG to include only a selected region.
-    - **Crop button** crops to the most recent red box.
-    - **Drag borders** of the image or crop region to create or resize the crop.
-  - **Undo** or **Clear** to roll back edits.
+- Annotate the screenshot with **drawing tools**:
+  - **Box** (default) — draws a red rectangle to highlight a region.
+  - **Line** — draws a red line.
+  - **Crop** — drag a rectangular region — image will be cropped to that region. Drag borders to resize.
+  - **Redact** — draw a black box to hide part of the image.
+  - **Undo** / **Clear** — roll back the most recent edit, or all edits.
 - Format conversion in **Paste**
   - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
   - In the HTML editors, the HTML source is pasted.

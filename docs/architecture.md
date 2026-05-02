@@ -459,10 +459,10 @@ sub-modules above.
     - `screenshot` — `ScreenshotArtifact` object
       `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true, "hasRedactions"?: true, "isCropped"?: true }`,
       set when a screenshot was saved.
-      - `hasHighlights` is `true` iff the saved PNG has un-converted
-        red markup (boxes, lines) baked into it. Red rectangles the
-        user converted to redactions or crops don't count — those
-        are reported via `hasRedactions` / `isCropped` instead.
+      - `hasHighlights` is `true` iff the saved PNG has red markup
+        (Box-tool boxes, Line-tool lines) baked into it. Redactions
+        and crops are separate kinds, reported via `hasRedactions`
+        / `isCropped` instead — they don't count as highlights.
       - `hasRedactions` is `true` iff the saved PNG has at least one
         opaque black redaction rectangle baked in.
       - `isCropped` is `true` iff the saved PNG was cropped to a
@@ -663,43 +663,49 @@ sub-modules above.
     user can still type shifted letters in other focus paths.
 - **Prompt** — auto-growing textarea (capped at 200px). Enter
   submits, Shift+Enter inserts a newline.
-- **Highlight overlay** — see [Image annotation](#image-annotation).
-- **Preview image** — fits 90% of body width and shrinks vertically
-  via JS-managed `max-height` so the page never scrolls.
+- **Drawing-tool overlay** — see [Image annotation](#image-annotation).
+- **Preview image** — fills the remaining flex slot beside the
+  tool palette and shrinks vertically via JS-managed `max-height`
+  so the page never scrolls.
 
 ### Image annotation
 
 The screenshot preview is wrapped in an SVG overlay where the user
-can draw red markup on the regions they want the agent to focus on,
-and optionally convert drawn boxes into opaque redactions or the
-active crop region.
+draws annotations with a *modal* tool palette. Exactly one of four
+tool buttons is selected at a time; a left-button drag commits an
+edit of that tool's kind. There's no right-click drawing.
 
-- **Left-click-drag** — draws a 3px-bordered red rectangle.
-- **Right-click-drag** — draws a 3px red line. The browser context
-  menu is suppressed on the overlay.
-- **Redact button** — converts the most recent unconverted red
-  rectangle in the stack into an opaque black box. Hides whatever
-  was underneath in the saved PNG. Disabled when no unconverted red
-  rectangle exists. Each click converts one box, so repeated clicks
-  walk backward through the stack.
-- **Crop button** — converts the top-of-stack red rectangle into
-  the active crop region; everything outside dims in the preview
-  and the saved PNG is reduced to just that region. Disabled
-  unless the top of the stack is an unconverted red rectangle, so
-  a crop always applies to the box the user just drew.
-- **Drag-to-crop** — the four edges and four corners of the image
-  (or the active crop, when one exists) are draggable handles.
-  Hovering one flips the cursor to the matching resize cursor; a
-  drag inward commits a new 'crop' edit on the stack. Each drag is
-  its own undoable step, so resizes nest naturally — Undo peels
-  back one resize at a time rather than collapsing them.
+- **Tool palette** — Box / Line / Crop / Redact, plus separated
+  Undo / Clear actions. The Box and Line buttons render an icon of
+  what they draw; Crop and Redact use text labels. Selected = a
+  pushed-down style on the active button. Default tool is Box.
+- **Box tool** — drag commits a 3px-bordered red rectangle.
+- **Line tool** — drag commits a 3px red diagonal line.
+- **Crop tool** — drag paints the live cropped preview (dim frame
+  outside the drag bounds, dashed border, corner grips) so the user
+  sees the final result while dragging; commits a 'crop' edit on
+  mouseup. The saved PNG is reduced to the crop region. Each draw
+  stacks; the most-recently-added active crop wins.
+- **Redact tool** — drag paints a filled black rectangle live,
+  matching the committed appearance — a 'redact' edit that hides
+  whatever was underneath in the saved PNG.
+- **Crop-edge handles (drag-to-crop / drag-to-resize)** — the four
+  edges and four corners of the *effective* crop region (the active
+  crop if one exists, else the full image) are draggable. With no
+  active crop, dragging an image edge inward creates a crop from
+  scratch; with an active crop, the handles sit on the crop's own
+  edges. Hovering one flips the cursor to the matching resize
+  cursor; a drag commits a new 'crop' edit on the stack. Each drag
+  is its own undoable step. The hit-test wins over the selected
+  tool, so a drag that starts in the HANDLE_PX band always becomes
+  a crop-handle drag rather than a tool draw.
 - **Undo / Clear** — single edit-history stack; disabled when
-  empty. Undo reverses both draws and conversions — popping a
-  conversion turns the box back into a red rectangle.
+  empty. The history records only `add` ops (no in-place
+  conversions exist in the new model), so Undo simply removes the
+  last-added edit.
 - Edits are stored as percentages of the image dimensions so they
   stay aligned across window resizes and prompt growth.
-- Every button carries a `title` tooltip explaining what it does,
-  shown on hover even while disabled.
+- Every button carries a `title` tooltip explaining what it does.
 
 ### Edit dialogs (template-driven)
 
@@ -922,10 +928,10 @@ active crop region.
   per-kind edit flags (`highlights`, `hasRedactions`, `isCropped`
   — see below), the current `editVersion`, and the
   `screenshotOverride` data URL when present.
-  - `highlights` is `true` iff at least one un-converted red
-    rectangle or line survives on the preview. Rectangles the
-    user converted to redactions or crops flip their own flag
-    (`hasRedactions` / `isCropped`) instead, not `highlights`.
+  - `highlights` is `true` iff at least one red rectangle or line
+    is on the preview. Redactions and crops are separate edit
+    kinds and flip their own flag (`hasRedactions` / `isCropped`)
+    instead, not `highlights`.
   - `hasRedactions` is `true` iff any redaction rectangle is
     baked into the PNG.
   - `isCropped` is `true` iff a crop region is active and the

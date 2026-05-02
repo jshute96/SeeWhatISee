@@ -39,7 +39,7 @@
   }
   /* Push the Options button to the far-right of the header and use
    * the page's flat-button style (matching `button#capture`,
-   * `.highlight-bar button`, etc.) rather than user-agent default
+   * `.highlight-buttons button`, etc.) rather than user-agent default
    * chrome. */
   header #options-btn {
     margin-left: auto;
@@ -766,32 +766,31 @@
      hex codes in JS. */
   .ask-status-ok    { color: #060; }
   .ask-status-error { color: #b00; }
-  .highlight-bar {
-    margin: 0 0 8px 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-  }
-  .highlight-bar button {
-    padding: 4px 12px;
-    font-size: 14px;
-    border: 1px solid #555;
-    border-radius: 4px;
-    background: #f5f5f5;
-    cursor: pointer;
-  }
-  .highlight-bar button:disabled {
-    opacity: 0.5;
-  }
   hr {
     border: none;
     border-top: 2px solid #555;
     margin: 32px 0;
   }
-  .image-box {
+  /*
+   * Drawing-tool palette + image. The palette (`.highlight-controls`)
+   * is a fit-content column on the LEFT; the image (`.image-box`)
+   * takes the remaining width (flex: 1). min-width: 0 on the flex
+   * item lets the image actually shrink below its intrinsic size
+   * when needed.
+   */
+  .image-and-highlights {
     display: flex;
-    justify-content: center;
+    align-items: flex-start;
+    gap: 24px;
+  }
+  .image-box {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    /* Left-justify so a shrunken image sits flush next to the
+     * highlight-controls sidebar instead of drifting to the middle
+     * of its (wider) flex slot. */
+    justify-content: flex-start;
   }
   .image-wrap {
     position: relative;
@@ -802,11 +801,70 @@
   }
   .image-box img {
     display: block;
-    /* 90% of body content width (body has 24px margin on each side).
-       max-height is set inline by fitImage() to fill remaining viewport. */
-    max-width: calc((100vw - 48px) * 0.9 - 2px);
+    /* Cap to the flex slot width (image-box) so the sidebar always
+       has room. max-height is set inline by fitImage() to fill
+       remaining viewport. */
+    max-width: 100%;
     width: auto;
     height: auto;
+  }
+  .highlight-controls {
+    flex: 0 0 auto;
+  }
+  /* "Edit image" header above the tool palette. Matches the
+   * "Prompt:" label's bold + 14px styling so the two field titles
+   * read as siblings. */
+  .highlight-title {
+    margin: 0 0 6px 0;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  /*
+   * `width: fit-content` shrinks the column to the widest button's
+   * intrinsic width; the column-flex default `align-items: stretch`
+   * then stretches the narrower siblings to that same width — so all
+   * six buttons (4 tool-selectors + Undo + Clear) end up sized to
+   * the longest label without us having to hardcode a width.
+   */
+  .highlight-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: fit-content;
+  }
+  .highlight-buttons button {
+    padding: 6px 12px;
+    font-size: 14px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+  }
+  .highlight-buttons button:disabled {
+    opacity: 0.5;
+  }
+  /* Icon-only tool buttons (Box, Line). The SVG glyph centers
+   * horizontally in the wider button slot (sized by Crop/Redact). */
+  .tool-btn-icon svg {
+    display: block;
+    width: 22px;
+    height: 16px;
+    margin: 0 auto;
+  }
+  /* Selected (pushed-down) tool button. Darker face plus an inset
+   * shadow reads as pressed; border darkens so the "lift" is gone.
+   * The Undo/Clear buttons never get this class — they're actions,
+   * not modes. */
+  .highlight-buttons .tool-btn.selected {
+    background: #cfd6dc;
+    border-color: #2b3a44;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+  /* Visual gap between the four tool-selection buttons and the
+   * Undo/Clear action buttons below them. Larger than the regular
+   * 6px row gap so the two groups read as separate clusters. */
+  .highlight-buttons #undo {
+    margin-top: 14px;
   }
   #overlay {
     position: absolute;
@@ -857,6 +915,18 @@
         <path d="M14 6l4 4"
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+      <!-- Drawing-tool glyphs for the highlight panel:
+           - draw-box-icon: red rectangle outline, mirrors the boxes
+             the Box tool draws.
+           - draw-line-icon: red diagonal line, mirrors a line draw. -->
+      <symbol id="draw-box-icon" viewBox="0 0 24 16">
+        <rect x="2" y="2" width="20" height="12"
+              fill="none" stroke="red" stroke-width="2"></rect>
+      </symbol>
+      <symbol id="draw-line-icon" viewBox="0 0 24 16">
+        <line x1="3" y1="13" x2="21" y2="3"
+              stroke="red" stroke-width="2" stroke-linecap="round"></line>
       </symbol>
       <!-- Down-chevron glyph for the Ask split-button caret. -->
       <symbol id="caret-down-icon" viewBox="0 0 24 24">
@@ -1153,33 +1223,59 @@
     <textarea id="prompt-text" rows="1"></textarea>
   </div>
 
-  <!--
-    Highlight toolbar. Drag on the image draws red rectangles; right-
-    click-drag draws red lines. Redact converts the most recent
-    unconverted red rectangle into an opaque black box (irreversibly
-    hiding whatever was underneath in the saved PNG). Crop converts
-    the most recent unconverted red rectangle at the top of the stack
-    into a crop region (dims everything outside and shrinks the saved
-    PNG to just that region). Both conversions are undoable.
-  -->
-  <div class="highlight-bar">
-    <span><b>Add highlights below.</b> Drag to draw boxes, right-click-drag to draw lines. Drag edges to crop.</span>
-    <button id="redact" disabled
-            title="Turn the last drawn box into a black redaction.">Redact</button>
-    <button id="crop" disabled
-            title="Crop the screenshot to the last drawn box.">Crop</button>
-    <button id="undo" disabled
-            title="Undo the most recent edit.">Undo</button>
-    <button id="clear" disabled
-            title="Clear all edits.">Clear</button>
-  </div>
-
   <hr>
 
-  <div class="image-box">
-    <div class="image-wrap">
-      <img id="preview" alt="Captured page">
-      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+  <!--
+    Image + drawing-tool sidebar. The user picks one of the four
+    tool buttons in the panel to the left of the image, then drags
+    on the image to commit an edit of that kind. See the
+    `.tool-btn` block below for the per-tool details.
+  -->
+  <div class="image-and-highlights">
+    <div class="highlight-controls">
+      <div class="highlight-title" role="heading" aria-level="2">Edit image</div>
+      <!--
+        Drawing-tool palette. Exactly one tool button is selected at
+        a time (default: Box). Selected = pushed-down look via
+        `.selected`. Each tool's drag paints what it will commit so
+        the user sees the final result live: tool-box → red rect,
+        tool-line → red line, tool-crop → dim-frame cropped preview,
+        tool-redact → filled black rect. Mouseup commits the edit.
+        Undo / Clear are *actions*, not modes — they're separated
+        from the tool group by an extra top-margin on #undo.
+      -->
+      <div class="highlight-buttons">
+        <button id="tool-box" class="tool-btn tool-btn-icon selected"
+                type="button" data-tool="rect"
+                title="Draw box" aria-label="Draw box"
+                aria-pressed="true">
+          <svg aria-hidden="true"><use href="#draw-box-icon"></use></svg>
+        </button>
+        <button id="tool-line" class="tool-btn tool-btn-icon"
+                type="button" data-tool="line"
+                title="Draw line" aria-label="Draw line"
+                aria-pressed="false">
+          <svg aria-hidden="true"><use href="#draw-line-icon"></use></svg>
+        </button>
+        <button id="tool-crop" class="tool-btn"
+                type="button" data-tool="crop"
+                title="Drag to crop the screenshot to a region"
+                aria-pressed="false">Crop</button>
+        <button id="tool-redact" class="tool-btn"
+                type="button" data-tool="redact"
+                title="Drag to add a black redaction box"
+                aria-pressed="false">Redact</button>
+        <button id="undo" disabled
+                title="Undo the most recent edit">Undo</button>
+        <button id="clear" disabled
+                title="Clear all edits">Clear</button>
+      </div>
+    </div>
+    <div class="image-box">
+      <div class="image-wrap">
+        <img id="preview" alt="Captured page">
+        <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
     </div>
   </div>
 

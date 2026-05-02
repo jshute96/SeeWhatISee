@@ -148,12 +148,11 @@ export interface ScreenshotArtifact {
   /** Bare basename of the PNG on disk (no directory segment). */
   filename: string;
   /**
-   * `true` iff the saved PNG bytes carry un-converted red highlights
-   * (boxes / lines) baked in. Rectangles that the user converted to
-   * redactions or crops do *not* count — those get their own flags
-   * below. Downstream consumers treat `hasHighlights: true` as "the
-   * user marked specific regions on this image; focus your
-   * description on those."
+   * `true` iff the saved PNG bytes carry red highlights (Box-tool
+   * boxes / Line-tool lines) baked in. Redactions and crops are
+   * separate kinds and get their own flags below. Downstream
+   * consumers treat `hasHighlights: true` as "the user marked
+   * specific regions on this image; focus your description on those."
    */
   hasHighlights?: true;
   /**
@@ -738,11 +737,11 @@ export interface SaveDetailedOptions {
    */
   prompt?: string;
   /**
-   * True when `capture.screenshotDataUrl` has at least one
-   * un-converted red rectangle / line baked into the PNG bytes.
-   * Causes the saved record's `screenshot` artifact object to carry
-   * `hasHighlights: true`. Ignored unless `includeScreenshot` is
-   * also true — there's no point flagging highlights on a record
+   * True when `capture.screenshotDataUrl` has at least one red
+   * rectangle / line (from the Box / Line tools) baked into the PNG
+   * bytes. Causes the saved record's `screenshot` artifact object to
+   * carry `hasHighlights: true`. Ignored unless `includeScreenshot`
+   * is also true — there's no point flagging highlights on a record
    * that didn't save the image they're on.
    */
   hasHighlights?: boolean;

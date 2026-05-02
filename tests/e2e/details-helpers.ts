@@ -196,17 +196,19 @@ export async function configureAndCapture(
   ]);
 }
 
-// Drag a rectangle on the highlight overlay between the given
-// percentage coordinates of its bounding box. Tests use this to
-// produce highlights without coupling to an internal drawing helper.
+// Drag on the drawing overlay between the given percentage
+// coordinates of its bounding box. Used by drawing tests to commit
+// an edit of whichever tool is currently selected (Box by default;
+// Line / Crop / Redact when the test clicks the matching tool
+// button first).
 //
 // Callers must keep `fromPct` at least `HANDLE_PX` (10 CSS px)
 // away from every image edge. If the mousedown lands inside the
-// HANDLE_PX band, `detectCropHandle` in capture-page.ts fires
-// and starts a *crop-drag* instead of a rect/line draw — a silent
-// miscategorisation that'd look like a drawing test failure but is
-// actually a misuse of the helper. We assert against it rather
-// than guessing the intent.
+// HANDLE_PX band, `detectCropHandle` in capture-page.ts fires and
+// starts a *crop-handle drag* (creating or resizing the crop)
+// instead of a tool-driven draw — a silent miscategorisation that
+// would look like a drawing test failure but is actually a misuse
+// of the helper. We assert against it rather than guessing intent.
 export async function dragRect(
   capturePage: Page,
   fromPct: { xPct: number; yPct: number },
@@ -224,8 +226,8 @@ export async function dragRect(
   if (insetX < HANDLE_PX || insetY < HANDLE_PX) {
     throw new Error(
       `dragRect from (${fromPct.xPct}, ${fromPct.yPct}) is within ${HANDLE_PX}px of the image edge — ` +
-      `a mousedown there would start a crop-drag instead of a rect draw. Keep the start at least ` +
-      `${HANDLE_PX}px inset, or use the dragEdge helper if a crop-drag is the intent.`,
+      `a mousedown there would start a crop-handle drag instead of a tool draw. Keep the start at ` +
+      `least ${HANDLE_PX}px inset, or use the dragEdge helper if a crop-handle drag is the intent.`,
     );
   }
   await capturePage.mouse.move(x1, y1);

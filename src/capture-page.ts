@@ -292,8 +292,9 @@ wireSelectionControls();
 const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
-const redactBtn = document.getElementById('redact') as HTMLButtonElement;
-const cropBtn = document.getElementById('crop') as HTMLButtonElement;
+const toolButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('.tool-btn'),
+);
 
 // Auto-grow the prompt textarea to fit its content, capped by CSS
 // max-height. After resizing we re-fit the image because its top has
@@ -727,28 +728,38 @@ function formatBytes(n: number): string {
 
 // ─── Highlight overlay ────────────────────────────────────────────
 //
-// Left-click-drag draws red rectangles; right-click-drag draws red
-// lines. Any drawn red rectangle can be *converted* in place to one
-// of two other kinds without leaving the stack:
+// Drawing is *modal*: one of four tool buttons (Box / Line / Crop /
+// Redact) is selected at a time, and a left-button drag on the
+// overlay produces an edit of that kind:
 //
-//   - Redact — opaque black box that hides whatever was under it in
-//     the saved PNG. The Redact button is enabled whenever any
-//     unconverted red rectangle exists and converts the most recent
-//     such one per click.
-//   - Crop — shrinks the saved PNG to the rectangle and dims
-//     everything outside in the preview. Only available when the
-//     top of the stack is currently an unconverted red rectangle
-//     (the user asked for this gating so a crop reliably applies
-//     to the rectangle they just drew).
+//   - Box     — red stroked rectangle (highlights a region).
+//   - Line    — red diagonal line (annotates direction / arrow).
+//   - Crop    — drag paints the live cropped preview (dim frame
+//     outside the drag bounds, dashed border, corner grips), so the
+//     user sees what the cropped result will look like. Commits as
+//     a crop region on mouseup; the saved PNG is shrunk to the
+//     crop. Multiple crops stack; the most-recent active one wins.
+//   - Redact  — drag paints a filled black rectangle live, matching
+//     the committed appearance — opaque black box that hides
+//     whatever was underneath in the saved PNG.
 //
-// Both conversions are themselves undoable: Undo walks back one
-// history step (draw, convert, or convert again), so popping a
-// conversion restores the red rectangle it came from. Clear wipes
-// everything. Coordinates are percentages of the image so edits
+// There's no right-click drawing. There's no in-place conversion
+// between kinds: every drag commits one new edit of the active
+// tool's kind, and Undo simply removes the last edit (Clear wipes
+// the stack). Coordinates are percentages of the image so edits
 // survive resizes and prompt growth.
+//
+// Crop-edge handles work alongside the tool palette: the four edges
+// and four corners of the *effective* crop region (the active crop
+// if one exists, else the full image) are draggable. With no active
+// crop, dragging an image edge inward creates a crop from scratch;
+// with one, dragging the crop edges resizes it. The HANDLE_PX hit
+// band wins over the selected tool, so a Box drag that starts in
+// the band starts a crop-handle drag instead of a Box draw.
 
 type Point = { x: number; y: number };
 type RectKind = 'rect' | 'redact' | 'crop';
+type Tool = RectKind | 'line';
 interface RectEdit {
   id: number;
   kind: RectKind;
@@ -761,13 +772,10 @@ interface LineEdit {
 }
 type Edit = RectEdit | LineEdit;
 
-// History is an append-only log so Undo can reverse both draws and
-// conversions. 'add' entries reference an edit by id so Undo can
-// remove it; 'convert' entries carry the previous kind so Undo can
-// put it back. Clear wipes both `edits` and `history`.
-type HistoryOp =
-  | { op: 'add'; id: number }
-  | { op: 'convert'; id: number; from: RectKind; to: RectKind };
+// History is an append-only log of edit additions — Undo pops the
+// most recent and removes the matching edit. The only op is "add",
+// so the entry is just the edit's id.
+type HistoryOp = { id: number };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Movement under this many CSS pixels counts as a stray click, not
@@ -783,7 +791,12 @@ const editHistory: HistoryOp[] = [];
 let nextEditId = 1;
 let dragStart: Point | null = null;
 let dragCurrent: Point | null = null;
-let dragButton: number | null = null;
+
+// Currently selected drawing tool. Default 'rect' matches the
+// `.selected` class on the Box button in capture.html. Updated by
+// the tool-button click handler below; only ever read inside
+// render() and the mouseup handler.
+let selectedTool: Tool = 'rect';
 
 // ─── Crop-drag state ──────────────────────────────────────────────
 //
@@ -791,9 +804,8 @@ let dragButton: number | null = null;
 // active crop, when one exists) is a draggable handle. The user can
 // drag inward to create a crop from scratch or to resize an existing
 // one. Every completed drag commits a new 'crop' edit on the stack,
-// so it participates in Undo / Clear the same way a button-converted
-// crop does — and so resizes nest naturally without mutating prior
-// stack entries.
+// so it participates in Undo / Clear and resizes nest naturally
+// without mutating prior stack entries.
 //
 // Handles are sampled by hit-testing a `HANDLE_PX` band around the
 // four edges of the effective crop rectangle (the active crop's
@@ -809,10 +821,10 @@ const HANDLE_PX = 10;
 
 // Minimum crop width/height as a fraction of the image, so a drag
 // can't collapse the crop to 0×0 (which would make it impossible to
-// grab the handles on the next drag). 3% picks up ~20 px on a
+// grab the handles on the next drag). 1.5% picks up ~9 px on a
 // 600 px preview — enough room to click on without being a wasted
 // constraint.
-const MIN_CROP_PCT = 3;
+const MIN_CROP_PCT = 1.5;
 
 interface CropDragState {
   handle: CropHandle;
@@ -842,10 +854,6 @@ function localCoords(e: MouseEvent): Point {
     x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
     y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
   };
-}
-
-function findEdit(id: number): Edit | undefined {
-  return edits.find((e) => e.id === id);
 }
 
 // The effective crop rectangle is the most-recently-added 'crop'
@@ -1051,15 +1059,26 @@ function render(): void {
     // (only the most recent crop is visible).
   }
 
-  // Render the crop as the drag preview if a crop-drag is in
-  // progress, else the committed active crop, else nothing. Both
-  // drag-preview and committed-crop share the same visual (dim
-  // surround + dashed border + grip marks), so the user sees the
-  // final state live while dragging.
+  // Render the crop as the drag preview if a crop drag is in
+  // progress (either a Crop-tool *creation* drag or a handle
+  // *resize* drag), else the committed active crop, else nothing.
+  // All three states share the same visual (dim surround + dashed
+  // border + corner grips), so the user sees the final cropped
+  // result live while dragging — including a Crop-tool create
+  // drag, where the dim frame appears under the bounds the user
+  // is currently dragging.
   let cropPreview:
     | { x: number; y: number; w: number; h: number }
     | undefined;
-  if (cropDrag) {
+  if (selectedTool === 'crop' && dragStart && dragCurrent) {
+    const r = imgRect();
+    cropPreview = {
+      x: (Math.min(dragStart.x, dragCurrent.x) / r.width) * 100,
+      y: (Math.min(dragStart.y, dragCurrent.y) / r.height) * 100,
+      w: (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100,
+      h: (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100,
+    };
+  } else if (cropDrag) {
     cropPreview = { x: cropDrag.curX, y: cropDrag.curY, w: cropDrag.curW, h: cropDrag.curH };
   } else {
     const crop = activeCrop();
@@ -1119,11 +1138,11 @@ function render(): void {
   }
 
   // Small square grips at the four corners of the effective crop
-  // region (the active crop, or the full image when no crop exists).
-  // They're drawn even with no crop so the initial image hints that
-  // its borders are draggable — without them the edge hit band is
-  // invisible and the user has no cue to discover it. White fill
-  // with a 1px dark outline so they read on both light and dark
+  // region (the cropPreview if a drag is in flight, the active crop
+  // if one exists, else the image's own corners). Drawn even with
+  // no crop so the image hints that its edges are draggable —
+  // without them the edge hit band is invisible. White fill with a
+  // 1px dark outline so they read on both light and dark
   // backgrounds. Grips render centered on the corner and may extend
   // past the image edge — `#overlay` is `overflow: visible` so the
   // square is fully drawn even at a boundary corner.
@@ -1146,86 +1165,76 @@ function render(): void {
   }
 
   if (dragStart && dragCurrent) {
-    if (dragButton === 2) {
+    if (selectedTool === 'line') {
       overlay.appendChild(makeLine(
         dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y,
       ));
-    } else {
+    } else if (selectedTool === 'rect' || selectedTool === 'redact') {
+      // Both tools draw exactly what they'll commit, so the user
+      // sees the final result live: Box → red stroked rect, Redact
+      // → filled black rect. Crop is handled above via `cropPreview`
+      // (dim frame around the live drag bounds), so it doesn't
+      // appear in this branch.
       const x = Math.min(dragStart.x, dragCurrent.x);
       const y = Math.min(dragStart.y, dragCurrent.y);
       const dw = Math.abs(dragCurrent.x - dragStart.x);
       const dh = Math.abs(dragCurrent.y - dragStart.y);
-      overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red'));
+      if (selectedTool === 'rect') {
+        overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red'));
+      } else {
+        overlay.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
+      }
     }
   }
 
   const hasEditHistory = editHistory.length > 0;
   undoBtn.disabled = !hasEditHistory;
   clearBtn.disabled = !hasEditHistory;
-  // Redact requires *any* unconverted red rect to exist; each click
-  // converts the most recent one, so repeated clicks walk backward.
-  redactBtn.disabled = !edits.some((e) => e.kind === 'rect');
-  // Crop only applies to the most recent draw. If the top of the
-  // stack is a line or already-converted rect, the button stays
-  // disabled — matches the user's "this only applies to the most
-  // recent red box" rule and avoids silently converting something
-  // further down.
-  const top = edits[edits.length - 1];
-  cropBtn.disabled = !top || top.kind !== 'rect';
 }
 
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
-  if (me.button !== 0 && me.button !== 2) return;
-  // A drag is already in flight (left-button crop or rect/line).
-  // Ignore the second button press so the state machine can't end
-  // up with both `cropDrag` and `dragStart` non-null at the same
-  // time. The mousemove branches below bail on the "wrong" state,
-  // and the mouseup handler only clears one drag per up event —
-  // so a chorded press would otherwise strand the first drag when
-  // the second button releases first.
+  // Left button only — there's no right-click drawing in the new
+  // tool model. The browser will surface the right-button context
+  // menu untouched.
+  if (me.button !== 0) return;
+  // A drag is already in flight. Ignore so the state machine can't
+  // end up with both `cropDrag` and `dragStart` non-null at the
+  // same time.
   if (cropDrag !== null || dragStart !== null) return;
   const p = localCoords(me);
-  // Left-button press on a crop handle starts a crop-drag instead
-  // of the usual rect/line draw. Right-button always draws a line —
-  // lines aren't a natural fit for "drag the crop edge."
-  if (me.button === 0) {
-    const handle = detectCropHandle(p);
-    if (handle) {
-      me.preventDefault();
-      const c = effectiveCropPct();
-      cropDrag = {
-        handle,
-        startX: c.x, startY: c.y, startW: c.w, startH: c.h,
-        originX: p.x, originY: p.y,
-        curX: c.x, curY: c.y, curW: c.w, curH: c.h,
-      };
-      render();
-      return;
-    }
+  // Crop-handle drag wins over the selected tool. Hit-test runs
+  // against the *effective* crop region — the active crop if one
+  // exists, else the full image — so dragging an image edge inward
+  // creates a crop from scratch. A drag elsewhere in the overlay
+  // commits an edit of the selected tool's kind (below).
+  const handle = detectCropHandle(p);
+  if (handle) {
+    me.preventDefault();
+    const c = effectiveCropPct();
+    cropDrag = {
+      handle,
+      startX: c.x, startY: c.y, startW: c.w, startH: c.h,
+      originX: p.x, originY: p.y,
+      curX: c.x, curY: c.y, curW: c.w, curH: c.h,
+    };
+    render();
+    return;
   }
   me.preventDefault();
   dragStart = p;
   dragCurrent = dragStart;
-  dragButton = me.button;
   // Reset any idle-hover resize cursor — we're committing to a
-  // rect/line draw from this spot, and the resize cursor would
-  // mislead the user if they started right on a handle. The
-  // window.mousemove handler for the normal drag path doesn't
-  // touch cursor, so without this the resize cursor would stick
-  // for the duration of the draw.
+  // tool-driven draw from this spot, and the resize cursor would
+  // mislead the user if they started right on a handle.
   overlay.style.cursor = 'crosshair';
   render();
 });
 
-// Suppress the browser context menu so right-click-drag is available
-// for drawing lines.
-overlay.addEventListener('contextmenu', (e) => e.preventDefault());
-
-// Idle-hover cursor feedback: match `detectCropHandle` so the user
-// gets a resize cursor before committing to the drag. When a drag
-// is already in flight (rect or crop) the mousemove handler below
-// owns the cursor, so skip the hover branch.
+// Idle-hover cursor feedback. The hit-test matches the mousedown
+// path's, so the user gets a resize cursor before committing — on
+// the active crop's edges if one exists, or the image edges (for
+// "drag here to start cropping") if none.
 overlay.addEventListener('mousemove', (e) => {
   if (dragStart || cropDrag) return;
   const handle = detectCropHandle(localCoords(e));
@@ -1273,7 +1282,7 @@ window.addEventListener('mouseup', (e) => {
         w: cropDrag.curW,
         h: cropDrag.curH,
       });
-      editHistory.push({ op: 'add', id });
+      editHistory.push({ id });
       editVersion++;
     }
     cropDrag = null;
@@ -1283,65 +1292,66 @@ window.addEventListener('mouseup', (e) => {
   }
 
   if (dragStart === null) return;
-  // dragStart and dragButton are always set/cleared together by the
-  // mousedown/mouseup pair, so reaching this line implies dragButton
-  // is non-null. The non-null assertion makes the intent explicit
-  // and lets TypeScript narrow the comparison without an extra
-  // guard the runtime would never hit.
-  if (e.button !== dragButton!) return;
+  // Left button only matches the mousedown gate.
+  if (e.button !== 0) return;
   const end = localCoords(e);
   const r = imgRect();
   const dx = end.x - dragStart.x;
   const dy = end.y - dragStart.y;
   const moved = Math.hypot(dx, dy) >= CLICK_THRESHOLD_PX;
-  // Both buttons require real movement to produce an edit. A bare
-  // click (no drag) is discarded so we don't push a degenerate
-  // zero-size rectangle / zero-length line.
+  // Real movement required — a bare click shouldn't push a
+  // degenerate zero-size shape.
+  let pending: Edit | null = null;
   if (moved) {
-    const id = nextEditId++;
-    if (dragButton === 2) {
-      edits.push({
+    const id = nextEditId;
+    if (selectedTool === 'line') {
+      pending = {
         id,
         kind: 'line',
         x1: (dragStart.x / r.width) * 100,
         y1: (dragStart.y / r.height) * 100,
         x2: (end.x / r.width) * 100,
         y2: (end.y / r.height) * 100,
-      });
+      };
     } else {
       const x = Math.min(dragStart.x, end.x);
       const y = Math.min(dragStart.y, end.y);
-      edits.push({
-        id,
-        kind: 'rect',
-        x: (x / r.width) * 100,
-        y: (y / r.height) * 100,
-        w: (Math.abs(dx) / r.width) * 100,
-        h: (Math.abs(dy) / r.height) * 100,
-      });
+      const wPct = (Math.abs(dx) / r.width) * 100;
+      const hPct = (Math.abs(dy) / r.height) * 100;
+      // Crop needs each side ≥ MIN_CROP_PCT so the resulting crop's
+      // edge handles stay grabbable. The handle-resize path enforces
+      // this between opposing edges; the create path has to enforce
+      // it at commit time too — a diagonal CLICK_THRESHOLD_PX drag
+      // would otherwise commit a sub-1% crop that can't be re-grabbed.
+      const tooSmall = selectedTool === 'crop' && (wPct < MIN_CROP_PCT || hPct < MIN_CROP_PCT);
+      if (!tooSmall) {
+        pending = {
+          id,
+          kind: selectedTool,
+          x: (x / r.width) * 100,
+          y: (y / r.height) * 100,
+          w: wPct,
+          h: hPct,
+        };
+      }
     }
-    editHistory.push({ op: 'add', id });
+  }
+  if (pending) {
+    edits.push(pending);
+    editHistory.push({ id: pending.id });
+    nextEditId++;
     editVersion++;
   }
   dragStart = null;
   dragCurrent = null;
-  dragButton = null;
   render();
 });
 
 undoBtn.addEventListener('click', () => {
   const last = editHistory.pop();
   if (!last) return;
-  if (last.op === 'add') {
-    const idx = edits.findIndex((e) => e.id === last.id);
-    if (idx >= 0) edits.splice(idx, 1);
-  } else {
-    // Revert the conversion: find the edit and put its previous
-    // kind back. Lines are never convert targets, so we know this
-    // is a RectEdit.
-    const e = findEdit(last.id);
-    if (e && e.kind !== 'line') e.kind = last.from;
-  }
+  const idx = edits.findIndex((e) => e.id === last.id);
+  if (idx >= 0) edits.splice(idx, 1);
   editVersion++;
   render();
 });
@@ -1353,34 +1363,24 @@ clearBtn.addEventListener('click', () => {
   render();
 });
 
-// Convert the most recent unconverted red rectangle (searching back
-// from the top of the stack) to a redaction. Button-disabled gate in
-// render() already ensures one exists, but we re-check here so the
-// handler is safe to call programmatically too.
-redactBtn.addEventListener('click', () => {
-  for (let i = edits.length - 1; i >= 0; i--) {
-    const e = edits[i]!;
-    if (e.kind === 'rect') {
-      editHistory.push({ op: 'convert', id: e.id, from: 'rect', to: 'redact' });
-      e.kind = 'redact';
-      editVersion++;
-      render();
-      return;
-    }
+// Tool selection. Each `.tool-btn` carries `data-tool` matching one
+// of `Tool`'s string values. Clicking a button updates `selectedTool`
+// and toggles the `.selected` / `aria-pressed` state across the
+// whole group so exactly one is pushed-down at a time.
+function setSelectedTool(tool: Tool): void {
+  selectedTool = tool;
+  for (const btn of toolButtons) {
+    const isMine = btn.dataset.tool === tool;
+    btn.classList.toggle('selected', isMine);
+    btn.setAttribute('aria-pressed', isMine ? 'true' : 'false');
   }
-});
-
-// Convert the top-of-stack red rectangle to the active crop region.
-// Disabled unless the last edit is an un-converted rect — see
-// render() for the gating rule.
-cropBtn.addEventListener('click', () => {
-  const top = edits[edits.length - 1];
-  if (!top || top.kind !== 'rect') return;
-  editHistory.push({ op: 'convert', id: top.id, from: 'rect', to: 'crop' });
-  top.kind = 'crop';
-  editVersion++;
-  render();
-});
+}
+for (const btn of toolButtons) {
+  btn.addEventListener('click', () => {
+    const tool = btn.dataset.tool as Tool | undefined;
+    if (tool) setSelectedTool(tool);
+  });
+}
 
 // ─── Image fit ────────────────────────────────────────────────────
 //
@@ -2388,10 +2388,9 @@ function hasBakeableEdits(): boolean {
 
 // Per-kind flags reported to the SW so the saved record's screenshot
 // artifact can carry `hasHighlights` / `hasRedactions` / `isCropped`
-// independently. A single red rectangle that the user converts to a
-// redaction flips only `hasRedactions` — not `hasHighlights` —
-// because after conversion the rectangle is no longer a red
-// highlight in the saved PNG.
+// independently. Each tool-kind flips its own flag: only Box-tool
+// boxes and Line-tool lines count as `hasHighlights`; redactions
+// and crops are separate kinds and flip `hasRedactions` / `isCropped`.
 //
 // `isCropped` uses `activeCrop()` (not "any crop edit in the stack")
 // so a crop that's been dragged back out to the full image reports

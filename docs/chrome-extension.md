@@ -541,79 +541,90 @@ This section is split by topic:
 
 ### Image annotation pane
 
-The screenshot preview is layered with an SVG overlay that lets
-the user draw red markup on the regions they want the agent to
-focus on, convert drawn rectangles into opaque redactions, and
-convert a drawn rectangle into the active crop region.
+The screenshot preview is layered with an SVG overlay driven by a
+modal *tool palette* on the left. Exactly one of four tool buttons
+is selected at a time; a left-button drag commits an edit of that
+tool's kind. There's no right-click drawing, and no in-place
+"convert this rect to a crop / redact" — every drag is a fresh edit.
 
-- **Left-click-drag** — draws a 3px-bordered red rectangle.
-- **Right-click-drag** — draws a 3px red line. The browser
-  context menu is suppressed on the overlay.
-- **Redact button** — converts the most recent unconverted red
-  rectangle into an opaque black box in the preview and the
-  saved PNG. Enabled whenever any unconverted red rectangle
-  exists; each click consumes one, walking back through the
-  stack on repeated clicks.
-- **Crop button** — converts the top-of-stack red rectangle into
-  the active crop region. Everything outside the region dims in
-  the preview; on save the canvas is cropped to just that region.
-  Disabled unless the top of the stack is currently an
-  un-converted red rectangle, so a crop always applies to the box
-  the user just drew (rather than silently reaching further back).
-- **Drag-to-crop / resize-crop.** The four edges and four corners
-  of the effective crop rectangle are draggable handles. With no
-  active crop, the effective rectangle is the whole image — so
-  dragging an image edge inward creates a crop from scratch. With
-  an active crop, the handles sit on the crop's own edges.
-  - Hit-testing is a `HANDLE_PX` band (10 CSS px) around each
-    edge. Corners take precedence over plain edges; the `cursor`
-    CSS flips to `ns-resize` / `ew-resize` / `nwse-resize` /
-    `nesw-resize` on hover so the affordance is discoverable
-    without reading the tooltip.
-  - Small white grip squares at the four corners of the effective
-    crop region make the handles visible even before the user
-    hovers — otherwise the hit regions are invisible. They render
-    on the initial image too (at the image's own corners), so the
-    "drag the image edge to start cropping" affordance is
-    discoverable without first hovering into the hit band.
-  - The grip is centered on the corner and may extend past the
-    image edge; `#overlay` is `overflow: visible` so a boundary
-    corner shows the full square rather than a quarter-square nub.
-    Drag previews stay inside the image regardless because
-    `localCoords()` clamps mouse coords to the image rect.
-  - Each completed drag commits a **new** `'crop'` edit on the
-    stack, not an in-place mutation of the previous one. Undo
-    peels back one resize at a time; earlier crops stay in the
-    stack (hidden behind the newer one for rendering) and
-    re-emerge as Undo walks backward.
-  - The proposed bounds are clamped on three axes:
-    - Inside the image: 0 ≤ x, x+w ≤ 100 (and the same for y).
-    - `MIN_CROP_PCT` floor (3%) on width and height.
-    - Dragged-edge-only: a drag past the opposite edge clamps
-      the dragged edge at `MIN_CROP_PCT` away from the opposite
-      one. The opposite edge never moves.
-    - Why not flip / push? A flipped crop is surprising on a
-      resize tool and never useful. Pushing the opposite edge
-      out to preserve the minimum used to produce n/w vs. s/e
-      asymmetry, so that's avoided too.
-  - A sub-`CLICK_THRESHOLD_PX` drag is discarded, so a stray
-    click on a handle doesn't add a no-op entry to the stack.
-- **Undo / Clear** — single edit-history stack covering draws
-  *and* conversions. Undo reverses the most recent action, which
-  means popping a conversion restores the red rectangle it came
-  from. Both buttons disable when the stack is empty.
+#### Tool palette
+
+- Bold "Edit image" header (matches the "Prompt:" label's
+  weight/size so the two field titles read as siblings) sits above
+  the column.
+- Six buttons, all the same width, in a vertical column: Box, Line,
+  Crop, Redact, then a 14px gap, then Undo / Clear. Box / Line use
+  red icons (rectangle outline, diagonal line); Crop / Redact use
+  text labels. Default selected tool is Box.
+- Selected button gets `.selected` (darker face + inset shadow) and
+  `aria-pressed="true"`. Clicking another tool toggles the class
+  and aria across the group so exactly one is pushed-down.
+- Undo / Clear are *actions*, not modes — they never get `.selected`.
+
+#### Drawing tools
+
+- **Box** — drag commits a 3px red stroked rectangle.
+- **Line** — drag commits a 3px red diagonal line.
+- **Crop** — drag paints the live cropped preview (dim frame
+  outside the drag bounds, dashed border, corner grips) so the user
+  sees the final cropped result while dragging. Commits on mouseup
+  as a crop region; saved PNG is shrunk to the crop. Multiple crops
+  stack; the most-recently-added active crop wins.
+- **Redact** — drag paints a filled black rectangle live, matching
+  the committed appearance — opaque fill that hides whatever was
+  underneath in the saved PNG.
+
+#### Crop-edge handles (drag-to-crop / drag-to-resize)
+
+- The four edges and four corners of the *effective* crop region
+  (the active crop if one exists, else the full image) are
+  draggable. With no active crop, dragging an image edge inward
+  creates a crop from scratch; with an active crop, the handles
+  sit on the crop's own edges. The hit-test wins over the selected
+  tool, so a drag that starts in the band always becomes a
+  crop-handle drag rather than a tool draw.
+- Hit-testing is a `HANDLE_PX` band (10 CSS px) around each
+  effective edge. Corners beat plain edges. The `cursor` CSS flips
+  to the matching resize cursor on hover.
+- Small white grip squares mark the four corners of the effective
+  crop region — even when no crop exists, so the image's own
+  corners show grips and the "drag here to start cropping"
+  affordance is discoverable. Grips center on the corner and may
+  extend past the image edge; `#overlay` is `overflow: visible`
+  so a boundary corner shows the full square.
+- Each completed drag commits a **new** `'crop'` edit on the
+  stack — not an in-place mutation of the previous one. Undo
+  peels back one resize at a time; earlier crops stay in the
+  stack hidden behind the newer one and re-emerge as Undo walks
+  backward.
+- Bounds are clamped on three axes:
+  - Inside the image: 0 ≤ x, x+w ≤ 100 (and the same for y).
+  - `MIN_CROP_PCT` floor (1.5%) on width and height.
+  - Dragged-edge-only: a drag past the opposite edge clamps the
+    dragged edge at `MIN_CROP_PCT` away from the opposite one.
+    The opposite edge never moves.
+  - Why not flip / push? A flipped crop is surprising on a resize
+    tool and never useful. Pushing the opposite edge out to
+    preserve the minimum used to produce n/w vs. s/e asymmetry,
+    so that's avoided too.
+- Sub-`CLICK_THRESHOLD_PX` drags are discarded so a stray click
+  on a handle doesn't add a no-op entry.
+
+#### Edit stack & geometry
+
+- **Undo / Clear** — single edit-history stack of `add` ops only
+  (no convert ops in the new model). Undo removes the
+  last-added edit; Clear wipes everything. Both disable when the
+  stack is empty.
 - **Resize-stable coordinates** — edits are stored as percentages
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
 - **Click-vs-drag threshold** — movement under 4 CSS pixels
   between mousedown and mouseup counts as a stray click and is
-  discarded, so neither button can produce a degenerate
-  zero-size rectangle or zero-length line.
+  discarded, so no tool can produce a degenerate zero-size shape.
 - **Tooltips** — every button has a `title` attribute describing
-  what it does (e.g. "Turn the last drawn box into a black
-  redaction"). Kept short so the hover reads at a glance; the
-  disabled-state rationale is conveyed by the button itself being
-  grayed out, not spelled out in the tooltip.
+  what it does (e.g. "Drag to add a black redaction box"). Kept
+  short so the hover reads at a glance.
 - **Crop rendering** — the preview paints a single dim "picture
   frame" around the active crop via an SVG `<path>` with
   `fill-rule="evenodd"` (outer = full image, inner = crop),
@@ -670,11 +681,9 @@ If the user has any edits *and* is saving the screenshot:
   the background as a `screenshotOverride` field on the
   `saveDetails` runtime message, alongside three per-kind edit
   flags (`highlights`, `hasRedactions`, `isCropped`).
-  - `highlights` is `true` iff at least one *un-converted* red
-    rectangle or line survives on the stack. A rectangle the
-    user converted to a redaction / crop no longer counts as a
-    highlight — the bake turned it into something else, so it
-    flips the other flag instead.
+  - `highlights` is `true` iff at least one red rectangle or line
+    is on the stack. Redactions and crops are separate edit kinds
+    and flip their own flag instead.
   - `hasRedactions` is `true` iff any redaction rectangle is
     baked into the PNG.
   - `isCropped` is `true` iff the saved PNG was cropped to a
@@ -699,8 +708,9 @@ If the user has any edits *and* is saving the screenshot:
 ### Image fit-to-viewport
 
 - The preview image must not produce a vertical scrollbar.
-- CSS caps it at `max-width: calc((100vw - 48px) * 0.9 - 2px)`
-  (90% of body content width minus the 1px wrap border each side).
+- CSS caps it at `max-width: 100%` of its `.image-box` flex slot
+  (the flex row reserves the tool-palette column on the left, so
+  the slot is the body width minus the palette's natural width).
 - A `fitImage()` function sets `max-height` inline based on the
   remaining viewport height (`window.innerHeight - top - reserved`).
 - It re-runs on window resize, after the prompt textarea grows

@@ -1,9 +1,10 @@
 // E2E coverage for the Capture-page *drawing* overlay: the
-// highlight-bar buttons (Redact, Crop, Undo, Clear), the SVG
-// annotation surface (rect / line draws), the drag-to-crop
-// gesture, and the resulting on-disk flags on log.json's
-// `screenshot` artifact (`hasHighlights`, `hasRedactions`,
-// `isCropped`).
+// highlight-controls tool buttons (#tool-box / #tool-line /
+// #tool-crop / #tool-redact, plus #undo / #clear), the SVG
+// annotation surface (rect / line / crop / redact draws), the
+// crop-handle resize gesture, and the resulting on-disk flags on
+// log.json's `screenshot` artifact (`hasHighlights`,
+// `hasRedactions`, `isCropped`).
 //
 // Split out of `capture-with-details.spec.ts` so the drawing
 // surface has its own home — the details spec was approaching
@@ -329,9 +330,7 @@ test('drawing: draw then undo → no highlights flag, no red in saved PNG', asyn
   await openerPage.close();
 });
 
-// ─── New: per-kind flags and conversion semantics ────────────────
-
-test('drawing: rect → Redact → save flips only hasRedactions', async ({
+test('drawing: Line tool draw commits a line and flips hasHighlights', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -342,15 +341,82 @@ test('drawing: rect → Redact → save flips only hasRedactions', async ({
     getServiceWorker,
   );
 
-  // Draw a rectangle, then convert it to a redaction. The only
-  // edit on the stack is now a `redact` — `hasHighlights` should
-  // NOT fire, since no red rectangle / line survives.
+  // Select the Line tool and drag — the drag commits a `line` edit
+  // (the only tool that produces non-rect geometry). Lines count
+  // as `hasHighlights` alongside Box-tool boxes.
+  await capturePage.locator('#tool-line').click();
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.6, yPct: 0.4 },
+  );
+  expect(await readEditKinds(capturePage)).toEqual(['line']);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+  expect(record.screenshot?.hasRedactions).toBeUndefined();
+  expect(record.screenshot?.isCropped).toBeUndefined();
+
+  await openerPage.close();
+});
+
+test('drawing: drag image edge to crop creates a crop', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // No active crop. Drag the east edge inward by ~40%. The overlay
+  // detects a handle press within HANDLE_PX of the right image edge
+  // and starts a crop-handle drag, committing a new 'crop' edit on
+  // mouseup. This is the "drag image edges to crop" affordance — it
+  // works regardless of which drawing tool is currently selected,
+  // because the handle hit-test wins over the tool dispatch.
+  await dragEdge(capturePage, 'e', { x: 0, y: 0, w: 100, h: 100 }, 0.6);
+  expect(await readEditKinds(capturePage)).toEqual(['crop']);
+  const crop = await readEffectiveCrop(capturePage);
+  expect(crop).not.toBeNull();
+  // Left edge stayed at 0, right edge moved inward to ~60%.
+  expect(crop!.x).toBeCloseTo(0, 0);
+  expect(crop!.w).toBeGreaterThan(50);
+  expect(crop!.w).toBeLessThan(70);
+
+  await openerPage.close();
+});
+
+// ─── Per-kind flags by drawing tool ──────────────────────────────
+
+test('drawing: Redact tool draw flips only hasRedactions', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Select the Redact tool and drag — the drag commits a `redact`
+  // edit directly. `hasHighlights` should NOT fire, since no red
+  // rectangle / line was drawn.
+  await capturePage.locator('#tool-redact').click();
   await dragRect(
     capturePage,
     { xPct: 0.3, yPct: 0.3 },
     { xPct: 0.7, yPct: 0.7 },
   );
-  await capturePage.locator('#redact').click();
   expect(await readEditKinds(capturePage)).toEqual(['redact']);
 
   await configureAndCapture(capturePage, {
@@ -379,7 +445,7 @@ test('drawing: rect → Redact → save flips only hasRedactions', async ({
   await openerPage.close();
 });
 
-test('drawing: rect → Crop → save flips only isCropped', async ({
+test('drawing: Crop tool draw flips only isCropped', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -390,14 +456,15 @@ test('drawing: rect → Crop → save flips only isCropped', async ({
     getServiceWorker,
   );
 
-  // Draw a rectangle, click Crop. The edit is now `crop` and the
-  // saved PNG should be sized to the cropped region.
+  // Select the Crop tool and drag a region — the drag commits a
+  // `crop` edit directly. The saved PNG should be sized to the
+  // cropped region.
+  await capturePage.locator('#tool-crop').click();
   await dragRect(
     capturePage,
     { xPct: 0.25, yPct: 0.25 },
     { xPct: 0.75, yPct: 0.75 },
   );
-  await capturePage.locator('#crop').click();
   expect(await readEditKinds(capturePage)).toEqual(['crop']);
   const crop = await readEffectiveCrop(capturePage);
   expect(crop).not.toBeNull();
@@ -444,14 +511,15 @@ test('drawing: rect + redact + crop together emit all three flags', async ({
     getServiceWorker,
   );
 
-  // Three edits on the stack, one per kind: a red rect (kept),
-  // a redact (converted), a crop (converted). All three flags
-  // should appear on the record.
+  // One edit per kind by switching tools between drags. Default
+  // tool is Box, so the first drag commits a `rect` without an
+  // explicit tool click. All three flags should appear on the
+  // record after save.
   await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.4, yPct: 0.4 });
+  await capturePage.locator('#tool-redact').click();
   await dragRect(capturePage, { xPct: 0.5, yPct: 0.5 }, { xPct: 0.6, yPct: 0.6 });
-  await capturePage.locator('#redact').click();
+  await capturePage.locator('#tool-crop').click();
   await dragRect(capturePage, { xPct: 0.1, yPct: 0.1 }, { xPct: 0.9, yPct: 0.9 });
-  await capturePage.locator('#crop').click();
   expect(await readEditKinds(capturePage)).toEqual(['rect', 'redact', 'crop']);
 
   await configureAndCapture(capturePage, {
@@ -468,42 +536,6 @@ test('drawing: rect + redact + crop together emit all three flags', async ({
   await openerPage.close();
 });
 
-test('drawing: drag image edge to crop creates a crop', async ({
-  extensionContext,
-  fixtureServer,
-  getServiceWorker,
-}) => {
-  const { openerPage, capturePage } = await openDetailsFlow(
-    extensionContext,
-    fixtureServer,
-    getServiceWorker,
-  );
-
-  // No active crop. Drag the east edge inward by ~40%. The
-  // overlay detects a handle press within HANDLE_PX of the right
-  // edge and starts a crop-drag, committing a new 'crop' edit on
-  // mouseup.
-  await dragEdge(capturePage, 'e', { x: 0, y: 0, w: 100, h: 100 }, 0.6);
-  expect(await readEditKinds(capturePage)).toEqual(['crop']);
-  const crop = await readEffectiveCrop(capturePage);
-  expect(crop).not.toBeNull();
-  // Left edge stayed at 0, right edge moved inward to ~60%.
-  expect(crop!.x).toBeCloseTo(0, 0);
-  expect(crop!.w).toBeGreaterThan(50);
-  expect(crop!.w).toBeLessThan(70);
-
-  await configureAndCapture(capturePage, {
-    saveScreenshot: true,
-    saveHtml: false,
-  });
-
-  const sw = await getServiceWorker();
-  const record = await readLatestRecord(sw);
-  expect(record.screenshot?.isCropped).toBe(true);
-
-  await openerPage.close();
-});
-
 test('drawing: crop dragged back to full image → no isCropped flag, full-size PNG', async ({
   extensionContext,
   fixtureServer,
@@ -515,9 +547,10 @@ test('drawing: crop dragged back to full image → no isCropped flag, full-size 
     getServiceWorker,
   );
 
-  // Create a smaller crop via the Crop button.
+  // Create a smaller crop with the Crop tool, then resize via the
+  // edge handles (which only become active *after* a crop exists).
+  await capturePage.locator('#tool-crop').click();
   await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
-  await capturePage.locator('#crop').click();
   let bounds = await readEffectiveCrop(capturePage);
   expect(bounds).not.toBeNull();
 
@@ -571,14 +604,14 @@ test('drawing: crop drag past the opposite edge clamps without moving it', async
     getServiceWorker,
   );
 
-  // Start with a non-full crop, then drag the W handle rightward
-  // well past the E edge. Under the current clamp rule the W edge
-  // stops at `right - MIN_CROP_PCT` and the E edge stays fixed —
-  // a previous version instead pushed the E edge outward to
-  // preserve the minimum, which asymmetrically affected N/W drags
-  // vs S/E drags.
+  // Start with a non-full crop (Crop tool draw), then drag the W
+  // handle rightward well past the E edge. Under the current clamp
+  // rule the W edge stops at `right - MIN_CROP_PCT` and the E edge
+  // stays fixed — a previous version instead pushed the E edge
+  // outward to preserve the minimum, which asymmetrically affected
+  // N/W drags vs S/E drags.
+  await capturePage.locator('#tool-crop').click();
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
-  await capturePage.locator('#crop').click();
   const before = await readEffectiveCrop(capturePage);
   expect(before).not.toBeNull();
   // Our starting crop's east edge was at 80% of the image.
@@ -593,9 +626,46 @@ test('drawing: crop drag past the opposite edge clamps without moving it', async
   const eastAfter = after!.x + after!.w;
   // E edge didn't move.
   expect(eastAfter).toBeCloseTo(eastBefore, 1);
-  // New crop is minimum-width and anchored at the E edge.
-  expect(after!.w).toBeLessThan(5);
+  // New crop is exactly MIN_CROP_PCT (1.5) wide, anchored at the E
+  // edge. Tightened from `< 5` so a future MIN_CROP_PCT bump can't
+  // silently change the clamp without this test failing.
+  expect(after!.w).toBeCloseTo(1.5, 0);
   expect(after!.x + after!.w).toBeCloseTo(eastBefore, 1);
+
+  await openerPage.close();
+});
+
+test('drawing: Crop tool drag below MIN_CROP_PCT is discarded', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // A Crop drag just past the 4-px CLICK_THRESHOLD_PX commits a
+  // sub-MIN_CROP_PCT crop under the naive path. Without the
+  // commit-time floor the resulting crop's edge handles would be
+  // un-grabbable. The drag below should produce no edit at all.
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(
+    capturePage,
+    { xPct: 0.5, yPct: 0.5 },
+    { xPct: 0.505, yPct: 0.505 },
+  );
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  expect(await readEffectiveCrop(capturePage)).toBeNull();
+
+  // Sanity: a sufficiently-large Crop drag still commits.
+  await dragRect(
+    capturePage,
+    { xPct: 0.3, yPct: 0.3 },
+    { xPct: 0.7, yPct: 0.7 },
+  );
+  expect(await readEditKinds(capturePage)).toEqual(['crop']);
 
   await openerPage.close();
 });
