@@ -636,3 +636,36 @@ test('details: tab opens next to opener and returns focus on close', async ({
   await leftDistractor.close();
   await rightDistractor.close();
 });
+
+// ─── Stale-page guard ─────────────────────────────────────────────
+
+// Opening capture.html directly (no SW-side session for the tab) used
+// to leave a half-rendered page with non-functional Capture / Ask
+// buttons. The page now detects the empty `getDetailsData` response,
+// hides every `[data-capture-main]` block, and reveals the
+// #missing-session-error pane. The header (with Options) stays
+// visible so the user has a working escape hatch.
+test('details: direct load with no session shows error pane', async ({
+  extensionContext,
+  extensionId,
+}) => {
+  const page = await extensionContext.newPage();
+  await page.goto(`chrome-extension://${extensionId}/capture.html`);
+
+  const errorPane = page.locator('#missing-session-error');
+  await expect(errorPane).toBeVisible();
+
+  // Every main-content block is hidden (the `hidden` attribute is
+  // set, so Playwright's `toBeHidden` resolves true).
+  const mainBlocks = page.locator('[data-capture-main]');
+  const count = await mainBlocks.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) {
+    await expect(mainBlocks.nth(i)).toBeHidden();
+  }
+
+  // Header is still visible — Options remains reachable.
+  await expect(page.locator('#options-btn')).toBeVisible();
+
+  await page.close();
+});

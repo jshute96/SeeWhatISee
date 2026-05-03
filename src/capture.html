@@ -1070,6 +1070,24 @@
     cursor: crosshair;
     user-select: none;
   }
+  /* Stale-page error pane shown when capture.html was opened without
+     a SW-seeded session. */
+  .missing-session-error {
+    max-width: 640px;
+    margin: 16px 0;
+    padding: 12px 16px;
+    color: #222;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  /* Force-hide the main-content blocks when capture-page.ts sets
+     `hidden` on them. Required because each block has its own
+     `display: flex` / `display: block` rule with class-level
+     specificity, which would otherwise tie the UA `[hidden]` rule and
+     win on source order, leaving the controls visible. */
+  [data-capture-main][hidden] {
+    display: none !important;
+  }
 </style>
 </head>
 <body>
@@ -1198,6 +1216,20 @@
   </header>
 
   <!--
+    Stale-page error pane. Hidden by default; capture-page.ts reveals
+    it (and hides every `[data-capture-main]` block below) when
+    `getDetailsData` resolves with no session — i.e. capture.html
+    was opened directly (bookmark, history, browser restart) without
+    the SW-seeded snapshot the page is built from. Header stays
+    visible so Options remains reachable.
+  -->
+  <div id="missing-session-error" class="missing-session-error" hidden>
+    <b>Invalid capture page.</b><br>
+    No capture connected.<br>
+    Open SeeWhatISee from the toolbar icon on the page you want to capture.
+  </div>
+
+  <!--
     Captured-page card. Visual: bordered strip with the page title on
     top (clickable, opens the source page in a new tab), the URL
     underneath in monospace blue with a trailing external-link glyph,
@@ -1208,7 +1240,7 @@
     title text + href in `loadData`; restricted / unavailable URLs
     drop the `href` so the rows render as inert grey text.
   -->
-  <div class="capture-card">
+  <div class="capture-card" data-capture-main>
     <div class="capture-card-body">
       <a id="captured-title" class="capture-card-title"
          target="_blank" rel="noreferrer noopener"></a>
@@ -1249,7 +1281,7 @@
     </div>
   </div>
 
-  <div class="controls">
+  <div class="controls" data-capture-main>
     <div class="checkboxes">
       <div class="checkbox-row" id="row-screenshot">
         <label><input type="checkbox" id="cap-screenshot" checked> Save <u>s</u>creenshot</label>
@@ -1499,7 +1531,7 @@
     </div>
   </div>
 
-  <hr>
+  <hr data-capture-main>
 
   <!--
     Image + drawing-tool sidebar. The user picks one of the four
@@ -1507,7 +1539,7 @@
     on the image to commit an edit of that kind. See the
     `.tool-btn` block below for the per-tool details.
   -->
-  <div class="image-and-highlights">
+  <div class="image-and-highlights" data-capture-main>
     <div class="highlight-controls">
       <div class="highlight-title" role="heading" aria-level="2">Edit image</div>
       <!--

@@ -117,7 +117,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
-| `src/capture.html` | Capture page (the `Capture...` action's review surface) — page-card (title/URL/size + Copy URL), save options + Copy/Edit buttons, edit HTML + selection modals, prompt, drawing-tool palette + image overlay |
+| `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
 | `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, modal drawing tools (Box/Line/Arrow/Crop/Redact + crop-edge resize), bake-in, fit-to-viewport |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, collapsible delay groups, saves via `setOptions` |

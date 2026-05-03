@@ -133,6 +133,16 @@ interface DetailsData {
  */
 let editVersion = 0;
 
+/**
+ * Set true by `loadData` when the SW returns no session for this
+ * tab (direct load of `capture.html`, e.g. an old bookmark). When
+ * set, the page is showing only the header + the
+ * `#missing-session-error` pane — every `[data-capture-main]` block
+ * is `display:none`. Page-wide Alt-shortcuts gate on this so they
+ * don't mutate hidden checkboxes / "click" hidden buttons.
+ */
+let staleMode = false;
+
 const optionsBtn = document.getElementById('options-btn') as HTMLButtonElement;
 optionsBtn.addEventListener('click', () => {
   // `openOptionsPage` honours the manifest's `open_in_tab: true`, so
@@ -743,6 +753,12 @@ document.addEventListener('keydown', (e) => {
   // further down the file. Safe because the listener fires on user
   // input — long after all top-level `const`s have initialised.
   if (anyEditDialogOpen()) return;
+  // In the no-session error state every control referenced below is
+  // `display:none`. Their `.disabled` flags are still false (we
+  // never wired them up), so without this guard Alt+S / Alt+H /
+  // Alt+N would flip hidden checkboxes and Alt+C / Alt+A would
+  // "click" hidden buttons — surprising no-ops at best.
+  if (staleMode) return;
   if (!e.altKey || e.shiftKey) return;
   const key = e.key.toLowerCase();
   // Alt+C clicks the Capture button. Alt+A opens the Ask menu.
@@ -1588,10 +1604,38 @@ previewImg.addEventListener('load', fitImage);
 
 async function loadData(): Promise<void> {
   try {
-    const response: DetailsData | undefined = await chrome.runtime.sendMessage({
-      action: 'getDetailsData',
-    });
-    if (!response) return;
+    // Catch sendMessage rejections (SW not yet alive, "Could not
+    // establish connection" on a torn-down extension context, etc.)
+    // and treat them as "no session" — same broken-page failure
+    // mode as a missing entry, same recovery UX.
+    let response: DetailsData | undefined;
+    try {
+      response = await chrome.runtime.sendMessage({ action: 'getDetailsData' });
+    } catch {
+      response = undefined;
+    }
+    if (!response) {
+      // No SW-side session for this tab — the user likely opened the
+      // capture.html URL directly (e.g. an old bookmark, or a tab
+      // restored after a browser restart without the session entry
+      // that originally seeded it). Hide every main-content block
+      // and reveal the explanatory pane so they don't see a half-
+      // broken page with non-functional Capture / Ask buttons.
+      // `staleMode` also gates the page-wide Alt-shortcut listener
+      // so Alt+C / Alt+A / etc. don't silently mutate hidden
+      // controls. The `finally` below still flips body visibility
+      // and calls `promptInput.focus()`; the focus call is a silent
+      // no-op because the prompt is inside a now-hidden block.
+      staleMode = true;
+      document
+        .querySelectorAll<HTMLElement>('[data-capture-main]')
+        .forEach((el) => {
+          el.hidden = true;
+        });
+      const errorPane = document.getElementById('missing-session-error');
+      if (errorPane) errorPane.hidden = false;
+      return;
+    }
     previewImg.src = response.screenshotDataUrl;
     capturedUrl = response.url;
     // Title falls back to the URL when no title was captured (covers

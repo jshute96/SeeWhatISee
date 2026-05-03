@@ -874,6 +874,19 @@ re-activation is required:
   tab without clicking Capture, a `chrome.tabs.onRemoved` handler
   drops the stashed capture from `chrome.storage.session`. Without
   this, session storage would grow until the browser restarts.
+- **Stale-page guard for direct loads.** Opening `capture.html`
+  without a session-storage entry (old bookmark, history entry,
+  browser-restart tab restore) causes `getDetailsData` to resolve
+  `undefined`. The page handles this in `loadData`:
+  - Hides every `[data-capture-main]` block (capture-card,
+    controls, hr, image-and-highlights).
+  - Reveals the `#missing-session-error` pane with a one-liner
+    pointing the user back to the toolbar icon.
+  - The header (Options button) stays visible as an escape hatch.
+  - `[data-capture-main][hidden] { display: none !important }` is
+    required because the per-block `display: flex` / `display:
+    block` rules tie the UA `[hidden]` rule on specificity and win
+    on source order, so plain `el.hidden = true` wouldn't take.
 
 ## Testing an MV3 extension with Playwright
 
