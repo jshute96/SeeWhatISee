@@ -236,6 +236,8 @@ Layout intent (full rationale in the `.controls` CSS comment in
 | `src/background/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
 | `src/background/ask/google.ts` | Google Search adapter — `newTabOnly`, image-only, types into a `<textarea>` instead of a contenteditable; submit posts the search form to `/search`. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
+| `src/ask-widget.ts` | In-page status / recovery widget that runs in the AI tab's ISOLATED world (see "Status widget" below). |
+| `src/background/ask/widget-store.ts` | `chrome.storage.session` wrapper for the widget — one record per destination tabId. |
 | `src/capture.html` + `src/capture-page.ts` | Ask button, menu, status line, payload assembly. |
 
 ### Provider registry
@@ -550,6 +552,89 @@ Steps:
   manifest permissions.
 - The extension runs zero code on AI sites until the user clicks
   Ask. Smaller surface area, no impact on regular browsing.
+
+## Status widget (`ask-widget.ts`)
+
+A small panel injected into the destination AI tab gives the user a
+live view of Ask's progress and a clipboard-based recovery path.
+
+### What it shows
+
+- **Title bar (expanded)** — extension icon, "SeeWhatISee" text,
+  status icon, `_` minimize, `×` close. Status icon is a CSS spinner
+  while injecting, a green ✓ on success, a red ✕ on error. Clicking
+  anywhere on the bar that isn't a button toggles between collapsed
+  and expanded.
+- **Status** — `Injecting <what>…` while the inject runtime works,
+  then `Injected successfully.` or the error message verbatim.
+- **Content** — one button per item the user sent (Screenshot, HTML,
+  Selection, Prompt). Click copies to the clipboard with a transient
+  "Copied!" confirmation. HTML and rich-format selections include
+  both the format-specific MIME and `text/plain` so paste targets
+  that don't recognize HTML/markdown still get something useful.
+- **Source** — the source page's title + URL, mirroring the
+  Capture page's URL/title card. Both are clickable links to the
+  source; each row has its own Copy button.
+
+### States
+
+- **Expanded** by default while sending. ~220 px wide with the
+  sections listed above.
+- **Collapsed** strip pinned to the right edge — the title-bar
+  children laid out vertically (icon, name, status, `×`; no `_`
+  since clicking the strip itself expands), and arranged so the
+  natural reading direction (bottom-to-top, matching the rotated
+  "SeeWhatISee" label) presents them in title-bar order.
+- Auto-collapses on success; stays expanded on error.
+- A new send re-expands a collapsed widget so the user sees the
+  in-flight Status without having to click the strip.
+- `×` removes the widget DOM AND clears that tab's storage record
+  (full dismiss). `_` just collapses the UI; the record stays.
+
+### Storage model
+
+- `chrome.storage.session` keyed by destination `tabId`
+  (`askWidget:<tabId>`).
+- Holds status, error message, source URL/title, the full attachment
+  payload, and prompt text — enough for the widget to render a full
+  recovery surface even after the Capture page closes.
+- Re-Asking into the same tab overwrites the record (one widget per
+  tab, latest send wins).
+- `tabs.onRemoved` clears records for closed tabs so session storage
+  doesn't accumulate orphans across the day.
+
+### Wire layout
+
+```
+sendToAi() ─┬─▶ writeWidgetRecord(tabId, {status:'injecting', ...})
+            ├─▶ executeScript ISOLATED: stash tabId on window
+            ├─▶ executeScript ISOLATED: load ask-widget.js
+            ├─▶ executeScript MAIN:    load+invoke ask-inject.js
+            └─▶ patchWidgetRecord(tabId, {status:'success'|'error', ...})
+                                         │
+                          chrome.storage.onChanged
+                                         ▼
+                              widget refresh()
+```
+
+### Why ISOLATED world
+
+- The widget needs `chrome.runtime.getURL` (icon) and
+  `chrome.storage.session` (state). Both are unavailable to MAIN-world
+  scripts.
+- Shadow DOM gives style isolation from the host page's CSS without
+  needing MAIN-world reach. The widget never touches the page's
+  prompt composer — that's the MAIN-world inject runtime's job.
+
+### Idempotent mount
+
+- The IIFE checks `window.__seeWhatISeeWidget` (ISOLATED-world
+  global, per-tab). If a handle exists, it just calls `refresh()`
+  with the latest record. If not, it mounts fresh.
+- The SW therefore re-injects `ask-widget.js` before every Ask
+  without having to track per-tab mount state — an X'd widget
+  reappears on the next send by the same path that mounted it the
+  first time.
 
 ## Why ProseMirror matters
 

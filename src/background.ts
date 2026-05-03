@@ -72,6 +72,7 @@ import {
   installAskMessageHandler,
   setAskPin,
 } from './background/ask/index.js';
+import { installWidgetStoreCleanup } from './background/ask/widget-store.js';
 import { ASK_PROVIDERS, _setAskProvidersForTest } from './background/ask/providers.js';
 import { getAskProviderSettings } from './background/ask/settings.js';
 
@@ -83,6 +84,7 @@ installUnhandledRejectionHandler();
 installDetailsMessageHandlers();
 installOptionsMessageHandlers();
 installAskMessageHandler();
+installWidgetStoreCleanup();
 
 chrome.action.onClicked.addListener(() => {
   // Fire-and-forget refresh so any hotkey edit since our last

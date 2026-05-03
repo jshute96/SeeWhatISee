@@ -3271,6 +3271,8 @@ function buildAskPayload(): {
   attachments: AskAttachment[];
   promptText: string;
   autoSubmit: boolean;
+  sourceUrl: string;
+  sourceTitle: string;
 } | null {
   const promptText = promptInput.value.trim();
   const attachments = buildAskAttachments();
@@ -3287,6 +3289,11 @@ function buildAskPayload(): {
     // Empty prompt → user wants to set up the conversation and keep
     // typing on the AI side. Non-empty → fire it off.
     autoSubmit: promptText.length > 0,
+    // Source-page metadata for the in-page widget's Page section.
+    // The widget needs both URL and title to mirror the Capture-page
+    // card; the widget falls back gracefully if either is empty.
+    sourceUrl: capturedUrl,
+    sourceTitle: capturedTitleLink.textContent ?? capturedUrl,
   };
 }
 

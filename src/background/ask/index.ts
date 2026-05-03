@@ -21,6 +21,11 @@ import {
   type AskProviderId,
 } from './providers.js';
 import { getAskProviderSettings } from './settings.js';
+import {
+  patchWidgetRecord,
+  writeWidgetRecord,
+  type AskWidgetRecord,
+} from './widget-store.js';
 
 /**
  * Effective accepted attachment kinds for a destination (provider +
@@ -75,6 +80,15 @@ export interface AskPayload {
   attachments: AskAttachment[];
   promptText: string;
   autoSubmit: boolean;
+  /**
+   * Source page metadata — the page the user captured from, NOT the
+   * destination AI tab. Used by the in-page status widget to render
+   * its Page section so the user always knows what was captured even
+   * after the Capture page closes. Optional for forward-compat with
+   * older callers; the widget falls back to "(no URL)" when absent.
+   */
+  sourceUrl?: string;
+  sourceTitle?: string;
 }
 
 export interface AskResult {
@@ -551,6 +565,35 @@ export async function sendToAi(
     // Swallow — see comment above.
   }
 
+  // Status widget: write 'injecting' record + mount the in-page
+  // widget BEFORE the inject runtime starts. The widget shows the
+  // user "Injecting …" while the file work happens, then live-
+  // updates on success/error via `chrome.storage.onChanged`. Best-
+  // effort: a widget-mount failure must not block the actual Ask.
+  const widgetRecord: AskWidgetRecord = {
+    status: 'injecting',
+    destinationLabel,
+    sourceUrl: payload.sourceUrl ?? '',
+    sourceTitle: payload.sourceTitle ?? '',
+    attachments: payload.attachments.map((a) => ({
+      kind: a.kind,
+      mimeType: a.mimeType,
+      filename: a.filename,
+      data: a.data,
+    })),
+    promptText: payload.promptText,
+    updatedAt: Date.now(),
+  };
+  await writeWidgetRecord(tabId, widgetRecord);
+  try {
+    await mountAskWidget(tabId);
+  } catch {
+    // Widget mount can fail on pages that block extension scripting
+    // (rare on the supported AI hosts). Log nothing — the inject
+    // path will surface its own errors and the user just doesn't get
+    // the in-page status overlay this round.
+  }
+
   try {
     // Two-step injection: load the runtime once (registers
     // window.__seeWhatISeeAsk), then call it. Splitting the steps
@@ -572,11 +615,20 @@ export async function sendToAi(
 
     const result = callResult?.result as { ok: boolean; error?: string } | undefined;
     if (!result) {
+      await patchWidgetRecord(tabId, {
+        status: 'error',
+        error: 'No response from injected runtime',
+      });
       return { ok: false, error: 'No response from injected runtime', tabId };
     }
     if (!result.ok) {
+      await patchWidgetRecord(tabId, {
+        status: 'error',
+        error: result.error ?? 'Unknown injection failure',
+      });
       return { ok: false, error: result.error ?? 'Unknown injection failure', tabId };
     }
+    await patchWidgetRecord(tabId, { status: 'success', error: undefined });
     // Pin this destination so the next plain-Ask click reuses the
     // same tab. Includes both new-tab opens (so the freshly-created
     // tab gets reused) and existing-tab picks.
@@ -590,12 +642,41 @@ export async function sendToAi(
     }
     return { ok: true, tabId };
   } catch (err) {
+    const message = `Failed to inject into ${provider.label}: ${describe(err)}`;
+    await patchWidgetRecord(tabId, { status: 'error', error: message });
     return {
       ok: false,
-      error: `Failed to inject into ${provider.label}: ${describe(err)}`,
+      error: message,
       tabId,
     };
   }
+}
+
+/**
+ * Inject the status widget into `tabId`. Two-step ISOLATED-world
+ * call: first stash the tabId on `window` (the file-load form of
+ * `executeScript` doesn't accept `args`), then load `ask-widget.js`
+ * which reads it and mounts/refreshes itself.
+ *
+ * Idempotent — re-injecting on a tab that already has a mounted
+ * widget is a no-op (the script's IIFE detects the existing handle
+ * and just calls `refresh()`). Safe to call before every Ask.
+ */
+async function mountAskWidget(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'ISOLATED',
+    func: (tid: number) => {
+      (window as unknown as { __seeWhatISeeWidgetTabId?: number })
+        .__seeWhatISeeWidgetTabId = tid;
+    },
+    args: [tabId],
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'ISOLATED',
+    files: ['ask-widget.js'],
+  });
 }
 
 /**
