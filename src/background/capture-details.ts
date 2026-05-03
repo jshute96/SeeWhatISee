@@ -433,23 +433,31 @@ async function saveDetailsSession(tabId: number, session: DetailsSession): Promi
 }
 
 /**
- * Re-activate the capture's opener tab and then close the Capture
- * page tab. Shared between the saveDetails happy path and the
- * standalone closeCapturePage handler (used by the Ask flow's
- * ctrl-click) so both paths get the same opener-focus dance.
+ * Close the Capture page tab. Used by the saveDetails happy path
+ * and the standalone closeCapturePage handler.
  *
- * Order matters: activate first, then remove. If we removed first,
- * Chrome would briefly flash its own pick of the next-active tab
- * before our update could land. Chrome's natural pick is also not
- * reliably the immediate-right neighbor — in headless Playwright
- * tests it activated the tab two positions right of the closed
- * slot. The e2e test pins this down.
+ * `focusOpener` controls whether we first activate the opener tab
+ * (the page the user originally captured from):
+ *   - `true` for saveDetails — the user just saved a record and
+ *     has no reason to stay on a tab that's about to vanish, so
+ *     dropping them back on the source page is the natural next
+ *     step. Chrome's own close-time pick isn't reliably the right
+ *     neighbor (in headless Playwright tests it activates the tab
+ *     two positions right of the closed slot), hence the explicit
+ *     re-activation. Order matters: activate first, then remove —
+ *     removing first would let Chrome briefly flash its own pick.
+ *   - `false` for the Ask ctrl-click path — `sendToAi` already
+ *     focused the provider tab so the user can watch the answer
+ *     stream in. Re-activating the opener here would yank focus
+ *     back to the original screenshot tab, which defeats the
+ *     point of the close-and-watch gesture.
  */
 async function closeCapturePageTab(
   tabId: number,
   openerTabId: number | undefined,
+  focusOpener: boolean,
 ): Promise<void> {
-  if (openerTabId !== undefined) {
+  if (focusOpener && openerTabId !== undefined) {
     try {
       await chrome.tabs.update(openerTabId, { active: true });
     } catch (err) {
@@ -1119,7 +1127,7 @@ export function installDetailsMessageHandlers(): void {
             // The `tabs.onRemoved` listener would do this anyway —
             // we just don't have to wait for it.
             await chrome.storage.session.remove(detailsStorageKey(tabId));
-            await closeCapturePageTab(tabId, session.openerTabId);
+            await closeCapturePageTab(tabId, session.openerTabId, true);
           }
           // Stay-open path (shift-click): keep the session intact so
           // the user can iterate / retake / re-save. Filename
@@ -1144,13 +1152,20 @@ export function installDetailsMessageHandlers(): void {
 
     if (msg.action === 'closeCapturePage') {
       void (async () => {
-        const session = await loadDetailsSession(tabId);
         const key = detailsStorageKey(tabId);
         // Drop the stashed capture before we close — same lifecycle
         // as the saveDetails path. Skipped silently if the entry's
         // already gone.
         await chrome.storage.session.remove(key);
-        await closeCapturePageTab(tabId, session?.openerTabId);
+        // `focusOpener: false` — this path fires only after Ask
+        // ctrl-click, by which point `sendToAi` has already focused
+        // the destination provider tab. Re-activating the opener
+        // here would steal focus back to the original screenshot
+        // tab and the user would lose sight of the answer landing.
+        // The opener id is therefore unused, which is why this
+        // handler skips the session lookup the saveDetails path
+        // does for it.
+        await closeCapturePageTab(tabId, undefined, false);
       })();
       return false;
     }

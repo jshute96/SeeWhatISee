@@ -74,7 +74,10 @@ Both `#capture` and `#ask-btn` apply the same modifier semantics:
   losing the staged preview.
 - **Ctrl-click** — close the page after the action. Mirrors Capture's
   default for the Ask side, so a "send and dismiss" gesture works
-  the same way regardless of which button you hit.
+  the same way regardless of which button you hit. The Ask close
+  path leaves focus on the destination provider tab (not the
+  original screenshot tab) — `sendToAi` already activated the
+  provider and the answer is about to stream in there.
 
 shift wins if both modifiers are held. Ask only requests the close
 on a successful send — failures keep the page open as a recovery

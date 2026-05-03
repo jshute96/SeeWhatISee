@@ -759,13 +759,26 @@ If the user has any edits *and* is saving the screenshot:
 `index: active.index + 1` and sets `openerTabId: active.id`, so it
 appears immediately to the right of the tab the user captured from.
 
-On close, the `saveDetails` finally block:
+On close, the `saveDetails` happy path runs `closeCapturePageTab`
+with `focusOpener: true`:
 
 1. Removes the session-storage entry.
 2. Re-activates the opener tab via `chrome.tabs.update`.
 3. Removes the Capture page tab.
 
-The ordering matters and the explicit re-activation is required:
+The standalone `closeCapturePage` SW handler (fired by Ask's
+ctrl-click) runs the same helper with `focusOpener: false`:
+
+- The Ask flow's `sendToAi` already focused the destination
+  provider tab — that's where the answer is about to stream in.
+- Re-activating the opener here would yank focus back to the
+  original screenshot tab and the user would lose sight of the
+  result, defeating the "send and watch" gesture. The "ask:
+  ctrl-click closes the Capture page and leaves focus on the
+  provider tab" e2e test pins this down.
+
+For the saveDetails path the ordering matters and the explicit
+re-activation is required:
 
 - **Why not rely on Chrome's natural close behavior?** Chrome
   activates the *right neighbor* of a closed tab, not its opener.

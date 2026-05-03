@@ -1044,16 +1044,17 @@ test('ask: shift-click leaves the page open after a successful Ask (matches plai
   await openerPage.close();
 });
 
-test('ask: ctrl-click closes the Capture page after a successful Ask', async ({
+test('ask: ctrl-click closes the Capture page and leaves focus on the provider tab', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // Ctrl-click is the explicit "send and dismiss" gesture. After
-  // a successful send the page-side handler posts
-  // `closeCapturePage` to the SW, which re-activates the opener
-  // and removes the tab — the same dance saveDetails uses on its
-  // happy path.
+  // Ctrl-click is the explicit "send and dismiss" gesture. After a
+  // successful send the page-side handler posts `closeCapturePage`
+  // to the SW, which removes the tab WITHOUT re-activating the
+  // opener — `sendToAi` already focused the provider tab so the
+  // user can watch the answer land. Re-focusing the opener here
+  // (the original screenshot tab) would defeat the gesture.
   const { openerPage, capturePage } = await openDetailsFlow(
     extensionContext,
     fixtureServer,
@@ -1074,6 +1075,19 @@ test('ask: ctrl-click closes the Capture page after a successful Ask', async ({
     capturePage.locator('#ask-btn').click({ modifiers: ['Control'] }),
   ]);
   expect(capturePage.isClosed()).toBe(true);
+
+  // The active tab in the focused window should be a provider
+  // tab (the one sendToAi just focused), NOT the opener (which
+  // would mean focus snapped back to the original screenshot
+  // page). The plain-Ask path with no pin opens a fresh tab on
+  // the first enabled provider, so we check the active tab's
+  // URL is on fake-claude.html rather than matching a specific
+  // pre-existing tab id.
+  const activeUrl = await sw.evaluate(async () => {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return active?.url ?? '';
+  });
+  expect(activeUrl).toContain('/fake-claude.html');
 
   await claudePage.close();
   await openerPage.close();

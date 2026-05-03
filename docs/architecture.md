@@ -1003,8 +1003,11 @@ edit of that tool's kind. There's no right-click drawing.
   - **Shift-click** — same save, but the SW keeps the page open
     and preserves the per-tab session so the user can edit / retake
     / re-save without losing the staged content.
-  - **Ctrl-click** — same as plain click; explicit "send and
-    dismiss" gesture so the Ask button gets the same close behavior.
+  - **Ctrl-click** — same as plain click on the Capture button.
+    The modifier exists for symmetry: the same chord on the Ask
+    button is the explicit "send and dismiss" gesture, and that
+    path leaves focus on the destination provider tab rather than
+    the opener (see [`ask-on-web.md`](ask-on-web.md)).
   - On any error the SW keeps the page open regardless of
     modifier — the user keeps the preview as a recovery surface
     and can read the message in `#ask-status`.
