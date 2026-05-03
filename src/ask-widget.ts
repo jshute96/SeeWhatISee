@@ -86,10 +86,23 @@
     host: HTMLDivElement;
     root: ShadowRoot;
     refresh(record: AskWidgetRecord | null): void;
-    /** Set by `init()`; row retry buttons call into the orchestrator. */
-    retryOne?: (itemIndex: number) => Promise<void>;
+    /** Set by `init()`; row retry buttons call into the orchestrator.
+     *  Returns `{stale: true}` if the record we painted from is gone
+     *  or has been replaced (re-Ask) — same staleness model as Copy. */
+    retryOne?: (
+      itemIndex: number,
+      expectedRunId: number,
+    ) => Promise<{ stale?: boolean } | void>;
     /** Set by `init()`; the painter disables retry buttons when true. */
     isInFlight?: () => boolean;
+  }
+
+  /** Single source of the per-tab storage key. Mirrors
+   *  `KEY_PREFIX + tabId` from `widget-store.ts` — both sides must
+   *  stay in lockstep, so keep this short and keep it the only
+   *  template literal of this shape in the file. */
+  function widgetStorageKey(tabId: number): string {
+    return `askWidget:${tabId}`;
   }
 
   // ─── Idempotent mount ────────────────────────────────────────────
@@ -122,7 +135,7 @@
     // the listener / readRecord lifetime is visibly tied to this
     // mount and a future refactor can't accidentally read a stale
     // key from another tab.
-    const storageKey = `askWidget:${tabId}`;
+    const storageKey = widgetStorageKey(tabId);
 
     async function readRecord(): Promise<AskWidgetRecord | null> {
       try {
@@ -369,8 +382,22 @@
      * the overall status (success once everything is done; error if
      * anything still failed).
      */
-    async function retryOne(itemIndex: number): Promise<void> {
+    async function retryOne(
+      itemIndex: number,
+      expectedRunId: number,
+    ): Promise<{ stale?: boolean } | void> {
       if (inFlightCount > 0) return;
+      // Mirror the Copy click's staleness model: if the record we
+      // painted from is gone (X dismiss) or has been replaced
+      // (re-Ask incremented runId), bail before touching anything.
+      // Patching storage here would either no-op (record missing)
+      // or — worse — clobber the new run's items. Surfaced to the
+      // click handler as "Content no longer available" on the retry
+      // button.
+      const current = await readRecord();
+      if (!current || current.runId !== expectedRunId) {
+        return { stale: true };
+      }
       inFlightCount++;
       try {
         // Flip overall status back to 'injecting' so the title-bar
@@ -708,7 +735,7 @@
         // `mountWidget` self-contained, and the cost is one string
         // template per click.
         void chrome.storage.session
-          .remove(`askWidget:${tabIdLocal}`)
+          .remove(widgetStorageKey(tabIdLocal))
           .catch(() => {});
         (window as unknown as {
           __seeWhatISeeWidget?: WidgetHandle;
@@ -857,11 +884,12 @@
     );
     record.items.forEach((item, itemIndex) => {
       if (item.kind === 'submit') return;
-      const doCopy = copyForItem(item, record);
+      const doCopy = copyForItem(item, record.runId, handle.tabId);
       container.appendChild(
         makeContentRow({
           label: item.label,
           itemIndex,
+          runId: record.runId,
           status: item.status,
           error: item.error,
           doCopy,
@@ -877,22 +905,88 @@
   }
 
   /**
-   * Build the copy action for one row. Attachment items pull from
-   * `record.attachments[item.attachmentIndex]`; the prompt item
-   * pulls from `record.promptText`. Returns a no-op for items with
-   * no copyable payload (defensive — shouldn't happen).
+   * Sentinel for "the record we painted from is no longer the source
+   * of truth." Surfaced identically as "Content no longer available"
+   * on the clicked button. Triggers:
+   *   - record gone from storage (X dismiss);
+   *   - record exists but `runId` differs (re-Ask superseded us);
+   *   - record matches but the attachment slot is undefined
+   *     (defensive — items/attachments should stay in sync per runId).
+   */
+  class StaleRecordError extends Error {
+    constructor() {
+      super('Content no longer available');
+    }
+  }
+
+  /**
+   * Flash a "Content no longer available" indicator on a button for
+   * ~1.2 s, then revert. Shared by the Copy and Retry click handlers
+   * so both staleness paths look the same.
+   *
+   * Wide Copy buttons get the message as text (with ellipsis CSS so
+   * the row doesn't jump height). Narrow Retry buttons (22×22 icon)
+   * can't fit the text — they only get the red flash + title tooltip,
+   * which is enough since the user just clicked and is hovering near
+   * the cursor.
+   */
+  function flashStaleness(btn: HTMLButtonElement): void {
+    const isNarrow = btn.classList.contains('swis-retry-btn');
+    const originalText = btn.textContent ?? '';
+    const originalTitle = btn.title;
+    if (!isNarrow) btn.textContent = 'Content no longer available';
+    btn.title = 'Content no longer available';
+    btn.classList.add('swis-copy-failed');
+    setTimeout(() => {
+      if (!isNarrow) btn.textContent = originalText;
+      btn.title = originalTitle;
+      btn.classList.remove('swis-copy-failed');
+    }, 1200);
+  }
+
+  /**
+   * Read the latest record for `tabId` and verify its `runId` still
+   * matches what we painted from. Throws `StaleRecordError` if the
+   * record is gone (X dismiss) or has been replaced (re-Ask).
+   */
+  async function readMatchingRecord(
+    tabId: number,
+    expectedRunId: number,
+  ): Promise<AskWidgetRecord> {
+    const storageKey = widgetStorageKey(tabId);
+    const got = await chrome.storage.session.get(storageKey);
+    const v = got[storageKey] as AskWidgetRecord | undefined;
+    if (!v || v.runId !== expectedRunId) throw new StaleRecordError();
+    return v;
+  }
+
+  /**
+   * Build the copy action for one row. Captures only primitives
+   * (`runId`, `tabId`, `attachmentIndex`) and reads fresh bytes from
+   * `chrome.storage.session` on click — keeps the heavy attachment
+   * payloads out of paint-time closures so steady-state widget heap
+   * stays small. Returns a no-op for items with no copyable payload
+   * (defensive — shouldn't happen).
    */
   function copyForItem(
     item: AskWidgetItem,
-    record: AskWidgetRecord,
+    runId: number,
+    tabId: number,
   ): () => Promise<unknown> | unknown {
     if (item.kind === 'attachment') {
-      const att = record.attachments[item.attachmentIndex ?? -1];
-      if (!att) return () => undefined;
-      return () => copyAttachment(att);
+      const idx = item.attachmentIndex ?? -1;
+      return async () => {
+        const fresh = await readMatchingRecord(tabId, runId);
+        const att = fresh.attachments[idx];
+        if (!att) throw new StaleRecordError();
+        await copyAttachment(att);
+      };
     }
     if (item.kind === 'prompt') {
-      return () => navigator.clipboard.writeText(record.promptText);
+      return async () => {
+        const fresh = await readMatchingRecord(tabId, runId);
+        await navigator.clipboard.writeText(fresh.promptText);
+      };
     }
     return () => undefined;
   }
@@ -900,6 +994,7 @@
   interface ContentRowOpts {
     label: string;
     itemIndex: number;
+    runId: number;
     status: AskWidgetItemStatus;
     error?: string;
     doCopy: () => Promise<unknown> | unknown;
@@ -939,9 +1034,12 @@
       retry.textContent = '↻';
       retry.title = `Retry ${opts.label}`;
       retry.disabled = opts.anyInProgress || !!opts.handle.isInFlight?.();
-      retry.addEventListener('click', () => {
+      retry.addEventListener('click', async () => {
         if (retry.disabled) return;
-        void opts.handle.retryOne?.(opts.itemIndex);
+        const result = await opts.handle.retryOne?.(opts.itemIndex, opts.runId);
+        if (result && 'stale' in result && result.stale) {
+          flashStaleness(retry);
+        }
       });
       row.appendChild(retry);
     }
@@ -964,6 +1062,14 @@
         btn.textContent = 'Copied!';
         btn.classList.add('swis-copied');
       } catch (err) {
+        if (err instanceof StaleRecordError) {
+          // Not a copy failure — the record is gone or has been
+          // superseded. Use the shared staleness flash so Retry and
+          // Copy look identical, and skip the warn-log (nothing
+          // failed; the user is just acting on a stale row).
+          flashStaleness(btn);
+          return;
+        }
         btn.textContent = 'Copy failed';
         btn.classList.add('swis-copy-failed');
         // Same console-log rationale as the init() warning.
@@ -1431,13 +1537,22 @@
       border: 1px solid #ccc;
       border-radius: 4px;
       cursor: pointer;
+      /* Stale flash ("Content no longer available", 28 chars) is
+       * wider than the row's free space at the widget's 220 px width;
+       * without these the row would wrap to two lines and visibly jump
+       * height for 1.2 s. Title attribute carries the full text. */
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .swis-copy-btn:hover { background: #f5f5f5; }
     .swis-copy-btn.swis-copied {
       background: #dcfce7;
       border-color: #86efac;
     }
-    .swis-copy-btn.swis-copy-failed {
+    .swis-copy-btn.swis-copy-failed,
+    .swis-retry-btn.swis-copy-failed {
       background: #fee2e2;
       border-color: #fca5a5;
     }

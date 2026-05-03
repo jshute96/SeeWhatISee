@@ -144,6 +144,18 @@ into MAIN-world helpers in `ask-inject.ts`.
   `QUOTA_BYTES` exceeded for very large payloads); the SW returns
   this as a clear capture-page error rather than waiting for the
   60 s widget-completion timeout.
+- **Lazy-read on Copy / Retry click**:
+  - Paint-time closures capture only primitives — `runId`, `tabId`,
+    `attachmentIndex`. No reference to the heavy attachment bytes.
+  - The click handler reads the latest record from
+    `chrome.storage.session` and uses that. Storage thus stays the
+    single in-memory copy.
+  - Records are matched on `runId`. If it's gone (X dismiss) or has
+    been replaced (re-Ask increments `runId`), the button briefly
+    flashes "Content no longer available" instead of operating on
+    stale bytes.
+  - Retry shares the same gate before touching storage — without it
+    a stale retry click could clobber the new run's items.
 
 ## Wire layout
 
