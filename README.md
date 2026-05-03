@@ -36,12 +36,15 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       Screenshot files are still saved in your Downloads folder.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
-  keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT)
-  are enabled for *Ask* plus which one is the default destination.
+  keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT /
+  Google) are enabled for *Ask* plus which one is the default destination.
   Claude Code (`claude.ai/code`) is treated as a Claude tab variant —
   pin or pick an existing one to send to it; the Capture page blocks
   the send and asks you to uncheck Save HTML / Save selection if
   those are set, since Claude Code only accepts image uploads.
+  Google is image-only and always opens a fresh google.com tab (no
+  pinning, no existing-tab reuse) — the search box gets your prompt
+  and submits to a Google Search results page.
 
 #### Capturing selected text
 
@@ -84,7 +87,7 @@ On this page, you can:
   - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
   - In the HTML editors, the HTML source is pasted.
   - *Paste as plain text* (*Ctrl-Shift-V*) always pastes plain text.
-- **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. The button is split: clicking **Ask** sends to the tab you used last (or, on first use, opens a new tab in the default provider); the chevron on the right opens a menu where you can pick a different target — a new tab in Claude, Gemini, or ChatGPT, or any tab you already have open (including Claude Code on `claude.ai/code`). The menu marks the current target with a check. Alt+A opens the menu. If you typed a prompt, it's auto-submitted.
+- **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. The button is split: clicking **Ask** sends to the tab you used last (or, on first use, opens a new tab in the default provider); the chevron on the right opens a menu where you can pick a different target — a new tab in Claude, Gemini, ChatGPT, or Google, or any tab you already have open (including Claude Code on `claude.ai/code`). Google is new-tab-only — it doesn't appear in the existing-window list and can't be pinned. The menu marks the current target with a check. Alt+A opens the menu. If you typed a prompt, it's auto-submitted.
 
 If you add a prompt, the agent will follow it when reading this snapshot,
 focusing on highlighted areas in the screenshot.

@@ -213,6 +213,10 @@ export async function findProviderForTab(
   for (const provider of ASK_PROVIDERS) {
     if (!provider.enabled) continue;
     if (!settings.enabled[provider.id]) continue;
+    // `newTabOnly` providers (Google) opt out of pinning entirely —
+    // skip them so the toolbar Pin/Unpin entry stays disabled on
+    // their pages.
+    if (provider.newTabOnly) continue;
     // Delegate `urlPatterns` matching to Chrome (its match-pattern
     // grammar isn't a simple glob — see the AskProvider jsdoc) by
     // scoping a `tabs.query` to this provider's patterns and
@@ -367,7 +371,10 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
     // appear here with `enabled: false` so the menu can render the
     // "(coming soon)" row — that decision is the page's, not ours.
     if (!settings.enabled[provider.id]) continue;
-    const tabs = provider.enabled
+    // `newTabOnly` providers (Google) never reuse existing tabs —
+    // skip the query entirely so the menu doesn't render an
+    // "Existing window in <X>" section for them.
+    const tabs = provider.enabled && !provider.newTabOnly
       ? await chrome.tabs.query({ url: provider.urlPatterns })
       : [];
     const excludes = provider.excludeUrlPatterns ?? [];
@@ -573,7 +580,14 @@ export async function sendToAi(
     // Pin this destination so the next plain-Ask click reuses the
     // same tab. Includes both new-tab opens (so the freshly-created
     // tab gets reused) and existing-tab picks.
-    await writePin({ provider: provider.id, tabId });
+    //
+    // `newTabOnly` providers opt out — Google Search isn't a chat
+    // surface to reuse, and pinning the just-opened tab would have
+    // the next plain Ask try to inject into a `/search?q=...` results
+    // page instead of opening a fresh google.com.
+    if (!provider.newTabOnly) {
+      await writePin({ provider: provider.id, tabId });
+    }
     return { ok: true, tabId };
   } catch (err) {
     return {

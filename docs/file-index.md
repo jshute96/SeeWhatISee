@@ -14,7 +14,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `playwright.config.ts` | Playwright test runner config (default e2e suite) |
-| `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude / Gemini / ChatGPT) — opt-in only |
+| `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude / Gemini / ChatGPT / Google) — opt-in only |
 | `.gitignore` | Git ignore rules |
 
 ## Local Claude Config (`.claude/`)
@@ -109,6 +109,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background/ask/claude.ts` | Claude provider data — URLs, ranked selectors, and a `urlVariants` entry for the image-only `/code` (Claude Code) sub-page |
 | `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
 | `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; declares `attachmentPreview` for chip-count verification |
+| `src/background/ask/google.ts` | Google Search provider — `newTabOnly` (no pinning), image-only via `acceptedAttachmentKinds`, types into the search textarea and submits to `/search` |
 | `src/ask-inject.ts` | Provider-agnostic MAIN-world runtime — attach files, type prompt, click submit; optional `attachmentPreview` chip-count gate verifies the upload landed |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
@@ -179,6 +180,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e-live/claude-code.live.spec.ts` | Claude Code `LiveProvider` wiring — reuses Claude's selectors / locators, declares `acceptedAttachmentKinds: ['image']`; the shared suite swaps in extra images for the text-payload tests |
 | `tests/e2e-live/gemini.live.spec.ts` | Gemini `LiveProvider` wiring (selectors imported from `gemini.ts`, Quill + `uploader-file-preview` chips + Angular `user-query` locators) — calls `runLiveSuite` |
 | `tests/e2e-live/chatgpt.live.spec.ts` | ChatGPT `LiveProvider` wiring (selectors imported from `chatgpt.ts`, `group/file-tile` chips + `data-message-author-role="user"` bubble) — calls `runLiveSuite` |
+| `tests/e2e-live/google.live.spec.ts` | Google live spec — custom (skips `runLiveSuite`); selectors smoke check, image-attaches-no-submit, image+prompt submit navigates to `/search?q=…` |
 
 ## Unit Tests (`tests/unit/`)
 

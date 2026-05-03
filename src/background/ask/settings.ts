@@ -32,28 +32,28 @@ export interface AskProviderSettings {
   default: AskProviderId | null;
 }
 
-const PROVIDER_IDS: AskProviderId[] = ['claude', 'gemini', 'chatgpt'];
+const PROVIDER_IDS: AskProviderId[] = ['claude', 'gemini', 'chatgpt', 'google'];
 
 /**
  * Provider id order used for "next enabled" default-shifting.
  * Matches the alphabetical-by-label order the Options page renders
- * (ChatGPT, Claude, Gemini). Hard-coded rather than derived from
- * `ASK_PROVIDERS` so e2e tests that swap the registry to a single
- * fake provider don't change the rotation order.
+ * (ChatGPT, Claude, Gemini, Google). Hard-coded rather than derived
+ * from `ASK_PROVIDERS` so e2e tests that swap the registry to a
+ * single fake provider don't change the rotation order.
  *
  * Kept in sync with the page-side rotation in `src/options.ts`
  * (`pickNextEnabledAskDefault`), which sorts by label. Today both
- * routes resolve to `[chatgpt, claude, gemini]` because the labels
- * happen to be alphabetical-by-id; if we ever add a provider whose
- * label breaks that property, both sides need to converge — see
- * the matching note on the page-side helper.
+ * routes resolve to `[chatgpt, claude, gemini, google]` because the
+ * labels happen to be alphabetical-by-id; if we ever add a provider
+ * whose label breaks that property, both sides need to converge —
+ * see the matching note on the page-side helper.
  */
-const DEFAULT_ROTATION: AskProviderId[] = ['chatgpt', 'claude', 'gemini'];
+const DEFAULT_ROTATION: AskProviderId[] = ['chatgpt', 'claude', 'gemini', 'google'];
 
 const STORAGE_KEY = 'askProviderSettings';
 
 export const DEFAULT_ASK_PROVIDER_SETTINGS: AskProviderSettings = {
-  enabled: { claude: true, gemini: true, chatgpt: true },
+  enabled: { claude: true, gemini: true, chatgpt: true, google: true },
   default: 'claude',
 };
 

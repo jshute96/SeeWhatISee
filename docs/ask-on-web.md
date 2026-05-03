@@ -3,8 +3,9 @@
 The "Ask AI" button on the Capture page sends the currently-staged
 artifacts (screenshot, HTML snapshot, optional selection, prompt) to
 an AI web UI in another tab. Ships with Claude (including Claude Code,
-which can only take image uploads), Gemini, and ChatGPT; the
-provider-adapter layout makes additional providers additive.
+which can only take image uploads), Gemini, ChatGPT, and Google
+Search (image-only, new-tab-only); the provider-adapter layout makes
+additional providers additive.
 
 ## Goals
 
@@ -191,7 +192,7 @@ one row per registered provider, two columns of controls:
 Storage:
 
 - Key: `askProviderSettings` in `chrome.storage.local`.
-- Shape: `{ enabled: { claude, gemini, chatgpt }, default | null }`.
+- Shape: `{ enabled: { claude, gemini, chatgpt, google }, default | null }`.
 - Factory defaults: all enabled, default = Claude.
 - `normalizeAskProviderSettings` is applied on every read AND write
   so a partial / never-saved object lands on the factory defaults
@@ -233,6 +234,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
 | `src/background/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
+| `src/background/ask/google.ts` | Google Search adapter — `newTabOnly`, image-only, types into a `<textarea>` instead of a contenteditable; submit posts the search form to `/search`. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
 | `src/capture.html` + `src/capture-page.ts` | Ask button, menu, status line, payload assembly. |
 
@@ -240,7 +242,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 ```ts
 type AskProvider = {
-  id: 'claude' | 'gemini' | 'chatgpt';
+  id: 'claude' | 'gemini' | 'chatgpt' | 'google';
   label: string;
   urlPatterns: string[];        // chrome.tabs.query
   excludeUrlPatterns?: string[];// glob excludes filtered post-query
@@ -248,6 +250,7 @@ type AskProvider = {
   enabled: boolean;             // false = "coming soon" in the menu
   acceptedAttachmentKinds?: ('image' | 'text')[]; // provider-wide; omit = all
   urlVariants?: AskUrlVariant[];                  // per-URL overrides
+  newTabOnly?: boolean;                           // skip pinning + existing-tab listing
   selectors: AskInjectSelectors;
 };
 ```
@@ -422,13 +425,42 @@ screen that can't accept the payload yet. The Ask menu only surfaces
 `ask-inject.ts` is unchanged by all of this — filtering happens in
 the SW so the runtime stays selector-driven and provider-agnostic.
 
+### `newTabOnly` (Google Search)
+
+Some destinations aren't a chat surface to reuse — Google Search
+submits via a form GET that navigates the tab to `/search?q=…`,
+clobbering any prior state. For these, set `newTabOnly: true` on the
+provider and three things change:
+
+- The Ask menu hides the "Existing window in <X>" section for it
+  (`listAskProviders` skips the `chrome.tabs.query`).
+- The toolbar Pin/Unpin entry stays disabled when the active tab is
+  on this provider (`findProviderForTab` skips it).
+- A successful send doesn't write `askPin` (`sendToAi` skips the
+  pin-write step), so the next plain Ask still resolves to whatever
+  the user's configured default points at — including a fresh tab on
+  this provider, if it *is* the default.
+
+The provider can still be the user's chosen default; plain Ask just
+opens a new tab on it every time.
+
+Google additionally pairs this with `acceptedAttachmentKinds: ['image']`
+because the `+`-button file input is image-only — HTML and selection
+attachments get the same Capture-page pre-send refusal Claude Code
+uses.
+
 ### Adding a new provider
 
 1. Create `src/background/ask/<provider>.ts`, export an
    `AskProvider` with selectors specific to that site.
 2. Append it to `ASK_PROVIDERS` in `providers.ts`.
-3. Set `enabled: true` once the file-input + prompt + submit path
+3. Add the id to `PROVIDER_IDS`, `DEFAULT_ROTATION`, and
+   `DEFAULT_ASK_PROVIDER_SETTINGS.enabled` in `settings.ts`.
+4. Set `enabled: true` once the file-input + prompt + submit path
    has been validated end-to-end on the live site.
+5. For non-chat destinations (form-submit-and-navigate), set
+   `newTabOnly: true` and pair with `acceptedAttachmentKinds` if the
+   composer is type-restricted.
 
 `ask-inject.ts` does not change — it's selector-driven.
 
@@ -564,9 +596,9 @@ Copy/Save any artifact manually as a recovery path.
 
 There's a separate manual suite at `tests/e2e-live/` that runs
 the injection library against the **real** provider pages
-(claude.ai, gemini.google.com, chatgpt.com). Used to confirm prod
-selectors still match the live DOM and the prod timings still
-work. Not part of `npm test`.
+(claude.ai, gemini.google.com, chatgpt.com, google.com). Used to
+confirm prod selectors still match the live DOM and the prod
+timings still work. Not part of `npm test`.
 
 Setup, running, design principles, and how to add a new
 provider all live in [`ask-live-tests.md`](ask-live-tests.md).

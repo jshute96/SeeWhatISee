@@ -12,8 +12,9 @@
 import { chatgptProvider } from './chatgpt.js';
 import { claudeProvider } from './claude.js';
 import { geminiProvider } from './gemini.js';
+import { googleProvider } from './google.js';
 
-export type AskProviderId = 'claude' | 'gemini' | 'chatgpt';
+export type AskProviderId = 'claude' | 'gemini' | 'chatgpt' | 'google';
 
 /** Attachment categories an Ask provider's composer accepts. */
 export type AskAttachmentKind = 'image' | 'text';
@@ -183,12 +184,25 @@ export interface AskProvider {
    * Matched in declaration order against the destination tab's URL.
    */
   urlVariants?: AskUrlVariant[];
+  /**
+   * When `true`, plain Ask only ever opens a fresh tab on this
+   * provider. The Ask menu hides "Existing window in <X>" entries
+   * for it, the toolbar Pin/Unpin entry won't engage when the active
+   * tab is on it, and a successful send doesn't write the destination
+   * to `askPin`. Used for providers whose pages aren't a stable chat
+   * surface to reuse — Google Search lands on `/search?q=...` after
+   * submit, so re-using that tab would clobber the previous results
+   * rather than continuing a conversation. Pinning still works fine
+   * for chat-style providers; this only opts out of it.
+   */
+  newTabOnly?: boolean;
 }
 
 export const ASK_PROVIDERS: AskProvider[] = [
   claudeProvider,
   geminiProvider,
   chatgptProvider,
+  googleProvider,
 ];
 
 export function getAskProvider(id: AskProviderId): AskProvider {

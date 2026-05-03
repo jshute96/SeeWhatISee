@@ -88,8 +88,8 @@ interface CaptureDetailsDefaults {
 
 ```ts
 interface AskProviderSettings {
-  enabled: { claude: boolean; gemini: boolean; chatgpt: boolean };
-  default: 'claude' | 'gemini' | 'chatgpt' | null;
+  enabled: { claude: boolean; gemini: boolean; chatgpt: boolean; google: boolean };
+  default: 'claude' | 'gemini' | 'chatgpt' | 'google' | null;
 }
 ```
 
@@ -105,7 +105,7 @@ interface AskProviderSettings {
   2. `default` is either null or the id of an enabled provider — if
      the stored value points at a disabled provider, normalize
      auto-shifts it to the next enabled provider in label-order
-     (ChatGPT → Claude → Gemini, wrapping); if no provider is
+     (ChatGPT → Claude → Gemini → Google, wrapping); if no provider is
      enabled, default becomes null.
 - Pin lifecycle: a `chrome.storage.onChanged` listener in
   `src/background.ts` clears `askPin` when the pinned provider

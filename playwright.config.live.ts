@@ -61,5 +61,9 @@ export default defineConfig({
       name: 'chatgpt',
       testMatch: /chatgpt\.live\.spec\.ts$/,
     },
+    {
+      name: 'google',
+      testMatch: /google\.live\.spec\.ts$/,
+    },
   ],
 });

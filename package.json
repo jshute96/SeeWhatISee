@@ -24,6 +24,8 @@
     "test:live-gemini": "playwright test --config=playwright.config.live.ts --project=gemini",
     "pretest:live-chatgpt": "node scripts/build.mjs",
     "test:live-chatgpt": "playwright test --config=playwright.config.live.ts --project=chatgpt",
+    "pretest:live-google": "node scripts/build.mjs",
+    "test:live-google": "playwright test --config=playwright.config.live.ts --project=google",
     "open-test-browser": "scripts/open-test-browser.sh",
     "clean": "rm -rf dist test-results playwright-report"
   },

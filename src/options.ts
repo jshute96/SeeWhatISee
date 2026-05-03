@@ -572,7 +572,7 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
  *
  * Drift hazard: the page sorts by label, the SW uses a hard-coded
  * id rotation. They match today because the labels happen to be
- * alphabetical-by-id (ChatGPT, Claude, Gemini). Renaming a provider
+ * alphabetical-by-id (ChatGPT, Claude, Gemini, Google). Renaming a provider
  * to something that re-orders alphabetically would split the two —
  * the page would shift one way visually and the SW would re-shift
  * to a different default on save. If we add provider labels that

@@ -122,8 +122,8 @@ something the manifest can fix — just something to warn users about.
 ### Ask flow uses dynamic injection (no `content_scripts`)
 
 The Ask button on the Capture page sends artifacts to a third-party
-AI tab (claude.ai, gemini.google.com, or chatgpt.com). Two design
-choices fall out of the permissions we already have:
+AI tab (claude.ai, gemini.google.com, chatgpt.com, or google.com).
+Two design choices fall out of the permissions we already have:
 
 - **No `content_scripts` declaration.** The manifest does not list
   AI-site URLs — `chrome.scripting.executeScript` covers it on

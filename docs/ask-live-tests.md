@@ -2,9 +2,9 @@
 
 Manual e2e tests that run our injection library
 (`src/ask-inject.ts`) against the **real** AI provider pages
-(claude.ai, gemini.google.com, chatgpt.com). Used to confirm the
-production selectors still match the live DOM and the production
-timing constants are still right.
+(claude.ai, gemini.google.com, chatgpt.com, google.com). Used to
+confirm the production selectors still match the live DOM and the
+production timing constants are still right.
 
 These tests are **not** part of `npm test` — they require a
 manually-launched browser, a logged-in test account, and they
@@ -293,8 +293,12 @@ checking against the running extension, reload it first.
      for that provider's chip / message DOM.
    - Call `runLiveSuite(provider)`.
    - `gemini.live.spec.ts` is the smallest template.
+   - For non-chat destinations whose composer doesn't survive a
+     submit (Google Search navigates to `/search?q=...`),
+     `runLiveSuite` doesn't fit — write a custom spec with a few
+     focused tests. `google.live.spec.ts` is the template.
 2. Add a matching project entry in `playwright.config.live.ts`
-   (follow the Claude / Gemini / ChatGPT pattern).
+   (follow the Claude / Gemini / ChatGPT / Google pattern).
 3. Log in to the provider in the running test browser
    (`.chrome-test-profile/` retains the session).
 4. Optionally add an `npm run test:live-<provider>` script.
