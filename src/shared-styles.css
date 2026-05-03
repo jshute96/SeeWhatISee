@@ -44,3 +44,26 @@
   opacity: 0.5;
   box-shadow: none;
 }
+
+/*
+ * Light-purple chrome for top app-headers / bottom app-footers,
+ * shared across capture.html and options.html. Picks up the violet
+ * eye in the toolbar icon (deep-purple-50 background, deep-purple-200
+ * border). Per-page padding, font, and flex layout still live in the
+ * page's own `header` / `.footer` rule — these classes only set the
+ * colour theme + the divider line against the main content area.
+ */
+.app-header {
+  background: #ede7f6;
+  border-bottom: 2px solid #b39ddb;
+}
+.app-footer {
+  background: #ede7f6;
+  border-top: 2px solid #b39ddb;
+}
+/* Product name "SeeWhatISee" inside an `.app-header` — rendered in
+ * a darker purple (deep-purple-700) so the brand pops against the
+ * pale lavender bar while the rest of the title text stays neutral. */
+.app-header .app-brand {
+  color: #512da8;
+}

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SeeWhatISee: Capture screenshot or contents</title>
+<title>SeeWhatISee — Capture screenshot or contents</title>
 <!--
   highlight.js theme. Styles the <span class="hljs-*"> tokens produced
   by `hljs.highlight(...).value` inside the edit-dialog editor. We
@@ -33,13 +33,20 @@
      */
     visibility: hidden;
   }
+  /* Light-purple bar at the top of the page (matches the Options
+     page). Negative side/top margins pull the bar out to the
+     viewport edge through the body's 24px margin so the chrome reads
+     as a full-width app header rather than a centred inset block.
+     Background + border-bottom come from `.app-header` in
+     shared-styles.css. */
   header {
     display: flex;
     align-items: center;
     gap: 10px;
     font-size: 20px;
     font-weight: 600;
-    margin-bottom: 16px;
+    margin: -24px -24px 16px -24px;
+    padding: 12px 24px;
   }
   header img {
     width: 28px;
@@ -247,7 +254,6 @@
      * row to a new line over overflowing past the page edge. The
      * textarea's `flex: 1` keeps it greedy on wide viewports. */
     flex-wrap: wrap;
-    margin-bottom: 16px;
   }
   /* Column holding the buttons+label row on top of the Ask status
    * line. Column width is set by `.left-stack-row` only — see (2)
@@ -890,7 +896,19 @@
   hr {
     border: none;
     border-top: 2px solid #555;
-    margin: 32px 0;
+    /* Asymmetric on purpose: the preceding `.controls` flex row
+     * always reserves 1em of vertical space at its bottom for the
+     * empty `#ask-status` line (so a future status message doesn't
+     * shift the layout). That ~13px of invisible space sits inside
+     * `.controls` but visibly above the rule, so a symmetric 32/32
+     * margin reads as ~45 above vs. 32 below. Trim ~13px off the
+     * top here to balance the visible gap.
+     *
+     * Note: `.controls` itself has no `margin-bottom` — the slack
+     * above the rule comes entirely from the reserved `#ask-status`
+     * line, not from a sibling margin. Don't add one back unless
+     * you also retune the `19px` here. */
+    margin: 19px 0 32px 0;
   }
   /*
    * Drawing-tool palette + image. The palette (`.highlight-controls`)
@@ -1120,9 +1138,9 @@
     </defs>
   </svg>
 
-  <header>
+  <header class="app-header">
     <img src="icons/icon-48.png" alt="">
-    <span>SeeWhatISee: Capture screenshot or contents</span>
+    <span><span class="app-brand">SeeWhatISee</span> — Capture screenshot or contents</span>
     <button type="button" id="options-btn" class="btn">Options</button>
   </header>
 

@@ -576,6 +576,23 @@ live view of Ask's progress and a clipboard-based recovery path.
   Capture page's URL/title card. Both are clickable links to the
   source; each row has its own Copy button.
 
+### Visual theme
+
+- Title bar (both expanded `.swis-titlebar` and the collapsed strip
+  `.swis-collapsed`) uses `#e0d4f0`, with a deep-purple-200
+  (`#b39ddb`) divider — a touch darker than the Capture / Options
+  page header (`#ede7f6`). The widget needs the extra contrast
+  against its own pale-purple body; the page headers sit on white
+  and don't.
+- Body uses `#f5f0fa` so the title bar still reads as a distinct
+  band and the whole widget stays tinted against mostly-white
+  provider pages.
+- Close-button hover (`.swis-titlebar-btn:hover`) is `#c8b8e2` —
+  visibly darker than the bar without going all the way to the
+  outer border's deep-purple-200.
+- Outer border is `#b39ddb` for theme consistency with the shared
+  `.app-header` / `.app-footer` chrome in `shared-styles.css`.
+
 ### States
 
 - **Expanded** by default while sending. ~220 px wide with the

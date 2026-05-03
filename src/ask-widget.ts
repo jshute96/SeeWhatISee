@@ -555,15 +555,27 @@
       <img class="swis-icon swis-icon-rotated" alt="" />
       <div class="swis-title swis-title-vertical">SeeWhatISee</div>
       <span class="swis-status-icon swis-status-icon-rotated" data-status="injecting" title=""></span>
-      <button type="button" class="swis-titlebar-btn" data-action="close" title="Close">×</button>
+      <button type="button" class="swis-titlebar-btn" data-action="close" title="Close">
+        <svg class="swis-btn-glyph" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 3 L9 9 M9 3 L3 9" />
+        </svg>
+      </button>
     </div>
     <div id="expanded" class="swis-expanded">
       <div class="swis-titlebar">
         <img class="swis-icon" alt="" />
         <div class="swis-title">SeeWhatISee</div>
         <span class="swis-status-icon" data-status="injecting" title=""></span>
-        <button type="button" class="swis-titlebar-btn" data-action="minimize" title="Minimize">_</button>
-        <button type="button" class="swis-titlebar-btn" data-action="close" title="Close">×</button>
+        <button type="button" class="swis-titlebar-btn" data-action="minimize" title="Minimize">
+          <svg class="swis-btn-glyph" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 10 L9 10" />
+          </svg>
+        </button>
+        <button type="button" class="swis-titlebar-btn" data-action="close" title="Close">
+          <svg class="swis-btn-glyph" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 3 L9 9 M9 3 L3 9" />
+          </svg>
+        </button>
       </div>
       <div class="swis-section">
         <div class="swis-section-label">Status</div>
@@ -610,8 +622,15 @@
     .swis-collapsed, .swis-expanded {
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       color: #222;
-      background: #fff;
-      border: 1px solid #ccc;
+      /* Light-purple body so the widget offsets against mostly-white
+       * provider pages (Claude / Gemini / ChatGPT). Slightly paler
+       * than the title bar's #ede7f6 (deep-purple-50) so the title
+       * bar still reads as a distinct band on top. Border picks up
+       * the same deep-purple-200 used by the Capture / Options page
+       * header chrome so the widget feels like part of the same
+       * product family. */
+      background: #f5f0fa;
+      border: 1px solid #b39ddb;
       border-right: none;
       border-radius: 8px 0 0 8px;
       box-shadow: -2px 2px 8px rgba(0, 0, 0, 0.12);
@@ -633,7 +652,11 @@
       gap: 6px;
       width: 32px;
       padding: 6px 4px;
-      background: #f5f5f5;
+      /* Same purple as the expanded title bar — the collapsed strip
+       * is the title bar in vertical form. A touch darker than the
+       * Capture-page header (#ede7f6) so it still reads as a band
+       * against the widget body's own pale-purple #f5f0fa. */
+      background: #e0d4f0;
       cursor: pointer;
     }
     /* Title text in the collapsed strip: vertical writing mode +
@@ -668,8 +691,13 @@
       align-items: center;
       gap: 6px;
       padding: 6px 8px;
-      background: #f5f5f5;
-      border-bottom: 1px solid #ddd;
+      /* A touch darker than the Capture / Options page header's
+       * #ede7f6 — the widget needs the extra contrast against its
+       * own pale-purple body so the title bar reads as a distinct
+       * band. Border-bottom stays deep-purple-200 for theme
+       * consistency. */
+      background: #e0d4f0;
+      border-bottom: 1px solid #b39ddb;
       border-radius: 8px 0 0 0;
       cursor: pointer;
     }
@@ -715,24 +743,53 @@
       width: 20px;
       height: 20px;
       padding: 0;
-      font-size: 14px;
-      line-height: 1;
-      color: #555;
+      /* inline-flex centres the inline SVG glyph geometrically —
+       * better than relying on font metrics, which left the old "×"
+       * character sitting a few pixels above optical centre. */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      /* Deep-purple-700 — matches the brand text and section labels
+       * so the close / minimize glyphs read as part of the same theme
+       * rather than as neutral grey UI chrome. Flows into the SVG
+       * stroke via stroke: currentColor on .swis-btn-glyph. */
+      color: #512da8;
       background: transparent;
       border: 1px solid transparent;
       border-radius: 4px;
       cursor: pointer;
     }
+    /* Close (X) and minimize (—) glyphs are inline SVG instead of
+     * unicode text. Reasons: (1) geometric centring vs. font-baseline
+     * drift; (2) rotation-invariant — the X looks the same in the
+     * collapsed strip's vertical layout without needing
+     * swis-icon-rotated; (3) sizing is independent of font-family
+     * the host page might otherwise leak in (shadow DOM helps but
+     * isn't bulletproof against UA defaults). */
+    .swis-btn-glyph {
+      width: 12px;
+      height: 12px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+    }
     .swis-titlebar-btn:hover {
-      background: #e5e5e5;
-      border-color: #ccc;
+      /* Tinted hover so it harmonizes with the purple title bar
+       * instead of reading as a cool-grey chip on a warm bar.
+       * Visibly darker than the bar so the hover state reads, but
+       * not all the way to the deep-purple-200 outer border. */
+      background: #c8b8e2;
+      border-color: #b39ddb;
     }
     .swis-section {
       display: flex;
       flex-direction: column;
       gap: 4px;
       padding: 8px 10px;
-      border-bottom: 1px solid #eee;
+      /* Section divider tinted to stay visible against the purple
+       * widget body — plain #eee washes out on #f5f0fa. */
+      border-bottom: 1px solid #e0d8ec;
     }
     .swis-section:last-child { border-bottom: none; }
     .swis-section-label {
@@ -740,7 +797,10 @@
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #888;
+      /* Deep-purple-700 (matches the brand text in the page header)
+       * so STATUS / CONTENT / SOURCE pop against the pale-purple
+       * body instead of fading into the grey #888 they used to use. */
+      color: #512da8;
     }
     .swis-status-text {
       font-size: 13px;

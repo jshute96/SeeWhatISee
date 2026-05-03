@@ -31,6 +31,8 @@
      */
     visibility: hidden;
   }
+  /* Background + border-bottom come from `.app-header` in
+     shared-styles.css so capture.html's header matches. */
   header {
     flex: none;
     display: flex;
@@ -39,8 +41,6 @@
     padding: 16px 24px;
     font-size: 20px;
     font-weight: 600;
-    border-bottom: 2px solid #bbb;
-    background: #f8f8f8;
   }
   main {
     flex: 1;
@@ -255,14 +255,14 @@
     padding: 1px 5px;
     border-radius: 3px;
   }
+  /* Background + border-top come from `.app-footer` in
+     shared-styles.css so the footer matches the header bar. */
   .footer {
     flex: none;
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 12px 24px;
-    border-top: 2px solid #bbb;
-    background: #f8f8f8;
   }
   /*
    * Side-by-side container for the two "Default action" sections.
@@ -303,9 +303,9 @@
 </style>
 </head>
 <body>
-<header>
+<header class="app-header">
   <img src="icons/icon-48.png" alt="">
-  <span>SeeWhatISee — Options</span>
+  <span><span class="app-brand">SeeWhatISee</span> — Options</span>
 </header>
 
 <main>
@@ -493,7 +493,7 @@
 </div>
 </main>
 
-<div class="footer">
+<div class="footer app-footer">
   <button id="save" type="button" class="btn">Save</button>
   <button id="undo" type="button" class="btn">Undo changes</button>
   <button id="defaults" type="button" class="btn">Defaults</button>
