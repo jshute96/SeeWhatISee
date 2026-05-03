@@ -116,7 +116,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
 | `src/capture.html` | Capture page (the `Capture...` action's review surface) — page-card (title/URL/size + Copy URL), save options + Copy/Edit buttons, edit HTML + selection modals, prompt, drawing-tool palette + image overlay |
-| `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, modal drawing tools (Box/Line/Crop/Redact + crop-edge resize), bake-in, fit-to-viewport |
+| `src/capture-page.ts` | Controller for `capture.html`: prompt, Copy-filename clipboard, Edit dialogs, modal drawing tools (Box/Line/Arrow/Crop/Redact + crop-edge resize), bake-in, fit-to-viewport |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, collapsible delay groups, saves via `setOptions` |
 | `src/shared-styles.css` | Page-wide `.btn` chrome (raised look + hover/active/.pressed flash + disabled) shared by `capture.html` and `options.html` via `<link rel="stylesheet">` |
@@ -157,7 +157,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/capture-paste.spec.ts` | E2E for rich-text paste — html→markdown / html-source routing, source-view short-circuit, real copy/paste round-trips |
 | `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, `triggerCapture` hand-off |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
-| `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing tool palette — Box/Line/Crop/Redact + Undo/Clear, crop-edge resize, edit-flag semantics on log.json |
+| `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing tool palette — Box/Line/Arrow/Crop/Redact + Undo/Clear, crop-edge resize, edit-flag semantics on log.json |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |

@@ -385,6 +385,86 @@ test('drawing: Line tool draw commits a line and flips hasHighlights', async ({
   await openerPage.close();
 });
 
+test('drawing: Arrow tool draw commits an arrow and flips hasHighlights', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Select the Arrow tool and drag — the drag commits an `arrow`
+  // edit (line + arrowhead barbs at the click-release end). Arrows
+  // count as `hasHighlights` alongside boxes and lines.
+  await capturePage.locator('#tool-arrow').click();
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.6, yPct: 0.4 },
+  );
+  expect(await readEditKinds(capturePage)).toEqual(['arrow']);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+  expect(record.screenshot?.hasRedactions).toBeUndefined();
+  expect(record.screenshot?.isCropped).toBeUndefined();
+
+  await openerPage.close();
+});
+
+test('drawing: draw arrow then undo → no highlights flag', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Arrow is a new edit-kind; confirm it flows through the generic
+  // undo path the same way Box / Line / Crop / Redact do — popping
+  // the arrow leaves the stack empty, the Undo / Clear buttons go
+  // back to disabled, and the saved record carries no highlight flag.
+  const undo = capturePage.locator('#undo');
+  const clear = capturePage.locator('#clear');
+
+  await capturePage.locator('#tool-arrow').click();
+  await dragRect(
+    capturePage,
+    { xPct: 0.2, yPct: 0.2 },
+    { xPct: 0.6, yPct: 0.4 },
+  );
+  expect(await readEditKinds(capturePage)).toEqual(['arrow']);
+  await expect(undo).toBeEnabled();
+
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await expect(undo).toBeDisabled();
+  await expect(clear).toBeDisabled();
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
+
+  await openerPage.close();
+});
+
 test('drawing: drag image edge to crop creates a crop', async ({
   extensionContext,
   fixtureServer,

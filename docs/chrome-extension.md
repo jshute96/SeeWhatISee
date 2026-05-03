@@ -568,12 +568,13 @@ tool's kind. There's no right-click drawing, and no in-place
   the column.
 - Buttons stack vertically, all sized to the widest label. The
   column has clusters separated by 14px gaps:
-  - Box, Line, Crop, Redact (tool selectors).
+  - Box, Line, Arrow, Crop, Redact (tool selectors).
   - Undo, Clear (edit-stack actions).
   - Copy, Save (image-level actions — Copy puts the *current* PNG
     bytes on the clipboard; Save opens the native save-as dialog).
-- Box / Line use red icons (rectangle outline, diagonal line);
-  the rest use text labels. Default selected tool is Box.
+- Box / Line / Arrow use red icons (rectangle outline, diagonal
+  line, diagonal line with arrowhead); the rest use text labels.
+  Default selected tool is Box.
 - Selected button gets `.selected` (darker face + inset shadow) and
   `aria-pressed="true"`. Tool selection fires on `mousedown` (not
   `click`) so the previously-selected tool deselects the moment the
@@ -592,6 +593,9 @@ tool's kind. There's no right-click drawing, and no in-place
 
 - **Box** — drag commits a 3px red stroked rectangle.
 - **Line** — drag commits a 3px red diagonal line.
+- **Arrow** — drag commits a 3px red line with a barbed arrowhead at
+  the click-release end. Barb length is 25% of the segment length,
+  capped at 18 CSS px (scaled to natural pixels in the bake-in path).
 - **Crop** — drag paints the live cropped preview (dim frame
   outside the drag bounds, dashed border, corner grips) so the user
   sees the final cropped result while dragging. Commits on mouseup

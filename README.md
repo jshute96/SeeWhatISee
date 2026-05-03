@@ -78,7 +78,7 @@ On this page, you can:
 - Add an optional **Prompt**. (Enter submits; Shift+Enter or `\`+Enter inserts a newline.)
 - Annotate the screenshot with **drawing tools**:
   - **Box** (default) — draws a red rectangle to highlight a region.
-  - **Line** — draws a red line.
+  - **Line** / **Arrow** — draws a red line or arrow.
   - **Crop** — drag a rectangular region — image will be cropped to that region. Drag borders to resize.
   - **Redact** — draw a black box to hide part of the image.
   - **Undo** / **Clear** — roll back the most recent edit, or all edits.

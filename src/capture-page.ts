@@ -786,12 +786,14 @@ function formatBytes(n: number): string {
 
 // ─── Highlight overlay ────────────────────────────────────────────
 //
-// Drawing is *modal*: one of four tool buttons (Box / Line / Crop /
-// Redact) is selected at a time, and a left-button drag on the
+// Drawing is *modal*: one of the tool buttons (Box / Line / Arrow /
+// Crop / Redact) is selected at a time, and a left-button drag on the
 // overlay produces an edit of that kind:
 //
 //   - Box     — red stroked rectangle (highlights a region).
-//   - Line    — red diagonal line (annotates direction / arrow).
+//   - Line    — red diagonal line.
+//   - Arrow   — red line with a barbed arrowhead at the click-release
+//     end; barbs scale with segment length up to a fixed cap.
 //   - Crop    — drag paints the live cropped preview (dim frame
 //     outside the drag bounds, dashed border, corner grips), so the
 //     user sees what the cropped result will look like. Commits as
@@ -817,7 +819,8 @@ function formatBytes(n: number): string {
 
 type Point = { x: number; y: number };
 type RectKind = 'rect' | 'redact' | 'crop';
-type Tool = RectKind | 'line';
+type LineKind = 'line' | 'arrow';
+type Tool = RectKind | LineKind;
 interface RectEdit {
   id: number;
   kind: RectKind;
@@ -825,7 +828,7 @@ interface RectEdit {
 }
 interface LineEdit {
   id: number;
-  kind: 'line';
+  kind: LineKind;
   x1: number; y1: number; x2: number; y2: number;
 }
 type Edit = RectEdit | LineEdit;
@@ -1081,6 +1084,56 @@ function makeLine(x1: number, y1: number, x2: number, y2: number): SVGLineElemen
   return el;
 }
 
+// Arrowhead barbs scale with the segment length so a tiny arrow keeps
+// a proportional head, but cap so a very long arrow doesn't grow a
+// disproportionately large head. ARROW_HEAD_RATIO is the barb length
+// as a fraction of the segment length; ARROW_HEAD_MAX_PX caps it.
+// ARROW_HEAD_ANGLE is the angle each barb makes against the reverse
+// line direction.
+const ARROW_HEAD_RATIO = 0.25;
+const ARROW_HEAD_MAX_PX = 18;
+const ARROW_HEAD_ANGLE = (28 * Math.PI) / 180;
+
+// Compute the two barb endpoints for an arrowhead at (x2,y2) on the
+// segment from (x1,y1)→(x2,y2). Returned in the same coordinate
+// system as the inputs. `maxHeadPx` caps the barb length in those
+// same units — overlay calls leave it at the default (CSS-pixel
+// cap); the bake-in path passes a scaled cap so the natural-pixel
+// arrowhead matches the displayed proportion.
+function arrowBarbs(
+  x1: number, y1: number, x2: number, y2: number,
+  maxHeadPx: number = ARROW_HEAD_MAX_PX,
+): { ax: number; ay: number; bx: number; by: number } | null {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return null;
+  const head = Math.min(len * ARROW_HEAD_RATIO, maxHeadPx);
+  // Reverse-direction unit vector.
+  const ux = -dx / len;
+  const uy = -dy / len;
+  const cos = Math.cos(ARROW_HEAD_ANGLE);
+  const sin = Math.sin(ARROW_HEAD_ANGLE);
+  // Rotate the reverse direction by ±ARROW_HEAD_ANGLE for the two barbs.
+  const ax = x2 + head * (ux * cos - uy * sin);
+  const ay = y2 + head * (ux * sin + uy * cos);
+  const bx = x2 + head * (ux * cos + uy * sin);
+  const by = y2 + head * (-ux * sin + uy * cos);
+  return { ax, ay, bx, by };
+}
+
+// Draw an arrow (line + arrowhead) onto the SVG overlay. Returns
+// nothing — appends `<line>` shapes to `overlay`.
+function appendArrow(
+  x1: number, y1: number, x2: number, y2: number,
+): void {
+  overlay.appendChild(makeLine(x1, y1, x2, y2));
+  const b = arrowBarbs(x1, y1, x2, y2);
+  if (!b) return;
+  overlay.appendChild(makeLine(b.ax, b.ay, x2, y2));
+  overlay.appendChild(makeLine(b.bx, b.by, x2, y2));
+}
+
 function render(): void {
   while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
   const r = imgRect();
@@ -1088,13 +1141,16 @@ function render(): void {
   const h = r.height;
 
   for (const e of edits) {
-    if (e.kind === 'line') {
-      overlay.appendChild(makeLine(
-        (e.x1 / 100) * w,
-        (e.y1 / 100) * h,
-        (e.x2 / 100) * w,
-        (e.y2 / 100) * h,
-      ));
+    if (e.kind === 'line' || e.kind === 'arrow') {
+      const ax1 = (e.x1 / 100) * w;
+      const ay1 = (e.y1 / 100) * h;
+      const ax2 = (e.x2 / 100) * w;
+      const ay2 = (e.y2 / 100) * h;
+      if (e.kind === 'arrow') {
+        appendArrow(ax1, ay1, ax2, ay2);
+      } else {
+        overlay.appendChild(makeLine(ax1, ay1, ax2, ay2));
+      }
     } else if (e.kind === 'rect') {
       overlay.appendChild(makeStrokedRect(
         (e.x / 100) * w,
@@ -1227,6 +1283,10 @@ function render(): void {
       overlay.appendChild(makeLine(
         dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y,
       ));
+    } else if (selectedTool === 'arrow') {
+      appendArrow(
+        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y,
+      );
     } else if (selectedTool === 'rect' || selectedTool === 'redact') {
       // Both tools draw exactly what they'll commit, so the user
       // sees the final result live: Box → red stroked rect, Redact
@@ -1362,10 +1422,10 @@ window.addEventListener('mouseup', (e) => {
   let pending: Edit | null = null;
   if (moved) {
     const id = nextEditId;
-    if (selectedTool === 'line') {
+    if (selectedTool === 'line' || selectedTool === 'arrow') {
       pending = {
         id,
-        kind: 'line',
+        kind: selectedTool,
         x1: (dragStart.x / r.width) * 100,
         y1: (dragStart.y / r.height) * 100,
         x2: (end.x / r.width) * 100,
@@ -2526,13 +2586,26 @@ function renderHighlightedPng(): string {
 
   for (const e of edits) {
     if (e.kind === 'crop') continue; // the crop is realized by the canvas size itself
-    if (e.kind === 'line') {
+    if (e.kind === 'line' || e.kind === 'arrow') {
+      const x1 = (e.x1 / 100) * natW - sx;
+      const y1 = (e.y1 / 100) * natH - sy;
+      const x2 = (e.x2 / 100) * natW - sx;
+      const y2 = (e.y2 / 100) * natH - sy;
       ctx.strokeStyle = 'red';
       ctx.lineWidth = strokePx;
       ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.beginPath();
-      ctx.moveTo((e.x1 / 100) * natW - sx, (e.y1 / 100) * natH - sy);
-      ctx.lineTo((e.x2 / 100) * natW - sx, (e.y2 / 100) * natH - sy);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      if (e.kind === 'arrow') {
+        const b = arrowBarbs(x1, y1, x2, y2, ARROW_HEAD_MAX_PX * scale);
+        if (b) {
+          ctx.moveTo(b.ax, b.ay);
+          ctx.lineTo(x2, y2);
+          ctx.lineTo(b.bx, b.by);
+        }
+      }
       ctx.stroke();
     } else if (e.kind === 'rect') {
       ctx.strokeStyle = 'red';
@@ -2571,9 +2644,10 @@ function hasBakeableEdits(): boolean {
 
 // Per-kind flags reported to the SW so the saved record's screenshot
 // artifact can carry `hasHighlights` / `hasRedactions` / `isCropped`
-// independently. Each tool-kind flips its own flag: only Box-tool
-// boxes and Line-tool lines count as `hasHighlights`; redactions
-// and crops are separate kinds and flip `hasRedactions` / `isCropped`.
+// independently. Each tool-kind flips its own flag: Box-tool boxes,
+// Line-tool lines, and Arrow-tool arrows all count as `hasHighlights`;
+// redactions and crops are separate kinds and flip `hasRedactions` /
+// `isCropped`.
 //
 // `isCropped` uses `activeCrop()` (not "any crop edit in the stack")
 // so a crop that's been dragged back out to the full image reports
@@ -2583,7 +2657,7 @@ function editFlags(): { hasHighlights: boolean; hasRedactions: boolean; isCroppe
   let hasHighlights = false;
   let hasRedactions = false;
   for (const e of edits) {
-    if (e.kind === 'rect' || e.kind === 'line') hasHighlights = true;
+    if (e.kind === 'rect' || e.kind === 'line' || e.kind === 'arrow') hasHighlights = true;
     else if (e.kind === 'redact') hasRedactions = true;
   }
   return { hasHighlights, hasRedactions, isCropped: activeCrop() !== undefined };

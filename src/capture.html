@@ -1050,6 +1050,18 @@
         <line x1="3" y1="13" x2="21" y2="3"
               stroke="red" stroke-width="2" stroke-linecap="round"></line>
       </symbol>
+      <!-- draw-arrow-icon: red diagonal line with an arrowhead at the
+           end-point, matching what the Arrow tool draws (line + two
+           barbs on the click-release end). Barb endpoints are
+           computed from the line direction (~-29°) so the arrowhead
+           sits symmetrically on the line. -->
+      <symbol id="draw-arrow-icon" viewBox="0 0 24 16">
+        <line x1="3" y1="13" x2="21" y2="3"
+              stroke="red" stroke-width="2" stroke-linecap="round"></line>
+        <polyline points="17.9,8.1 21,3 15,2.9"
+              fill="none" stroke="red" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></polyline>
+      </symbol>
       <!-- External-link glyph for the Captured-page card's URL row. -->
       <symbol id="external-link-icon" viewBox="0 0 24 24">
         <path d="M14 4h6v6M20 4l-9 9M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"
@@ -1420,15 +1432,21 @@
       <div class="highlight-buttons">
         <button id="tool-box" class="tool-btn tool-btn-icon btn selected"
                 type="button" data-tool="rect"
-                title="Draw box" aria-label="Draw box"
+                title="Draw boxes" aria-label="Draw boxes"
                 aria-pressed="true">
           <svg aria-hidden="true"><use href="#draw-box-icon"></use></svg>
         </button>
         <button id="tool-line" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="line"
-                title="Draw line" aria-label="Draw line"
+                title="Draw lines" aria-label="Draw lines"
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-line-icon"></use></svg>
+        </button>
+        <button id="tool-arrow" class="tool-btn tool-btn-icon btn"
+                type="button" data-tool="arrow"
+                title="Draw arrows" aria-label="Draw arrows"
+                aria-pressed="false">
+          <svg aria-hidden="true"><use href="#draw-arrow-icon"></use></svg>
         </button>
         <button id="tool-crop" class="tool-btn btn"
                 type="button" data-tool="crop"
