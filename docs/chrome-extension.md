@@ -138,12 +138,13 @@ Two design choices fall out of the permissions we already have:
   An isolated-world script fires events into a separate JS realm
   and the page never sees them.
 
-The two-step injection — `executeScript({ files: ['ask-inject.js'] })`
-to register `window.__seeWhatISeeAsk`, then a second
-`executeScript({ func, args })` to invoke it — keeps the file
-self-contained (no `import`/`export`, runs as a classic script) and
-lets retries land in the same MAIN-world realm without re-loading
-the bundle.
+- `executeScript({ files: ['ask-inject.js'] })` installs the IIFE's
+  postMessage bridge listener.
+- The ISOLATED-world widget then drives one operation at a time
+  (`attachFile`, `typePrompt`, `clickSubmit`) over that bridge.
+- Keeping `ask-inject.ts` as a classic script (no `import`/`export`)
+  lets retries land in the same MAIN-world realm without re-loading
+  the bundle.
 
 ## Error reporting: from invisible to visible
 

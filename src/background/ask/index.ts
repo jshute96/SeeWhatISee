@@ -1,12 +1,17 @@
-// Ask flow orchestration: resolve target tab, focus it, and run the
-// injected runtime to attach files + fill the prompt + submit.
+// Ask flow orchestration: resolve target tab, focus it, and load the
+// injected runtime + widget so the widget can walk attach + prompt +
+// submit one item at a time.
 //
-// Wire layout (see also src/ask-inject.ts and src/capture-page.ts):
+// Wire layout (see also src/ask-inject.ts, src/ask-widget.ts, and
+// src/capture-page.ts):
 //
 //   capture-page.ts ──{action: 'askAi', destination, payload}──▶
 //     installAskMessageHandler() (this file) ──▶
-//       sendToAi() ──▶ chrome.scripting.executeScript(MAIN world) ──▶
-//         dist/ask-inject.js's window.__seeWhatISeeAsk(selectors, payload)
+//       sendToAi() ──▶ writeWidgetRecord + executeScript:
+//         - dist/ask-inject.js (MAIN world) installs the postMessage
+//           bridge listener on window
+//         - dist/ask-widget.js (ISOLATED world) mounts the status
+//           widget, which drives the bridge ops one at a time
 //
 // One Ask call may open a new tab on the AI provider (waiting for it
 // to finish loading before injecting), or reuse an existing tab the
@@ -647,7 +652,8 @@ export async function sendToAi(
  * Convert a payload into the ordered item list the widget walks.
  * One item per attachment, then a `prompt` item if the user typed
  * one, then a `submit` item (only when `autoSubmit` is on AND the
- * prompt is non-empty — same gate as the legacy runtime).
+ * prompt is non-empty — empty prompt means "set up the conversation,
+ * let me think").
  *
  * Labels match what the widget renders in the Content section, so
  * the per-item rows and the orchestration items line up 1:1.

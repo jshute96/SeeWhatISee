@@ -1,11 +1,13 @@
 // Runtime injected into the AI provider's tab (currently claude.ai)
 // to attach files, fill the prompt, and optionally submit.
 //
-// Loaded by `chrome.scripting.executeScript({ files: ['ask-inject.js'], world: 'MAIN' })`,
-// then invoked via a second executeScript call. Must be a plain
-// (non-module) script — no imports/exports — because executeScript
-// runs files as classic content scripts. Selectors are passed in as
-// data; site-specific logic stays out of this file.
+// Loaded by `chrome.scripting.executeScript({ files: ['ask-inject.js'], world: 'MAIN' })`.
+// The IIFE installs a postMessage bridge listener; the
+// ISOLATED-world widget then drives one operation at a time
+// (`attachFile`, `typePrompt`, `clickSubmit`) over that bridge. Must
+// be a plain (non-module) script — no imports/exports — because
+// executeScript runs files as classic content scripts. Selectors are
+// passed in as data; site-specific logic stays out of this file.
 //
 // Lives in MAIN world so we can dispatch events the React-based
 // composer expects to see (input/beforeinput on its ProseMirror,
@@ -19,27 +21,6 @@
     textInput: string[];
     submitButton: string[];
     attachmentPreview?: string[];
-  }
-
-  interface AskAttachment {
-    /** Data URL or raw text. `kind === 'image'` always means a data URL. */
-    data: string;
-    kind: 'image' | 'text';
-    /** MIME type, e.g. 'image/png', 'text/html', 'text/markdown'. */
-    mimeType: string;
-    /** Filename presented to the AI site, e.g. 'screenshot.png'. */
-    filename: string;
-  }
-
-  interface AskPayload {
-    attachments: AskAttachment[];
-    promptText: string;
-    autoSubmit: boolean;
-  }
-
-  interface AskResult {
-    ok: boolean;
-    error?: string;
   }
 
   // Hard wait used by autoSubmit: the AI's submit button stays
@@ -70,7 +51,6 @@
   // never sets the global, so the production timings stand.
   interface AskTuning {
     fileSettleMs?: number;
-    preSubmitSettleMs?: number;
     previewConfirmTimeoutMs?: number;
   }
   function tuning(): AskTuning {
@@ -90,10 +70,11 @@
   // we run in MAIN world via `chrome.scripting.executeScript`, Chrome
   // attributes console output back to the extension and `console.warn`
   // shows up on chrome://extensions as a warning. Failures here are
-  // already caught and returned as `AskResult.error` to the SW, so
-  // there's nothing for the user to act on at the extensions page —
-  // the warn-level signal was just noise. `[warn]` in the message
-  // keeps the bad-path lines visually distinct in DevTools.
+  // already caught and reported back over the bridge as
+  // `{ok: false, error}`, so there's nothing for the user to act on
+  // at the extensions page — the warn-level signal was just noise.
+  // `[warn]` in the message keeps the bad-path lines visually
+  // distinct in DevTools.
   function log(...args: unknown[]): void {
     console.log('[SeeWhatISee Ask]', ...args);
   }
@@ -231,9 +212,11 @@
     // `type=file` inputs to a no-op for the duration so we can set
     // `.files` directly without ever showing the picker.
     //
-    // attachFiles is single-shot — the caller (run()) awaits each
-    // call before issuing the next, so origClick is captured against
-    // an unpatched prototype every time. Don't parallelize.
+    // attachFiles is single-shot — callers serialize via the bridge
+    // (the widget's `runItems` and the live tests' per-op loop both
+    // await each call before issuing the next), so origClick is
+    // captured against an unpatched prototype every time. Don't
+    // parallelize.
     const preClicks = selectors.preFileInputClicks ?? [];
     const origClick = HTMLInputElement.prototype.click;
     let input: HTMLInputElement | null;
@@ -543,83 +526,22 @@
     btn.click();
   }
 
-  async function run(
-    selectors: AskSelectors,
-    payload: AskPayload,
-  ): Promise<AskResult> {
-    log('run: invoked', {
-      attachments: payload.attachments.length,
-      promptLength: payload.promptText.length,
-      autoSubmit: payload.autoSubmit,
-      url: location.href,
-    });
-    try {
-      // 1. Build File objects up front so a malformed data URL fails
-      //    before we mutate any of the page's UI.
-      const files: File[] = payload.attachments.map((a) => {
-        if (a.kind === 'image') {
-          return dataUrlToFile(a.data, a.filename, a.mimeType);
-        }
-        return textToFile(a.data, a.filename, a.mimeType);
-      });
-
-      // 2. Attach all files in a single change event, then a brief
-      //    settle delay before the next step. The submit-enable poll
-      //    in clickSubmit() is the authoritative "uploads finished"
-      //    gate for the auto-submit path.
-      if (files.length > 0) {
-        await attachFiles(files, selectors);
-      } else {
-        log('run: no files to attach, skipping');
-      }
-
-      // 3. Type the prompt (if any) into the composer.
-      await typePrompt(payload.promptText, selectors);
-
-      // 4. Submit only when the user actually wrote a prompt — empty
-      //    prompt means "set up the conversation, let me think."
-      //    Brief settle so Claude's React state catches up to the
-      //    insertText events before we start polling submit-enable.
-      //    Without this, the no-attachment path can race the editor
-      //    state update and the loop times out before re-render.
-      if (payload.autoSubmit && payload.promptText.trim().length > 0) {
-        await delay(tuning().preSubmitSettleMs ?? POLL_INTERVAL_MS);
-        await clickSubmit(selectors);
-      } else {
-        log('run: autoSubmit off or prompt empty, leaving for user');
-      }
-
-      log('run: completed successfully');
-      return { ok: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logWarn('run: failed', message);
-      return { ok: false, error: message };
-    }
-  }
-
-  // ─── Two ways to drive the runtime ───────────────────────────────
+  // ─── postMessage bridge ──────────────────────────────────────────
   //
-  // 1. Legacy one-shot entry: `window.__seeWhatISeeAsk(selectors,
-  //    payload)` runs the whole flow (attach all files → type prompt
-  //    → submit). Kept for the live-test specs in `tests/e2e-live/`
-  //    that drive the runtime directly. The SW used to call this too;
-  //    it now uses the bridge instead.
+  // The ISOLATED-world widget drives the runtime one operation at a
+  // time (`attachFile`, `typePrompt`, `clickSubmit`) so it can track
+  // per-item status, retry failures, and skip the submit when an
+  // earlier item failed. The live-test specs in `tests/e2e-live/`
+  // drive the same bridge to exercise the same code path the widget
+  // uses in production.
   //
-  // 2. postMessage bridge: lets the ISOLATED-world widget call
-  //    individual operations (`attachFile`, `typePrompt`,
-  //    `clickSubmit`) one at a time so it can track per-item status,
-  //    retry failures, and skip the submit when something went wrong.
-  //
-  //    Protocol — the widget posts:
-  //      { swis: 'request', id, op, args }
-  //    and the bridge replies:
-  //      { swis: 'response', id, ok: true,  result }
-  //      { swis: 'response', id, ok: false, error: string }
-  //    Both sides filter on `ev.source === window` and the `swis`
-  //    marker so unrelated postMessages on the page don't collide.
-
-  (window as unknown as { __seeWhatISeeAsk?: typeof run }).__seeWhatISeeAsk = run;
+  // Protocol — the caller posts:
+  //   { swis: 'request', id, op, args }
+  // and the bridge replies:
+  //   { swis: 'response', id, ok: true,  result }
+  //   { swis: 'response', id, ok: false, error: string }
+  // Both sides filter on `ev.source === window` and the `swis` marker
+  // so unrelated postMessages on the page don't collide.
 
   interface AttachmentInput {
     kind: 'image' | 'text';
@@ -636,9 +558,7 @@
   }
 
   // Bridge dispatcher. Each op throws on failure and the bridge
-  // reports it as `ok: false`. Op handlers reuse the same per-op
-  // helpers (`attachFiles`, `typePrompt`, `clickSubmit`) the legacy
-  // `run` uses, so behavior stays identical.
+  // reports it as `ok: false`.
   async function dispatchOp(op: string, args: unknown): Promise<unknown> {
     if (op === 'attachFile') {
       const a = args as { attachment: AttachmentInput; selectors: AskSelectors };

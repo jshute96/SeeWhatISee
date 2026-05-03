@@ -79,10 +79,9 @@
     // to ingest uploads + type events; this fixture processes those
     // synchronously, so the prod values would just slow the suite.
     // Production claude.ai never sets this global — `?? FILE_SETTLE_DELAY_MS`
-    // / `?? POLL_INTERVAL_MS` keep the prod timings unchanged.
+    // keeps the prod timings unchanged.
     window.__seeWhatISeeAskTuning = {
       fileSettleMs: 50,
-      preSubmitSettleMs: 50,
     };
 
     const fileInput = document.querySelector('input[type="file"]');

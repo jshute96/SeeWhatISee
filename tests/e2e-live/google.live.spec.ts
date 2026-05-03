@@ -4,8 +4,8 @@
 // fundamentally diverges from the chat providers:
 //
 //   - Submit navigates the tab off `google.com` to `/search?q=…`,
-//     dropping the IIFE-loaded `__seeWhatISeeAsk` runtime. The shared
-//     suite's post-submit "call the runtime again" check would never
+//     dropping the IIFE-loaded bridge listener. The shared suite's
+//     post-submit "call the runtime again" check would never
 //     re-resolve.
 //   - There's no conversation surface, so most of the shared suite's
 //     locators (`userMessageLocator`, `fileAttachmentLocator`) don't
@@ -31,6 +31,7 @@ import {
   type Page,
 } from '@playwright/test';
 import { googleProvider } from '../../src/background/ask/google.js';
+import { driveBridge, type AskAttachment } from './lib/bridge.js';
 
 const CDP_ENDPOINT = process.env.SEE_LIVE_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';
 const REPO_ROOT = path.resolve(
@@ -46,18 +47,6 @@ const COMPOSER = SELECTORS.textInput[0];
 // search server-side traffic minimal.
 const TINY_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==';
-
-interface AskAttachment {
-  data: string;
-  kind: 'image' | 'text';
-  mimeType: string;
-  filename: string;
-}
-
-type AskRuntime = (
-  selectors: unknown,
-  payload: unknown,
-) => Promise<{ ok: boolean; error?: string }>;
 
 let SHARED_BROWSER: Browser | null = null;
 let SHARED_PAGE: Page | null = null;
@@ -119,24 +108,13 @@ async function loadRuntime(page: Page): Promise<void> {
   await page.evaluate(askInjectSrc);
 }
 
-async function callRuntime(
+function callRuntime(
   page: Page,
   attachments: AskAttachment[],
   promptText: string,
   autoSubmit: boolean,
 ): Promise<{ ok: boolean; error?: string }> {
-  return await page.evaluate(
-    async ({ selectors, payload }) => {
-      const fn = (window as unknown as { __seeWhatISeeAsk?: AskRuntime })
-        .__seeWhatISeeAsk;
-      if (!fn) return { ok: false, error: 'runtime not loaded' };
-      return await fn(selectors, payload);
-    },
-    {
-      selectors: googleProvider.selectors,
-      payload: { attachments, promptText, autoSubmit },
-    },
-  );
+  return driveBridge(page, googleProvider.selectors, attachments, promptText, autoSubmit);
 }
 
 test.beforeAll(async () => {

@@ -489,8 +489,9 @@ Capture page (capture-page.ts)
           ├── resolve tab (existing or new — wait 'complete' up to 15s)
           ├── focus tab + window
           ├── executeScript({ files: ['ask-inject.js'], world: 'MAIN' })
-          ├── executeScript({ func: invokeRuntime, args: [selectors, payload] })
-          │     window.__seeWhatISeeAsk(selectors, payload) — see below
+          │     installs the postMessage bridge listener (see below)
+          ├── executeScript({ files: ['ask-widget.js'], world: 'ISOLATED' })
+          │     widget walks each item via the bridge — see ask-widget.md
           └── on success: write 'askPin' = { provider, tabId }
     show #ask-status: "Sent." or error
     refresh #ask-target-label (the pin may have moved)
@@ -511,31 +512,31 @@ The Capture page assembles the payload from existing checkbox state:
 ### Injected runtime (`ask-inject.ts`)
 
 Self-contained IIFE, no `import` / `export`, runs in MAIN world.
-Exposes `window.__seeWhatISeeAsk(selectors, payload)`.
+Installs a postMessage bridge listener on `window` and exposes the
+ops the ISOLATED-world widget calls one at a time:
 
-Steps:
+- `attachFile { attachment, selectors }` — build a `File` from the
+  attachment's data (base64 decode for data URLs, `TextEncoder` for
+  text), set `input.files` on the resolved file input, dispatch
+  `change` + `input`, then settle 1500 ms and (if the provider opted
+  in via `selectors.attachmentPreview`) confirm the chip count rose
+  by one.
+- `typePrompt { text, selectors }` — focus the contenteditable and
+  insert the text segment-by-segment.
+  - Split on `\n` and insert each segment with `execCommand('insertText')`.
+  - Insert a paragraph break (`execCommand('insertParagraph')`)
+    between segments — preserves blank lines and does *not* trigger
+    an Enter `keydown`, so Claude's submit keymap stays out of it.
+  - Both calls fall back to a synthesized `InputEvent` if
+    `execCommand` returns `false`.
+- `clickSubmit { selectors }` — poll `selectors.submitButton` for an
+  enabled button (interval 150 ms, deadline 30 s) and click it. The
+  submit-enable state is the authoritative "uploads finished" signal.
 
-1. **Build files** from each `attachment.data` — base64 decode for
-   data URLs, `TextEncoder` for text. Failure here is caught before
-   any DOM mutation.
-2. **Attach files** in a single change event on the file input.
-   `DataTransfer.items.add(file)` for each, set `input.files = dt.files`,
-   dispatch `change` and `input`.
-3. **Settle** for 1500 ms — gives Claude's React state time to
-   ingest the upload before we type into the composer.
-4. **Type prompt** into the contenteditable.
-   - Split on `\n` and insert each segment with `execCommand('insertText')`.
-   - Insert a paragraph break (`execCommand('insertParagraph')`)
-     between segments — this preserves blank lines as their own
-     paragraphs and crucially does *not* trigger an Enter `keydown`,
-     so Claude's submit keymap stays out of it.
-   - Both calls fall back to a synthesized `InputEvent` if
-     `execCommand` returns `false`.
-5. **Auto-submit** when `autoSubmit && promptText.trim().length > 0`:
-   poll `selectors.submitButton` for an enabled button (interval
-   150 ms, deadline 30 s) and click. The submit-enable state is the
-   authoritative "uploads finished" signal.
-6. Return `{ ok: true }` or `{ ok: false, error }`.
+Each op resolves to `null` on success or rejects with an Error; the
+bridge serializes that as `{ok: true, result}` / `{ok: false, error}`
+back to the widget. See [`ask-widget.md`](ask-widget.md) for the
+bridge protocol and the per-op timeouts the widget enforces.
 
 ### Why MAIN world
 

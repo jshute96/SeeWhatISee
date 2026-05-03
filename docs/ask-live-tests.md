@@ -140,13 +140,16 @@ Live tests don't load the extension or drive the Capture page.
 They:
 
 1. Open a fresh provider tab.
-2. `page.evaluate(<contents of dist/ask-inject.js>)` to register
-   `window.__seeWhatISeeAsk`.
-3. Call the runtime with a synthetic payload.
+2. `page.evaluate(<contents of dist/ask-inject.js>)` to install the
+   IIFE's postMessage bridge listener on `window`.
+3. Drive the bridge from `page.evaluate` — one `attachFile` op per
+   attachment, then `typePrompt`, then `clickSubmit` (mirroring the
+   widget's `runItems` flow in production).
 4. Assert on the resulting DOM state.
 
 This keeps the live suite fast and focused: the only thing that
-can fail is the contract between our library and the real page.
+can fail is the contract between our library and the real page —
+exercised through the exact same bridge ops the widget uses.
 
 ### Test-account tagging
 

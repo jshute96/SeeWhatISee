@@ -19,6 +19,7 @@ import {
   type Page,
 } from '@playwright/test';
 import type { LiveProvider } from './types.js';
+import { driveBridge, type AskAttachment } from './bridge.js';
 
 const CDP_ENDPOINT = process.env.SEE_LIVE_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';
 const REPO_ROOT = path.resolve(
@@ -121,23 +122,6 @@ function accepts(provider: LiveProvider, kind: 'image' | 'text'): boolean {
   return allowed.includes(kind);
 }
 
-// Mirror of the AskAttachment interface in `src/ask-inject.ts`. Kept
-// as a separate copy because ask-inject.ts is a self-contained IIFE
-// (no exports — it's loaded via `executeScript` as a classic script).
-// MUST stay in sync with the IIFE's interface; if a new field is
-// added there, add it here too.
-interface AskAttachment {
-  data: string;
-  kind: 'image' | 'text';
-  mimeType: string;
-  filename: string;
-}
-
-type AskRuntime = (
-  selectors: unknown,
-  payload: unknown,
-) => Promise<{ ok: boolean; error?: string }>;
-
 /**
  * Run the five-test live suite (selectors smoke / multi-file no-submit /
  * two prompt-only calls accumulate / two file-attach calls accumulate /
@@ -205,29 +189,19 @@ export function runLiveSuite(provider: LiveProvider): void {
 
   async function loadAskRuntime(page: Page): Promise<void> {
     // The compiled bundle is a self-contained IIFE — evaluate runs it
-    // and the IIFE assigns `window.__seeWhatISeeAsk`. No exports, no
-    // module wrapper to unpack.
+    // and the IIFE installs the postMessage bridge listener (same one
+    // the widget drives in production). No exports, no module wrapper
+    // to unpack.
     await page.evaluate(askInjectSrc);
   }
 
-  async function callAskRuntime(
+  function callAskRuntime(
     page: Page,
     attachments: AskAttachment[],
     promptText: string,
     autoSubmit: boolean,
   ): Promise<{ ok: boolean; error?: string }> {
-    return await page.evaluate(
-      async ({ selectors, payload }) => {
-        const fn = (window as unknown as { __seeWhatISeeAsk?: AskRuntime })
-          .__seeWhatISeeAsk;
-        if (!fn) return { ok: false, error: 'runtime not loaded' };
-        return await fn(selectors, payload);
-      },
-      {
-        selectors: provider.selectors,
-        payload: { attachments, promptText, autoSubmit },
-      },
-    );
+    return driveBridge(page, provider.selectors, attachments, promptText, autoSubmit);
   }
 
   // ─── Selector smoke test ───────────────────────────────────────

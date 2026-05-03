@@ -720,7 +720,6 @@ test('ask error: destination silently drops non-image attachment → HTML item f
       window as unknown as { __seeWhatISeeAskTuning?: Record<string, number> }
     ).__seeWhatISeeAskTuning = {
       fileSettleMs: 50,
-      preSubmitSettleMs: 50,
       previewConfirmTimeoutMs: 800,
     };
   });
@@ -780,7 +779,6 @@ test('ask error: preview selectors that match nothing → "could not verify" mes
       window as unknown as { __seeWhatISeeAskTuning?: Record<string, number> }
     ).__seeWhatISeeAskTuning = {
       fileSettleMs: 50,
-      preSubmitSettleMs: 50,
       previewConfirmTimeoutMs: 600,
     };
   });

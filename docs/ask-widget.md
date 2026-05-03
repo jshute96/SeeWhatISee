@@ -114,9 +114,10 @@ into MAIN-world helpers in `ask-inject.ts`.
   - `clickSubmit` — 35 s (covers the 30 s submit-enable poll while
     the upload reaches the server). We never wait for the AI's
     response — only for the submit button to be clickable.
-- The legacy `window.__seeWhatISeeAsk(selectors, payload)` entry is
-  kept on `window` for the live-test specs in `tests/e2e-live/`,
-  which drive the runtime directly. The SW no longer uses it.
+- The live-test specs in `tests/e2e-live/` drive the same bridge,
+  posting `attachFile` / `typePrompt` / `clickSubmit` requests one at
+  a time so the suite exercises the same code path the widget uses
+  in production.
 
 ## Storage record
 
