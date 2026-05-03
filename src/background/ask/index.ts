@@ -5,9 +5,9 @@
 // Wire layout (see also src/ask-inject.ts, src/ask-widget.ts, and
 // src/capture-page.ts):
 //
-//   capture-page.ts ──{action: 'askAi', destination, payload}──▶
+//   capture-page.ts ──{action: 'askAiDefault', payload}──▶
 //     installAskMessageHandler() (this file) ──▶
-//       sendToAi() ──▶ writeWidgetRecord + executeScript:
+//       resolveAsk() + sendToAi() ──▶ writeWidgetRecord + executeScript:
 //         - dist/ask-inject.js (MAIN world) installs the postMessage
 //           bridge listener on window
 //         - dist/ask-widget.js (ISOLATED world) mounts the status
@@ -171,7 +171,48 @@ export interface AskPin {
 
 const PIN_KEY = 'askPin';
 
+/**
+ * Session-scoped override for the "new window in" provider that the
+ * fallback resolves to when no live pin exists. Set when the user
+ * picks a "New window in <X>" row from the Ask menu — the menu now
+ * acts as a default-picker rather than a sender, and this is how
+ * that pick survives until the next plain-Ask click. Cleared on
+ * browser restart so the user's Options-page default reasserts
+ * itself for fresh sessions.
+ *
+ * Lower priority than `askPin`: a still-alive pin always wins.
+ * Higher priority than `settings.default`: an in-session pick beats
+ * the persistent option.
+ */
+const PREFERRED_NEW_TAB_PROVIDER_KEY = 'askPreferredNewTabProvider';
+
 const NEW_TAB_LOAD_TIMEOUT_MS = 15000;
+
+async function readPreferredNewTabProvider(): Promise<AskProviderId | null> {
+  try {
+    const got = await chrome.storage.session.get(PREFERRED_NEW_TAB_PROVIDER_KEY);
+    const v = got[PREFERRED_NEW_TAB_PROVIDER_KEY];
+    return typeof v === 'string' ? (v as AskProviderId) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePreferredNewTabProvider(
+  provider: AskProviderId | null,
+): Promise<void> {
+  try {
+    if (provider === null) {
+      await chrome.storage.session.remove(PREFERRED_NEW_TAB_PROVIDER_KEY);
+    } else {
+      await chrome.storage.session.set({
+        [PREFERRED_NEW_TAB_PROVIDER_KEY]: provider,
+      });
+    }
+  } catch {
+    // Same rationale as writePin — session storage is best-effort.
+  }
+}
 
 async function readPin(): Promise<AskPin | null> {
   try {
@@ -213,6 +254,29 @@ export async function getAskPin(): Promise<AskPin | null> {
  */
 export async function setAskPin(pin: AskPin | null): Promise<void> {
   await writePin(pin);
+}
+
+/**
+ * Apply an Ask-menu default pick without sending. The menu's own
+ * onClick handlers route here so the user can shift the default
+ * destination (and the button label updates to match) without firing
+ * an Ask. The actual send happens on the next click of `#ask-btn`.
+ *
+ * - `existingTab`: writes `askPin` to that tab. Leaves the
+ *   preferred-new-tab override alone so unpinning later restores
+ *   the user's previous new-tab pick.
+ * - `newTab`: clears `askPin` (so the new pick takes precedence)
+ *   and writes the preferred-new-tab override. The persistent
+ *   Options-page default is untouched — this is a session-scoped
+ *   override only.
+ */
+export async function setAskDefault(destination: AskDestination): Promise<void> {
+  if (destination.kind === 'existingTab') {
+    await writePin({ provider: destination.provider, tabId: destination.tabId });
+  } else {
+    await writePin(null);
+    await writePreferredNewTabProvider(destination.provider);
+  }
 }
 
 /**
@@ -292,13 +356,29 @@ export interface AskResolution {
  */
 export async function resolveAsk(): Promise<AskResolution> {
   const settings = await getAskProviderSettings();
-  // Fallback target: the user's configured default if it's still an
-  // effective-enabled provider (adapter built AND user-enabled). The
-  // settings normalizer guarantees `settings.default` either points
-  // at a user-enabled provider or is null, so we only need to verify
-  // the static `provider.enabled` here.
+  // Fallback target priority for the "no live pin" path:
+  //   1. Session-scoped preferred new-tab provider (set by the Ask
+  //      menu's "New window in <X>" pick) — wins so an in-session
+  //      override beats the persistent setting.
+  //   2. The user's Options-page default if it's still an
+  //      effective-enabled provider (adapter built AND user-enabled).
+  //      The settings normalizer guarantees `settings.default` either
+  //      points at a user-enabled provider or is null, so we only
+  //      need to verify the static `provider.enabled` here.
   let fallbackProvider: AskProvider | null = null;
-  if (settings.default) {
+  const preferred = await readPreferredNewTabProvider();
+  if (preferred) {
+    const candidate = ASK_PROVIDERS.find((p) => p.id === preferred);
+    if (candidate && candidate.enabled && settings.enabled[candidate.id]) {
+      fallbackProvider = candidate;
+    } else {
+      // Preferred provider has been disabled (Options) or removed
+      // since the pick — drop the override so the next resolve uses
+      // the persistent default cleanly.
+      await writePreferredNewTabProvider(null);
+    }
+  }
+  if (!fallbackProvider && settings.default) {
     const candidate = ASK_PROVIDERS.find((p) => p.id === settings.default);
     if (candidate && candidate.enabled) fallbackProvider = candidate;
   }
@@ -894,7 +974,7 @@ function friendlyInjectError(err: unknown): string {
 }
 
 interface AskMessage {
-  action: 'askAi' | 'askAiDefault' | 'askListProviders';
+  action: 'askAiDefault' | 'askListProviders' | 'askSetDefault';
   destination?: AskDestination;
   payload?: AskPayload;
 }
@@ -906,7 +986,10 @@ interface AskMessage {
  *   Response includes `defaultDestination` (the row plain-Ask
  *   will hit, gets a green check) and `staleTabPin` (a still-alive
  *   pinned tab that's now on a wrong page, gets a greyed check).
- * - `askAi` — send to a specific destination (menu pick).
+ * - `askSetDefault` — apply a menu pick as the new default
+ *   destination (writes the pin or the preferred-new-tab provider).
+ *   Doesn't send; the page fires the actual Ask on the next click
+ *   of `#ask-btn`.
  * - `askAiDefault` — resolve + send to the current default. Lets
  *   the page invoke pin-or-fallback in one round-trip.
  *
@@ -929,12 +1012,19 @@ export function installAskMessageHandler(): void {
         );
         return true;
       }
-      if (msg?.action === 'askAi') {
-        if (!msg.destination || !msg.payload) {
-          sendResponse({ ok: false, error: 'Missing destination or payload' });
+      if (msg?.action === 'askSetDefault') {
+        if (!msg.destination) {
+          sendResponse({ ok: false, error: 'Missing destination' });
           return false;
         }
-        void sendToAi(msg.destination, msg.payload).then(sendResponse);
+        void setAskDefault(msg.destination)
+          .then(() => sendResponse({ ok: true }))
+          .catch((err: unknown) => {
+            sendResponse({
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         return true;
       }
       if (msg?.action === 'askAiDefault') {

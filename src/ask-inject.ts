@@ -347,9 +347,10 @@
       return;
     }
     // Note: a whitespace-only prompt (e.g. just "\n\n") never reaches
-    // here — capture-page.ts trims the input in `runAsk`, which both
-    // suppresses auto-submit and short-circuits the all-empty case
-    // ("Nothing to send — check at least one box or type a prompt.").
+    // here — capture-page.ts trims the input in `buildAskPayload`,
+    // which both suppresses auto-submit and short-circuits the
+    // all-empty case ("Nothing to send — check at least one box or
+    // type a prompt.").
     const input = findRanked<HTMLElement>('textInput', selectors.textInput);
     if (!input) throw new Error('Could not find the prompt input');
     input.focus();

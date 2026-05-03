@@ -144,6 +144,17 @@ const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElem
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
 const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElement;
+// `#ask-status` started life as the Ask flow's status line and now
+// also surfaces Capture-flow errors. Reused rather than duplicated
+// because both buttons live in the same control stack and the user
+// has one place to look for "what just happened" feedback.
+const pageStatus = document.getElementById('ask-status') as HTMLDivElement;
+function setStatusMessage(text: string, kind: 'ok' | 'error' | 'info'): void {
+  pageStatus.textContent = text;
+  pageStatus.classList.remove('ask-status-ok', 'ask-status-error');
+  if (kind === 'ok') pageStatus.classList.add('ask-status-ok');
+  else if (kind === 'error') pageStatus.classList.add('ask-status-error');
+}
 const previewImg = document.getElementById('preview') as HTMLImageElement;
 const capturedTitleLink = document.getElementById('captured-title') as HTMLAnchorElement;
 const capturedUrlLink = document.getElementById('captured-url') as HTMLAnchorElement;
@@ -619,6 +630,24 @@ let currentDefaultButton: 'capture' | 'ask' = 'capture';
 let currentPromptEnter: 'send' | 'newline' = 'send';
 
 /**
+ * Resolve a "close the Capture page after the action?" decision
+ * from a click event's modifier keys. Shared by the Capture and
+ * Ask buttons so both surfaces get the same modifier semantics:
+ *
+ *   - shift-click → keep the page open (returns `false`).
+ *   - ctrl-click  → close the page (returns `true`).
+ *   - plain click → the button's own default (`defaultClose`).
+ *
+ * shift wins over ctrl when both are held, so an ambiguous chord
+ * defaults to the safer "don't disappear the preview" outcome.
+ */
+function closeAfterFromModifiers(e: MouseEvent, defaultClose: boolean): boolean {
+  if (e.shiftKey) return false;
+  if (e.ctrlKey) return true;
+  return defaultClose;
+}
+
+/**
  * Apply / refresh the `.is-default` class so exactly one of the
  * Capture button or the Ask split widget shows the "default action"
  * highlight ring. Looking up the .ask-split element lazily so this
@@ -731,15 +760,19 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     captureBtn.click();
   } else if (key === 'a') {
-    // Alt+A opens the Ask menu (or closes it if already open). The
-    // keyboard path opens the menu rather than firing the default
-    // send so the user gets a chance to pick a different target —
-    // mirrors the behaviour the menu had before pinning landed. No-
-    // op while the caret is disabled (in-flight Ask) so a double-
-    // press doesn't queue a second send.
-    if (askCaret.disabled) return;
+    // Alt+A fires the Ask button against the currently-resolved
+    // default destination — same as a plain mouse click on
+    // `#ask-btn`. The menu was rebuilt as a default-picker (see
+    // the Ask flow header in this file), so opening it from the
+    // keyboard would force a useless second key for "send";
+    // firing immediately matches the Capture-button hotkey
+    // (Alt+C) and the muscle memory the keyboard path had before
+    // the menu existed. No-op while the button is disabled
+    // (in-flight Ask, no providers enabled) so a double-press
+    // doesn't queue a second send.
+    if (askBtn.disabled) return;
     e.preventDefault();
-    askCaret.click();
+    askBtn.click();
   } else if (key === 's') {
     if (screenshotBox.disabled) return;
     e.preventDefault();
@@ -2663,17 +2696,24 @@ function editFlags(): { hasHighlights: boolean; hasRedactions: boolean; isCroppe
   return { hasHighlights, hasRedactions, isCropped: activeCrop() !== undefined };
 }
 
-captureBtn.addEventListener('click', () => {
-  // Disable the button so double-clicks can't re-submit. The
-  // background handler returns false from the onMessage listener
-  // (no response expected), so `sendMessage` would resolve with
-  // `undefined` as soon as the message is dispatched — *not* when
-  // the save completes. We fire-and-forget instead of awaiting so
-  // it's obvious that nothing here is waiting on the save; the
-  // background closes this tab itself when `saveDetails` finishes
-  // (its `recordDetailedCapture` call resolves, or fails and the
-  // finally block fires).
+captureBtn.addEventListener('click', (e) => {
+  // Disable the button so double-clicks can't re-submit. We always
+  // wait for the SW response now: the SW reports save errors back
+  // through the message channel rather than the toolbar tooltip
+  // (the page has a status slot right next to the buttons that
+  // produced the error), so the page-side handler has to be there
+  // to receive it. The SW closes this tab itself on a successful
+  // close-after-save; on a failure it leaves the tab open so the
+  // user can read the error and recover from the same preview.
   captureBtn.disabled = true;
+  // Modifier semantics — same on both Capture and Ask buttons:
+  //   - shift-click: do the action, keep the page open.
+  //   - ctrl-click:  do the action, close the page after.
+  //   - plain click: each button's default (Capture closes, Ask
+  //     stays open), kept for muscle memory.
+  // shift wins when both are held — leans toward the safer "don't
+  // disappear the preview" outcome on ambiguous chords.
+  const closeAfter = closeAfterFromModifiers(e, true);
 
   try {
     // Only bake edits into a fresh PNG when both apply: there's
@@ -2693,24 +2733,58 @@ captureBtn.addEventListener('click', () => {
       ? editFlags()
       : { hasHighlights: false, hasRedactions: false, isCropped: false };
 
-    void chrome.runtime.sendMessage({
-      action: 'saveDetails',
-      screenshot: screenshotBox.checked,
-      html: htmlBox.checked,
-      selectionFormat: selectedSelectionFormat(),
-      prompt: promptInput.value.trim(),
-      highlights: flags.hasHighlights,
-      hasRedactions: flags.hasRedactions,
-      isCropped: flags.isCropped,
-      editVersion,
-      screenshotOverride,
-    });
+    setStatusMessage('Saving…', 'info');
+    void (async () => {
+      let response: { ok?: boolean; error?: string } | undefined;
+      try {
+        response = (await chrome.runtime.sendMessage({
+          action: 'saveDetails',
+          screenshot: screenshotBox.checked,
+          html: htmlBox.checked,
+          selectionFormat: selectedSelectionFormat(),
+          prompt: promptInput.value.trim(),
+          highlights: flags.hasHighlights,
+          hasRedactions: flags.hasRedactions,
+          isCropped: flags.isCropped,
+          editVersion,
+          screenshotOverride,
+          closeAfter,
+        })) as { ok?: boolean; error?: string } | undefined;
+      } catch (err) {
+        // Channel-disconnect on a closeAfter=true save is normal
+        // (the SW closes the tab and the response can race the
+        // teardown). Surface the error only when we expected to
+        // stay open — otherwise it's the expected "tab gone"
+        // signal and the page is on its way out anyway.
+        if (!closeAfter) {
+          setStatusMessage(
+            `Capture failed: ${err instanceof Error ? err.message : String(err)}`,
+            'error',
+          );
+          captureBtn.disabled = false;
+        }
+        return;
+      }
+      if (response?.ok) {
+        // closeAfter=true → SW will close us in a moment. Showing
+        // "Saved." briefly is fine; the message disappears with
+        // the tab. closeAfter=false leaves the user reading it.
+        setStatusMessage('Saved.', 'ok');
+        if (!closeAfter) captureBtn.disabled = false;
+      } else {
+        setStatusMessage(response?.error ?? 'Capture failed.', 'error');
+        captureBtn.disabled = false;
+      }
+    })();
   } catch (err) {
-    // If renderHighlightedPng (canvas / toDataURL) or sendMessage
-    // throws synchronously, we'd otherwise leave the button stuck
-    // disabled with no way for the user to retry. Re-enable and
-    // log the error so the user can try again.
+    // Synchronous failure (e.g. renderHighlightedPng / toDataURL
+    // throwing). Re-enable so the user can retry, surface the
+    // failure in the page status slot rather than the toolbar.
     console.warn('[SeeWhatISee] capture submit failed:', err);
+    setStatusMessage(
+      `Capture failed: ${err instanceof Error ? err.message : String(err)}`,
+      'error',
+    );
     captureBtn.disabled = false;
   }
 });
@@ -2729,19 +2803,25 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
 
 // ─── Ask flow ─────────────────────────────────────────────────────
 //
-// Two click targets in the Ask split widget:
+// Two click targets in the Ask split widget — only `#ask-btn` ever
+// sends:
 //   - `#ask-btn`   → resolve default destination via the SW (pinned
-//                    tab if alive, else "new window in" the first
-//                    enabled provider) and send straight to it. No
-//                    menu.
+//                    tab if alive, else preferred-new-tab provider,
+//                    else the user's Options-page default) and send
+//                    to it. shift-click keeps the page open after;
+//                    ctrl-click closes it on success.
 //   - `#ask-caret` → fetch the providers + their open tabs + the
 //                    same resolved default → render the menu with a
 //                    leading check on whichever item plain-Ask would
-//                    have hit. Picking an item sends to it.
+//                    have hit. Picking an item updates the default
+//                    (writes the pin or the preferred-new-tab
+//                    provider) and refreshes the button label, but
+//                    does NOT send. The user fires the send with a
+//                    follow-up click on `#ask-btn` (or Alt+A).
 //
-// In both paths the payload is built from the Capture-page state the
-// Capture button reads. The SW handles tab focus + script injection,
-// and pins the chosen destination so the next plain-Ask reuses the
+// The payload is built from the Capture-page state the Capture
+// button reads. The SW handles tab focus + script injection, and
+// pins the chosen destination so the next plain-Ask reuses the
 // same tab.
 
 interface AskTabSummary {
@@ -2773,7 +2853,6 @@ const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
 const askCaret = document.getElementById('ask-caret') as HTMLButtonElement;
 const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
 const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
-const askStatus = document.getElementById('ask-status') as HTMLDivElement;
 const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
 const askBtnIconUse = document.querySelector(
   '#ask-btn-icon use',
@@ -2948,6 +3027,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
     void refreshAskTargetLabel();
     return;
   }
+  if (area === 'session' && changes['askPreferredNewTabProvider']) {
+    // A menu pick in another Capture-page tab (or this one's last
+    // pick once the SW finishes writing) just shifted which
+    // provider the fallback resolves to. Refresh so the button
+    // label and trailing icon match the new resolution.
+    void refreshAskTargetLabel();
+    return;
+  }
   if (area === 'local' && changes['capturePageDefaults']) {
     const next = changes['capturePageDefaults'].newValue as
       | { defaultButton?: 'capture' | 'ask'; promptEnter?: 'send' | 'newline' }
@@ -2960,13 +3047,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
   }
 });
-
-function setAskStatus(text: string, kind: 'ok' | 'error' | 'info'): void {
-  askStatus.textContent = text;
-  askStatus.classList.remove('ask-status-ok', 'ask-status-error');
-  if (kind === 'ok') askStatus.classList.add('ask-status-ok');
-  else if (kind === 'error') askStatus.classList.add('ask-status-error');
-}
 
 // Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
 // closeAskMenu() clears it so a close that happens *before* the timer
@@ -3144,11 +3224,7 @@ async function openAskMenu(): Promise<void> {
         onClick: provider.enabled
           ? () => {
               closeAskMenu();
-              void runAsk(
-                dest,
-                provider.newTabAcceptedAttachmentKinds,
-                provider.label,
-              );
+              void setAskDefaultDestination(dest);
             }
           : undefined,
       }),
@@ -3175,7 +3251,6 @@ async function openAskMenu(): Promise<void> {
         provider: provider.id,
         tabId: tab.tabId,
       };
-      const tabKinds = tab.acceptedAttachmentKinds;
       askMenuList.appendChild(
         renderAskMenuItem({
           label: tab.title || tab.url || `Tab ${tab.tabId}`,
@@ -3200,7 +3275,7 @@ async function openAskMenu(): Promise<void> {
             ? undefined
             : () => {
                 closeAskMenu();
-                void runAsk(dest, tabKinds, tab.destinationDisplayName);
+                void setAskDefaultDestination(dest);
               },
         }),
       );
@@ -3212,12 +3287,63 @@ askCaret.addEventListener('click', () => {
   void openAskMenu();
 });
 
-askBtn.addEventListener('click', () => {
+askBtn.addEventListener('click', (e) => {
   // Close the menu if it happens to be open (e.g. user opened via
   // the caret then changed their mind and hit the main button).
   if (!askMenu.hidden) closeAskMenu();
-  void runAskDefault();
+  // Modifier semantics mirror the Capture button:
+  //   - shift-click → keep the page open after the Ask (also the
+  //     default — Ask doesn't close on plain click since the user
+  //     usually wants to glance at the destination tab and return).
+  //   - ctrl-click  → close the Capture page once the SW reports
+  //     a successful send. Useful when the user is done with this
+  //     capture and the tab is just clutter.
+  void runAskDefault(closeAfterFromModifiers(e, false));
 });
+
+/**
+ * Apply a menu pick as the new Ask default and refresh the button
+ * label to match. Doesn't send — the menu is a default-picker, not
+ * a sender. The next click on `#ask-btn` (or Alt+A) does the send
+ * against this newly-set default.
+ *
+ * Disables both Ask buttons for the duration of the SW round-trip
+ * so a fast follow-up click on `#ask-btn` can't fire an
+ * `askAiDefault` message that arrives at the SW before the
+ * `askSetDefault` write lands — the page-side disable forces the
+ * second click to wait for the first to settle.
+ * `refreshAskTargetLabel` re-enables the buttons in the finally
+ * block based on the now-resolved state.
+ *
+ * Failures are surfaced in the ask-status line; the button label
+ * still gets a refresh attempt either way so a partial write
+ * (pin set, label fetch failed) doesn't lie about the resolved
+ * default.
+ */
+async function setAskDefaultDestination(destination: AskDestination): Promise<void> {
+  askBtn.disabled = true;
+  askCaret.disabled = true;
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      action: 'askSetDefault',
+      destination,
+    })) as { ok?: boolean; error?: string } | undefined;
+    if (!response?.ok) {
+      setStatusMessage(response?.error ?? 'Failed to set default.', 'error');
+    } else {
+      // Clear any lingering error from a previous Ask so the new
+      // default-set isn't visually shouted at by stale red text.
+      setStatusMessage('', 'info');
+    }
+  } catch (err) {
+    setStatusMessage(
+      `Failed to set default: ${err instanceof Error ? err.message : String(err)}`,
+      'error',
+    );
+  } finally {
+    await refreshAskTargetLabel();
+  }
+}
 
 interface AskAttachment {
   data: string;
@@ -3295,7 +3421,7 @@ function buildAskPayload(): {
   const promptText = promptInput.value.trim();
   const attachments = buildAskAttachments();
   if (attachments.length === 0 && promptText.length === 0) {
-    setAskStatus(
+    setStatusMessage(
       'Nothing to send — check at least one box or type a prompt.',
       'error',
     );
@@ -3322,20 +3448,22 @@ function buildAskPayload(): {
  * success, refresh the button label since the SW may have just
  * pinned a different destination.
  */
-async function runAskWithMessage(message: {
-  action: 'askAi' | 'askAiDefault';
-  destination?: AskDestination;
-  payload: NonNullable<ReturnType<typeof buildAskPayload>>;
-}): Promise<void> {
+async function runAskWithMessage(
+  message: {
+    action: 'askAiDefault';
+    payload: NonNullable<ReturnType<typeof buildAskPayload>>;
+  },
+  closeAfter: boolean,
+): Promise<void> {
   askBtn.disabled = true;
   askCaret.disabled = true;
-  setAskStatus('Sending…', 'info');
+  setStatusMessage('Sending…', 'info');
   try {
     const response = (await chrome.runtime.sendMessage(message)) as
       | { ok: boolean; error?: string; skipped?: string[] }
       | undefined;
     if (!response) {
-      setAskStatus('No response from background.', 'error');
+      setStatusMessage('No response from background.', 'error');
       return;
     }
     if (!response.ok) {
@@ -3349,16 +3477,22 @@ async function runAskWithMessage(message: {
         response.skipped && response.skipped.length > 0
           ? ` Skipped: ${response.skipped.join(', ')}.`
           : '';
-      setAskStatus((response.error ?? 'Ask failed.') + skippedSuffix, 'error');
+      setStatusMessage((response.error ?? 'Ask failed.') + skippedSuffix, 'error');
       return;
     }
-    setAskStatus('Sent.', 'ok');
-    // Refresh after success: a "New window in X" pick just turned
-    // into a pin against the freshly-created tab, so the next plain
-    // Ask should target it. The label needs to reflect that.
+    setStatusMessage('Sent.', 'ok');
+    // Refresh after success: a successful Ask may have updated the
+    // pin (sendToAi pins the destination on success), so the label
+    // needs to reflect that.
     void refreshAskTargetLabel();
+    // ctrl-click → close the Capture page now that the Ask landed.
+    // Skipped on failure (the user keeps the page open as a
+    // recovery surface — Copy/Download buttons are still here).
+    if (closeAfter) {
+      void chrome.runtime.sendMessage({ action: 'closeCapturePage' });
+    }
   } catch (err) {
-    setAskStatus(
+    setStatusMessage(
       `Ask failed: ${err instanceof Error ? err.message : String(err)}`,
       'error',
     );
@@ -3375,18 +3509,7 @@ async function runAskWithMessage(message: {
   }
 }
 
-async function runAsk(
-  destination: AskDestination,
-  acceptedKinds: ('image' | 'text')[] | undefined,
-  displayName: string | undefined,
-): Promise<void> {
-  if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
-  const payload = buildAskPayload();
-  if (!payload) return;
-  await runAskWithMessage({ action: 'askAi', destination, payload });
-}
-
-async function runAskDefault(): Promise<void> {
+async function runAskDefault(closeAfter: boolean): Promise<void> {
   if (
     !checkDestinationAcceptsCheckedBoxes(
       currentDefaultAcceptedKinds,
@@ -3395,7 +3518,7 @@ async function runAskDefault(): Promise<void> {
   ) return;
   const payload = buildAskPayload();
   if (!payload) return;
-  await runAskWithMessage({ action: 'askAiDefault', payload });
+  await runAskWithMessage({ action: 'askAiDefault', payload }, closeAfter);
 }
 
 /**
@@ -3451,7 +3574,7 @@ function checkDestinationAcceptsCheckedBoxes(
     : `${offending.slice(0, -1).join(', ')} and ${offending[offending.length - 1]}`;
   const kindList = formatAcceptedKinds(acceptedKinds);
   const name = displayName ?? 'Destination';
-  setAskStatus(
+  setStatusMessage(
     `${name} only accepts ${kindList} attachments; uncheck ${list}.`,
     'error',
   );

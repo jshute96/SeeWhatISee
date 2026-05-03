@@ -26,6 +26,7 @@ import {
   findCapturedDownload,
   openDetailsFlow,
   readLatestRecord,
+  setEditorCode,
 } from './details-helpers';
 import { type CaptureRecord } from '../fixtures/files';
 
@@ -188,6 +189,246 @@ test('details: url-only with no prompt', async ({
   expect(record.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(record.title).toBe('purple');
 
+  await openerPage.close();
+});
+
+// ─── Error routing: surfaces in #ask-status, not the toolbar ────
+
+test('details: saveDetails failure surfaces in #ask-status, leaves toolbar untouched, keeps the page open even on a plain click', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Force a failure inside the SW's `saveDetails` handler by
+  // wiping the per-tab DetailsSession after the Capture page has
+  // loaded. The handler's first step is `requireDetailsSession`
+  // which now throws "Capture data missing …", and the new error-
+  // routing contract says:
+  //   - Page renders the message in #ask-status (not the toolbar).
+  //   - Toolbar tooltip is left alone.
+  //   - The Capture page stays open even when closeAfter was true
+  //     (plain click, the default close-after-save path), so the
+  //     user keeps the preview as a recovery surface.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Snapshot the toolbar tooltip BEFORE the click so we can
+  // assert it didn't change underneath us.
+  const tooltipBefore = await sw.evaluate(() => chrome.action.getTitle({}));
+
+  // Wipe the session entry for this Capture page tab. Storage key
+  // mirrors `detailsStorageKey(tabId)` in the SW.
+  await sw.evaluate(async () => {
+    const entries = await chrome.storage.session.get(null);
+    const keys = Object.keys(entries).filter((k) => k.startsWith('captureDetails_'));
+    if (keys.length > 0) await chrome.storage.session.remove(keys);
+  });
+
+  // Plain click (closeAfter defaults to true). The save fails, so
+  // the page must stay open and surface the error inline.
+  await capturePage.locator('#capture').click();
+
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'Capture data missing',
+    { timeout: 10_000 },
+  );
+  await expect(capturePage.locator('#ask-status')).toHaveClass(/ask-status-error/);
+  expect(capturePage.isClosed()).toBe(false);
+
+  const tooltipAfter = await sw.evaluate(() => chrome.action.getTitle({}));
+  expect(tooltipAfter).toBe(tooltipBefore);
+  expect(tooltipAfter).not.toContain('ERROR');
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('details: shift-click capture keeps the page open and the second capture reuses the same files', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Shift-clicking Capture writes the artifacts + log entry but
+  // leaves the page open AND keeps the per-tab session intact, so a
+  // second Capture click can run against the same staged content.
+  // Both captures should reuse the same on-disk files (no edits in
+  // between → unchanged revision → locked filename reused) and
+  // log.json should hold two records pointing at the same names.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Save HTML alongside the screenshot so we exercise both bump
+  // paths (image + text artifact).
+  await capturePage.locator('#cap-html').check();
+
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+
+  // Second capture, no edits in between. Status flips back to
+  // "Saved." and the page stays open.
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+
+  const sw = await getServiceWorker();
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const lines = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n');
+  // Two log entries — one per save — with identical filenames since
+  // nothing changed in between. `-1` would be a regression.
+  const records: CaptureRecord[] = lines
+    .slice(-2)
+    .map((l) => JSON.parse(l));
+  expect(records).toHaveLength(2);
+  expect(records[0].screenshot?.filename).toBeDefined();
+  expect(records[0].screenshot?.filename).toBe(records[1].screenshot?.filename);
+  expect(records[0].contents?.filename).toBe(records[1].contents?.filename);
+  expect(records[0].screenshot?.filename).not.toContain('-1.');
+  expect(records[0].contents?.filename).not.toContain('-1.');
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+test('details: edit between shift-clicks → second capture writes a new -1 file and references it', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // After Capture locks a file, the next save with edited content
+  // must NOT trample the locked file — it writes a fresh `-N` name
+  // and the new log record points at the new file. The original
+  // file stays on disk untouched.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await capturePage.locator('#cap-html').check();
+
+  // First capture — locks both filenames.
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+
+  // Edit the HTML body via the Edit-HTML dialog so the next save
+  // sees a diverged revision.
+  await capturePage.locator('#edit-html').click();
+  await setEditorCode(
+    capturePage.locator('#edit-html-textarea'),
+    '<html><body><p>edited body</p></body></html>',
+  );
+  await capturePage.locator('#edit-html-save').click();
+  await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty(
+    'open',
+    false,
+  );
+
+  // Second capture against the edited HTML.
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+
+  const sw = await getServiceWorker();
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const lines = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n');
+  const records: CaptureRecord[] = lines
+    .slice(-2)
+    .map((l) => JSON.parse(l));
+
+  // HTML filename diverges across the two saves — second carries
+  // `-1` before the extension. Screenshot is unchanged so its
+  // filename stays the same.
+  expect(records[0].contents?.filename).toBeDefined();
+  expect(records[1].contents?.filename).toBeDefined();
+  expect(records[0].contents?.filename).not.toBe(records[1].contents?.filename);
+  expect(records[1].contents?.filename).toMatch(/-1\.html$/);
+  expect(records[0].screenshot?.filename).toBe(records[1].screenshot?.filename);
+
+  // The base file from the first capture stays on disk untouched
+  // (the bump means the second save lands at a different name).
+  // The SW spy in `__seeDl` records every download by intended
+  // filename, so two distinct contents-*.html entries means two
+  // distinct files were written rather than one being overwritten.
+  // (chrome.downloads.search reports random uuids as the basename
+  // under headless test profiles, so it's not usable here for
+  // filename assertions.)
+  const downloadedBasenames = await sw.evaluate(() => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    return ((self as unknown as SpyState).__seeDl ?? [])
+      .map((d) => d.name.split(/[\\/]/).pop() ?? '');
+  });
+  expect(downloadedBasenames).toEqual(
+    expect.arrayContaining([
+      records[0].contents!.filename,
+      records[1].contents!.filename,
+    ]),
+  );
+
+  await capturePage.close();
+  await openerPage.close();
+});
+
+// ─── Click modifier coverage ─────────────────────────────────────
+
+test('details: ctrl-click capture closes the page (matches plain click default)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Ctrl-click is the explicit "close after the action" modifier.
+  // For Capture that lines up with the plain-click default, but
+  // pinning it here keeps the chord working if the default ever
+  // changes (and is the symmetric counterpart of ctrl-click Ask,
+  // which is the more interesting one).
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#capture').click({ modifiers: ['Control'] }),
+  ]);
+  expect(capturePage.isClosed()).toBe(true);
+
+  await openerPage.close();
+});
+
+test('details: shift+ctrl chord on capture keeps the page open (shift wins)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Documented chord precedence: shift wins over ctrl, leaning
+  // toward the safer "don't disappear the preview" outcome.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await capturePage.locator('#capture').click({ modifiers: ['Shift', 'Control'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+
+  await capturePage.close();
   await openerPage.close();
 });
 

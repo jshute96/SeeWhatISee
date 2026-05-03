@@ -805,7 +805,16 @@ test('ask error: preview selectors that match nothing → "could not verify" mes
   await openerPage.close();
 });
 
-test('ask error: target tab closed between menu render and click', async ({
+// ─── Pin liveness across menu pick → tab dies → Ask click ────────
+//
+// Menu picks now set the default rather than send. The "tab dies
+// between menu render and item click" race the old behavior had
+// is gone — instead, the user can pick a tab as default, that tab
+// can later die / navigate away / land on a wrong page, and the
+// next plain Ask still resolves cleanly. `resolveAsk` is the
+// arbiter; these tests pin the user-visible outcome.
+
+test('pin: existing-tab pick falls back to a new tab when the pinned tab closes before send', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -822,28 +831,39 @@ test('ask error: target tab closed between menu render and click', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: false,
-    prompt: 'to a closed tab',
+    prompt: 'pin then close',
   });
 
+  // Pick the fake-Claude tab as the default destination, then kill
+  // it. The Ask click that follows hits resolveAsk, which clears
+  // the dead pin lazily and falls through to a fresh new-tab.
   await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
-
-  // Close the fake-Claude tab between menu render and item click.
-  // sendToAi's pre-send URL guard catches the missing tab and
-  // surfaces "Tab is no longer open; …" before any inject attempt.
+  await capturePage
+    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
+    .click();
+  // Wait for the default-set round-trip to settle (button re-enables
+  // when refreshAskTargetLabel finishes), then close the pinned tab
+  // before clicking Ask.
+  await expect(capturePage.locator('#ask-btn')).toBeEnabled();
   await claudePage.close();
 
-  await clickExistingFakeClaudeItem(capturePage);
+  await capturePage.locator('#ask-btn').click();
 
-  await expect(capturePage.locator('#ask-status')).toContainText(
-    'Claude tab is no longer open',
-    { timeout: 10_000 },
-  );
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+  // A fresh fake-Claude tab was opened to land the send.
+  const opened = extensionContext
+    .pages()
+    .filter((p) => p.url().endsWith('/fake-claude.html'));
+  expect(opened).toHaveLength(1);
+  await opened[0].close();
 
   await openerPage.close();
 });
 
-test('ask error: target tab navigated off provider between menu render and click', async ({
+test('pin: existing-tab pick falls back when the pinned tab navigates off the provider', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -860,29 +880,40 @@ test('ask error: target tab navigated off provider between menu render and click
   await configureCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: false,
-    prompt: 'to a navigated tab',
+    prompt: 'pin then navigate off',
   });
 
   await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
-
-  // Navigate the fake-Claude tab to a non-provider URL between menu
-  // render and item click. The pre-send URL guard should refuse
-  // before any inject attempt.
+  await capturePage
+    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
+    .click();
+  await expect(capturePage.locator('#ask-btn')).toBeEnabled();
+  // Navigate the pinned tab off the provider's host before sending.
+  // resolveAsk's stillProvider check should drop the pin and the
+  // fallback should open a fresh fake-Claude tab.
   await claudePage.goto(`${fixtureServer.baseUrl}/green.html`);
 
-  await clickExistingFakeClaudeItem(capturePage);
+  await capturePage.locator('#ask-btn').click();
 
-  await expect(capturePage.locator('#ask-status')).toContainText(
-    'Tab is no longer on Claude',
-    { timeout: 10_000 },
-  );
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+  const opened = extensionContext
+    .pages()
+    .filter((p) => p.url().endsWith('/fake-claude.html'));
+  // The original fake-Claude tab is still around (it just navigated
+  // off — we then went back via the new tab opened by the fallback).
+  // Count only the live `/fake-claude.html` pages: should be exactly
+  // one (the freshly-opened fallback).
+  expect(opened).toHaveLength(1);
+  await opened[0].close();
 
   await claudePage.close();
   await openerPage.close();
 });
 
-test('ask error: target tab navigated to an excluded URL between menu render and click', async ({
+test('pin: existing-tab pick falls back when the pinned tab navigates to an excluded URL', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -893,8 +924,8 @@ test('ask error: target tab navigated to an excluded URL between menu render and
     getServiceWorker,
   );
   const sw = await getServiceWorker();
-  // Mark `?excluded` URLs on the fake-Claude page as non-chat (mirrors
-  // real Claude's settings/library/recents exclusion list).
+  // Mark `?excluded` URLs on the fake-Claude page as non-chat
+  // (mirrors real Claude's settings/library/recents exclusion list).
   await overrideAskProviders(sw, fixtureServer.baseUrl, {
     excludeUrlPatterns: ['*excluded*'],
   });
@@ -903,23 +934,34 @@ test('ask error: target tab navigated to an excluded URL between menu render and
   await configureCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: false,
-    prompt: 'to an excluded url',
+    prompt: 'pin then to excluded',
   });
 
   await capturePage.locator('#ask-caret').click();
   await waitForAskMenuReady(capturePage);
-
-  // Navigate within the same fake-Claude origin to a URL that matches
-  // the exclude pattern. The guard's "still on provider but excluded"
-  // branch should report a different error than the off-provider case.
+  await capturePage
+    .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
+    .click();
+  await expect(capturePage.locator('#ask-btn')).toBeEnabled();
+  // Same host, wrong page. The pin is kept (so a navigation back
+  // restores it) but resolveAsk's `excluded` branch routes the
+  // resolution to the new-tab fallback for *this* send.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
 
-  await clickExistingFakeClaudeItem(capturePage);
+  await capturePage.locator('#ask-btn').click();
 
-  await expect(capturePage.locator('#ask-status')).toContainText(
-    'no longer on a Claude chat page',
-    { timeout: 10_000 },
-  );
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+  const opened = extensionContext
+    .pages()
+    .filter(
+      (p) =>
+        p.url().endsWith('/fake-claude.html')
+        && p !== claudePage,
+    );
+  expect(opened).toHaveLength(1);
+  await opened[0].close();
 
   await claudePage.close();
   await openerPage.close();
@@ -927,11 +969,16 @@ test('ask error: target tab navigated to an excluded URL between menu render and
 
 // ─── Keyboard binding ────────────────────────────────────────────
 
-test('Alt+A opens the Ask menu (does not direct-send)', async ({
+test('Alt+A fires the Ask button (does not open the menu)', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
+  // Alt+A is now equivalent to clicking #ask-btn — the menu is a
+  // default-picker, so opening it from the keyboard would force a
+  // useless second key for "send." This test pins the new
+  // contract: menu stays hidden, status flips to "Sent." against
+  // the resolved default destination.
   const { openerPage, capturePage } = await openDetailsFlow(
     extensionContext,
     fixtureServer,
@@ -939,23 +986,129 @@ test('Alt+A opens the Ask menu (does not direct-send)', async ({
   );
   const sw = await getServiceWorker();
   await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
 
-  // Configure the page so a direct-send *would* succeed if Alt+A
-  // somehow hit the main button — distinguishes "menu opened" from
-  // "send fired" (which would set #ask-status to "Sending…/Sent.").
   await configureCapture(capturePage, {
     saveScreenshot: true,
     saveHtml: false,
-    prompt: 'should not send',
+    prompt: 'sent via Alt+A',
   });
 
   await capturePage.locator('body').focus();
   await capturePage.keyboard.press('Alt+a');
 
-  await waitForAskMenuReady(capturePage);
-  await expect(capturePage.locator('#ask-menu')).toBeVisible();
-  // Status line untouched — no send fired.
-  await expect(capturePage.locator('#ask-status')).toHaveText('');
+  // Status line lights up because the keyboard path now sends.
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 10_000,
+  });
+  // Menu must not have opened — Alt+A is no longer a caret click.
+  await expect(capturePage.locator('#ask-menu')).toBeHidden();
 
+  await claudePage.close();
+  await openerPage.close();
+});
+
+// ─── Click modifier coverage on #ask-btn ─────────────────────────
+
+test('ask: shift-click leaves the page open after a successful Ask (matches plain-click default)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Plain click on #ask-btn already leaves the page open. Shift-
+  // click has the same outcome — pinning it here keeps the chord
+  // working symmetrically with the Capture button's shift-click.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'shift-click ask',
+  });
+  await capturePage.locator('#ask-btn').click({ modifiers: ['Shift'] });
+
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+
+  await capturePage.close();
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('ask: ctrl-click closes the Capture page after a successful Ask', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Ctrl-click is the explicit "send and dismiss" gesture. After
+  // a successful send the page-side handler posts
+  // `closeCapturePage` to the SW, which re-activates the opener
+  // and removes the tab — the same dance saveDetails uses on its
+  // happy path.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'ctrl-click ask',
+  });
+
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#ask-btn').click({ modifiers: ['Control'] }),
+  ]);
+  expect(capturePage.isClosed()).toBe(true);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('ask: shift+ctrl chord keeps the page open (shift wins)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Documented chord precedence on both buttons: shift wins over
+  // ctrl, leaning toward the safer "don't disappear the preview"
+  // outcome.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'shift+ctrl ask',
+  });
+  await capturePage.locator('#ask-btn').click({ modifiers: ['Shift', 'Control'] });
+
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+
+  await capturePage.close();
+  await claudePage.close();
   await openerPage.close();
 });

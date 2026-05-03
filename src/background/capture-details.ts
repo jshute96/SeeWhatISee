@@ -10,7 +10,7 @@ import {
   type InMemoryCapture,
   type SelectionFormat,
 } from '../capture.js';
-import { runWithErrorReporting } from './error-reporting.js';
+import { clearCaptureError } from './error-reporting.js';
 import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 
 // "Capture page" flow. We grab both the screenshot and
@@ -83,10 +83,130 @@ export interface DetailsSession {
    */
   htmlEdited?: boolean;
   selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
+  /**
+   * Per-artifact monotonic edit counters bumped by `applyArtifactEdit`
+   * each time the user commits an edit in the corresponding dialog.
+   * Used by the multi-capture filename strategy: each
+   * `recordDetailedCapture` snapshots the current revision into
+   * `saved.<artifact>.revision`, and the next save compares the
+   * snapshot to the latest counter to decide whether to reuse the
+   * locked filename or bump a `-N` suffix.
+   *
+   * Screenshot edits are tracked on the page side via the
+   * `editVersion` integer the page passes through `ensureDownloaded`
+   * / `saveDetails`, so there's no entry here for it — the same
+   * counter plays the role for the bump logic.
+   */
+  revisions?: {
+    html?: number;
+    selection?: Partial<Record<SelectionFormat, number>>;
+  };
+  /**
+   * Filenames + revisions snapshotted after a successful
+   * `recordDetailedCapture`. Each entry says "this artifact was
+   * written to disk under this name and that's now referenced by a
+   * log.json record — treat the file as immutable." The next save
+   * checks both fields:
+   *   - same revision → reuse the locked filename (no re-download;
+   *     the on-disk file is what the new log record points at too,
+   *     so the user can drop multiple prompts referencing the same
+   *     screenshot/HTML/selection without proliferating files).
+   *   - different revision → user edited in between; bump a `-N`
+   *     suffix on the saved filename, write a fresh file under the
+   *     new name, and the new log record references the new name.
+   *     The previous file stays on disk untouched.
+   *
+   * Per-artifact, only set if that artifact was actually included in
+   * the previous Capture. Never cleared mid-session — once a file
+   * is locked, it stays locked for the rest of this Capture-page
+   * session even if the user toggles its checkbox off and on.
+   */
+  saved?: {
+    screenshot?: { bumpIndex: number; revision: number };
+    html?: { bumpIndex: number; revision: number };
+    selections?: Partial<Record<SelectionFormat, { bumpIndex: number; revision: number }>>;
+  };
+  /**
+   * Original (un-bumped) artifact filenames pinned at session
+   * creation. The multi-capture bump strategy reads these to
+   * produce stable `<base-stem>-N.<ext>` names — since
+   * `capture.<x>Filename` gets mutated to the *current* desired
+   * filename on each bump, parsing it for the trailing `-N` is
+   * unreliable (the timestamp's millisecond suffix already looks
+   * like a counter). `bumpedFilename(bases.<x>, bumpIndex)` is the
+   * authoritative computation.
+   */
+  bases?: {
+    screenshot?: string;
+    contents?: string;
+    selections?: Partial<Record<SelectionFormat, string>>;
+  };
 }
 
 export function detailsStorageKey(tabId: number): string {
   return `${DETAILS_STORAGE_PREFIX}${tabId}`;
+}
+
+/**
+ * Splice a `-N` index into a filename's stem (between the
+ * basename and the extension). `bumpIndex === 0` returns the
+ * unmodified base — that's the "first save, no bump yet" case.
+ *
+ *   `bumpedFilename('selection.md', 0)`              → 'selection.md'
+ *   `bumpedFilename('selection-2026-04.md', 1)`      → 'selection-2026-04-1.md'
+ *   `bumpedFilename('contents-20260503-080215-130.html', 2)`
+ *                                                    → 'contents-20260503-080215-130-2.html'
+ *
+ * Always splices from the original base — never tries to parse a
+ * trailing `-N` out of an already-bumped name. That would be
+ * ambiguous against the millisecond suffix in our timestamp format
+ * (`YYYYMMDD-HHMMSS-MMM`).
+ */
+function bumpedFilename(base: string, bumpIndex: number): string {
+  if (bumpIndex === 0) return base;
+  const lastDot = base.lastIndexOf('.');
+  const stem = lastDot < 0 ? base : base.slice(0, lastDot);
+  const ext = lastDot < 0 ? '' : base.slice(lastDot);
+  return `${stem}-${bumpIndex}${ext}`;
+}
+
+/**
+ * Compute the filename a save / copy of this artifact should land
+ * at right now. The bump rule:
+ *
+ *   - No `saved` entry yet → first save. Use the base filename
+ *     pinned at capture time.
+ *   - `saved.revision` matches the artifact's current revision →
+ *     unchanged since the lock; reuse the previously-locked
+ *     filename (`bumpedFilename(base, saved.bumpIndex)`) so multiple
+ *     captures referencing the same body all point at the same
+ *     on-disk file.
+ *   - `saved.revision` differs → user edited between saves; bump
+ *     `bumpIndex + 1` so the previous file stays immutable on disk.
+ */
+function nextSaveFilename(
+  base: string,
+  saved: { bumpIndex: number; revision: number } | undefined,
+  currentRevision: number,
+): string {
+  if (!saved) return base;
+  return bumpedFilename(base, nextBumpIndex(saved, currentRevision));
+}
+
+/**
+ * Pick the bumpIndex the next save / lock should use given the
+ * previous lock and the artifact's current revision. Same revision
+ * → reuse (no edit since the last save); diverged → +1 (user
+ * edited; need a fresh `-N` filename so the previous one stays
+ * immutable). Pulled out because the saveDetails post-save block
+ * applies the same rule to all three artifact kinds.
+ */
+function nextBumpIndex(
+  prev: { bumpIndex: number; revision: number } | undefined,
+  currentRevision: number,
+): number {
+  if (!prev) return 0;
+  return prev.revision === currentRevision ? prev.bumpIndex : prev.bumpIndex + 1;
 }
 
 export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
@@ -130,6 +250,19 @@ export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   const session: DetailsSession = {
     capture: data,
     openerTabId: active?.id,
+    // Snapshot the original (un-bumped) artifact filenames so the
+    // multi-capture filename strategy can produce stable
+    // `<base>-1.<ext>` names even after `capture.<x>Filename` gets
+    // mutated by the bump. Pinned here once at session creation
+    // and never touched again — `saved.<x>.bumpIndex` is the
+    // counter; the base supplies the stem + extension.
+    bases: {
+      screenshot: data.screenshotFilename,
+      contents: data.contentsFilename,
+      selections: data.selectionFilenames
+        ? { ...data.selectionFilenames }
+        : undefined,
+    },
   };
   await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: session });
 }
@@ -235,12 +368,33 @@ interface SaveDetailsMessage {
    * session storage is used as-is.
    */
   screenshotOverride?: string;
+  /**
+   * Default `true` — close the Capture page tab after the save
+   * finishes (matches the long-standing Capture-button behavior).
+   * The Capture page sends `false` for shift-click, which keeps the
+   * tab open so the user can immediately Ask, retake, or hand-edit
+   * without the page disappearing under them. The session storage
+   * for this tab is dropped either way; staying open just means the
+   * user keeps the preview they're already looking at.
+   */
+  closeAfter?: boolean;
+}
+interface CloseCapturePageMessage {
+  /**
+   * Standalone close request from the Capture page. Used by the
+   * Ask path when the user ctrl-clicks Ask: the SW closes this tab
+   * and re-activates the opener using the same dance saveDetails
+   * does on its happy path. Sent only after a successful Ask so the
+   * user doesn't lose access to the preview on a failure.
+   */
+  action: 'closeCapturePage';
 }
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
   | UpdateArtifactMessage
-  | SaveDetailsMessage;
+  | SaveDetailsMessage
+  | CloseCapturePageMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -276,6 +430,39 @@ async function requireDetailsSession(tabId: number): Promise<DetailsSession> {
  */
 async function saveDetailsSession(tabId: number, session: DetailsSession): Promise<void> {
   await chrome.storage.session.set({ [detailsStorageKey(tabId)]: session });
+}
+
+/**
+ * Re-activate the capture's opener tab and then close the Capture
+ * page tab. Shared between the saveDetails happy path and the
+ * standalone closeCapturePage handler (used by the Ask flow's
+ * ctrl-click) so both paths get the same opener-focus dance.
+ *
+ * Order matters: activate first, then remove. If we removed first,
+ * Chrome would briefly flash its own pick of the next-active tab
+ * before our update could land. Chrome's natural pick is also not
+ * reliably the immediate-right neighbor — in headless Playwright
+ * tests it activated the tab two positions right of the closed
+ * slot. The e2e test pins this down.
+ */
+async function closeCapturePageTab(
+  tabId: number,
+  openerTabId: number | undefined,
+): Promise<void> {
+  if (openerTabId !== undefined) {
+    try {
+      await chrome.tabs.update(openerTabId, { active: true });
+    } catch (err) {
+      // Best-effort: if the opener was closed during the Capture
+      // page flow, just log and proceed with the close.
+      console.warn('[SeeWhatISee] failed to focus opener tab:', err);
+    }
+  }
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch (err) {
+    console.warn('[SeeWhatISee] failed to close Capture page tab:', err);
+  }
 }
 
 /**
@@ -362,11 +549,60 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
 }
 
 /**
+ * Re-pin `capture.<artifact>Filename` to whatever
+ * `nextSaveFilename` says it should be right now, given the
+ * artifact's current revision and any locked filename from a
+ * previous `recordDetailedCapture`. Drops the matching
+ * `downloads.<artifact>` cache entry when the filename changes so
+ * the next `ensureArtifactDownloaded` call re-materializes under
+ * the new name. No-op when nothing's changed.
+ *
+ * Persists eagerly because the follow-on `ensureArtifactDownloaded`
+ * re-loads the session via `requireDetailsSession`.
+ */
+async function rebumpFilenameIfLocked(
+  tabId: number,
+  adapter: {
+    getBase: (s: DetailsSession) => string | undefined;
+    getCurrentFilename: (s: DetailsSession) => string;
+    setCurrentFilename: (s: DetailsSession, name: string) => void;
+    getSaved: (s: DetailsSession) => { bumpIndex: number; revision: number } | undefined;
+    getCurrentRevision: (s: DetailsSession) => number;
+    dropCache: (s: DetailsSession) => void;
+  },
+): Promise<void> {
+  const session = await requireDetailsSession(tabId);
+  // No lock yet → never any bump to apply; the current filename
+  // already is the base. Early-returning here means the
+  // `getBase ?? getCurrentFilename` fallback never has to make a
+  // judgment call about what to splice a `-N` into. (The fallback
+  // would matter if `bases.<x>` were missing while `saved.<x>`
+  // existed — but every path that writes `saved` was preceded by a
+  // session that pinned `bases` at creation, so the two go together.)
+  const saved = adapter.getSaved(session);
+  if (!saved) return;
+  const base = adapter.getBase(session) ?? adapter.getCurrentFilename(session);
+  const desired = nextSaveFilename(base, saved, adapter.getCurrentRevision(session));
+  if (desired === adapter.getCurrentFilename(session)) return;
+  adapter.setCurrentFilename(session, desired);
+  adapter.dropCache(session);
+  await saveDetailsSession(tabId, session);
+}
+
+/**
  * Materialize the screenshot file on disk if needed and return its
  * absolute on-disk path. Cache key is `editVersion`: a change means
  * the user drew / undid / cleared a highlight, so the on-disk PNG
  * is stale and we re-download with the page's freshly baked-in
  * override. Same-version reads hit the cache.
+ *
+ * Multi-capture filename strategy: before the cache check, re-pin
+ * `capture.screenshotFilename` via `rebumpFilenameIfLocked` so a
+ * second save against locked-then-edited bytes lands at a fresh
+ * `-N` filename rather than overwriting the previously-recorded
+ * file. The screenshot's revision is the page-supplied
+ * `editVersion` (no separate counter — the page already
+ * monotonically bumps it on every edit).
  *
  * Concurrency: a fast user clicking Copy → drawing → clicking Copy
  * again can interleave two in-flight downloads on the same tab. The
@@ -379,6 +615,20 @@ export async function ensureScreenshotDownloaded(
   editVersion: number,
   screenshotOverride: string | undefined,
 ): Promise<string> {
+  await rebumpFilenameIfLocked(tabId, {
+    getBase: (s) => s.bases?.screenshot,
+    getCurrentFilename: (s) => s.capture.screenshotFilename,
+    setCurrentFilename: (s, name) => { s.capture.screenshotFilename = name; },
+    getSaved: (s) => s.saved?.screenshot,
+    getCurrentRevision: () => editVersion,
+    dropCache: (s) => {
+      if (s.downloads?.screenshot) {
+        const copy = { ...s.downloads };
+        delete copy.screenshot;
+        s.downloads = copy;
+      }
+    },
+  });
   return ensureArtifactDownloaded(tabId, {
     getCachedPath: (s) => {
       const c = s.downloads?.screenshot;
@@ -431,6 +681,20 @@ function editableShouldCommit(
  * message can't write an empty HTML file.
  */
 export async function ensureHtmlDownloaded(tabId: number): Promise<string> {
+  await rebumpFilenameIfLocked(tabId, {
+    getBase: (s) => s.bases?.contents,
+    getCurrentFilename: (s) => s.capture.contentsFilename,
+    setCurrentFilename: (s, name) => { s.capture.contentsFilename = name; },
+    getSaved: (s) => s.saved?.html,
+    getCurrentRevision: (s) => s.revisions?.html ?? 0,
+    dropCache: (s) => {
+      if (s.downloads?.html) {
+        const copy = { ...s.downloads };
+        delete copy.html;
+        s.downloads = copy;
+      }
+    },
+  });
   // Snapshot the sticky edited flag so the commit predicate can
   // detect an Edit-dialog save landing mid-flight and skip committing
   // a cache entry whose on-disk file holds pre-edit bytes.
@@ -472,6 +736,26 @@ export async function ensureSelectionDownloaded(
   tabId: number,
   format: SelectionFormat,
 ): Promise<string> {
+  await rebumpFilenameIfLocked(tabId, {
+    getBase: (s) => s.bases?.selections?.[format],
+    getCurrentFilename: (s) => s.capture.selectionFilenames?.[format] ?? '',
+    setCurrentFilename: (s, name) => {
+      if (!s.capture.selectionFilenames) return;
+      s.capture.selectionFilenames = {
+        ...s.capture.selectionFilenames,
+        [format]: name,
+      };
+    },
+    getSaved: (s) => s.saved?.selections?.[format],
+    getCurrentRevision: (s) => s.revisions?.selection?.[format] ?? 0,
+    dropCache: (s) => {
+      if (s.downloads?.selections?.[format]) {
+        const copy = { ...s.downloads.selections };
+        delete copy[format];
+        s.downloads = { ...s.downloads, selections: copy };
+      }
+    },
+  });
   const pre = await requireDetailsSession(tabId);
   const wasEdited = pre.selectionEdited?.[format] === true;
   return ensureArtifactDownloaded(tabId, {
@@ -531,6 +815,19 @@ function selectionEditableSpec(format: SelectionFormat): EditableArtifactSpec {
     write: (s, v) => {
       if (s.capture.selections) s.capture.selections[format] = v;
       s.selectionEdited = { ...(s.selectionEdited ?? {}), [format]: true };
+      // Bump the per-format revision so a subsequent save can tell
+      // the body has changed since the last `recordDetailedCapture`
+      // and pick a fresh `-N` filename. The `saved` snapshot frozen
+      // at the previous save's revision is the comparison baseline;
+      // see nextSaveFilename above.
+      const before = s.revisions?.selection?.[format] ?? 0;
+      s.revisions = {
+        ...(s.revisions ?? {}),
+        selection: {
+          ...(s.revisions?.selection ?? {}),
+          [format]: before + 1,
+        },
+      };
     },
     dropDownload: (s) => {
       if (s.downloads?.selections && format in s.downloads.selections) {
@@ -547,6 +844,11 @@ const EDITABLE_ARTIFACTS: Record<EditableArtifactKind, EditableArtifactSpec> = {
     write: (s, v) => {
       s.capture.html = v;
       s.htmlEdited = true;
+      // Same rationale as selectionEditableSpec — bump the html
+      // revision so the next save knows the body has diverged from
+      // whatever the last `recordDetailedCapture` locked.
+      const before = s.revisions?.html ?? 0;
+      s.revisions = { ...(s.revisions ?? {}), html: before + 1 };
     },
     dropDownload: (s) => {
       if (s.downloads?.html) {
@@ -708,14 +1010,35 @@ export function installDetailsMessageHandlers(): void {
     }
 
     if (msg.action === 'saveDetails') {
-      void runWithErrorReporting(async () => {
-        const key = detailsStorageKey(tabId);
-        const session = await requireDetailsSession(tabId);
+      // The Capture page is alive and has a status slot — surface
+      // failures there rather than via the toolbar icon. This handler
+      // therefore does NOT go through `runWithErrorReporting`: the
+      // page is the right error sink because it can show the message
+      // in context next to the buttons that produced it. We still
+      // call `clearCaptureError()` on success so a previous toolbar
+      // error from a non-page path (toolbar click, context menu)
+      // gets cleared by the next healthy save.
+      //
+      // On failure we also keep the page open regardless of
+      // `closeAfter` — the user needs the preview as a recovery
+      // surface and should be able to read the error before
+      // dismissing.
+      void (async () => {
         try {
+          // Pre-flight session read just to confirm the page has
+          // something to save against and to capture the openerTabId
+          // for the close path. The post-save `saved.<x>` writes
+          // re-load the session so they pick up any in-flight
+          // mutations the ensure*Downloaded helpers may have made.
+          const session = await requireDetailsSession(tabId);
           // Each artifact runs through the same `ensure…Downloaded`
           // helper as the Copy buttons. Files the user already
-          // pre-downloaded via Copy (with the same `editVersion` for
-          // screenshots) hit the cache and are not re-written.
+          // pre-downloaded via Copy (with the same `editVersion`
+          // for screenshots) hit the cache and are not re-written.
+          // The helpers also re-pin the artifact filename via
+          // `rebumpFilenameIfLocked` so a save after a previous
+          // capture+edit lands at a fresh `-N` name rather than
+          // overwriting the locked file.
           if (msg.screenshot) {
             await ensureScreenshotDownloaded(
               tabId,
@@ -729,8 +1052,11 @@ export function installDetailsMessageHandlers(): void {
           if (msg.selectionFormat) {
             await ensureSelectionDownloaded(tabId, msg.selectionFormat);
           }
+          // Re-load after the ensure*Downloaded calls so we pass
+          // their (possibly bumped) filenames to recordDetailedCapture.
+          const postEnsure = await requireDetailsSession(tabId);
           await recordDetailedCapture({
-            capture: session.capture,
+            capture: postEnsure.capture,
             includeScreenshot: msg.screenshot,
             includeHtml: msg.html,
             selectionFormat: msg.selectionFormat ?? undefined,
@@ -738,59 +1064,94 @@ export function installDetailsMessageHandlers(): void {
             hasHighlights: msg.highlights,
             hasRedactions: msg.hasRedactions,
             isCropped: msg.isCropped,
-            htmlEdited: session.htmlEdited,
-            // Only the chosen selection format's edit flag matters for
-            // the sidecar — edits to other formats stay on disk but
-            // never land in `log.json` because they weren't picked
-            // for save.
+            htmlEdited: postEnsure.htmlEdited,
+            // Only the chosen selection format's edit flag matters
+            // for the sidecar — edits to other formats stay on
+            // disk but never land in `log.json` because they
+            // weren't picked for save.
             selectionEdited:
               msg.selectionFormat !== null
-                ? session.selectionEdited?.[msg.selectionFormat] === true
+                ? postEnsure.selectionEdited?.[msg.selectionFormat] === true
                 : undefined,
           });
-        } finally {
-          // Always clean up the stored capture and close the tab, even
-          // if recordDetailedCapture throws: the stashed data is no longer
-          // useful and the user can click the menu item again to retry.
-          //
-          // Trade-off: on failure the Capture page tab disappears out from
-          // under the user, and the only visible signal is the usual
-          // error-icon / tooltip swap from runWithErrorReporting. That's
-          // consistent with every other capture path (they all fail
-          // silently on-screen and surface the error on the toolbar),
-          // and leaving the tab open on failure would strand a
-          // now-stale preview the user would have to close by hand.
-          await chrome.storage.session.remove(key);
-          // Re-activate the opener (the page the user captured from)
-          // *before* removing the Capture page tab.
-          //
-          // We tested removing this and relying on Chrome's natural
-          // close behavior. Chrome's pick is not reliably the right
-          // neighbor — in headless Playwright tests it activated the
-          // tab two positions right of the closed slot, not the
-          // immediate right neighbor. The e2e test pins this down.
-          //
-          // Order matters: activate first, then remove. If we removed
-          // first, Chrome would briefly flash its own pick before
-          // our update could land.
-          const openerTabId = session.openerTabId;
-          if (openerTabId !== undefined) {
-            try {
-              await chrome.tabs.update(openerTabId, { active: true });
-            } catch (err) {
-              // Best-effort: if the opener was closed during the
-              // Capture page flow, just log and proceed with the close.
-              console.warn('[SeeWhatISee] failed to focus opener tab:', err);
-            }
+          // Lock each saved artifact: snapshot the bumpIndex +
+          // revision the file was written under, so the next save
+          // can tell whether to reuse the same on-disk file
+          // (revision unchanged → same bumpIndex) or bump
+          // `bumpIndex + 1` (revision diverged). Re-load to fold in
+          // any mid-save edits via the dialog. The bumpIndex
+          // carried forward is whatever produced the *current*
+          // capture.<x>Filename — either the previous save's index
+          // (when nothing changed since the last save) or that +1
+          // (when the user edited and the rebump fired).
+          const postSave = await requireDetailsSession(tabId);
+          postSave.saved = postSave.saved ?? {};
+          if (msg.screenshot) {
+            const rev = msg.editVersion ?? 0;
+            postSave.saved.screenshot = {
+              bumpIndex: nextBumpIndex(postSave.saved.screenshot, rev),
+              revision: rev,
+            };
           }
-          try {
-            await chrome.tabs.remove(tabId);
-          } catch (err) {
-            console.warn('[SeeWhatISee] failed to close Capture page tab:', err);
+          if (msg.html) {
+            const rev = postSave.revisions?.html ?? 0;
+            postSave.saved.html = {
+              bumpIndex: nextBumpIndex(postSave.saved.html, rev),
+              revision: rev,
+            };
           }
+          if (msg.selectionFormat && postSave.capture.selectionFilenames) {
+            const fmt = msg.selectionFormat;
+            const rev = postSave.revisions?.selection?.[fmt] ?? 0;
+            postSave.saved.selections = {
+              ...(postSave.saved.selections ?? {}),
+              [fmt]: {
+                bumpIndex: nextBumpIndex(postSave.saved.selections?.[fmt], rev),
+                revision: rev,
+              },
+            };
+          }
+          await saveDetailsSession(tabId, postSave);
+          sendResponse({ ok: true });
+          await clearCaptureError();
+          if (msg.closeAfter !== false) {
+            // Closing path: drop the session storage along the way.
+            // The `tabs.onRemoved` listener would do this anyway —
+            // we just don't have to wait for it.
+            await chrome.storage.session.remove(detailsStorageKey(tabId));
+            await closeCapturePageTab(tabId, session.openerTabId);
+          }
+          // Stay-open path (shift-click): keep the session intact so
+          // the user can iterate / retake / re-save. Filename
+          // `saved` snapshots above ensure subsequent saves don't
+          // trample the on-disk file we just locked.
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // Don't toolbar-report — the page surfaced the error in
+          // its status slot. Don't close even when `closeAfter` was
+          // set — the user keeps the page as a recovery surface
+          // (Copy / Download buttons are still there) and to read
+          // the error without it disappearing. Don't drop the
+          // session either — the user might fix the offending
+          // artifact and try again.
         }
-      });
-      // No response expected — background closes the tab when done.
+      })();
+      return true;
+    }
+
+    if (msg.action === 'closeCapturePage') {
+      void (async () => {
+        const session = await loadDetailsSession(tabId);
+        const key = detailsStorageKey(tabId);
+        // Drop the stashed capture before we close — same lifecycle
+        // as the saveDetails path. Skipped silently if the entry's
+        // already gone.
+        await chrome.storage.session.remove(key);
+        await closeCapturePageTab(tabId, session?.openerTabId);
+      })();
       return false;
     }
 

@@ -311,7 +311,9 @@ showed the global title. We don't use per-tab titles.
   message into `getDefaultActionTooltip(message)`, which slots
   `ERROR: <message>` between the app title and the action block
   (bracketed by its own blank lines). See the error-reporting
-  section above.
+  section above. Only fires for capture paths with no on-screen
+  surface (toolbar click, context menu) — Capture-page failures
+  land in `#ask-status` instead.
 
 ### Abandoned: capture-page tooltip override
 
@@ -806,14 +808,55 @@ The ordering matters and the explicit re-activation is required:
   reads from `chrome.storage.session` asynchronously and calls
   `sendResponse` later — the listener must return `true` or Chrome
   drops the channel and the page-side `sendMessage` resolves with
-  `undefined`. `saveDetails` doesn't reply, so it returns `false`.
+  `undefined`. `saveDetails` always replies (`{ ok: true }` /
+  `{ ok: false, error }`), so it returns `true`.
 - **Don't race the tab close against the save.** The `saveDetails`
-  handler does the save inside `runWithErrorReporting` and only
-  closes the tab in a `finally` block, so the close happens after
-  the download calls return *and* runs even when the save throws
-  — which matters because `chrome.downloads.download` resolves on
-  download *start*, not completion (overkill for our tiny data-URL
-  payloads in practice).
+  handler always responds before closing — the `sendResponse({ ok:
+  true })` fires first, then `closeCapturePageTab` runs. That ordering
+  matters because `chrome.tabs.remove` tears down the message
+  channel and a response sent after wouldn't reach the page.
+- **Capture-page errors land on the page, not the toolbar.**
+  - When the user is on the Capture page and the save fails, the
+    SW does NOT call `runWithErrorReporting`. The page has a
+    status slot (`#ask-status`) right next to the buttons that
+    produced the error, and surfacing the message there is more
+    discoverable than swapping the toolbar icon.
+  - The toolbar error channel is reserved for paths that have no
+    on-screen surface (toolbar click, context menu).
+  - Successful saves still call `clearCaptureError()` so a
+    previously toolbar-reported failure gets cleaned up by the
+    next healthy save.
+- **Multi-capture: shift-click preserves the session for re-saves.**
+  - Plain / ctrl-click Capture removes the per-tab
+    `chrome.storage.session` entry on the way out (the tab is
+    closing).
+  - Shift-click leaves the entry intact so a second Capture click
+    can save again.
+  - Each successful save snapshots a per-artifact
+    `saved.<x> = { bumpIndex, revision }` on the session; the next
+    `ensure*Downloaded` consults it via `nextSaveFilename`:
+    - **Same revision** → reuse the locked filename
+      (`bumpedFilename(bases.<x>, saved.bumpIndex)`). No re-download;
+      the new log record references the existing file. Optimizes
+      multi-prompt flows where the user iterates the prompt without
+      re-editing the artifact.
+    - **Diverged revision** (user edited via Edit dialog or drew on
+      the screenshot) → bump `bumpIndex + 1`. The previous file stays
+      immutable on disk; the new log record points at the freshly-
+      written file. Filenames look like `selection-2026.md` →
+      `selection-2026-1.md` → `selection-2026-2.md`.
+  - The "base" filename is pinned in `session.bases.<x>` at session
+    creation. Computing every bumped filename from the *base* (not
+    from the previously-bumped name) keeps the suffix logic robust
+    against the timestamp's millisecond portion, which already
+    looks like a `-N` counter.
+  - Caveat: reloading the Capture page mid-session is not a
+    supported workflow. The page-side `editVersion` resets to 0
+    on reload while the SW-side `saved.<x>` lock survives, so a
+    save after reload would falsely diverge the screenshot
+    revision and bump a fresh `-N` against bytes the user never
+    edited. Sessions are intended to live across multiple
+    captures via shift-click; reloads should be rare.
 - **Manual tab close cleanup.** If the user closes the Capture page
   tab without clicking Capture, a `chrome.tabs.onRemoved` handler
   drops the stashed capture from `chrome.storage.session`. Without

@@ -34,7 +34,11 @@ additional providers additive.
   - `#ask-btn` — the main "Ask `<provider>`" label. Click sends
     straight to the resolved default destination (no menu).
   - `#ask-caret` — chevron-only square button on the right edge.
-    Click opens the menu so the user can pick a different target.
+    Click opens the menu so the user can shift the default to a
+    different target. Picking a menu item updates the default
+    (writes the pin or the preferred-new-tab provider) and refreshes
+    the button label, but does *not* send — the actual Ask fires on
+    the next click of `#ask-btn`.
 - The trailing label `#ask-target-label` and the main button's
   tooltip are updated by `refreshAskTargetLabel()` to match
   whichever provider the resolved default points at — "Ask Claude"
@@ -52,12 +56,29 @@ additional providers additive.
 
 ### Hotkeys
 
-- `Alt+C` — Capture.
-- `Alt+A` — open the Ask menu (caret click). Mirrors the keyboard
-  path the menu had before pinning landed, so the user always has a
-  chance to pick a different target.
+- `Alt+C` — Capture (clicks `#capture`).
+- `Alt+A` — Ask (clicks `#ask-btn`); fires the send against the
+  currently-resolved default destination. Use the caret with the
+  mouse to shift the default first.
 - Both no-op when their button is `disabled` (in-flight save / Ask).
 - The underlines on `C` / `A` mirror the hotkeys.
+
+### Click modifiers (Capture and Ask)
+
+Both `#capture` and `#ask-btn` apply the same modifier semantics:
+
+- **Plain click** — each button's own default. Capture closes the
+  page after the save; Ask leaves it open.
+- **Shift-click** — keep the page open after the action. Useful
+  when chaining a Capture into an Ask (or vice versa) without
+  losing the staged preview.
+- **Ctrl-click** — close the page after the action. Mirrors Capture's
+  default for the Ask side, so a "send and dismiss" gesture works
+  the same way regardless of which button you hit.
+
+shift wins if both modifiers are held. Ask only requests the close
+on a successful send — failures keep the page open as a recovery
+surface (Copy / Download buttons are right there).
 
 ### Ask menu
 
@@ -85,7 +106,12 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
   providers with at least one matching tab open.
 - Each section is preceded by a horizontal separator
   (`.ask-menu-separator`).
-- One click on a menu item both picks the destination and sends.
+- Picking a menu item updates the default (writes `askPin` for an
+  existing-tab pick, writes `askPreferredNewTabProvider` for a
+  "New window in <X>" pick) and refreshes the button label / icon
+  to match. Does *not* send — the user fires the Ask with a
+  follow-up click on `#ask-btn` (or `Alt+A`). This split keeps
+  "shift the default" and "fire the send" as two distinct gestures.
 - Each item has a leading 16px indicator slot (always reserved).
   The item that matches the **resolved default** carries
   `is-default` and shows a green pushpin glyph (`#pin-icon`) —
@@ -133,15 +159,25 @@ whichever destination the SW currently considers the default:
   `src/background.ts`, listening on `chrome.storage.onChanged` for
   the `askProviderSettings` key — so the toolbar Pin/Unpin entry
   doesn't keep saying "Unpin" for a pin that won't be honored.
-- **Fallback** — the user's configured **default provider** (Options
-  page → Ask AI providers), opened in a new tab. Used when there's no
-  pin or the pin is dead. The default lives in `askProviderSettings`
-  in `chrome.storage.local`; the SW's `normalizeAskProviderSettings`
-  guarantees it always points at a user-enabled provider, or is null
-  when every provider is disabled. Null fallback means plain-Ask
-  resolves to "no destination" and the Capture-page button is
-  disabled with the "No Ask providers enabled" tooltip — see
-  [Provider settings](#provider-settings) below.
+- **Fallback priority** — when no live pin resolves, `resolveAsk`
+  walks the remaining levels in order:
+  - **`askPreferredNewTabProvider`** in `chrome.storage.session` —
+    a session-scoped override written by the Ask menu's "New
+    window in `<X>`" pick. Lets the menu act as a default-picker
+    without overwriting the persistent option. Cleared on
+    browser restart so the user's Options-page default reasserts
+    itself for fresh sessions.
+  - The user's configured **default provider** (Options page → Ask
+    AI providers), opened in a new tab. Lives in
+    `askProviderSettings` in `chrome.storage.local`; the SW's
+    `normalizeAskProviderSettings` guarantees it always points at
+    a user-enabled provider, or is null when every provider is
+    disabled. Null fallback means plain-Ask resolves to "no
+    destination" and the Capture-page button is disabled with
+    the "No Ask providers enabled" tooltip — see
+    [Provider settings](#provider-settings) below.
+  - Either level is dropped lazily on the next `resolveAsk` if the
+    provider has since been disabled.
 
 `sendToAi` writes the pin on every successful send, including
 new-tab opens (so the freshly-created tab gets reused next time).
@@ -479,18 +515,22 @@ Capture page (capture-page.ts)
   click #ask-caret ───────────────────────────────────┐
     sendMessage({ action: 'askListProviders' }) ──▶   │
       background/ask/index.ts                         │
-        listAskProviders() + resolveAsk()
+        listAskProviders() + resolveAsk()             │
           chrome.tabs.query(provider.urlPatterns)     │
-          read 'askPin' from chrome.storage.session   │
+          read 'askPin' + 'askPreferredNewTabProvider'│
     rebuild popup menu (pin on the default item)      │
                                                       │
   user picks a destination ◀────────────────────────  ┘
-    sendMessage({ action: 'askAi', destination, payload }) ──▶ ▼
-                                                                │
-  click #ask-btn ─────────────────────────────────────────────► │
+    sendMessage({ action: 'askSetDefault', destination }) ──▶
+      background/ask/index.ts
+        setAskDefault() — writes 'askPin' (existingTab) or
+                          'askPreferredNewTabProvider' (newTab)
+    refresh #ask-target-label (no send)
+
+  click #ask-btn (or Alt+A) ─────────────────────────────────► ▼
     sendMessage({ action: 'askAiDefault', payload }) ──▶        │
       background/ask/index.ts                                   │
-        resolveAsk()                             │
+        resolveAsk()                                            │
         sendToAi() ◀───────────────────────────────────────────┘
           ├── resolve tab (existing or new — wait 'complete' up to 15s)
           ├── focus tab + window
@@ -501,6 +541,7 @@ Capture page (capture-page.ts)
           └── on success: write 'askPin' = { provider, tabId }
     show #ask-status: "Sent." or error
     refresh #ask-target-label (the pin may have moved)
+    if ctrl-click: sendMessage({ action: 'closeCapturePage' })
 ```
 
 ### Payload

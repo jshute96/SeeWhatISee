@@ -36,7 +36,7 @@ that wires Chrome event listeners. The substantive logic lives in
 - `capture-actions.ts` — the `CAPTURE_ACTIONS` table + `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts.
 - `default-action.ts` — Click + Double-click defaults, `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder.
 - `context-menu.ts` — `installContextMenu`, menu title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard).
-- `capture-details.ts` — Capture-page per-tab session + `ensure*Downloaded` artifact cache.
+- `capture-details.ts` — Capture-page per-tab session, `ensure*Downloaded` cache, multi-capture filename bump (locks files referenced by a `recordDetailedCapture` and writes `<base>-N.<ext>` on later edits).
 - `capture-page-defaults.ts` — stored Capture-page Save defaults (`capturePageDefaults`).
 - `options.ts` — Options-page SW wire (`getOptionsData` / `setOptions`).
 - `ask/` — Ask flow: routes the staged Capture-page payload to a chosen AI tab (see "Ask AI" below).
@@ -382,13 +382,20 @@ sub-modules above.
     active tab (e.g. DevTools is on top), the query returns
     nothing and the call throws.
 
-- **Error reporting.** Every user-initiated click flows through
-  `runWithErrorReporting` in `background.ts`.
+- **Error reporting.** Two channels, picked by whether the user has
+  an on-screen surface to read the error from:
 
-  - On failure: swaps the toolbar icon to a pre-rendered error
-    variant and slots an `ERROR: …` line under the app title in
-    the tooltip.
-  - On later success: restores both.
+  - **Toolbar click / context menu** — no Capture page open, so the
+    failure is reported via the toolbar. `runWithErrorReporting` in
+    `background.ts` swaps in a pre-rendered error icon variant and
+    slots an `ERROR: …` line under the app title in the tooltip; a
+    later successful run restores both.
+  - **Capture page** — `saveDetails` responds `{ ok: false, error }`
+    over the message channel and the page renders the error in
+    `#ask-status` (the same status slot the Ask flow uses). The
+    toolbar is left alone. A successful Capture-page save also
+    calls `clearCaptureError()` so a previous toolbar-channel error
+    doesn't linger.
   - See [`chrome-extension.md`](chrome-extension.md) for the
     design rationale (why not badge text, why not
     `chrome.notifications`) and how error icon variants are
@@ -984,14 +991,39 @@ edit of that tool's kind. There's no right-click drawing.
   `screenshot.isCropped`, `contents.isEdited`,
   `selection.isEdited`. It's valid to save with no checkboxes
   ticked — the record then carries just the URL (and any prompt).
-- After the save resolves, the background re-activates the opener
-  tab and then removes the Capture page tab — the user lands back on
-  the page they captured from. Chrome's natural close-time pick is
-  not reliably the immediate right neighbor (we tested this and
-  Chrome activated a tab two positions right of the closed slot in
-  the headless e2e environment), so the explicit re-activation is
-  required for deterministic behavior. `openerTabId` alone has no
-  effect on close-time focus.
+- Click modifiers route the post-save lifecycle:
+  - **Plain click** — the historical behavior. SW closes the Capture
+    page tab after the save and re-activates the opener tab so the
+    user lands back on the page they captured from. Chrome's
+    natural close-time pick is not reliably the immediate right
+    neighbor (the headless e2e environment activates the tab two
+    positions right of the closed slot), so the explicit
+    re-activation is required for deterministic behavior;
+    `openerTabId` alone has no effect on close-time focus.
+  - **Shift-click** — same save, but the SW keeps the page open
+    and preserves the per-tab session so the user can edit / retake
+    / re-save without losing the staged content.
+  - **Ctrl-click** — same as plain click; explicit "send and
+    dismiss" gesture so the Ask button gets the same close behavior.
+  - On any error the SW keeps the page open regardless of
+    modifier — the user keeps the preview as a recovery surface
+    and can read the message in `#ask-status`.
+- Multi-capture filename strategy (only meaningful when the page
+  stays open across multiple saves — i.e. shift-click):
+  - Each successful `recordDetailedCapture` snapshots a per-artifact
+    `saved.<x> = { bumpIndex, revision }` on the session.
+  - The next `ensure*Downloaded` consults `nextSaveFilename`: if
+    the current revision matches the snapshot, the same locked
+    filename is reused (no re-download; the new log record points
+    at the same on-disk file — useful for re-Asking with multiple
+    prompts against the same artifact). If the revision diverged
+    (the user edited via an Edit dialog, or drew on the canvas),
+    `bumpIndex + 1` is rolled and the new file lands at
+    `<base>-N.<ext>`. The previously-locked file stays immutable.
+  - Filenames are computed from `bases.<x>` pinned at session
+    creation, so the timestamp's millisecond suffix
+    (`YYYYMMDD-HHMMSS-MMM`) can never be mistaken for a counter.
+  - Full notes in [`chrome-extension.md`](chrome-extension.md).
 
 See [`chrome-extension.md`](chrome-extension.md) for the
 runtime-message and session-storage hazards (CSP, SW idle-out,

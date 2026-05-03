@@ -223,14 +223,27 @@ export async function waitForAskMenuReady(capturePage: Page): Promise<void> {
   ).toBeVisible();
 }
 
-/** Click the existing-tab item that points at the fake-Claude page (title "Fake Claude"). */
+/**
+ * Pick the existing-tab item that points at the fake-Claude page
+ * (title "Fake Claude") AND fire the Ask. Menu picks no longer send
+ * — they shift the default destination — so the natural "send via
+ * this menu row" gesture is "click the row to set it as the
+ * default, then click Ask." Wrapped in one helper so the call sites
+ * read the same way they did before the menu became a default-
+ * picker.
+ */
 export async function clickExistingFakeClaudeItem(capturePage: Page): Promise<void> {
   await capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
     .click();
+  await capturePage.locator('#ask-btn').click();
 }
 
-/** Click the "New window in Claude" item. */
+/**
+ * Pick the "New window in Claude" item AND fire the Ask. Same
+ * "set-default-then-send" composition as
+ * `clickExistingFakeClaudeItem` — see that helper's comment.
+ */
 export async function clickNewClaudeItem(capturePage: Page): Promise<void> {
   // The new-tab item's text is exactly "Claude" (no parenthetical
   // suffix, since the only enabled provider has label "Claude").
@@ -240,6 +253,7 @@ export async function clickNewClaudeItem(capturePage: Page): Promise<void> {
     .locator('#ask-menu .ask-menu-item')
     .filter({ hasText: /^Claude$/ })
     .click();
+  await capturePage.locator('#ask-btn').click();
 }
 
 /** Open a fake-Claude tab and wait for its `__seeFakeClaude` global. */
