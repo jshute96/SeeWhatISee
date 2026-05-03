@@ -40,6 +40,12 @@ additional providers additive.
   whichever provider the resolved default points at — "Ask Claude"
   while the pin lives on a Claude tab, "Ask ChatGPT" once the user
   picks a ChatGPT tab from the menu, and so on.
+- Trailing destination glyph (`#ask-btn-icon`) sits after the
+  provider label and mirrors the resolved default's *kind* — pin
+  glyph (`#pin-icon`) for an existing pinned tab, new-window glyph
+  (`#new-window-icon`) for a new-tab destination. Same source
+  symbols the menu's leading indicator slot uses, so the on-button
+  hint and the in-menu hint stay visually consistent.
 - Tooltip phrasing reflects the destination kind: "Send to existing
   Claude window" when a pinned tab is alive, "Send to new Claude
   window" when the fallback is in play.

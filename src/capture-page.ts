@@ -2775,6 +2775,19 @@ const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
 const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
 const askStatus = document.getElementById('ask-status') as HTMLDivElement;
 const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
+const askBtnIconUse = document.querySelector(
+  '#ask-btn-icon use',
+) as SVGUseElement;
+
+// Swap the trailing glyph on #ask-btn between the pin (existing
+// pinned tab) and new-window glyphs so the user sees at a glance
+// which path plain-Ask is about to take. Falls back to the
+// new-window glyph when no destination has resolved yet — that's
+// what plain-Ask will do once a provider is enabled.
+function setAskBtnIcon(kind: 'pin' | 'new-window'): void {
+  const symbolId = kind === 'pin' ? '#pin-icon' : '#new-window-icon';
+  askBtnIconUse.setAttribute('href', symbolId);
+}
 
 /**
  * Read the providers + the resolved default destination from the
@@ -2871,6 +2884,7 @@ async function refreshAskTargetLabel(): Promise<void> {
     askBtn.title = noProvidersTooltip;
     askCaret.title = noProvidersTooltip;
     askTargetLabel.textContent = 'AI';
+    setAskBtnIcon('new-window');
     return;
   }
   // At least one provider is available — re-enable the split button
@@ -2887,10 +2901,14 @@ async function refreshAskTargetLabel(): Promise<void> {
         ? 'Send to existing'
         : 'Send to new';
       askBtn.title = `${verb} ${provider.label} window`;
+      setAskBtnIcon(defaultDestination.kind === 'existingTab' ? 'pin' : 'new-window');
       return;
     }
   }
-  // No default available — fall back to a generic label.
+  // No default available — fall back to a generic label. Plain-Ask
+  // will open a new window in this state, so the new-window glyph
+  // matches what's about to happen.
+  setAskBtnIcon('new-window');
   if (enabled.length === 1) {
     askTargetLabel.textContent = enabled[0].label;
     askBtn.title = `Send to ${enabled[0].label} on web`;

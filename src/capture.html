@@ -714,6 +714,18 @@
     height: 10px;
     display: block;
   }
+  /* Trailing destination glyph on the #ask-btn label, after the
+   * provider name. `capture-page.ts` swaps the inner <use> between
+   * #pin-icon (default = existing pinned tab) and #new-window-icon
+   * (default = new tab) so the user can tell at a glance which path
+   * plain-Ask will take. Sized to match the label's cap height;
+   * vertical-align keeps it on the text baseline. */
+  button#ask-btn .ask-btn-icon {
+    width: 14px;
+    height: 14px;
+    vertical-align: -2px;
+    margin-left: 8px;
+  }
   button#capture:disabled,
   button#ask-btn:disabled,
   button#ask-caret:disabled {
@@ -1092,9 +1104,11 @@
               fill="none" stroke="currentColor" stroke-width="3"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- Indicator glyphs for the Ask menu's leading slot. From
-           Google Material Symbols (outlined variant), Apache 2.0
-           license. Source:
+      <!-- Indicator glyphs for the Ask menu's leading slot AND for
+           the trailing slot inside the #ask-btn split-button label
+           (so the user sees at a glance whether plain-Ask will hit
+           a pinned tab vs open a new window). From Google Material
+           Symbols (outlined variant), Apache 2.0 license. Source:
              symbols/web/push_pin/materialsymbolsoutlined
              symbols/web/keep_off/materialsymbolsoutlined
              symbols/web/new_window/materialsymbolsoutlined
@@ -1103,12 +1117,14 @@
            independently, so they still render at the same visual
            size in the 14×14 menu slot.
            - `pin-icon` marks the existing-tab row plain-Ask is
-             pinned to (`is-default` on an existing tab).
+             pinned to (`is-default` on an existing tab); also shown
+             on #ask-btn when the resolved default is an existing tab.
            - `pin-off-icon` marks a stale-pin row (`is-stale`).
            - `new-window-icon` marks the "New window in <provider>"
-             row plain-Ask will hit (`is-default` on a new-tab row).
-             "Pin" doesn't fit here — it's an action row, not a
-             pinned target. -->
+             row plain-Ask will hit (`is-default` on a new-tab row);
+             also shown on #ask-btn when the resolved default is a
+             new-tab destination. "Pin" doesn't fit on those rows —
+             they're action rows, not pinned targets. -->
       <symbol id="pin-icon" viewBox="0 0 24 24">
         <path fill="currentColor"
               d="m16 12 2 2v2h-5v6l-1 1-1-1v-6H6v-2l2-2V5H7V3h10v2h-1Zm-7.15 2h6.3L14 12.85V5h-4v7.85ZM12 14Z"/>
@@ -1406,7 +1422,9 @@
           <div class="ask-wrap">
             <div class="ask-split">
               <button id="ask-btn" type="button" class="btn"
-                      title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span></button>
+                      title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span><svg
+                  id="ask-btn-icon" class="ask-btn-icon" aria-hidden="true"
+                ><use href="#new-window-icon"></use></svg></button>
               <button id="ask-caret" type="button" class="btn"
                       aria-haspopup="menu" aria-expanded="false"
                       aria-controls="ask-menu"
