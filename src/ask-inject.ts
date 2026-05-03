@@ -598,9 +598,105 @@
     }
   }
 
-  // Expose a single entry point on the page's window. The background
-  // script invokes it via a second executeScript call rather than
-  // running the work at file-load time, so retries land back in the
-  // same MAIN-world realm without re-injecting the file.
+  // ─── Two ways to drive the runtime ───────────────────────────────
+  //
+  // 1. Legacy one-shot entry: `window.__seeWhatISeeAsk(selectors,
+  //    payload)` runs the whole flow (attach all files → type prompt
+  //    → submit). Kept for the live-test specs in `tests/e2e-live/`
+  //    that drive the runtime directly. The SW used to call this too;
+  //    it now uses the bridge instead.
+  //
+  // 2. postMessage bridge: lets the ISOLATED-world widget call
+  //    individual operations (`attachFile`, `typePrompt`,
+  //    `clickSubmit`) one at a time so it can track per-item status,
+  //    retry failures, and skip the submit when something went wrong.
+  //
+  //    Protocol — the widget posts:
+  //      { swis: 'request', id, op, args }
+  //    and the bridge replies:
+  //      { swis: 'response', id, ok: true,  result }
+  //      { swis: 'response', id, ok: false, error: string }
+  //    Both sides filter on `ev.source === window` and the `swis`
+  //    marker so unrelated postMessages on the page don't collide.
+
   (window as unknown as { __seeWhatISeeAsk?: typeof run }).__seeWhatISeeAsk = run;
+
+  interface AttachmentInput {
+    kind: 'image' | 'text';
+    mimeType: string;
+    filename: string;
+    data: string;
+  }
+
+  function buildFile(att: AttachmentInput): File {
+    if (att.kind === 'image') {
+      return dataUrlToFile(att.data, att.filename, att.mimeType);
+    }
+    return textToFile(att.data, att.filename, att.mimeType);
+  }
+
+  // Bridge dispatcher. Each op throws on failure and the bridge
+  // reports it as `ok: false`. Op handlers reuse the same per-op
+  // helpers (`attachFiles`, `typePrompt`, `clickSubmit`) the legacy
+  // `run` uses, so behavior stays identical.
+  async function dispatchOp(op: string, args: unknown): Promise<unknown> {
+    if (op === 'attachFile') {
+      const a = args as { attachment: AttachmentInput; selectors: AskSelectors };
+      await attachFiles([buildFile(a.attachment)], a.selectors);
+      return null;
+    }
+    if (op === 'typePrompt') {
+      const a = args as { text: string; selectors: AskSelectors };
+      await typePrompt(a.text, a.selectors);
+      return null;
+    }
+    if (op === 'clickSubmit') {
+      const a = args as { selectors: AskSelectors };
+      await clickSubmit(a.selectors);
+      return null;
+    }
+    throw new Error(`Unknown op: ${op}`);
+  }
+
+  interface BridgeRequest {
+    swis: 'request';
+    id: string;
+    op: string;
+    args: unknown;
+  }
+
+  // Idempotent install — a re-injection of `ask-inject.js` (e.g. if
+  // the SW or widget re-mounts the runtime) must not double-register
+  // the listener, or every request would be answered twice. The flag
+  // lives on `window` so it survives across re-injections in the same
+  // MAIN-world realm.
+  const installed = (window as unknown as { __seeWhatISeeAskBridgeInstalled?: boolean })
+    .__seeWhatISeeAskBridgeInstalled;
+  if (!installed) {
+    window.addEventListener('message', (ev: MessageEvent) => {
+      if (ev.source !== window) return;
+      const data = ev.data as BridgeRequest | undefined;
+      if (!data || typeof data !== 'object' || data.swis !== 'request') return;
+      const { id, op, args } = data;
+      void dispatchOp(op, args).then(
+        (result) => {
+          window.postMessage(
+            { swis: 'response', id, ok: true, result },
+            '*',
+          );
+        },
+        (err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logWarn(`bridge op ${op} failed:`, message);
+          window.postMessage(
+            { swis: 'response', id, ok: false, error: message },
+            '*',
+          );
+        },
+      );
+    });
+    (window as unknown as { __seeWhatISeeAskBridgeInstalled?: boolean })
+      .__seeWhatISeeAskBridgeInstalled = true;
+    log('bridge installed');
+  }
 })();

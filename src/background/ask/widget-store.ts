@@ -1,11 +1,14 @@
 // Storage layer for the in-page Ask status widget.
 //
-// One record per destination tab. The SW writes the record before
-// invoking the inject runtime (status: 'injecting'), then updates
-// it with the outcome (status: 'success' | 'error'). The widget,
-// running in ISOLATED world on the destination tab, reads the same
-// record on mount and listens via `chrome.storage.onChanged` so its
-// UI stays in sync with the SW's progress.
+// See `docs/ask-widget.md` for the full design (per-item walking,
+// cross-world bridge, retry/cancel-and-replace semantics).
+//
+// One record per destination tab. The SW writes the initial record
+// (status: 'injecting' with all items 'pending'), mounts the widget,
+// then steps back — the widget drives the per-item inject and patches
+// the record per-item. The SW awaits the overall status to leave
+// 'injecting' before resolving the capture-page request and writing
+// the pin.
 //
 // Records live in `chrome.storage.session` so they're cleared on
 // browser restart — `tabId` is only meaningful within a single Chrome
@@ -27,13 +30,42 @@ export interface AskWidgetAttachment {
 
 export type AskWidgetStatus = 'injecting' | 'success' | 'error';
 
+export type AskWidgetItemStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'success'
+  | 'error';
+
+/**
+ * One step in the widget's per-item orchestration. The widget walks
+ * `items` in order, calling MAIN-world helpers via the postMessage
+ * bridge. Each step's outcome is patched back into this record so
+ * the UI updates live.
+ */
+export interface AskWidgetItem {
+  /** Step kind. `attachment` rows reference `attachmentIndex`; the
+   *  others are singletons per record. */
+  kind: 'attachment' | 'prompt' | 'submit';
+  /** Index into `attachments` when `kind === 'attachment'`. */
+  attachmentIndex?: number;
+  /** UI label: "Screenshot" / "HTML" / "Selection (markdown)" /
+   *  "Prompt" / "Submit". */
+  label: string;
+  status: AskWidgetItemStatus;
+  /** Filled when `status === 'error'`; surfaced in the row tooltip. */
+  error?: string;
+}
+
 /**
  * One Ask attempt's worth of state, for the widget. Includes both
- * progress (`status` / `error`) and the original payload so the
- * widget's Content section can offer copy-to-clipboard recovery
+ * progress (`status` + per-item `items`) and the original payload so
+ * the widget's Content section can offer copy-to-clipboard recovery
  * even after the Capture page closes.
  */
 export interface AskWidgetRecord {
+  /** Overall flow status. Computed from `items` by the widget after
+   *  each per-item update. The SW polls this to know when to release
+   *  the capture-page request. */
   status: AskWidgetStatus;
   /** Filled when `status === 'error'`; what to show in the Status section. */
   error?: string;
@@ -45,8 +77,32 @@ export interface AskWidgetRecord {
   sourceTitle: string;
   attachments: AskWidgetAttachment[];
   promptText: string;
-  /** ms since epoch — last time the SW touched this record. */
+  /** Per-step orchestration state — see `AskWidgetItem`. */
+  items: AskWidgetItem[];
+  /** True when the user typed a prompt and wants the conversation
+   *  to fire on completion. The widget skips the submit step when
+   *  any prior item failed regardless. */
+  autoSubmit: boolean;
+  /** Provider selectors the widget hands to MAIN-world helpers.
+   *  Plain data — selector strings only. */
+  selectors: AskInjectSelectorsLike;
+  /** Monotonic counter incremented on every fresh Ask into the same
+   *  tab. Lets the widget orchestrator detect and bail if a re-Ask
+   *  lands while a previous run is still walking the items. */
+  runId: number;
+  /** ms since epoch — last touch by SW or widget. */
   updatedAt: number;
+}
+
+/** Mirror of `AskInjectSelectors` from `src/ask-inject.ts`. We don't
+ *  import the type here because this module is loaded by the SW and
+ *  the inject runtime is a non-module classic script. */
+export interface AskInjectSelectorsLike {
+  preFileInputClicks?: string[];
+  fileInput: string[];
+  textInput: string[];
+  submitButton: string[];
+  attachmentPreview?: string[];
 }
 
 function key(tabId: number): string {
@@ -70,20 +126,19 @@ let accessLevelReady: Promise<void> = Promise.resolve();
  * Overwrite the entire record for `tabId`. Called once at the start
  * of every Ask send so a re-Ask into the same tab cleanly replaces
  * the prior attempt.
+ *
+ * Throws on storage failure (notably `QUOTA_BYTES` exceeded for
+ * attachment-heavy Asks — `chrome.storage.session` defaults to a
+ * 10 MB cap). The SW propagates this as a user-facing error so the
+ * capture page reports it immediately, instead of waiting for the
+ * widget-completion timeout to surface a generic failure.
  */
 export async function writeWidgetRecord(
   tabId: number,
   record: AskWidgetRecord,
 ): Promise<void> {
-  try {
-    await accessLevelReady;
-    await chrome.storage.session.set({ [key(tabId)]: record });
-  } catch {
-    // Session storage may be unavailable in unusual MV3 states.
-    // The widget gracefully degrades to "no data" when there's no
-    // record, so a write failure just means the widget doesn't show
-    // up — no need to fail the Ask flow over it.
-  }
+  await accessLevelReady;
+  await chrome.storage.session.set({ [key(tabId)]: record });
 }
 
 /**

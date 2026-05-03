@@ -555,103 +555,19 @@ Steps:
 
 ## Status widget (`ask-widget.ts`)
 
-A small panel injected into the destination AI tab gives the user a
-live view of Ask's progress and a clipboard-based recovery path.
+A small panel injected into the destination AI tab during every
+Ask. Renders per-step progress, exposes per-item Copy + Retry,
+and gives the user a clipboard-based recovery surface even after
+the Capture page closes.
 
-### What it shows
+The widget is the **active orchestrator** of the inject — the SW
+resolves the destination tab, writes the initial record, and then
+hands off; the widget walks each item via a `window.postMessage`
+bridge into MAIN-world helpers in `ask-inject.ts`.
 
-- **Title bar (expanded)** — extension icon, "SeeWhatISee" text,
-  status icon, `_` minimize, `×` close. Status icon is a CSS spinner
-  while injecting, a green ✓ on success, a red ✕ on error. Clicking
-  anywhere on the bar that isn't a button toggles between collapsed
-  and expanded.
-- **Status** — `Injecting <what>…` while the inject runtime works,
-  then `Injected successfully.` or the error message verbatim.
-- **Content** — one button per item the user sent (Screenshot, HTML,
-  Selection, Prompt). Click copies to the clipboard with a transient
-  "Copied!" confirmation. HTML and rich-format selections include
-  both the format-specific MIME and `text/plain` so paste targets
-  that don't recognize HTML/markdown still get something useful.
-- **Source** — the source page's title + URL, mirroring the
-  Capture page's URL/title card. Both are clickable links to the
-  source; each row has its own Copy button.
-
-### Visual theme
-
-- Title bar (both expanded `.swis-titlebar` and the collapsed strip
-  `.swis-collapsed`) uses `#e0d4f0`, with a deep-purple-200
-  (`#b39ddb`) divider — a touch darker than the Capture / Options
-  page header (`#ede7f6`). The widget needs the extra contrast
-  against its own pale-purple body; the page headers sit on white
-  and don't.
-- Body uses `#f5f0fa` so the title bar still reads as a distinct
-  band and the whole widget stays tinted against mostly-white
-  provider pages.
-- Close-button hover (`.swis-titlebar-btn:hover`) is `#c8b8e2` —
-  visibly darker than the bar without going all the way to the
-  outer border's deep-purple-200.
-- Outer border is `#b39ddb` for theme consistency with the shared
-  `.app-header` / `.app-footer` chrome in `shared-styles.css`.
-
-### States
-
-- **Expanded** by default while sending. ~220 px wide with the
-  sections listed above.
-- **Collapsed** strip pinned to the right edge — the title-bar
-  children laid out vertically (icon, name, status, `×`; no `_`
-  since clicking the strip itself expands), and arranged so the
-  natural reading direction (bottom-to-top, matching the rotated
-  "SeeWhatISee" label) presents them in title-bar order.
-- Auto-collapses on success; stays expanded on error.
-- A new send re-expands a collapsed widget so the user sees the
-  in-flight Status without having to click the strip.
-- `×` removes the widget DOM AND clears that tab's storage record
-  (full dismiss). `_` just collapses the UI; the record stays.
-
-### Storage model
-
-- `chrome.storage.session` keyed by destination `tabId`
-  (`askWidget:<tabId>`).
-- Holds status, error message, source URL/title, the full attachment
-  payload, and prompt text — enough for the widget to render a full
-  recovery surface even after the Capture page closes.
-- Re-Asking into the same tab overwrites the record (one widget per
-  tab, latest send wins).
-- `tabs.onRemoved` clears records for closed tabs so session storage
-  doesn't accumulate orphans across the day.
-
-### Wire layout
-
-```
-sendToAi() ─┬─▶ writeWidgetRecord(tabId, {status:'injecting', ...})
-            ├─▶ executeScript ISOLATED: stash tabId on window
-            ├─▶ executeScript ISOLATED: load ask-widget.js
-            ├─▶ executeScript MAIN:    load+invoke ask-inject.js
-            └─▶ patchWidgetRecord(tabId, {status:'success'|'error', ...})
-                                         │
-                          chrome.storage.onChanged
-                                         ▼
-                              widget refresh()
-```
-
-### Why ISOLATED world
-
-- The widget needs `chrome.runtime.getURL` (icon) and
-  `chrome.storage.session` (state). Both are unavailable to MAIN-world
-  scripts.
-- Shadow DOM gives style isolation from the host page's CSS without
-  needing MAIN-world reach. The widget never touches the page's
-  prompt composer — that's the MAIN-world inject runtime's job.
-
-### Idempotent mount
-
-- The IIFE checks `window.__seeWhatISeeWidget` (ISOLATED-world
-  global, per-tab). If a handle exists, it just calls `refresh()`
-  with the latest record. If not, it mounts fresh.
-- The SW therefore re-injects `ask-widget.js` before every Ask
-  without having to track per-tab mount state — an X'd widget
-  reappears on the next send by the same path that mounted it the
-  first time.
+Full design — UI, theming, storage record shape, cross-world
+bridge protocol, retry / cancel-and-replace semantics — lives in
+[`ask-widget.md`](ask-widget.md).
 
 ## Why ProseMirror matters
 

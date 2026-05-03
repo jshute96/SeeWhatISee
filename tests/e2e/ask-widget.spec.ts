@@ -16,6 +16,7 @@ import { openDetailsFlow, seedSelection } from './details-helpers';
 import {
   clickExistingFakeClaudeItem,
   configureCapture,
+  fakeClaudeState,
   installAskTestHooks,
   openFakeClaudeTab,
   overrideAskProviders,
@@ -115,17 +116,20 @@ test('widget: error path → stays expanded with the error text', async ({
   await clickExistingFakeClaudeItem(capturePage);
 
   await expect(capturePage.locator('#ask-status')).toContainText(
-    /Could not find the file-upload input/,
+    /Attachment not accepted/,
     { timeout: 10_000 },
   );
 
-  // Widget remains expanded, status dot is red, status text mentions the error.
+  // Widget remains expanded, status dot is red, status text shows
+  // the user-facing summary. The raw error from the MAIN-world
+  // helper still lives on the failed row's icon tooltip — we don't
+  // assert it here but it's available for debugging.
   await expect(widget(claudePage).locator('#expanded')).toBeVisible({ timeout: 5000 });
   await expect(widget(claudePage).locator('#collapsed')).toBeHidden();
 
   await expect(
     widget(claudePage).locator('#status-text'),
-  ).toContainText(/Could not find the file-upload input/);
+  ).toContainText(/Attachment not accepted/);
 
   const dotStatus = await widget(claudePage)
     .locator('#expanded .swis-status-icon')
@@ -742,7 +746,9 @@ test('widget: third section header reads "Source" (not "Page")', async ({
   const labels = widget(claudePage).locator('.swis-section-label');
   // Status, Content, Source — in that order.
   await expect(labels.nth(0)).toHaveText('Status');
-  await expect(labels.nth(1)).toHaveText('Content');
+  // Content section label now carries an inline "Click to copy" hint;
+  // a substring match keeps the assertion focused on the heading.
+  await expect(labels.nth(1)).toContainText('Content');
   await expect(labels.nth(2)).toHaveText('Source');
 
   await claudePage.close();
@@ -788,6 +794,429 @@ test('widget: Source section title also has a Copy button', async ({
   await claudePage.bringToFront();
   const clip = await claudePage.evaluate(() => navigator.clipboard.readText());
   expect(clip).toBe(expectedTitle);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+// ─── Per-item / retry / orchestration ─────────────────────────────
+
+test('widget: per-item rows show ✓ on each item after a happy-path run', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'per-item happy',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
+    timeout: 10_000,
+  });
+
+  await widget(claudePage).locator('#collapsed').click();
+  // Three rows: Screenshot, HTML, Prompt — each with status icon
+  // showing data-status="success" after the run.
+  const icons = widget(claudePage).locator(
+    '#content-buttons .swis-status-icon-row',
+  );
+  await expect(icons).toHaveCount(3);
+  for (let i = 0; i < 3; i++) {
+    await expect(icons.nth(i)).toHaveAttribute('data-status', 'success');
+    await expect(icons.nth(i)).toHaveText('✓');
+  }
+  // No retry buttons rendered — every row succeeded.
+  await expect(
+    widget(claudePage).locator('#content-buttons .swis-retry-btn'),
+  ).toHaveCount(0);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('widget: failed item gets a retry button; siblings still succeed', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Sabotage the file-input selector. Items in order: Screenshot
+  // (fails), Prompt (succeeds), Submit (skipped, prior failed).
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: { fileInput: ['#nope'] },
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'partial fail',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    /Attachment not accepted/,
+    { timeout: 10_000 },
+  );
+
+  // Expanded by default on error. Two rows visible: Screenshot, Prompt.
+  await expect(widget(claudePage).locator('#expanded')).toBeVisible();
+  const icons = widget(claudePage).locator(
+    '#content-buttons .swis-status-icon-row',
+  );
+  await expect(icons).toHaveCount(2);
+  await expect(icons.nth(0)).toHaveAttribute('data-status', 'error');
+  await expect(icons.nth(1)).toHaveAttribute('data-status', 'success');
+
+  // Exactly one retry button — on the failed Screenshot row.
+  await expect(
+    widget(claudePage).locator('#content-buttons .swis-retry-btn'),
+  ).toHaveCount(1);
+
+  // Prompt typed even though Screenshot failed (partial-success).
+  const state = await fakeClaudeState(claudePage);
+  expect(state.attachedFiles).toHaveLength(0);
+  expect(state.submitClicks).toBe(0);
+  const editorText = await claudePage.evaluate(
+    () =>
+      document.querySelector('[data-testid="chat-input"]')?.textContent ?? '',
+  );
+  expect(editorText).toContain('partial fail');
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('widget: retry on a failed item recovers it after fixing the selector', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Start with a sabotaged file-input selector → Screenshot fails.
+  // Restore the real selector (live SW override), click retry,
+  // assert the item flips to success.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: { fileInput: ['#nope'] },
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'retry-test',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(widget(claudePage).locator('#expanded')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const screenshotIcon = widget(claudePage).locator(
+    '#content-buttons .swis-status-icon-row',
+  ).first();
+  await expect(screenshotIcon).toHaveAttribute('data-status', 'error');
+
+  // The widget reads `record.selectors` per call — patch the
+  // record's selectors with a working file-input selector and the
+  // retry will pick them up.
+  await sw.evaluate(async () => {
+    const all = await chrome.storage.session.get(null);
+    const key = Object.keys(all).find((k) => k.startsWith('askWidget:'));
+    if (!key) throw new Error('no widget record');
+    const rec = all[key];
+    rec.selectors.fileInput = ['input[data-testid="file-upload"]'];
+    await chrome.storage.session.set({ [key]: rec });
+  });
+
+  await widget(claudePage).locator('#content-buttons .swis-retry-btn').click();
+  await expect(screenshotIcon).toHaveAttribute('data-status', 'success', {
+    timeout: 5000,
+  });
+  // Retry button is gone now that the row succeeded.
+  await expect(
+    widget(claudePage).locator('#content-buttons .swis-retry-btn'),
+  ).toHaveCount(0);
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('widget: re-Ask cancels and replaces — exactly one host on the page', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  for (const prompt of ['first', 'second', 'third']) {
+    await configureCapture(capturePage, {
+      saveScreenshot: false, saveHtml: false, prompt,
+    });
+    await capturePage.locator('#ask-caret').click();
+    await waitForAskMenuReady(capturePage);
+    await clickExistingFakeClaudeItem(capturePage);
+    await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
+      timeout: 10_000,
+    });
+    // Always exactly one host on the destination — no stacking even
+    // after multiple Asks. Previously a navigation race could leave
+    // the old host in the DOM; the mountWidget defensive sweep
+    // handles that.
+    await expect(claudePage.locator(HOST_SEL)).toHaveCount(1);
+  }
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+// ─── Transition / regression tests ────────────────────────────────
+//
+// These pin behaviors that were broken at some point and would have
+// shipped quietly because the existing tests sample at outcomes,
+// not at transitions. Each one is a regression guard against a
+// specific class of bug.
+
+test('widget: retry button is enabled once the orchestration error settles', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression: the orchestrator's `inFlightCount--` happens in
+  // `finally`, AFTER the last `patchStatus` already triggered the
+  // final paint. Without an explicit re-paint in the finally, the
+  // ↻ retry button would render disabled (inFlightCount was still
+  // 1 during the last paint) and stay that way until the next
+  // storage event happened to fire — leaving the user staring at
+  // a permanently-greyed retry control.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: { fileInput: ['#nope'] },
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true, saveHtml: false, prompt: 'retry-enabled',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'Attachment not accepted',
+    { timeout: 10_000 },
+  );
+
+  const retry = widget(claudePage).locator(
+    '#content-buttons .swis-retry-btn',
+  );
+  await expect(retry).toHaveCount(1);
+  // Specifically asserting NOT-disabled, not just "click works" —
+  // Playwright's actionability check on .click() would mask this
+  // bug by waiting up to its own timeout for the disabled state to
+  // clear, but the user sees the visible-disabled button instantly.
+  await expect(retry).toBeEnabled();
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('widget: in-flight row icon carries the spinner CSS', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression: per-item rows use `data-status="in_progress"` (the
+  // item-status vocabulary), but the spinner CSS originally only
+  // matched `data-status="injecting"` (the overall-record
+  // vocabulary). So during the in-flight window the row icon was
+  // a blank 14×14 box with no animation.
+  //
+  // We bypass the orchestration entirely — mount via a normal Ask,
+  // then directly write a record with one item in `in_progress`
+  // and assert the row icon picks up both the data-status AND the
+  // running animation. `shouldStartOrchestration` doesn't fire
+  // because items aren't all 'pending', so we don't kick off any
+  // bridge calls.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true, saveHtml: false, prompt: 'in-flight spinner',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
+    timeout: 10_000,
+  });
+  await widget(claudePage).locator('#collapsed').click();
+
+  // Patch items[0] to in_progress directly. The widget's storage
+  // listener picks it up and re-paints; the orchestrator does NOT
+  // re-enter (status is 'injecting' but not all items are pending).
+  await sw.evaluate(async () => {
+    const all = await chrome.storage.session.get(null);
+    const key = Object.keys(all).find((k) => k.startsWith('askWidget:'));
+    if (!key) throw new Error('no widget record');
+    const rec = all[key];
+    rec.status = 'injecting';
+    rec.items[0].status = 'in_progress';
+    await chrome.storage.session.set({ [key]: rec });
+  });
+
+  const firstRowIcon = widget(claudePage)
+    .locator('#content-buttons .swis-status-icon-row')
+    .first();
+  await expect(firstRowIcon).toHaveAttribute('data-status', 'in_progress');
+  // Catch the CSS-vocabulary mismatch by reading the computed
+  // animation name. `swis-spin` proves the row picked up the
+  // spinner rule, not just the empty placeholder.
+  const animationName = await firstRowIcon.evaluate(
+    (el) => getComputedStyle(el).animationName,
+  );
+  expect(animationName).toBe('swis-spin');
+
+  await claudePage.close();
+  await openerPage.close();
+});
+
+test('widget: retry that fails again still updates the Status text', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression: retryOne used to skip writing the final status
+  // when `allDoneOrSkipped` was false (the failed item is still in
+  // 'error'). The widget would stay on the in-flight "Injecting…"
+  // text from the retry's own pre-status patch, and the title-bar
+  // status icon would stay on the spinner — so a second-failure
+  // looked like a hung run.
+  //
+  // Test exercises the title-bar status icon's transitions:
+  //   error (initial) → injecting (during retry) → error (after).
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  // Sabotage stays in place across the retry — selectors are read
+  // from the storage record per call, so no live override is needed.
+  await overrideAskProviders(sw, fixtureServer.baseUrl, {
+    selectors: { fileInput: ['#nope'] },
+  });
+  const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true, saveHtml: false, prompt: 'retry-fail-again',
+  });
+  await capturePage.locator('#ask-caret').click();
+  await waitForAskMenuReady(capturePage);
+  await clickExistingFakeClaudeItem(capturePage);
+
+  const titlebarIcon = widget(claudePage)
+    .locator('#expanded .swis-status-icon')
+    .first();
+  await expect(titlebarIcon).toHaveAttribute('data-status', 'error', {
+    timeout: 10_000,
+  });
+
+  // Install a MutationObserver BEFORE clicking retry so we can
+  // capture the full transition sequence on data-status. With
+  // `#nope` selectors the failing op throws synchronously, making
+  // the 'injecting' window only a few ms — too brief for
+  // Playwright's ~100 ms polling to reliably catch via
+  // toHaveAttribute. The observer latches every value the
+  // attribute ever takes, then the test asserts the sequence.
+  await claudePage.evaluate(() => {
+    interface Win { __seeWhatISeeStatusLatch?: string[] }
+    const w = window as unknown as Win;
+    w.__seeWhatISeeStatusLatch = [];
+    const host = document.getElementById('see-what-i-see-widget-host');
+    const root = host?.shadowRoot;
+    const icon = root?.querySelector(
+      '#expanded .swis-status-icon',
+    ) as HTMLElement | null;
+    if (!icon) throw new Error('status icon not found');
+    w.__seeWhatISeeStatusLatch.push(icon.dataset.status ?? '');
+    new MutationObserver(() => {
+      w.__seeWhatISeeStatusLatch!.push(icon.dataset.status ?? '');
+    }).observe(icon, { attributes: true, attributeFilter: ['data-status'] });
+  });
+
+  // Click the retry button on the failed Screenshot row.
+  await widget(claudePage)
+    .locator('#content-buttons .swis-retry-btn')
+    .click();
+
+  // Wait for the icon to settle back to 'error' (proves the FINAL
+  // patchStatus on second failure fired; without the fix the icon
+  // would stick on 'injecting' forever).
+  await expect(titlebarIcon).toHaveAttribute('data-status', 'error', {
+    timeout: 10_000,
+  });
+
+  // Now read the latch — it must contain 'injecting' between the
+  // initial 'error' and the final 'error', proving the retry's
+  // pre-status flip ran.
+  const sequence = await claudePage.evaluate(() => {
+    return (window as unknown as { __seeWhatISeeStatusLatch?: string[] })
+      .__seeWhatISeeStatusLatch ?? [];
+  });
+  expect(sequence).toContain('injecting');
+  // First entry is the pre-click 'error'; last entry is the
+  // post-retry 'error'. 'injecting' must sit between them.
+  expect(sequence[0]).toBe('error');
+  expect(sequence[sequence.length - 1]).toBe('error');
+
+  // Status text reads the count-based summary again, not stuck
+  // on "Injecting …".
+  await expect(widget(claudePage).locator('#status-text')).toContainText(
+    'Attachment not accepted',
+  );
 
   await claudePage.close();
   await openerPage.close();

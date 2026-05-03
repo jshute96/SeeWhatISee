@@ -565,11 +565,13 @@ export async function sendToAi(
     // Swallow — see comment above.
   }
 
-  // Status widget: write 'injecting' record + mount the in-page
-  // widget BEFORE the inject runtime starts. The widget shows the
-  // user "Injecting …" while the file work happens, then live-
-  // updates on success/error via `chrome.storage.onChanged`. Best-
-  // effort: a widget-mount failure must not block the actual Ask.
+  // The widget owns the inject. The SW writes the initial record
+  // (items: 'pending', overall status: 'injecting'), loads the
+  // MAIN-world helper file (the bridge), mounts the widget, and then
+  // awaits the overall status to leave 'injecting' before resolving
+  // to the capture page. The widget walks the items via the bridge
+  // and patches per-item state along the way.
+  const items = buildItems(payload);
   const widgetRecord: AskWidgetRecord = {
     status: 'injecting',
     destinationLabel,
@@ -582,74 +584,150 @@ export async function sendToAi(
       data: a.data,
     })),
     promptText: payload.promptText,
+    items,
+    autoSubmit: payload.autoSubmit,
+    selectors: provider.selectors,
+    runId: Date.now(),
     updatedAt: Date.now(),
   };
-  await writeWidgetRecord(tabId, widgetRecord);
   try {
-    await mountAskWidget(tabId);
-  } catch {
-    // Widget mount can fail on pages that block extension scripting
-    // (rare on the supported AI hosts). Log nothing — the inject
-    // path will surface its own errors and the user just doesn't get
-    // the in-page status overlay this round.
+    await writeWidgetRecord(tabId, widgetRecord);
+  } catch (err) {
+    // Most likely cause: chrome.storage.session quota exceeded for a
+    // large attachment payload. Surface it immediately rather than
+    // waiting 60 s for the generic completion timeout.
+    return {
+      ok: false,
+      error: `Couldn't stage payload for the in-page widget: ${describe(err)}`,
+      tabId,
+    };
   }
 
   try {
-    // Two-step injection: load the runtime once (registers
-    // window.__seeWhatISeeAsk), then call it. Splitting the steps
-    // keeps the function payload small (no inline closure carrying
-    // the data URL) and lets us re-invoke for retries without
-    // reloading the file.
+    // Load the MAIN-world helper file once before the widget mounts,
+    // so the bridge is listening when the widget posts its first
+    // request. Re-loads are no-ops via the IIFE's
+    // `__seeWhatISeeAskBridgeInstalled` flag.
     await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       files: ['ask-inject.js'],
     });
-
-    const [callResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: invokeRuntime,
-      args: [provider.selectors, payload],
-    });
-
-    const result = callResult?.result as { ok: boolean; error?: string } | undefined;
-    if (!result) {
-      await patchWidgetRecord(tabId, {
-        status: 'error',
-        error: 'No response from injected runtime',
-      });
-      return { ok: false, error: 'No response from injected runtime', tabId };
-    }
-    if (!result.ok) {
-      await patchWidgetRecord(tabId, {
-        status: 'error',
-        error: result.error ?? 'Unknown injection failure',
-      });
-      return { ok: false, error: result.error ?? 'Unknown injection failure', tabId };
-    }
-    await patchWidgetRecord(tabId, { status: 'success', error: undefined });
-    // Pin this destination so the next plain-Ask click reuses the
-    // same tab. Includes both new-tab opens (so the freshly-created
-    // tab gets reused) and existing-tab picks.
-    //
-    // `newTabOnly` providers opt out — Google Search isn't a chat
-    // surface to reuse, and pinning the just-opened tab would have
-    // the next plain Ask try to inject into a `/search?q=...` results
-    // page instead of opening a fresh google.com.
-    if (!provider.newTabOnly) {
-      await writePin({ provider: provider.id, tabId });
-    }
-    return { ok: true, tabId };
+    await mountAskWidget(tabId);
   } catch (err) {
-    const message = `Failed to inject into ${provider.label}: ${describe(err)}`;
+    const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
     await patchWidgetRecord(tabId, { status: 'error', error: message });
-    return {
-      ok: false,
-      error: message,
-      tabId,
-    };
+    return { ok: false, error: message, tabId };
   }
+
+  // Wait for the widget to finish walking the items.
+  let final: AskWidgetRecord;
+  try {
+    final = await waitForWidgetCompletion(tabId);
+  } catch (err) {
+    const message = describe(err);
+    await patchWidgetRecord(tabId, { status: 'error', error: message });
+    return { ok: false, error: message, tabId };
+  }
+
+  if (final.status !== 'success') {
+    return { ok: false, error: final.error ?? 'Inject failed', tabId };
+  }
+
+  // Pin this destination so the next plain-Ask click reuses the same
+  // tab. `newTabOnly` providers opt out — Google Search isn't a chat
+  // surface to reuse.
+  if (!provider.newTabOnly) {
+    await writePin({ provider: provider.id, tabId });
+  }
+  return { ok: true, tabId };
+}
+
+/**
+ * Convert a payload into the ordered item list the widget walks.
+ * One item per attachment, then a `prompt` item if the user typed
+ * one, then a `submit` item (only when `autoSubmit` is on AND the
+ * prompt is non-empty — same gate as the legacy runtime).
+ *
+ * Labels match what the widget renders in the Content section, so
+ * the per-item rows and the orchestration items line up 1:1.
+ */
+function buildItems(payload: AskPayload) {
+  const items: AskWidgetRecord['items'] = [];
+  payload.attachments.forEach((att, i) => {
+    items.push({
+      kind: 'attachment',
+      attachmentIndex: i,
+      label: labelForAttachment(att),
+      status: 'pending',
+    });
+  });
+  const promptHasText = payload.promptText.trim().length > 0;
+  if (promptHasText) {
+    items.push({ kind: 'prompt', label: 'Prompt', status: 'pending' });
+  }
+  if (payload.autoSubmit && promptHasText) {
+    items.push({ kind: 'submit', label: 'Submit', status: 'pending' });
+  }
+  return items;
+}
+
+function labelForAttachment(att: AskAttachment): string {
+  if (att.kind === 'image') return 'Screenshot';
+  if (att.filename.endsWith('.html')) return 'HTML';
+  if (att.filename.endsWith('.md') || att.mimeType.includes('markdown')) {
+    return 'Selection (markdown)';
+  }
+  if (att.mimeType.includes('html')) return 'Selection (HTML)';
+  return 'Selection (text)';
+}
+
+/**
+ * Resolve when the widget's overall status flips out of 'injecting'.
+ * Listens to `chrome.storage.onChanged`. Times out after 60 s — most
+ * inject flows finish in seconds; a 60 s ceiling is generous for
+ * slow uploads while keeping the SW from leaking listeners forever.
+ */
+function waitForWidgetCompletion(
+  tabId: number,
+  timeoutMs = 60000,
+): Promise<AskWidgetRecord> {
+  const storageKey = `askWidget:${tabId}`;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (
+      kind: 'resolve' | 'reject',
+      payload: AskWidgetRecord | Error,
+    ): void => {
+      if (settled) return;
+      settled = true;
+      chrome.storage.onChanged.removeListener(onChanged);
+      clearTimeout(timer);
+      if (kind === 'resolve') resolve(payload as AskWidgetRecord);
+      else reject(payload as Error);
+    };
+    const onChanged = (
+      changes: { [k: string]: chrome.storage.StorageChange },
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'session' || !(storageKey in changes)) return;
+      const v = changes[storageKey].newValue as AskWidgetRecord | undefined;
+      if (v && v.status !== 'injecting') finish('resolve', v);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    const timer = setTimeout(
+      () => finish('reject', new Error('Inject timed out (widget never reported)')),
+      timeoutMs,
+    );
+    // Self-resolve race: if the widget already finished before we
+    // installed the listener (e.g. an extremely fast happy path), the
+    // current record will already be terminal. Probe and resolve
+    // immediately if so.
+    void chrome.storage.session.get(storageKey).then((got) => {
+      const v = got[storageKey] as AskWidgetRecord | undefined;
+      if (v && v.status !== 'injecting') finish('resolve', v);
+    });
+  });
 }
 
 /**
@@ -715,15 +793,6 @@ function filterAttachmentsByKinds(
   return { kept, skipped };
 }
 
-// Runs in MAIN world via executeScript({ func }). Kept as a named
-// outer function (instead of an inline arrow at the call site) so
-// TypeScript type-checks it against the runtime's expected shape and
-// the serialized form stays small.
-function invokeRuntime(selectors: unknown, payload: unknown): unknown {
-  const fn = (window as unknown as { __seeWhatISeeAsk?: Function }).__seeWhatISeeAsk;
-  if (!fn) return { ok: false, error: 'Ask runtime not loaded' };
-  return fn(selectors, payload);
-}
 
 async function openNewProviderTab(provider: AskProvider): Promise<number> {
   const created = await chrome.tabs.create({
@@ -780,6 +849,42 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
 function describe(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * User-facing message for any failure of the
+ * `chrome.scripting.executeScript` calls that load the bridge and
+ * mount the widget. Every error reaching this point is Chrome's
+ * own — not ours — and they're all implementation-leaking AND
+ * locale-translated. The known cases all share the same
+ * user-actionable resolution (verify the tab is on a real prompt
+ * page) so we collapse them into one message.
+ *
+ * Known underlying messages from Chrome (English; other locales
+ * differ):
+ *   - "Cannot access contents of the page. Extension manifest must
+ *      request permission to access the respective host."
+ *      → restricted URL (chrome://, Web Store) or crashed/error page.
+ *   - "The tab was closed." / "No frame with id X in tab Y."
+ *      → tab closed or frame gone.
+ *   - "Frame with ID 0 was removed."
+ *      → SPA navigation tore down the frame.
+ *
+ * The raw error is logged for debugging via the SW console (open
+ * via chrome://extensions → the extension's "service worker" link).
+ * Errors from our own MAIN-world helpers don't reach this path —
+ * they come back over the bridge, get marked as per-item failures,
+ * and surface through `summarizeErrors`.
+ */
+function friendlyInjectError(err: unknown): string {
+  // `console.log` rather than `console.warn` to match the
+  // convention in `ask-inject.ts` / `ask-widget.ts`: warnings
+  // surface as actionable items at chrome://extensions and
+  // crowd out user-facing problems with internal noise. The
+  // `[warn]` prefix keeps the bad-path lines visually distinct
+  // when reading the SW console.
+  console.log('[SeeWhatISee] [warn] Inject error:', describe(err));
+  return 'Check if the tab is on a prompt screen.';
 }
 
 interface AskMessage {

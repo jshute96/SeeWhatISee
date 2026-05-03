@@ -573,8 +573,11 @@ test('ask error: missing file-input selector → status reports the failure', as
   );
   const sw = await getServiceWorker();
   // Override the file-input selector with a value that won't match
-  // anything on fake-claude — the inject runtime should throw
-  // "Could not find the file-upload input".
+  // anything on fake-claude — the per-file attachment helper should
+  // throw "Could not find the file-upload input". The widget walks
+  // items in order, so the prompt still gets typed (text-input
+  // selectors are intact) and the submit is skipped because the
+  // screenshot item ended in error.
   await overrideAskProviders(sw, fixtureServer.baseUrl, {
     selectors: { fileInput: ['#nonexistent-file-input'] },
   });
@@ -591,10 +594,11 @@ test('ask error: missing file-input selector → status reports the failure', as
   await clickExistingFakeClaudeItem(capturePage);
 
   await expect(capturePage.locator('#ask-status')).toContainText(
-    'Could not find the file-upload input',
+    'Attachment not accepted',
     { timeout: 10_000 },
   );
-  // No file should have arrived; the failure happens before attach.
+  // No file should have arrived; submit is skipped (attachment
+  // failed) — the prompt still got typed but won't have been sent.
   const state = await fakeClaudeState(claudePage);
   expect(state.attachedFiles).toHaveLength(0);
   expect(state.submitClicks).toBe(0);
@@ -632,7 +636,7 @@ test('ask error: missing prompt-input selector → status reports the failure', 
   await clickExistingFakeClaudeItem(capturePage);
 
   await expect(capturePage.locator('#ask-status')).toContainText(
-    'Could not find the prompt input',
+    'Prompt not accepted',
     { timeout: 10_000 },
   );
 
@@ -682,14 +686,16 @@ test('ask: attachment-preview verification confirms each chip appeared', async (
   await openerPage.close();
 });
 
-test('ask error: destination silently drops non-image attachment → status names the count', async ({
+test('ask error: destination silently drops non-image attachment → HTML item fails individually', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
   // Mirrors the ChatGPT-logged-out case: file input accepts the
-  // dispatch, image chip appears, HTML chip never does. The runtime's
-  // attachment-preview verification should refuse before submit.
+  // dispatch, image chip appears, HTML chip never does. With per-file
+  // dispatch the image item succeeds and the HTML item fails on its
+  // own chip-count check. The widget marks just the HTML row as
+  // errored and skips submit.
   const { openerPage, capturePage } = await openDetailsFlow(
     extensionContext,
     fixtureServer,
@@ -729,11 +735,13 @@ test('ask error: destination silently drops non-image attachment → status name
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
+  // One attachment failed (HTML), Screenshot succeeded — summary
+  // collapses to the count-based "Attachment not accepted" form.
   await expect(capturePage.locator('#ask-status')).toContainText(
-    'Only 1 of 2 attachments were accepted',
+    'Attachment not accepted',
     { timeout: 10_000 },
   );
-  // Submit must not have fired — verification refuses before clickSubmit.
+  // Submit must not have fired — HTML attachment failed.
   const state = await fakeClaudeState(claudePage);
   expect(state.submitClicks).toBe(0);
 
@@ -787,8 +795,11 @@ test('ask error: preview selectors that match nothing → "could not verify" mes
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
+  // The "could not verify" raw error from the chip-count gate is
+  // still on the failed row's icon tooltip; the user-facing summary
+  // collapses to the count-based form.
   await expect(capturePage.locator('#ask-status')).toContainText(
-    'Could not verify attachment delivery',
+    'Attachment not accepted',
     { timeout: 10_000 },
   );
 

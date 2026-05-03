@@ -44,6 +44,28 @@
 
   type AskWidgetStatus = 'injecting' | 'success' | 'error';
 
+  type AskWidgetItemStatus =
+    | 'pending'
+    | 'in_progress'
+    | 'success'
+    | 'error';
+
+  interface AskWidgetItem {
+    kind: 'attachment' | 'prompt' | 'submit';
+    attachmentIndex?: number;
+    label: string;
+    status: AskWidgetItemStatus;
+    error?: string;
+  }
+
+  interface AskInjectSelectorsLike {
+    preFileInputClicks?: string[];
+    fileInput: string[];
+    textInput: string[];
+    submitButton: string[];
+    attachmentPreview?: string[];
+  }
+
   interface AskWidgetRecord {
     status: AskWidgetStatus;
     error?: string;
@@ -52,6 +74,10 @@
     sourceTitle: string;
     attachments: AskWidgetAttachment[];
     promptText: string;
+    items: AskWidgetItem[];
+    autoSubmit: boolean;
+    selectors: AskInjectSelectorsLike;
+    runId: number;
     updatedAt: number;
   }
 
@@ -60,6 +86,10 @@
     host: HTMLDivElement;
     root: ShadowRoot;
     refresh(record: AskWidgetRecord | null): void;
+    /** Set by `init()`; row retry buttons call into the orchestrator. */
+    retryOne?: (itemIndex: number) => Promise<void>;
+    /** Set by `init()`; the painter disables retry buttons when true. */
+    isInFlight?: () => boolean;
   }
 
   // ─── Idempotent mount ────────────────────────────────────────────
@@ -128,8 +158,305 @@
       __seeWhatISeeWidget?: WidgetHandle;
     }).__seeWhatISeeWidget = handle;
 
+    // Orchestration state. `activeRunId` tracks which Ask invocation
+    // the orchestrator is currently walking; a re-Ask into the same
+    // tab arrives as a new record with a new `runId`, which causes
+    // the in-flight loop to bail at its next checkpoint and the new
+    // run to start fresh.
+    //
+    // `inFlightCount` counts active operations (orchestrator walks +
+    // user-initiated retries) so retry buttons stay disabled while
+    // any work is happening — and a finally on one path can't
+    // wrongly clear a flag set by a concurrent path. Boolean was the
+    // first cut and let `retryOne`'s finally clobber the orchestrator's
+    // flag; the counter avoids that.
+    let activeRunId = 0;
+    let inFlightCount = 0;
+
+    /**
+     * Per-item patcher — bypasses the SW-side `patchWidgetItem` and
+     * goes straight to `chrome.storage.session` because we're in
+     * ISOLATED world. Same shape as the SW helper. The orchestrator
+     * uses this to flip in_progress → success/error per step, which
+     * fires `chrome.storage.onChanged` and re-renders the widget UI.
+     */
+    async function patchItem(
+      itemIndex: number,
+      patch: Partial<AskWidgetItem>,
+    ): Promise<void> {
+      try {
+        const got = await chrome.storage.session.get(storageKey);
+        const current = got[storageKey] as AskWidgetRecord | undefined;
+        if (!current || !current.items[itemIndex]) return;
+        const items = current.items.slice();
+        items[itemIndex] = { ...items[itemIndex], ...patch };
+        await chrome.storage.session.set({
+          [storageKey]: { ...current, items, updatedAt: Date.now() },
+        });
+      } catch {
+        // Best-effort — if storage write fails the UI just doesn't
+        // update for this step. The next storage event recovers.
+      }
+    }
+
+    /**
+     * Patch the overall status (e.g. flip out of 'injecting' once
+     * all items are done). Triggers the SW's
+     * `waitForWidgetCompletion` which resolves the capture-page
+     * request.
+     */
+    async function patchStatus(
+      status: AskWidgetStatus,
+      error?: string,
+    ): Promise<void> {
+      try {
+        const got = await chrome.storage.session.get(storageKey);
+        const current = got[storageKey] as AskWidgetRecord | undefined;
+        if (!current) return;
+        await chrome.storage.session.set({
+          [storageKey]: { ...current, status, error, updatedAt: Date.now() },
+        });
+      } catch {
+        // Same fallback rationale as patchItem.
+      }
+    }
+
+    /**
+     * Run a single item. Looks up the item's current state in the
+     * latest record (so a retry sees fresh selectors / payload),
+     * calls the MAIN-world bridge, returns ok / error.
+     *
+     * `expectRunId` lets the orchestrator pre-check `activeRunId`
+     * just before firing into MAIN world — if a re-Ask superseded
+     * us between the orchestrator's last checkpoint and now, we
+     * skip the bridge call entirely. Without this guard the OLD
+     * run could land an `attachFile` against the same composer the
+     * NEW run is now mutating, racing baseline-chip-count math and
+     * potentially splicing two prompt insertions together. Pass
+     * `null` to skip the guard (used by `retryOne`, which is gated
+     * by `inFlight` instead).
+     *
+     * Looking up the record fresh per call (rather than closing over
+     * `record` from the orchestrator) means a retry kicked off via
+     * the row's retry button always uses the most-recent state.
+     */
+    async function runItem(
+      itemIndex: number,
+      expectRunId: number | null,
+    ): Promise<{ ok: boolean; error?: string; superseded?: boolean }> {
+      const record = await readRecord();
+      if (!record) return { ok: false, error: 'No record' };
+      const item = record.items[itemIndex];
+      if (!item) return { ok: false, error: 'Item gone' };
+      if (expectRunId !== null && activeRunId !== expectRunId) {
+        return { ok: false, superseded: true };
+      }
+
+      try {
+        if (item.kind === 'attachment') {
+          const att = record.attachments[item.attachmentIndex ?? -1];
+          if (!att) throw new Error('Attachment missing from record');
+          await callMain('attachFile', {
+            attachment: att,
+            selectors: record.selectors,
+          });
+        } else if (item.kind === 'prompt') {
+          await callMain('typePrompt', {
+            text: record.promptText,
+            selectors: record.selectors,
+          });
+        } else if (item.kind === 'submit') {
+          await callMain('clickSubmit', { selectors: record.selectors });
+        } else {
+          throw new Error(`Unknown item kind: ${item.kind}`);
+        }
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    /**
+     * Walk the items in order, marking each in_progress → outcome.
+     * Skips items already in `success` (lets a retry-then-resume
+     * flow naturally re-enter without re-running done items). Skips
+     * `submit` if any earlier item is in `error`.
+     *
+     * Exits early if `activeRunId` changed under us (re-Ask
+     * superseded this run).
+     */
+    async function runItems(record: AskWidgetRecord): Promise<void> {
+      const myRunId = record.runId;
+      // Caller MUST go through `tryStartRun`, which atomically
+      // claims `activeRunId` before the async kickoff. The
+      // assignment here is defensive — assert the claim is in
+      // place rather than silently re-claim, so a future direct
+      // caller is loud about its mistake instead of stomping a
+      // newer run's claim.
+      if (activeRunId !== myRunId) {
+        console.log(
+          '[SeeWhatISee Widget] [warn] runItems called without prior',
+          ' tryStartRun claim; activeRunId',
+          activeRunId,
+          '!=',
+          myRunId,
+          '— bailing.',
+        );
+        return;
+      }
+      inFlightCount++;
+      try {
+        for (let i = 0; i < record.items.length; i++) {
+          if (activeRunId !== myRunId) return; // Superseded.
+          const item = record.items[i];
+          if (item.status === 'success') continue;
+
+          if (item.kind === 'submit') {
+            // Re-read the live record so we see this run's previous
+            // items at their current statuses — the local `record`
+            // is frozen at orchestration start and would still show
+            // every item as 'pending' here.
+            const live = await readRecord();
+            const priorFailed = live?.items
+              .slice(0, i)
+              .some((it) => it.status === 'error') ?? false;
+            if (priorFailed) {
+              await patchItem(i, {
+                status: 'pending',
+                error: 'Skipped: prior items failed',
+              });
+              continue;
+            }
+          }
+
+          await patchItem(i, { status: 'in_progress', error: undefined });
+          const result = await runItem(i, myRunId);
+          if (activeRunId !== myRunId || result.superseded) return;
+          if (result.ok) {
+            await patchItem(i, { status: 'success', error: undefined });
+          } else {
+            await patchItem(i, { status: 'error', error: result.error });
+          }
+        }
+
+        // Compute overall status and write it. Refresh the record so
+        // we see all the patches we just made.
+        const final = await readRecord();
+        if (!final) return;
+        if (activeRunId !== myRunId) return;
+        const anyError = final.items.some((it) => it.status === 'error');
+        const overall: AskWidgetStatus = anyError ? 'error' : 'success';
+        await patchStatus(overall, summarizeErrors(final.items));
+      } finally {
+        inFlightCount--;
+        // The last `patchStatus` write fired before this decrement,
+        // so the storage-driven re-paint saw `inFlightCount === 1`
+        // and rendered any retry buttons disabled. Force one more
+        // paint with the now-zero counter so failed-item retries
+        // become clickable. Without this, the row would stay
+        // disabled until some other storage event happened to fire.
+        void readRecord().then((rec) => handle.refresh(rec));
+      }
+    }
+
+    /**
+     * User-initiated single-item retry from the row's ↻ button.
+     * Gated by `inFlightCount` so a retry can't race a still-running
+     * orchestration or another retry. After the retry, re-evaluates
+     * the overall status (success once everything is done; error if
+     * anything still failed).
+     */
+    async function retryOne(itemIndex: number): Promise<void> {
+      if (inFlightCount > 0) return;
+      inFlightCount++;
+      try {
+        // Flip overall status back to 'injecting' so the title-bar
+        // spinner / Status section reflect the in-flight retry. The
+        // statusLabel for 'injecting' is "Injecting <what> into
+        // <dest>…" which is appropriate even though only one item
+        // is actually being re-run.
+        await patchStatus('injecting', undefined);
+        await patchItem(itemIndex, {
+          status: 'in_progress',
+          error: undefined,
+        });
+        const result = await runItem(itemIndex, null);
+        if (result.ok) {
+          await patchItem(itemIndex, {
+            status: 'success',
+            error: undefined,
+          });
+        } else {
+          await patchItem(itemIndex, {
+            status: 'error',
+            error: result.error,
+          });
+        }
+
+        // Always recompute overall after the retry — including when
+        // the same item failed again. Without this write the title
+        // bar would stay on the spinner from the in_progress patch
+        // and the Status section would still show "Injecting …" if
+        // the new outcome doesn't fire its own status update. A
+        // skipped-submit row stays 'pending'; the user can retry it
+        // manually if they want the conversation to actually fire.
+        const final = await readRecord();
+        if (!final) return;
+        const anyError = final.items.some((it) => it.status === 'error');
+        await patchStatus(
+          anyError ? 'error' : 'success',
+          summarizeErrors(final.items),
+        );
+      } finally {
+        inFlightCount--;
+        // Same rationale as `runItems`'s finally — re-paint so the
+        // row's retry button is re-evaluated against the now-zero
+        // counter (otherwise a multi-step recovery flow can leave
+        // siblings looking disabled until the next storage event).
+        void readRecord().then((rec) => handle.refresh(rec));
+      }
+    }
+
+    // Expose `retryOne` and the in-flight reader to the painter so
+    // the row buttons can call into the orchestrator and disable
+    // when any work is happening.
+    handle.retryOne = retryOne;
+    handle.isInFlight = (): boolean => inFlightCount > 0;
+
+    /**
+     * Atomic "claim and start" for a fresh record. Without claiming
+     * `activeRunId` synchronously here, both the initial-paint
+     * `readRecord` callback and the storage-onChanged listener could
+     * race: each sees `activeRunId === 0` (or the prior runId), each
+     * passes the guard, each kicks off `runItems` in parallel
+     * against the SAME runId. That cascade makes every per-step
+     * MAIN-world call run twice — including `typePrompt`, which
+     * shows up as "TestTest" in Claude's composer.
+     *
+     * The synchronous `activeRunId = rec.runId` BEFORE the async
+     * runItems call closes the window: the second caller's guard
+     * sees the already-claimed runId and bails.
+     */
+    function tryStartRun(rec: AskWidgetRecord | null): void {
+      if (!rec) return;
+      if (!shouldStartOrchestration(rec)) return;
+      if (activeRunId === rec.runId) return;
+      activeRunId = rec.runId;
+      void runItems(rec);
+    }
+
     // Initial paint + live updates.
-    void readRecord().then((rec) => handle.refresh(rec));
+    void readRecord().then((rec) => {
+      handle.refresh(rec);
+      // The SW writes records in fresh-injecting shape; that's the
+      // trigger that takes the widget from "passive renderer" to
+      // "active driver." `tryStartRun` handles the initial-paint
+      // race with the storage listener.
+      tryStartRun(rec);
+    });
 
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'session') return;
@@ -137,13 +464,178 @@
       const newValue = changes[storageKey].newValue as
         | AskWidgetRecord
         | undefined;
+      const oldValue = changes[storageKey].oldValue as
+        | AskWidgetRecord
+        | undefined;
       handle.refresh(newValue ?? null);
+      // Re-Ask detection: fresh-injecting record AND a runId we
+      // haven't claimed. Both checks needed:
+      //   - `runId !== oldValue?.runId` filters out the per-item
+      //     patches the orchestrator itself fires (same runId).
+      //   - `tryStartRun`'s atomic `activeRunId` claim handles the
+      //     startup race with the initial-paint readRecord.
+      if (newValue && newValue.runId !== oldValue?.runId) {
+        tryStartRun(newValue);
+      }
+    });
+  }
+
+  /**
+   * One-line user-facing summary of a failed run. Counts attachment
+   * vs prompt failures separately and produces phrasing the Status
+   * section can show verbatim. Returns `undefined` when nothing
+   * failed (so the caller can pass it directly to `patchStatus`'s
+   * optional `error` argument).
+   *
+   * Shape:
+   *   - 1 attachment failed → "Attachment not accepted. Retry or use copy/paste."
+   *   - N attachments failed → "N attachments not accepted. Retry or use copy/paste."
+   *   - prompt failed → "Prompt not accepted. Retry or use copy/paste."
+   *   - mixed → "N attachments and prompt not accepted. Retry or use copy/paste."
+   *
+   * The per-item error text from MAIN-world helpers is intentionally
+   * dropped here — it was leaking implementation detail (e.g.
+   * "No attachments were accepted by the destination") and reading
+   * confusingly when other items in the same Ask succeeded. Each
+   * row's hover-tooltip still carries its raw error for debugging.
+   */
+  function summarizeErrors(items: AskWidgetItem[]): string | undefined {
+    const failed = items.filter((it) => it.status === 'error');
+    if (failed.length === 0) return undefined;
+
+    // Submit can only fail when EVERY prior item succeeded — the
+    // orchestrator auto-skips it (patches status='pending') if any
+    // attachment or prompt errored. So a `submit` failure is always
+    // standalone; we never see "attachments + submit" in `failed`.
+    // Submit also has no copy/paste recovery (it's not a payload),
+    // so its message is its own thing.
+    if (failed.some((it) => it.kind === 'submit')) {
+      return 'Unable to submit. Submit manually on the chat page.';
+    }
+
+    const attachmentCount = failed.filter(
+      (it) => it.kind === 'attachment',
+    ).length;
+    const promptFailed = failed.some((it) => it.kind === 'prompt');
+    const parts: string[] = [];
+    if (attachmentCount > 0) {
+      parts.push(
+        attachmentCount === 1
+          ? 'Attachment'
+          : `${attachmentCount} attachments`,
+      );
+    }
+    if (promptFailed) {
+      parts.push(parts.length > 0 ? 'prompt' : 'Prompt');
+    }
+    return `${parts.join(' and ')} not accepted. Retry or use copy/paste.`;
+  }
+
+  /**
+   * A record is "fresh" (orchestration should start) when its
+   * overall status is 'injecting' AND no item has been touched yet
+   * (all pending). Per-item patches the orchestrator itself writes
+   * keep the overall status 'injecting' but flip individual items,
+   * so this guard avoids re-entering on our own writes.
+   */
+  function shouldStartOrchestration(record: AskWidgetRecord): boolean {
+    return (
+      record.status === 'injecting'
+      && record.items.every((it) => it.status === 'pending')
+    );
+  }
+
+  // Per-op bridge timeouts. Each value sits a small margin above the
+  // longest legitimate work the corresponding helper does in
+  // `ask-inject.ts`, so a healthy op never trips its timeout. The
+  // safety net is for "the bridge crashed" / "the page unloaded"
+  // mid-await — without it, `callMain` would leak its message
+  // listener and the orchestrator would hang forever.
+  //
+  //   attachFile  — settle (1.5 s) + chip-confirm (8 s) + buffer.
+  //                 The chip gate proves the SITE accepted the
+  //                 selection, NOT that the upload completed; the
+  //                 actual upload runs in the background and is
+  //                 covered by clickSubmit's submit-enable wait.
+  //   typePrompt  — synchronous text insertion; sub-second in
+  //                 practice. 5 s is comfortably above any plausible
+  //                 ProseMirror reset / re-render.
+  //   clickSubmit — polls for the submit button to leave its
+  //                 disabled state (the AI site holds it disabled
+  //                 while the upload is reaching the server). Inner
+  //                 SUBMIT_ENABLE_TIMEOUT_MS is 30 s; the bridge
+  //                 timeout sits just above it. We do NOT wait for
+  //                 the AI's response — only for submit to be
+  //                 clickable.
+  const CALL_MAIN_TIMEOUTS_MS: Record<string, number> = {
+    attachFile: 15000,
+    typePrompt: 5000,
+    clickSubmit: 35000,
+  };
+
+  /**
+   * postMessage RPC into MAIN world. The bridge is installed by
+   * `dist/ask-inject.js` (see the bottom of `src/ask-inject.ts`).
+   * Each call gets a unique id; the response listener routes back
+   * to the matching promise. Throws on `ok: false`, on timeout, on
+   * an unknown op (fast-fail — no need to wait the longest timeout
+   * just to surface a typo), or if the bridge response can't be
+   * parsed.
+   */
+  function callMain(op: string, args: unknown): Promise<unknown> {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timeoutMs = CALL_MAIN_TIMEOUTS_MS[op];
+    if (timeoutMs === undefined) {
+      return Promise.reject(new Error(`Unknown bridge op "${op}"`));
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      function cleanup(): void {
+        settled = true;
+        window.removeEventListener('message', onMsg);
+        clearTimeout(timer);
+      }
+      function onMsg(ev: MessageEvent): void {
+        if (ev.source !== window) return;
+        const data = ev.data as
+          | { swis?: string; id?: string; ok?: boolean; result?: unknown; error?: string }
+          | undefined;
+        if (
+          !data
+          || typeof data !== 'object'
+          || data.swis !== 'response'
+          || data.id !== id
+        ) {
+          return;
+        }
+        if (settled) return;
+        cleanup();
+        if (data.ok) resolve(data.result);
+        else reject(new Error(data.error ?? 'Unknown bridge error'));
+      }
+      window.addEventListener('message', onMsg);
+      const timer = setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        reject(new Error(`Bridge op "${op}" timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      window.postMessage({ swis: 'request', id, op, args }, '*');
     });
   }
 
   // ─── Mount + DOM construction ────────────────────────────────────
 
   function mountWidget(tabIdLocal: number): WidgetHandle {
+    // Defensive sweep: if an old host element survives in the DOM
+    // without a matching `__seeWhatISeeWidget` global (e.g. an SPA
+    // navigation cleared the window-scoped global but left the DOM
+    // node in place), remove it before creating a new one. Without
+    // this the user would see two widgets stacked on top of each
+    // other on the next Ask.
+    document
+      .querySelectorAll('#see-what-i-see-widget-host')
+      .forEach((el) => el.remove());
+
     const host = document.createElement('div');
     host.id = 'see-what-i-see-widget-host';
     // Anchor by the TOP edge so the widget's top-right corner sits
@@ -231,6 +723,19 @@
       img.src = iconUrl;
     });
 
+    // Build the handle as a mutable object so `init()` can fill in
+    // `retryOne` / `isInFlight` after mount returns. `refresh`
+    // closes over `handle`, so it always reads the latest field
+    // values at paint time — the row painter calls `handle.retryOne`
+    // and `handle.isInFlight()` to wire up retry buttons and gate
+    // them while a run is active.
+    const handle: WidgetHandle = {
+      tabId: tabIdLocal,
+      host,
+      root,
+      refresh: () => {},
+    };
+
     function refresh(record: AskWidgetRecord | null): void {
       if (!record) {
         // No record means the SW never wrote one (or X just cleared
@@ -247,7 +752,7 @@
 
       paintTitle(root, record);
       paintStatusSection(root, record);
-      paintContentSection(root, record);
+      paintContentSection(root, record, handle);
       paintPageSection(root, record);
 
       // State transitions:
@@ -270,8 +775,9 @@
         setState('expanded');
       }
     }
+    handle.refresh = refresh;
 
-    return { tabId: tabIdLocal, host, root, refresh };
+    return handle;
   }
 
   // ─── Painters ────────────────────────────────────────────────────
@@ -334,29 +840,36 @@
     return parts.slice(0, -1).join(', ') + ' + ' + parts[parts.length - 1];
   }
 
-  function paintContentSection(root: ShadowRoot, record: AskWidgetRecord): void {
+  function paintContentSection(
+    root: ShadowRoot,
+    record: AskWidgetRecord,
+    handle: WidgetHandle,
+  ): void {
     const container = root.getElementById('content-buttons') as HTMLDivElement;
     container.replaceChildren();
 
-    // Each row: [per-item status icon] [copy button]. Per-item
-    // status currently mirrors the overall record status, since the
-    // inject runtime batches all files into a single change event
-    // and we only know batch-level success/failure. The layout is
-    // ready for real per-file tracking — when we add it, the only
-    // change is which status the row gets.
-    for (const att of record.attachments) {
-      const label = labelForAttachment(att);
+    // One row per orchestration item, in execution order. The
+    // `submit` item has no copy action (it's a verb, not a payload),
+    // so we skip rendering it — its status still flows through to
+    // the title-bar status icon via `record.status`.
+    const anyInProgress = record.items.some(
+      (it) => it.status === 'in_progress',
+    );
+    record.items.forEach((item, itemIndex) => {
+      if (item.kind === 'submit') return;
+      const doCopy = copyForItem(item, record);
       container.appendChild(
-        makeContentRow(label, record.status, () => copyAttachment(att)),
+        makeContentRow({
+          label: item.label,
+          itemIndex,
+          status: item.status,
+          error: item.error,
+          doCopy,
+          handle,
+          anyInProgress,
+        }),
       );
-    }
-    if (record.promptText.trim().length > 0) {
-      container.appendChild(
-        makeContentRow('Prompt', record.status, () =>
-          navigator.clipboard.writeText(record.promptText),
-        ),
-      );
-    }
+    });
 
     // Hide whole section if nothing to copy.
     const section = root.getElementById('content-section') as HTMLDivElement;
@@ -364,38 +877,77 @@
   }
 
   /**
-   * Build one row in the Content section: a small status icon on
-   * the left (sharing the same `.swis-status-icon` styles as the
-   * title-bar dot, so spinner / ✓ / ✕ render identically), then the
-   * Copy button. Empty status means "not tried" — render a hollow
-   * placeholder so the row's left margin matches the others.
+   * Build the copy action for one row. Attachment items pull from
+   * `record.attachments[item.attachmentIndex]`; the prompt item
+   * pulls from `record.promptText`. Returns a no-op for items with
+   * no copyable payload (defensive — shouldn't happen).
    */
-  function makeContentRow(
-    label: string,
-    status: AskWidgetStatus,
-    doCopy: () => Promise<unknown> | unknown,
-  ): HTMLDivElement {
+  function copyForItem(
+    item: AskWidgetItem,
+    record: AskWidgetRecord,
+  ): () => Promise<unknown> | unknown {
+    if (item.kind === 'attachment') {
+      const att = record.attachments[item.attachmentIndex ?? -1];
+      if (!att) return () => undefined;
+      return () => copyAttachment(att);
+    }
+    if (item.kind === 'prompt') {
+      return () => navigator.clipboard.writeText(record.promptText);
+    }
+    return () => undefined;
+  }
+
+  interface ContentRowOpts {
+    label: string;
+    itemIndex: number;
+    status: AskWidgetItemStatus;
+    error?: string;
+    doCopy: () => Promise<unknown> | unknown;
+    handle: WidgetHandle;
+    anyInProgress: boolean;
+  }
+
+  /**
+   * Build one row in the Content section:
+   *   [status icon]  [Copy <label>]  [↻ retry]?
+   *
+   * The status icon shares the title-bar `.swis-status-icon` styles
+   * (spinner / ✓ / ✕). A retry button (↻) is appended only on
+   * `error` rows. Retry is gated by `handle.isInFlight()` — disabled
+   * while any row is `in_progress`, so two retries can't race.
+   */
+  function makeContentRow(opts: ContentRowOpts): HTMLDivElement {
     const row = document.createElement('div');
     row.className = 'swis-content-row';
+
     const icon = document.createElement('span');
     icon.className = 'swis-status-icon swis-status-icon-row';
-    icon.dataset.status = status;
+    icon.dataset.status = opts.status;
     icon.textContent =
-      status === 'success' ? '✓' : status === 'error' ? '✕' : '';
+      opts.status === 'success' ? '✓'
+      : opts.status === 'error' ? '✕'
+      : '';
+    if (opts.status === 'error' && opts.error) icon.title = opts.error;
     row.appendChild(icon);
-    row.appendChild(makeCopyButton(label, doCopy));
+
+    row.appendChild(makeCopyButton(opts.label, opts.doCopy));
+
+    if (opts.status === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'swis-retry-btn';
+      retry.textContent = '↻';
+      retry.title = `Retry ${opts.label}`;
+      retry.disabled = opts.anyInProgress || !!opts.handle.isInFlight?.();
+      retry.addEventListener('click', () => {
+        if (retry.disabled) return;
+        void opts.handle.retryOne?.(opts.itemIndex);
+      });
+      row.appendChild(retry);
+    }
     return row;
   }
 
-  function labelForAttachment(att: AskWidgetAttachment): string {
-    if (att.kind === 'image') return 'Screenshot';
-    if (att.filename.endsWith('.html')) return 'HTML';
-    if (att.filename.endsWith('.md') || att.mimeType.includes('markdown')) {
-      return 'Selection (markdown)';
-    }
-    if (att.mimeType.includes('html')) return 'Selection (HTML)';
-    return 'Selection (text)';
-  }
 
   function makeCopyButton(
     label: string,
@@ -582,9 +1134,11 @@
         <div id="status-text" class="swis-status-text" data-status="injecting"></div>
       </div>
       <div id="content-section" class="swis-section">
-        <div class="swis-section-label">Content</div>
+        <div class="swis-section-label">
+          <span>Content</span>
+          <span class="swis-hint">Click to copy</span>
+        </div>
         <div id="content-buttons" class="swis-content-buttons"></div>
-        <div class="swis-hint">Click to copy</div>
       </div>
       <div class="swis-section">
         <div class="swis-section-label">Source</div>
@@ -727,7 +1281,14 @@
       font-weight: 700;
       line-height: 1;
     }
-    .swis-status-icon[data-status="injecting"] {
+    /* Spinner ring fires for both vocabularies:
+     *   - "injecting" (overall record.status, used by the title-bar
+     *     status icons in expanded + collapsed views)
+     *   - "in_progress" (per-item status, used by the per-row
+     *     status icons in the Content section)
+     * Same visual; just different naming for the two scopes. */
+    .swis-status-icon[data-status="injecting"],
+    .swis-status-icon[data-status="in_progress"] {
       border: 2px solid #e5e5e5;
       border-top-color: #f59e0b;
       border-radius: 50%;
@@ -793,6 +1354,9 @@
     }
     .swis-section:last-child { border-bottom: none; }
     .swis-section-label {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
@@ -801,6 +1365,15 @@
        * so STATUS / CONTENT / SOURCE pop against the pale-purple
        * body instead of fading into the grey #888 they used to use. */
       color: #512da8;
+    }
+    /* Inline hint inside a section label sits to the right of the
+     * heading text — used for "Click to copy" next to "Content".
+     * Reset the heading's caps / tracking so the hint reads as
+     * normal lower-case helper text. */
+    .swis-section-label .swis-hint {
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
     }
     .swis-status-text {
       font-size: 13px;
@@ -827,6 +1400,28 @@
     .swis-status-icon-row {
       width: 14px;
       height: 14px;
+    }
+    /* ↻ retry button on errored rows. Same neutral styling as
+     * .swis-page-copy-btn so the row reads as a small per-item
+     * action cluster. Disabled state matches the disabled Copy
+     * button. */
+    .swis-retry-btn {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1;
+      color: #555;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .swis-retry-btn:hover { background: #f5f5f5; }
+    .swis-retry-btn:disabled {
+      color: #aaa;
+      cursor: not-allowed;
     }
     .swis-copy-btn {
       padding: 4px 10px;
