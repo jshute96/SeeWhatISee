@@ -199,6 +199,27 @@ const PREFERRED_NEW_TAB_PROVIDER_KEY = 'askPreferredNewTabProvider';
 
 const NEW_TAB_LOAD_TIMEOUT_MS = 15000;
 
+/**
+ * Marker for the cancel-like exit paths from a send: user dismissed
+ * the widget (× during placeholder OR injecting) or closed the
+ * destination tab (during load OR injecting). All of them want the
+ * same downstream handling — return `err.message` to the capture
+ * page verbatim, skip the `Could not open <Provider>:` prefix, skip
+ * the `patchWidgetRecord({status: 'error'})` patch (the record is
+ * gone or about to be cleaned up by `installWidgetStoreCleanup`).
+ *
+ * Modeling this as a class instead of a string-equality check keeps
+ * `sendToAi` decoupled from the specific user-facing wording, so a
+ * future "Cancelled by user" rewording or a new early-exit path
+ * doesn't silently re-introduce the prefix or the phantom record.
+ */
+class EarlyExitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EarlyExitError';
+  }
+}
+
 async function readPreferredNewTabProvider(): Promise<AskProviderId | null> {
   try {
     const got = await chrome.storage.session.get(PREFERRED_NEW_TAB_PROVIDER_KEY);
@@ -668,6 +689,12 @@ export async function sendToAi(
     try {
       tabId = await openNewProviderTabWithPlaceholder(provider, recordTemplate);
     } catch (err) {
+      // EarlyExitError messages are already self-explanatory ("Tab
+      // closed during load"); a "Could not open Claude:" prefix would
+      // just push the useful word further from the start of the line.
+      if (err instanceof EarlyExitError) {
+        return { ok: false, error: err.message };
+      }
       return {
         ok: false,
         error: `Could not open ${provider.label}: ${describe(err)}`,
@@ -751,7 +778,13 @@ export async function sendToAi(
     final = await waitForWidgetCompletion(tabId);
   } catch (err) {
     const message = describe(err);
-    await patchWidgetRecord(tabId, { status: 'error', error: message });
+    // Skip the error-state patch on early-exit paths: the record is
+    // either already cleared (× dismiss) or about to be cleared by
+    // `installWidgetStoreCleanup` (tab close). Patching would be a
+    // no-op at best and a phantom record at worst.
+    if (!(err instanceof EarlyExitError)) {
+      await patchWidgetRecord(tabId, { status: 'error', error: message });
+    }
     return { ok: false, error: message, tabId };
   }
 
@@ -813,6 +846,18 @@ function labelForAttachment(att: AskAttachment): string {
  * Listens to `chrome.storage.onChanged`. Times out after 60 s — most
  * inject flows finish in seconds; a 60 s ceiling is generous for
  * slow uploads while keeping the SW from leaking listeners forever.
+ *
+ * Also rejects fast on the early-exit paths so the capture page sees
+ * an immediate, accurate message instead of waiting out the timeout:
+ *
+ * - **Widget × dismiss** — the widget's close handler clears the
+ *   storage record, surfacing here as `onChanged` with
+ *   `newValue === undefined`. Treated as `'Cancelled'` (same string
+ *   the placeholder-phase cancel returns, so the capture-page UX is
+ *   uniform across phases).
+ * - **Tab close** — `chrome.tabs.onRemoved` fires; `'Tab closed
+ *   during injection'` mirrors the load-phase `'Tab closed during
+ *   load'` message.
  */
 function waitForWidgetCompletion(
   tabId: number,
@@ -828,6 +873,7 @@ function waitForWidgetCompletion(
       if (settled) return;
       settled = true;
       chrome.storage.onChanged.removeListener(onChanged);
+      chrome.tabs.onRemoved.removeListener(onTabRemoved);
       clearTimeout(timer);
       if (kind === 'resolve') resolve(payload as AskWidgetRecord);
       else reject(payload as Error);
@@ -838,9 +884,25 @@ function waitForWidgetCompletion(
     ): void => {
       if (area !== 'session' || !(storageKey in changes)) return;
       const v = changes[storageKey].newValue as AskWidgetRecord | undefined;
-      if (v && v.status !== 'injecting') finish('resolve', v);
+      // Record cleared: widget × dismissed it (the close handler in
+      // ask-widget.ts removes the storage entry). Bail with the same
+      // message the placeholder-phase cancel uses. Tab-close also
+      // clears the record via installWidgetStoreCleanup, but
+      // `onTabRemoved` below typically fires first; if it doesn't,
+      // 'Cancelled' is still a reasonable user-facing read.
+      if (v === undefined) {
+        finish('reject', new EarlyExitError('Cancelled'));
+        return;
+      }
+      if (v.status !== 'injecting') finish('resolve', v);
+    };
+    const onTabRemoved = (id: number): void => {
+      if (id === tabId) {
+        finish('reject', new EarlyExitError('Tab closed during injection'));
+      }
     };
     chrome.storage.onChanged.addListener(onChanged);
+    chrome.tabs.onRemoved.addListener(onTabRemoved);
     const timer = setTimeout(
       () => finish('reject', new Error('Inject timed out (widget never reported)')),
       timeoutMs,
@@ -971,8 +1033,58 @@ async function openNewProviderTabWithPlaceholder(
     // re-creates the record if this fails.
   });
   void mountAskWidgetOnFirstLoading(tabId);
-  await waitForTabComplete(tabId, NEW_TAB_LOAD_TIMEOUT_MS);
+  // Race the page-load wait against a placeholder-dismiss watcher so
+  // that an × on the placeholder widget surfaces 'Cancelled' to the
+  // capture page immediately, instead of after the (potentially
+  // multi-second) provider page finishes loading. Either resolution
+  // is fine — the post-call `readWidgetRecord` check in `sendToAi`
+  // is the single source of truth for the cancel decision regardless
+  // of which promise won.
+  const dismissed = watchForPlaceholderDismiss(tabId);
+  try {
+    await Promise.race([
+      waitForTabComplete(tabId, NEW_TAB_LOAD_TIMEOUT_MS),
+      dismissed.promise,
+    ]);
+  } finally {
+    dismissed.cleanup();
+  }
   return tabId;
+}
+
+/**
+ * Watch `chrome.storage.session` for the placeholder record being
+ * removed (the widget's × handler clears it, so the listener fires
+ * the moment the user dismisses the placeholder). Returns the
+ * promise plus an explicit `cleanup` so the caller's
+ * `Promise.race` can detach the listener on the page-load-wins
+ * branch — without it the listener would leak past every cancelled
+ * Ask until the SW restarts.
+ */
+function watchForPlaceholderDismiss(
+  tabId: number,
+): { promise: Promise<void>; cleanup: () => void } {
+  const storageKey = `askWidget:${tabId}`;
+  let onChanged:
+    | ((
+        changes: { [k: string]: chrome.storage.StorageChange },
+        area: chrome.storage.AreaName,
+      ) => void)
+    | null = null;
+  const promise = new Promise<void>((resolve) => {
+    onChanged = (changes, area) => {
+      if (area !== 'session' || !(storageKey in changes)) return;
+      if (changes[storageKey].newValue === undefined) resolve();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+  });
+  const cleanup = (): void => {
+    if (onChanged) {
+      chrome.storage.onChanged.removeListener(onChanged);
+      onChanged = null;
+    }
+  };
+  return { promise, cleanup };
 }
 
 /**
@@ -1016,8 +1128,9 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     };
     const onRemoved = (id: number): void => {
       // User closed the tab during load — fail fast instead of
-      // waiting out the full timeout.
-      if (id === tabId) finish(new Error('Tab was closed during load'));
+      // waiting out the full timeout. EarlyExitError lets sendToAi
+      // strip the "Could not open <Provider>:" prefix.
+      if (id === tabId) finish(new EarlyExitError('Tab closed during load'));
     };
     const finish = (err?: Error): void => {
       if (settled) return;
@@ -1036,14 +1149,18 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     );
     // Race condition: the tab may already be 'complete' (or already
     // gone) by the time we attached the listener. Probe and resolve
-    // / reject immediately based on what we find.
+    // / reject immediately based on what we find. A `chrome.tabs.get`
+    // rejection at this point almost always means "tab closed before
+    // we could check" — surface as the same EarlyExitError the
+    // tab-removed listener throws so the user-facing read is uniform
+    // regardless of which microsecond the close happens in.
     chrome.tabs
       .get(tabId)
       .then((tab) => {
         if (tab.status === 'complete') finish();
       })
-      .catch((err: unknown) => {
-        finish(err instanceof Error ? err : new Error(String(err)));
+      .catch(() => {
+        finish(new EarlyExitError('Tab closed during load'));
       });
   });
 }

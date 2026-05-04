@@ -67,10 +67,42 @@ laid out, the cross-world architecture that lets it drive the inject.
 - A new send re-expands a collapsed widget so the user sees the
   in-flight Status without having to click the strip.
 - `×` removes the widget DOM AND clears that tab's storage record
-  (full dismiss). It also posts `askPlaceholderClosed` to the SW so
-  an in-flight new-tab Ask waiting on page-load skips the
-  promote-to-injecting step (the user wants the bare loaded page,
-  not the widget). `_` just collapses the UI; the record stays.
+  (full dismiss).
+  - The record-clear doubles as the cancel signal.
+  - SW detects it both during the new-tab page-load wait and during
+    `injecting` (same `chrome.storage.onChanged` watcher that
+    resolves successful completion).
+  - Capture-page status reads "Cancelled".
+- `_` just collapses the UI; the record stays.
+
+### Early-exit signals during a send
+
+The capture page surfaces the right reason without waiting out the
+60 s completion timeout. Two SW-side watchers cover the phases:
+
+- **Placeholder phase** — `openNewProviderTabWithPlaceholder` races
+  `waitForTabComplete` against `watchForPlaceholderDismiss`. The
+  dismiss watcher fires the moment the widget × clears the record,
+  so the cancel surfaces immediately rather than after the
+  (potentially multi-second) provider page finishes loading.
+- **Injection phase** — `waitForWidgetCompletion` listens to both
+  `chrome.storage.onChanged` (record-clear → ×) and
+  `chrome.tabs.onRemoved` (tab close), each with its own message.
+
+User-facing messages:
+
+- **Widget × dismiss** → `'Cancelled'`. Same string in either phase.
+- **Tab close during load** → `'Tab closed during load'`.
+- **Tab close during injection** → `'Tab closed during injection'`.
+- **Bridge timeout** → `'Inject timed out (widget never reported)'`
+  (60 s ceiling).
+
+The cancel + tab-close cases are thrown as `EarlyExitError` so
+`sendToAi` returns the message verbatim (no `Could not open
+<Provider>:` prefix) and skips the error-state `patchWidgetRecord`
+call (the record is gone or about to be cleaned up). The bridge
+timeout is a regular error: the record is still live, gets patched
+with the failure, and the widget keeps walking.
 
 ### Status lifecycle
 
@@ -191,10 +223,13 @@ SW sendToAi():
   │     │     mountAskWidget(tabId)  ── early best-effort mount;
   │     │                                widget paints "Waiting
   │     │                                for <provider> to load…"
-  │     └─▶ await waitForTabComplete(tabId, …)
+  │     └─▶ Promise.race([
+  │           waitForTabComplete(tabId, …),
+  │           watchForPlaceholderDismiss(tabId)  ── fires fast on ×
+  │         ])
   │
-  ├─▶ if cancelledTabs.delete(tabId): clearWidgetRecord + return
-  │   "Cancelled" — user dismissed via × during page load
+  ├─▶ if !readWidgetRecord(tabId): return "Cancelled"
+  │   ── widget × cleared the record during the wait above
   ── both paths ─────────────────────────────────────────────────
   ├─▶ writeWidgetRecord(tabId, {status:'injecting',
   │     items:[…pending], selectors, runId:NEW, …})
