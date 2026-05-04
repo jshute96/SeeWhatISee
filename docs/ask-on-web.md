@@ -203,8 +203,8 @@ whichever destination the SW currently considers the default:
   When the *user* disables the pinned provider on the Options page,
   the pin is cleared **eagerly** by `clearPinIfProviderDisabled` in
   `src/background.ts`, listening on `chrome.storage.onChanged` for
-  the `askProviderSettings` key — so the toolbar Pin/Unpin entry
-  doesn't keep saying "Unpin" for a pin that won't be honored.
+  the `askProviderSettings` key — so the toolbar Set/Unset entry
+  doesn't keep saying "Unset" for a pin that won't be honored.
 - **Fallback priority** — when no live pin resolves, `resolveAsk`
   walks the remaining levels in order:
   - **`askPreferredNewTabProvider`** in `chrome.storage.session` —
@@ -233,24 +233,24 @@ plain-Ask path.
 ### Toolbar pin entry
 
 The action context menu (right-click on the toolbar icon) carries
-a `Pin tab as Ask target` entry that lets the user pin/unpin the
+a `Set this tab as Ask button target` entry that lets the user pin/unpin the
 **current tab** directly, without opening the Capture page. Driven
 by `refreshPinAskTargetMenu` and `togglePinAskTarget` in
 `src/background.ts` / `src/background/context-menu.ts`:
 
 - **Eligibility** — enabled when either:
   - The active tab is the current `askPin` (regardless of URL), so
-    the user can always Unpin from the tab the pin points at — even
-    after navigating it to a wrong page.
+    the user can always clear the pin from the tab it points at —
+    even after navigating it to a wrong page.
   - The active tab matches an enabled provider's `urlPatterns`
     (Chrome match-pattern grammar) and isn't on its
     `excludeUrlPatterns` list, so it's a valid pin target.
 
   Otherwise the entry greys out.
-- **Title** — flips between `Pin tab as Ask target` and
-  `Unpin tab as Ask target` based on whether the active tab is
-  the current `askPin`. The "Unpin" wording stays even when the
-  pinned tab has navigated to a wrong page.
+- **Title** — flips between `Set this tab as Ask button target`
+  and `Unset this tab as Ask button target` based on whether the
+  active tab is the current `askPin`. The "Unset" wording stays
+  even when the pinned tab has navigated to a wrong page.
 - **Refresh timing** — Chrome doesn't expose an `onShown` hook for
   the action context menu, so we keep the entry's state ahead of
   the user with listeners on `tabs.onActivated`, `tabs.onUpdated`
@@ -501,7 +501,7 @@ Pre-send guard on the Capture page:
   (`"Claude Code only accepts image attachments; uncheck Save HTML
   and Save selection."`), and the send is aborted.
 - The SW's matching refusal at send time is the safety net for stale
-  page state (toolbar Pin/Unpin or tab-navigation races where the
+  page state (toolbar Set/Unset or tab-navigation races where the
   cached accepted-kinds doesn't match what the destination actually
   accepts now). Its error message has the same shape, with
   `Skipped: …` appended naming the dropped filenames.
@@ -524,7 +524,7 @@ provider and three things change:
 
 - The Ask menu hides the "Existing window in <X>" section for it
   (`listAskProviders` skips the `chrome.tabs.query`).
-- The toolbar Pin/Unpin entry stays disabled when the active tab is
+- The toolbar Set/Unset entry stays disabled when the active tab is
   on this provider (`findProviderForTab` skips it).
 - A successful send doesn't write `askPin` (`sendToAi` skips the
   pin-write step), so the next plain Ask still resolves to whatever

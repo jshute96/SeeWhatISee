@@ -158,17 +158,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   // Pin entry's title depends on the `askPin` session-storage key:
   // when `sendToAi` writes a pin or another path clears it, the
-  // entry's "Pin"/"Unpin" wording for the active tab can flip
+  // entry's "Set"/"Unset" wording for the active tab can flip
   // without any tab event firing.
   if (area === 'session' && changes['askPin']) {
     void refreshPinAskTargetMenu();
   }
   // User toggled an Ask provider's enabled state on the Options page:
-  // the toolbar Pin/Unpin entry's eligibility on the active tab may
+  // the toolbar Set/Unset entry's eligibility on the active tab may
   // have flipped (a provider just became disabled or re-enabled).
   // Also drop the pin eagerly if its provider just became disabled —
   // resolveAsk would do this lazily on the next resolve, but clearing
-  // it here keeps the toolbar entry's "Unpin" wording from lingering
+  // it here keeps the toolbar entry's "Unset" wording from lingering
   // on a pin that won't be honored anyway.
   if (area === 'local' && changes['askProviderSettings']) {
     void clearPinIfProviderDisabled().then(() => refreshPinAskTargetMenu());
@@ -207,7 +207,7 @@ chrome.windows.onFocusChanged.addListener(() => {
 
 /**
  * Pin/unpin the given tab as the Ask target. Wired to the
- * "Pin tab as Ask target" / "Unpin tab…" toolbar entry. We
+ * "Set this tab as Ask button target" / "Unset…" toolbar entry. We
  * re-resolve at click time (rather than trusting the entry's
  * cached state) so a stale title can't make us pin an
  * already-excluded page or refuse to clear a now-excluded pin.
@@ -353,7 +353,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   setDefaultDblWithoutSelectionId,
   refreshActionTooltip,
   refreshMenusIfHotkeysChanged,
-  // Toolbar Pin/Unpin entry — exposed so the e2e suite can
+  // Toolbar Set/Unset entry — exposed so the e2e suite can
   // exercise the same code paths the user hits on right-click.
   refreshPinAskTargetMenu,
   togglePinAskTarget,

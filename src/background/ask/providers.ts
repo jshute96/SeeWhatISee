@@ -198,7 +198,7 @@ export interface AskProvider {
   /**
    * When `true`, plain Ask only ever opens a fresh tab on this
    * provider. The Ask menu hides "Existing window in <X>" entries
-   * for it, the toolbar Pin/Unpin entry won't engage when the active
+   * for it, the toolbar Set/Unset entry won't engage when the active
    * tab is on it, and a successful send doesn't write the destination
    * to `askPin`. Used for providers whose pages aren't a stable chat
    * surface to reuse — Google Search lands on `/search?q=...` after

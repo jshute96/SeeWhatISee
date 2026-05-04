@@ -272,7 +272,7 @@ async function writePin(pin: AskPin | null): Promise<void> {
 /**
  * Read the current pin. Used by the toolbar context menu to decide
  * whether the active tab is already pinned (and the entry should
- * read "Unpin…" instead of "Pin…"). Returns null when no pin is
+ * read "Unset…" instead of "Set…"). Returns null when no pin is
  * set or session storage is unreadable.
  */
 export async function getAskPin(): Promise<AskPin | null> {
@@ -281,7 +281,7 @@ export async function getAskPin(): Promise<AskPin | null> {
 
 /**
  * Manually set or clear the pin. Used by the toolbar context-menu
- * Pin/Unpin entry; the regular Ask flow updates the pin via
+ * Set/Unset entry; the regular Ask flow updates the pin via
  * `sendToAi` on a successful send and doesn't go through here.
  */
 export async function setAskPin(pin: AskPin | null): Promise<void> {
@@ -316,7 +316,7 @@ export async function setAskDefault(destination: AskDestination): Promise<void> 
  * one whose `urlPatterns` Chrome's match-pattern engine accepts
  * for this tab and whose `excludeUrlPatterns` glob doesn't reject
  * it. Returns null if no enabled provider claims the tab. Used by
- * the toolbar Pin/Unpin entry to decide whether the entry should
+ * the toolbar Set/Unset entry to decide whether the entry should
  * be enabled.
  */
 export async function findProviderForTab(
@@ -329,7 +329,7 @@ export async function findProviderForTab(
     if (!provider.enabled) continue;
     if (!settings.enabled[provider.id]) continue;
     // `newTabOnly` providers (Google) opt out of pinning entirely —
-    // skip them so the toolbar Pin/Unpin entry stays disabled on
+    // skip them so the toolbar Set/Unset entry stays disabled on
     // their pages.
     if (provider.newTabOnly) continue;
     // Delegate `urlPatterns` matching to Chrome (its match-pattern
@@ -637,7 +637,7 @@ export async function sendToAi(
   // Refuse outright if any attachment doesn't match the destination's
   // accepted kinds. The Capture page's pre-send guard already catches
   // this in normal flow, so reaching here means the page's cached
-  // accepted-kinds was stale (Pin/Unpin from the toolbar, a tab
+  // accepted-kinds was stale (Set/Unset from the toolbar, a tab
   // navigation, or an Options-page change between cache load and
   // click). Treating it as an error rather than silently filtering
   // matches the user's expectation: the payload they checked is what

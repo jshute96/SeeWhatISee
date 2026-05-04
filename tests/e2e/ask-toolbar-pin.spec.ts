@@ -1,5 +1,5 @@
-// E2E coverage for the toolbar context menu's "Pin page as Ask
-// target" / "Unpin tab as Ask target" entry.
+// E2E coverage for the toolbar context menu's "Set this tab as
+// Ask button target" / "Unset this tab as Ask button target" entry.
 //
 // Playwright can't (cleanly) right-click the extension toolbar
 // icon to drive the action context menu, so these tests poke the
@@ -105,7 +105,7 @@ test('toolbar pin: refresh on a non-provider tab leaves the entry disabled', asy
   await captureMenuUpdates(sw);
 
   // The capture page is the active tab — not on a fake-Claude URL,
-  // so the entry should refresh to "Pin…", disabled.
+  // so the entry should refresh to "Set…", disabled.
   await capturePage.bringToFront();
   await sw.evaluate(() => {
     return (
@@ -116,14 +116,14 @@ test('toolbar pin: refresh on a non-provider tab leaves the entry disabled', asy
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Pin tab as Ask target',
+    title: 'Set this tab as Ask button target',
     enabled: false,
   });
 
   await openerPage.close();
 });
 
-test('toolbar pin: refresh on a provider tab enables the entry with "Pin…" wording', async ({
+test('toolbar pin: refresh on a provider tab enables the entry with "Set…" wording', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -139,7 +139,7 @@ test('toolbar pin: refresh on a provider tab enables the entry with "Pin…" wor
   await captureMenuUpdates(sw);
 
   // Newly-opened fake-Claude tab is the active tab; refresh
-  // should mark the entry "Pin…", enabled.
+  // should mark the entry "Set…", enabled.
   await claudePage.bringToFront();
   await sw.evaluate(() => {
     return (
@@ -150,7 +150,7 @@ test('toolbar pin: refresh on a provider tab enables the entry with "Pin…" wor
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Pin tab as Ask target',
+    title: 'Set this tab as Ask button target',
     enabled: true,
   });
 
@@ -158,7 +158,7 @@ test('toolbar pin: refresh on a provider tab enables the entry with "Pin…" wor
   await openerPage.close();
 });
 
-test('toolbar pin: refresh on the already-pinned tab flips the title to "Unpin…"', async ({
+test('toolbar pin: refresh on the already-pinned tab flips the title to "Unset…"', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -195,7 +195,7 @@ test('toolbar pin: refresh on the already-pinned tab flips the title to "Unpin�
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Unpin tab as Ask target',
+    title: 'Unset this tab as Ask button target',
     enabled: true,
   });
 
@@ -272,7 +272,7 @@ test('toolbar pin: not-pinned tab on an excluded URL stays disabled', async ({
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Pin tab as Ask target',
+    title: 'Set this tab as Ask button target',
     enabled: false,
   });
 
@@ -280,7 +280,7 @@ test('toolbar pin: not-pinned tab on an excluded URL stays disabled', async ({
   await openerPage.close();
 });
 
-test('toolbar pin: already-pinned tab on a wrong page still offers Unpin', async ({
+test('toolbar pin: already-pinned tab on a wrong page still offers Unset', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -299,7 +299,7 @@ test('toolbar pin: already-pinned tab on a wrong page still offers Unpin', async
   await claudePage.bringToFront();
 
   // Pin while the tab is on a valid URL, then navigate it to an
-  // excluded URL. The menu should still offer "Unpin…" enabled —
+  // excluded URL. The menu should still offer "Unset…" enabled —
   // otherwise the user would be stranded with no way to clear the
   // pin from the tab it points at.
   await sw.evaluate(async () => {
@@ -326,11 +326,11 @@ test('toolbar pin: already-pinned tab on a wrong page still offers Unpin', async
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Unpin tab as Ask target',
+    title: 'Unset this tab as Ask button target',
     enabled: true,
   });
 
-  // And the Unpin click actually clears the pin even though the
+  // And the Unset click actually clears the pin even though the
   // URL would no longer be a valid pin target.
   const cleared = await sw.evaluate(async () => {
     const api = (

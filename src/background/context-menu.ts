@@ -47,9 +47,9 @@ export const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
 export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 
 // Toolbar entry that pins (or unpins) the current tab as the Ask
-// target. Title flips between "Pin tab as Ask target" and
-// "Unpin tab as Ask target" depending on whether the active tab
-// is already the pin; greyed out when the tab isn't on an enabled
+// target. Title flips between "Set this tab as Ask button target"
+// and "Unset this tab as Ask button target" depending on whether
+// the active tab is already the pin; greyed out when the tab isn't on an enabled
 // AI provider. Sync is driven by `refreshPinAskTargetMenu` from
 // background.ts's tab/window listeners so the entry reflects the
 // current page by the time the user opens the menu.
@@ -470,9 +470,9 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //   Capture...
 //   Save screenshot
 //   Save HTML contents
-//   Pin tab as Ask target            (greyed unless current tab is a provider;
-//                                      flips to "Unpin tab…" when the tab is
-//                                      already the pin)
+//   Set this tab as Ask button target  (greyed unless current tab is a provider;
+//                                        flips to "Unset…" when the tab is
+//                                        already the pin)
 //   Capture with delay  ▸              (submenu, bases with showInDelayedSubmenu)
 //       • Capture... in 2s
 //       • Save default items in 2s
@@ -599,17 +599,17 @@ export async function installContextMenu(): Promise<void> {
     });
   }
 
-  // ── "Pin tab as Ask target" entry ──────────────────────────
+  // ── "Set this tab as Ask button target" entry ─────────────
   // Title and enabled state are kept in sync by
   // `refreshPinAskTargetMenu` from background.ts whenever the
   // active tab changes — so by the time the user opens this menu,
   // the entry reflects the current tab. Defaults are set here as
-  // the safe pre-refresh state ("Pin", disabled): users on a
+  // the safe pre-refresh state ("Set", disabled): users on a
   // non-provider tab will see the disabled state during the
   // momentary gap between install and the first refresh.
   chrome.contextMenus.create({
     id: PIN_ASK_TARGET_MENU_ID,
-    title: 'Pin tab as Ask target',
+    title: 'Set this tab as Ask button target',
     enabled: false,
     contexts: ['action'],
   });
@@ -745,18 +745,18 @@ export async function installContextMenu(): Promise<void> {
 }
 
 /**
- * Sync the Pin/Unpin entry to the active tab. Three states:
+ * Sync the Set/Unset entry to the active tab. Three states:
  *
- *   1. Tab *is* the current pin → "Unpin tab as Ask target",
- *      enabled. We allow this even when the tab's URL is no longer
- *      a valid Ask target (e.g. user pinned a Claude conversation
- *      then navigated to /settings) — otherwise the user would be
- *      stranded with no way to clear the stale pin from the page
- *      they're on.
+ *   1. Tab *is* the current pin → "Unset this tab as Ask button
+ *      target", enabled. We allow this even when the tab's URL is no
+ *      longer a valid Ask target (e.g. user pinned a Claude
+ *      conversation then navigated to /settings) — otherwise the
+ *      user would be stranded with no way to clear the stale pin
+ *      from the page they're on.
  *   2. Tab is *not* the pin and is on an enabled provider (and not
- *      excluded) → "Pin tab as Ask target", enabled.
- *   3. Tab is *not* the pin and isn't a valid target → "Pin tab as
- *      Ask target", disabled.
+ *      excluded) → "Set this tab as Ask button target", enabled.
+ *   3. Tab is *not* the pin and isn't a valid target → "Set this
+ *      tab as Ask button target", disabled.
  *
  * Best-effort: missing active tab leaves the entry in state 3.
  * `chrome.contextMenus.update` silently drops updates against
@@ -764,7 +764,7 @@ export async function installContextMenu(): Promise<void> {
  * harmless.
  */
 export async function refreshPinAskTargetMenu(): Promise<void> {
-  let title = 'Pin tab as Ask target';
+  let title = 'Set this tab as Ask button target';
   let enabled = false;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -772,7 +772,7 @@ export async function refreshPinAskTargetMenu(): Promise<void> {
       const pin = await getAskPin();
       if (pin && pin.tabId === tab.id) {
         // State 1: this tab is the pin. Always offer Unpin.
-        title = 'Unpin tab as Ask target';
+        title = 'Unset this tab as Ask button target';
         enabled = true;
       } else if (await findProviderForTab(tab.id, tab.url ?? '')) {
         // State 2: not the pin but a valid target — offer Pin.

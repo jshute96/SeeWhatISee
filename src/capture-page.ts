@@ -3003,7 +3003,7 @@ async function refreshAskTargetLabel(): Promise<void> {
   // a label/tooltip from the resolved default.
   askBtn.disabled = false;
   askMenuBtn.disabled = false;
-  askMenuBtn.title = 'Choose Ask target';
+  askMenuBtn.title = 'Choose Ask target tab';
   if (defaultDestination) {
     const provider = providers.find((p) => p.id === defaultDestination.provider);
     if (provider) {
@@ -3102,7 +3102,7 @@ void refreshAskTargetLabel();
 //
 // - `local.askProviderSettings` — flipped from the Options page in
 //   another tab. Refreshes the Ask label + disabled state.
-// - `session.askPin` — the toolbar context-menu Pin/Unpin entry
+// - `session.askPin` — the toolbar context-menu Set/Unset entry
 //   writes here (without going through `runAskWithMessage`), so
 //   without this listener the cached `currentDefaultAcceptedKinds`
 //   would go stale and the page-side pre-send guard would miss the
@@ -3577,7 +3577,7 @@ async function runAskWithMessage(
       // to the error so the user sees which files were the problem.
       // Normal flow catches this upstream in the page-side guard;
       // this path fires only when the page's cached accepted-kinds
-      // was stale (toolbar Pin/Unpin or tab-navigation race).
+      // was stale (toolbar Set/Unset or tab-navigation race).
       const skippedSuffix =
         response.skipped && response.skipped.length > 0
           ? ` Skipped: ${response.skipped.join(', ')}.`
@@ -3668,7 +3668,7 @@ async function runAskFor(
  * user needs to uncheck, and return false so the caller bails. The
  * SW runs the same check at send time and refuses outright (with
  * `Skipped: …` in the error) if anything slips through — covers
- * stale-cache races (toolbar Pin/Unpin or tab navigation between
+ * stale-cache races (toolbar Set/Unset or tab navigation between
  * cache load and click). `displayName` falls back to a generic
  * "Destination" if the SW didn't provide one (defensive — in
  * practice the listing always fills it in alongside any non-null

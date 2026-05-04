@@ -9,7 +9,7 @@
 // surface — submitting navigates to `/search?q=...` and reusing that
 // tab would clobber prior results. Plain Ask always opens a fresh
 // google.com tab. The Ask menu hides the "Existing window in Google"
-// section, the toolbar Pin/Unpin entry doesn't engage on google.com
+// section, the toolbar Set/Unset entry doesn't engage on google.com
 // tabs, and a successful Google send doesn't write `askPin`.
 //
 // Restricted to `acceptedAttachmentKinds: ['image']` because the file

@@ -110,7 +110,7 @@ interface AskProviderSettings {
 - Pin lifecycle: a `chrome.storage.onChanged` listener in
   `src/background.ts` clears `askPin` when the pinned provider
   becomes user-disabled (`clearPinIfProviderDisabled`), then refreshes
-  the toolbar Pin/Unpin entry. `resolveAsk` also clears stale pins
+  the toolbar Set/Unset entry. `resolveAsk` also clears stale pins
   lazily on the next resolve.
 
 ## Toolbar dispatch (`handleActionClick`)
