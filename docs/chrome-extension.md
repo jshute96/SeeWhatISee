@@ -445,6 +445,110 @@ promising — the main issue was the `onActivated` restore logic.
     that slot; further additions need to nest under "More" or
     promote a primary entry into a new submenu.
 
+## Image right-click context menu
+
+Image-context entries (currently Capture… and Save screenshot)
+live in `contexts: ['image']` and surface in the page context menu
+when the user right-clicks any `<img>`-like element. Distinct from
+the toolbar `action` menu above — different context root, different
+click info shape (`info.srcUrl` is set), and not subject to the
+6-item top-level cap (that limit applies only to
+`contexts: ['action']`).
+
+- **Auto-grouping.** Chrome bundles all top-level page-context
+  entries from a single extension under a parent submenu labeled
+  with the extension name. We don't create that parent ourselves —
+  registering two siblings produces "SeeWhatISee ▸ Capture... /
+  Save screenshot".
+- **Click info.** `chrome.contextMenus.onClicked` delivers
+  `info.srcUrl` (image URL) and `tab` (the page the image lives
+  on). The image URL is typically `http(s):`, `data:`, or `blob:`;
+  the page-side fetch path described below resolves all three from
+  the source page's context. Cross-origin images without permissive
+  CORS may still fail — the failure surfaces on the toolbar icon
+  via `runWithErrorReporting`.
+- **Image bytes via page-side fetch.** Both entries call
+  `fetchImageInPage(tabId, srcUrl)` which runs a one-shot
+  `executeScript` in the page's isolated world. Two strategies, in
+  order:
+  - **fetch().** Carries the user's cookies for the URL's origin
+    and respects the page-side CORS environment. Works for
+    `data:` / `blob:` URLs (no network round-trip) and for most
+    same-origin / CORS-clean cross-origin images. The original
+    encoded bytes pass through losslessly — JPEG photos stay JPEG.
+  - **Canvas snapshot.** When fetch fails (403 from a site whose
+    auth doesn't accept anonymous CORS, hot-link protection
+    rejecting our `Sec-Fetch-Site`, expired signed-URL params,
+    etc.), the fallback finds an `<img>` whose `currentSrc` or
+    `src` matches the right-clicked URL, draws it onto a canvas,
+    and reads PNG bytes back. Lossy for JPEG sources but preserves
+    the visual content the user already saw painted. Fails on
+    tainted canvases (cross-origin without
+    `crossorigin="anonymous"` on the original `<img>`); the error
+    surfaces with a clear message explaining why.
+  - **Errors round-trip.** The injected function catches its own
+    rejections and returns an `error` field. `executeScript`
+    discards page-side rejections, so the explicit envelope is the
+    only way the SW sees the failure reason.
+  - **Limitation.** The canvas fallback requires an `<img>` element
+    matching `srcUrl`. CSS `background-image` URLs are not supported
+    — Chrome's `contexts: ['image']` doesn't fire on those anyway.
+- **Filename extension.** `imageExtensionFor(mime, srcUrl)` picks
+  an extension via a three-step ladder.
+  - Known MIMEs hit the static table (`png` / `jpg` / `webp` /
+    `gif` / `svg` / `avif` / `bmp` / `ico`).
+  - Off-table MIMEs fall through to the URL pathname extension
+    (e.g. `/photo.heic` → `heic`). Useful when servers send
+    `application/octet-stream`.
+  - Final fallback is `unknown` (never `.png` — misnaming bytes is
+    the bug we're avoiding).
+  - Filename is `screenshot-<ts>.<ext>` so the bytes stay honest.
+- **Bake-in always emits PNG.** The Capture-page bake
+  (`renderHighlightedPng` → `canvas.toDataURL('image/png')`) is
+  rasterized PNG regardless of the source format. To keep the
+  filename honest, `ensureScreenshotDownloaded` swaps the
+  extension to `.png` before writing whenever
+  `screenshotOverride` is set, and reverts to
+  `screenshotOriginalExt` when the user undoes back to clean.
+- **Routing.**
+  - `IMAGE_CAPTURE_MENU_ID` →
+    `startCaptureWithDetailsFromImage(tab, srcUrl)`.
+    - Builds the `InMemoryCapture` with the image bytes as
+      `screenshotDataUrl`, skips the page HTML scrape, still
+      scrapes selection.
+    - Opens `capture.html` next to the source tab.
+    - Session carries `htmlUnavailable: true` and
+      `imageUrl: srcUrl` so the page can quiet-disable Save HTML
+      and the SW can record the source URL.
+  - `IMAGE_SAVE_SCREENSHOT_MENU_ID` →
+    `captureImageAsScreenshot(tab, srcUrl)`.
+    - Writes the bytes via `saveCapture(..., ext, srcUrl)` and
+      appends a `screenshot` + `imageUrl` record to `log.json`.
+    - No Capture page round-trip; no HTML scrape.
+- **`imageUrl` on the record.** Top-level `CaptureRecord` field,
+  emitted by `serializeRecord` last in the JSON object — after
+  `url` and `title`. Keeps the per-record metadata block (page
+  URL, page title, source image URL) visually grouped at the end.
+  - Independent of `screenshot`: `recordDetailedCapture` forwards
+    `capture.imageUrl` even when `includeScreenshot: false`.
+  - Intent is "remember which image the user picked" — shouldn't
+    get dropped just because they unchecked Save Screenshot before
+    clicking Capture.
+- **Image-flow defaults.** `imageFlowDefaults(user)` in
+  `capture-details.ts` synthesizes a `CaptureDetailsDefaults` for
+  image sessions.
+  - Save Screenshot ✓, Save HTML false, Save Selection ✓ (when
+    present).
+  - Inherits the user's selection `format` plus `defaultButton` /
+    `promptEnter` so the page's highlight ring and Enter behavior
+    don't change.
+  - The user's stored `capturePageDefaults` is **not** mutated;
+    only the wire response is overridden.
+- **Error reporting.** Both routes are wrapped in
+  `runWithErrorReporting` so a fetch failure (CORS-blocked image,
+  404, restricted-URL scrape) surfaces on the toolbar icon /
+  tooltip the same way other capture failures do.
+
 ## Options page (`options.html`)
 
 Bundled second extension page reached via right-click → Options on

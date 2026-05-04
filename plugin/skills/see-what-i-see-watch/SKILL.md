@@ -37,6 +37,7 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
     - `format` — one of `"html"`, `"text"`, `"markdown"`.
     - `isEdited: true` — same as `contents.isEdited`.
   - `prompt` — the user's instruction for this capture.
+  - `imageUrl` — URL of a specific image the user captured, inside the page.
 
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 

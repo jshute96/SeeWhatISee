@@ -240,6 +240,17 @@ export interface CaptureRecord {
    */
   url: string;
   /**
+   * URL of the source image when the capture came from the
+   * image-context right-click flow (Save screenshot / Capture... on
+   * a right-clicked `<img>`). Carried independently from the
+   * `screenshot` artifact so downstream consumers can resolve the
+   * original image even if the user unchecked Save Screenshot in
+   * the Capture page (or the bytes are no longer on disk). Omitted
+   * for tab-screenshot captures — `serializeRecord` only emits the
+   * field when present.
+   */
+  imageUrl?: string;
+  /**
    * Title of the captured tab (`chrome.tabs.Tab.title`). Same omit-
    * when-empty contract as `url` — `serializeRecord` skips the field
    * when the value is empty so an absent title doesn't appear as
@@ -526,6 +537,7 @@ export async function captureSelection(
     title: record.title,
     timestamp: record.timestamp,
     screenshotFilename: '',
+    screenshotOriginalExt: 'png',
     contentsFilename: '',
     selections: bodies,
     selectionFilenames: filenames,
@@ -570,10 +582,28 @@ export interface InMemoryCapture {
   timestamp: string;
   /**
    * Filename the screenshot will be written under if the user saves
-   * it. Computed from `timestamp` so the Capture page
-   * can show / copy the exact name before the file lands on disk.
+   * it. Computed from `timestamp` so the Capture page can show /
+   * copy the exact name before the file lands on disk.
+   *
+   * Mutable across the session: when the Capture-page user bakes
+   * highlights / redactions / a crop into the screenshot, the bake
+   * step always emits PNG bytes (canvas → `toDataURL('image/png')`),
+   * and the SW rewrites this filename's extension to `.png` so the
+   * bytes on disk match the name. Reverting all edits (no bake)
+   * flips it back to the original extension. See
+   * `screenshotOriginalExt` for the immutable record of the
+   * pre-bake extension.
    */
   screenshotFilename: string;
+  /**
+   * Original filename extension the screenshot would use without any
+   * bake-in — `png` for the toolbar tab-capture path, MIME-derived
+   * for the image right-click flow (e.g. `jpg`, `webp`, `unknown`).
+   * Stable across the session; the SW reads it to swap
+   * `screenshotFilename` back to the pre-bake extension when the
+   * user undoes all edits between Copy / Capture clicks.
+   */
+  screenshotOriginalExt: string;
   /**
    * Filename the HTML snapshot will be written under if the user
    * saves it. Same reason as `screenshotFilename`.
@@ -625,6 +655,25 @@ export interface InMemoryCapture {
    * this to flag the screenshot row/preview with an error icon.
    */
   screenshotError?: string;
+  /**
+   * Image-context right-click flow: the URL of the right-clicked
+   * `<img>`. Mirrors the eventual `CaptureRecord.imageUrl` and is
+   * carried on the in-memory capture so the Capture page can echo
+   * it (e.g. as a hover hint) and so `recordDetailedCapture` can
+   * include it in the saved record regardless of whether the user
+   * keeps the screenshot checkbox checked.
+   */
+  imageUrl?: string;
+  /**
+   * Image-context flow flag: HTML was deliberately not scraped
+   * because the user came in via right-clicking an image, not the
+   * whole-tab capture path. Distinct from `htmlError` — there's no
+   * failure to surface, the Capture page should just disable the
+   * Save HTML row quietly without an error icon. Selection is
+   * still scraped in this mode (the right-click might happen on a
+   * page with a relevant caption selected).
+   */
+  htmlUnavailable?: boolean;
 }
 
 /**
@@ -664,34 +713,77 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotError = err instanceof Error ? err.message : String(err);
   }
 
-  // Grab the HTML and the selection in a single scripting round-trip
-  // via the shared `scrapePageStateInPage` worker — see its doc
-  // comment for the selection branch breakdown and the rationale for
-  // bundling HTML and selection together.
-  //
-  // Scraping can fail on restricted URLs (chrome://, the Web Store,
-  // etc.) where extensions aren't allowed to inject scripts. We catch
-  // those failures and still return a valid `InMemoryCapture` with the
-  // screenshot + URL so the Capture page can open — it just disables
-  // the Save HTML / Save selection rows and surfaces the error via an
-  // icon tooltip. The screenshot + prompt + highlights remain usable
-  // so the user isn't locked out of the flow entirely.
+  const scrape = await scrapeTabState(active, { includeHtml: true });
+
+  // Pin the capture moment + filenames here so the Capture page can
+  // show / copy the exact filename the file will land at, even if
+  // the user waits minutes before clicking Save.
+  const now = new Date();
+  const ts = compactTimestamp(now);
+  const capture = buildInMemoryCapture({
+    screenshotDataUrl,
+    screenshotExt: 'png',
+    html: scrape.html,
+    selectionRaw: scrape.selectionRaw,
+    pageUrl: active.url ?? '',
+    pageTitle: active.title ?? '',
+    timestamp: now,
+    ts,
+  });
+  if (scrape.htmlError !== undefined) capture.htmlError = scrape.htmlError;
+  if (scrape.selectionError !== undefined) capture.selectionError = scrape.selectionError;
+  if (screenshotError !== undefined) capture.screenshotError = screenshotError;
+  return capture;
+}
+
+/**
+ * Run `scrapePageStateInPage` against the given tab and decode its
+ * result into the shape `captureBothToMemory` (full HTML + selection)
+ * and `captureImageToMemory` (selection only) both consume.
+ *
+ * `includeHtml` flips the `outerHTML` serialization in the page-side
+ * worker — `false` skips it, which the image-context flow uses to
+ * avoid a multi-megabyte round-trip on long pages.
+ *
+ * Restricted URLs (chrome://, Web Store, etc.) where `executeScript`
+ * can't inject surface as `htmlError` / `selectionError` rather than
+ * throwing, so callers can still hand back a partial
+ * `InMemoryCapture` and let the Capture page disable the affected
+ * rows. When `includeHtml: false` the helper never sets `htmlError`
+ * (no failure to report — HTML wasn't asked for); a scrape failure
+ * in that mode comes back as `selectionError` only.
+ */
+async function scrapeTabState(
+  tab: chrome.tabs.Tab,
+  options: { includeHtml: boolean },
+): Promise<{
+  html: string;
+  selectionRaw: { html: string; text: string } | null;
+  htmlError?: string;
+  selectionError?: string;
+}> {
   let html = '';
   let selectionRaw: { html: string; text: string } | null = null;
   let htmlError: string | undefined;
   let selectionError: string | undefined;
   try {
     const results = await chrome.scripting.executeScript({
-      target: { tabId: active.id! },
+      target: { tabId: tab.id! },
       func: scrapePageStateInPage,
-      args: [true],
+      args: [options.includeHtml],
     });
     const scraped = results[0]?.result as PageScrapeResult | undefined;
-    if (!scraped || !scraped.html) {
+    if (!scraped) {
+      // Whole scrape didn't come back — that's a failure either way.
+      const reason = 'Failed to retrieve page contents';
+      if (options.includeHtml) htmlError = reason;
+      selectionError = reason;
+    } else if (options.includeHtml && !scraped.html) {
+      // Asked for HTML, scrape returned but the body is empty.
       htmlError = 'Failed to retrieve page contents';
       selectionError = htmlError;
     } else {
-      html = scraped.html;
+      html = options.includeHtml ? scraped.html : '';
       selectionRaw = scraped.selection;
       // See `scrapeSelection` for the gating rationale — only log
       // when there *was* a range but we couldn't recover from it.
@@ -700,41 +792,293 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
       }
     }
   } catch (err) {
-    htmlError = err instanceof Error ? err.message : String(err);
-    selectionError = htmlError;
+    const reason = err instanceof Error ? err.message : String(err);
+    if (options.includeHtml) htmlError = reason;
+    selectionError = reason;
   }
+  return { html, selectionRaw, htmlError, selectionError };
+}
 
-  // Pin the capture moment + filenames here so the Capture page can
-  // show / copy the exact filename the file will land at, even if
-  // the user waits minutes before clicking Save.
+interface BuildInMemoryCaptureInput {
+  screenshotDataUrl: string;
+  /** Filename extension for the screenshot artifact — `png` for the
+   * tab-screenshot path, the source image's MIME-derived extension
+   * for the right-clicked-image path. */
+  screenshotExt: string;
+  html: string;
+  selectionRaw: { html: string; text: string } | null;
+  pageUrl: string;
+  pageTitle: string;
+  timestamp: Date;
+  ts: string;
+}
+
+function buildInMemoryCapture(input: BuildInMemoryCaptureInput): InMemoryCapture {
+  const capture: InMemoryCapture = {
+    screenshotDataUrl: input.screenshotDataUrl,
+    html: input.html,
+    url: input.pageUrl,
+    title: input.pageTitle,
+    timestamp: input.timestamp.toISOString(),
+    screenshotFilename: `screenshot-${input.ts}.${input.screenshotExt}`,
+    screenshotOriginalExt: input.screenshotExt,
+    contentsFilename: `contents-${input.ts}.html`,
+  };
+  if (input.selectionRaw !== null) {
+    capture.selections = {
+      html: input.selectionRaw.html,
+      text: input.selectionRaw.text,
+      markdown: selectionMarkdownBody(
+        input.selectionRaw.html,
+        input.selectionRaw.text,
+        input.pageUrl,
+      ),
+    };
+    capture.selectionFilenames = selectionFilenamesFor(input.ts);
+  }
+  return capture;
+}
+
+/**
+ * Image-context-menu sibling of `captureBothToMemory`. The
+ * "screenshot" comes from a specific image on the page (right-clicked
+ * `info.srcUrl`) instead of `captureVisibleTab`, and we deliberately
+ * skip the page HTML scrape — the user's intent here is "this image,"
+ * not "this whole page." The `InMemoryCapture` shape is otherwise
+ * identical to the toolbar path so the Capture page flow doesn't need
+ * any image-aware branches downstream.
+ *
+ * Selection is still scraped: a right-click that lands while text is
+ * selected often means "the selected text is a caption / context for
+ * this image," so we offer to save it. The Capture page's image-flow
+ * defaults check Save Screenshot + Save Selection (when present) so
+ * that pairing is the easy path.
+ *
+ * The image bytes are fetched from the page-side context (rather than
+ * the SW) so the user's cookies and the page's same-origin / CORS
+ * environment apply naturally — authenticated images and CDN-protected
+ * images load the same way they did when the user originally saw them
+ * on the page.
+ */
+export async function captureImageToMemory(
+  tab: chrome.tabs.Tab,
+  srcUrl: string,
+): Promise<InMemoryCapture> {
+  if (tab.id === undefined) throw new Error('No tab id for image capture');
+  const { dataUrl, ext } = await fetchImageInPage(tab.id, srcUrl);
+  const scrape = await scrapeTabState(tab, { includeHtml: false });
   const now = new Date();
   const ts = compactTimestamp(now);
-  const capture: InMemoryCapture = {
-    screenshotDataUrl,
-    html,
-    url: active.url ?? '',
-    title: active.title ?? '',
-    timestamp: now.toISOString(),
-    screenshotFilename: `screenshot-${ts}.png`,
-    contentsFilename: `contents-${ts}.html`,
-  };
-  if (selectionRaw !== null) {
-    // HTML stays byte-identical to the scrape (see `scrapeSelection`
-    // for why); markdown goes through `selectionMarkdownBody` which
-    // either passes through markdown-source text verbatim or runs
-    // `htmlToMarkdown` with `pageUrl` so relative hrefs / srcs
-    // resolve to absolute.
-    capture.selections = {
-      html: selectionRaw.html,
-      text: selectionRaw.text,
-      markdown: selectionMarkdownBody(selectionRaw.html, selectionRaw.text, active.url ?? ''),
-    };
-    capture.selectionFilenames = selectionFilenamesFor(ts);
-  }
-  if (htmlError !== undefined) capture.htmlError = htmlError;
-  if (selectionError !== undefined) capture.selectionError = selectionError;
-  if (screenshotError !== undefined) capture.screenshotError = screenshotError;
+  const capture = buildInMemoryCapture({
+    screenshotDataUrl: dataUrl,
+    screenshotExt: ext,
+    html: '',
+    selectionRaw: scrape.selectionRaw,
+    pageUrl: tab.url ?? '',
+    pageTitle: tab.title ?? '',
+    timestamp: now,
+    ts,
+  });
+  capture.htmlUnavailable = true;
+  capture.imageUrl = srcUrl;
+  if (scrape.selectionError !== undefined) capture.selectionError = scrape.selectionError;
   return capture;
+}
+
+/**
+ * "Save screenshot" sibling for the image context menu — saves the
+ * right-clicked image bytes under the same `screenshot-<ts>.<ext>`
+ * naming as a tab capture, and records it in `log.json` exactly like
+ * `captureVisible` does. No Capture page round-trip; no HTML scrape.
+ *
+ * The record carries `imageUrl` (the right-clicked source URL)
+ * alongside the saved screenshot artifact, so a downstream agent can
+ * resolve the original image even if the saved bytes are gone.
+ *
+ * Uses the source image's MIME-derived extension so the on-disk file
+ * is honest about its bytes (a JPEG image stays a `.jpg`, not a
+ * `.png` with JPEG bytes). The downstream see-what-i-see skills key
+ * off the `screenshot` artifact regardless of extension.
+ */
+export async function captureImageAsScreenshot(
+  tab: chrome.tabs.Tab,
+  srcUrl: string,
+): Promise<CaptureResult> {
+  if (tab.id === undefined) throw new Error('No tab id for image capture');
+  const { dataUrl, ext } = await fetchImageInPage(tab.id, srcUrl);
+  return saveCapture(dataUrl, tab.url ?? '', tab.title ?? '', ext, srcUrl);
+}
+
+/**
+ * Filename-extension lookup table for the image-context save path.
+ * Mirrors the canonical short names browsers and downstream tools
+ * key off (`jpg`, not `jpeg`; `svg` not `svg+xml`). Used only for
+ * MIMEs we want to normalize away from their full subtype string.
+ */
+const IMAGE_MIME_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/svg+xml': 'svg',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/x-icon': 'ico',
+  'image/vnd.microsoft.icon': 'ico',
+};
+
+/**
+ * Pick the right filename extension for the bytes we're about to
+ * save. Order:
+ *
+ *   1. Known MIME → table lookup (canonical short names).
+ *   2. URL pathname extension (`/photo.heic` → `heic`) when the
+ *      MIME didn't help. Useful when servers send
+ *      `application/octet-stream` or otherwise lie about the type.
+ *   3. `unknown` — never `.png`, because misnaming JPEG bytes as
+ *      `.png` (or vice-versa) is the bug we're trying to avoid.
+ *      An honest `.unknown` lets the user open the file with
+ *      whatever their OS chooses based on the magic header.
+ *
+ * Pathname-extension parsing is conservative: only accepts 1-5
+ * lowercase letters/digits to avoid pulling weird strings out of
+ * query parameters or fragments.
+ */
+export function imageExtensionFor(mime: string, srcUrl: string): string {
+  const m = mime.toLowerCase().split(';')[0]!.trim();
+  const fromTable = IMAGE_MIME_EXTENSIONS[m];
+  if (fromTable) return fromTable;
+  const fromUrl = imageExtensionFromUrl(srcUrl);
+  if (fromUrl) return fromUrl;
+  return 'unknown';
+}
+
+function imageExtensionFromUrl(srcUrl: string): string | undefined {
+  // Only http(s) / file URLs carry a meaningful pathname; data: /
+  // blob: have nothing to extract.
+  let pathname: string;
+  try {
+    pathname = new URL(srcUrl).pathname;
+  } catch {
+    return undefined;
+  }
+  const match = /\.([a-z0-9]{1,5})$/i.exec(pathname);
+  return match ? match[1]!.toLowerCase() : undefined;
+}
+
+/**
+ * Resolve an image URL into PNG/JPEG/etc. bytes from the source tab's
+ * page context. Two strategies, tried in order:
+ *
+ *   1. **Fetch.** A normal `fetch(url)` from the page's isolated
+ *      world. Sends cookies for the URL's origin (default
+ *      credentials), respects CORS the way a page-side fetch would,
+ *      and works for `data:` / `blob:` URLs that have no network
+ *      round-trip at all. This is the right answer when it works —
+ *      the response body is the original encoded bytes (lossless),
+ *      so JPEG photos stay JPEG, animated GIFs stay animated, etc.
+ *   2. **Canvas snapshot of the already-painted `<img>`.** When
+ *      fetch fails (403 because the server's auth doesn't accept
+ *      anonymous CORS, hot-link protection rejecting our
+ *      `Sec-Fetch-Site`, expired signed-URL params, etc.) we fall
+ *      back to whatever's already on the page. Find an `<img>` whose
+ *      `currentSrc` or `src` matches the right-clicked URL, draw it
+ *      onto a canvas, and read PNG bytes back. Lossy for JPEG
+ *      sources (they're re-encoded as PNG) but preserves the visual
+ *      content the user actually saw. Tainted-canvas sources
+ *      (cross-origin without `crossorigin="anonymous"`) throw a
+ *      SecurityError on `toDataURL`; that's surfaced as a clear
+ *      error so the user knows why.
+ *
+ * Returns `mime` in addition to `dataUrl` so the caller can pick the
+ * right filename extension via `imageExtensionFor`. The canvas
+ * fallback always reports `image/png` because that's what
+ * `toDataURL('image/png')` produces.
+ *
+ * The injected function catches its own errors and returns them in
+ * the result envelope — `executeScript` discards page-side
+ * rejections, so we can't rely on the promise rejecting back through
+ * the IPC.
+ */
+async function fetchImageInPage(
+  tabId: number,
+  srcUrl: string,
+): Promise<{ dataUrl: string; ext: string }> {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (url: string) => {
+      // Helper: read a Blob into a data URL via FileReader. Same
+      // shape both branches use, so define it once.
+      const blobToDataUrl = (blob: Blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error ?? new Error('FileReader error'));
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsDataURL(blob);
+        });
+
+      // Strategy 1: fetch().
+      let fetchError: string | undefined;
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const blob = await res.blob();
+          const dataUrl = await blobToDataUrl(blob);
+          return { dataUrl, mime: blob.type };
+        }
+        fetchError = `HTTP ${res.status} fetching image`;
+      } catch (err) {
+        fetchError = err instanceof Error ? err.message : String(err);
+      }
+
+      // Strategy 2: snapshot the already-painted <img>. Looks for an
+      // image whose `currentSrc` or `src` matches the right-clicked
+      // URL. `currentSrc` matches first because <picture>/srcset can
+      // make `src` lie about which URL actually painted.
+      const candidates = Array.from(document.querySelectorAll('img'));
+      const img =
+        candidates.find((el) => el.currentSrc === url) ??
+        candidates.find((el) => el.src === url);
+      if (!img || !img.complete || img.naturalWidth === 0) {
+        return {
+          error:
+            `Image fetch failed (${fetchError ?? 'unknown error'}) and no painted <img>`
+            + ` matches the URL. The image may not be visible on the page, may`
+            + ` use a CSS background-image (not supported), or finished loading`
+            + ` after we looked.`,
+        };
+      }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return { error: 'Failed to get 2D canvas context' };
+        ctx.drawImage(img, 0, 0);
+        // toDataURL throws SecurityError on a tainted canvas (cross-
+        // origin image loaded without crossorigin="anonymous").
+        const dataUrl = canvas.toDataURL('image/png');
+        return { dataUrl, mime: 'image/png' };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          error:
+            `Image fetch failed (${fetchError ?? 'unknown error'}) and canvas`
+            + ` fallback was blocked: ${msg}. This usually means the image is`
+            + ` cross-origin and the server doesn't send permissive CORS headers.`,
+        };
+      }
+    },
+    args: [srcUrl],
+  });
+  const out = results[0]?.result as
+    | { dataUrl: string; mime: string }
+    | { error: string }
+    | undefined;
+  if (!out) throw new Error('Failed to fetch image (no result from page)');
+  if ('error' in out) throw new Error(out.error);
+  return { dataUrl: out.dataUrl, ext: imageExtensionFor(out.mime, srcUrl) };
 }
 
 export interface SaveDetailedOptions {
@@ -1006,6 +1350,14 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
       isCropped: opts.isCropped,
     });
   }
+  // `imageUrl` rides on the InMemoryCapture for the image-context flow
+  // and is forwarded to the record independently of `includeScreenshot`
+  // — the user's intent is "remember which image I picked," and that
+  // shouldn't get dropped just because they unchecked Save Screenshot
+  // before clicking Capture.
+  if (opts.capture.imageUrl) {
+    record.imageUrl = opts.capture.imageUrl;
+  }
   if (opts.includeHtml) {
     record.contents = artifact(opts.capture.contentsFilename, opts.htmlEdited);
   }
@@ -1029,20 +1381,30 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   return record;
 }
 
-async function saveCapture(dataUrl: string, url: string, title: string): Promise<CaptureResult> {
+async function saveCapture(
+  dataUrl: string,
+  url: string,
+  title: string,
+  ext = 'png',
+  imageUrl?: string,
+): Promise<CaptureResult> {
   // Compute one Date and derive both the filename's compact timestamp and
   // the record's ISO timestamp from it, so the two can never drift.
   const now = new Date();
   // `filename` in the record is the bare basename so it resolves against
   // whichever directory the sidecar is read from. The downloads API needs
-  // the full subdir-qualified path, which we build separately.
-  const filename = `screenshot-${compactTimestamp(now)}.png`;
+  // the full subdir-qualified path, which we build separately. `ext`
+  // defaults to `png` for the tab-screenshot path; the image-context
+  // save path passes the MIME-derived extension of the source image and
+  // an `imageUrl` carrying the original right-clicked URL.
+  const filename = `screenshot-${compactTimestamp(now)}.${ext}`;
   const record: CaptureRecord = {
     timestamp: now.toISOString(),
     screenshot: { filename },
     url,
     title,
   };
+  if (imageUrl) record.imageUrl = imageUrl;
 
   // Save the screenshot first. The metadata files are downstream and
   // shouldn't be written if the image itself failed to save.
@@ -1156,6 +1518,12 @@ function serializeRecord(r: CaptureRecord, indent = 0): string {
   // them the same way.
   if (r.url) ordered.url = r.url;
   if (r.title) ordered.title = r.title;
+  // `imageUrl` is the rightmost field, after `url` / `title`. Emitted
+  // independently of `screenshot` so the source-image URL survives
+  // even when the user unchecks Save Screenshot in the Capture page.
+  // Sitting after `title` keeps the per-record metadata block (page
+  // URL, page title, source image URL) visually grouped at the end.
+  if (r.imageUrl) ordered.imageUrl = r.imageUrl;
   return JSON.stringify(ordered, null, indent);
 }
 

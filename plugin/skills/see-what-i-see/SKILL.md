@@ -30,6 +30,7 @@ You can't run this autonomously since it requires the user to have just clicked 
     - `format` — one of `"html"`, `"text"`, `"markdown"`.
     - `isEdited: true` — same as `contents.isEdited`.
   - `prompt` — the user's instruction for this capture.
+  - `imageUrl` — URL of a specific image the user captured, inside the page.
 
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 

@@ -34,6 +34,11 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
+- **Right-click an image**:
+  - **SeeWhatISee → Capture…** — Opens the *Capture* page using
+    that image as the screenshot. The page selection (e.g. a
+    caption) is also captured.
+  - **SeeWhatISee → Save screenshot** — Capture and save the image directly.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
   keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT /
@@ -232,6 +237,7 @@ present when that item was included or available.
   flow, giving instructions for agents on what to do with this capture.
 - `url` — URL of the captured page.
 - `title` — Title of the captured page.
+- `imageUrl` — URL of a specific image the user captured on the page.
 
 `filename` fields have file basenames in `log.json` in the `Downloads` folder.
 The scripts that extract these records to pass to agents expand `filename` to hold absolute paths.

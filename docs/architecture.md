@@ -334,6 +334,75 @@ sub-modules above.
     [chrome-extension.md → Context menus on the toolbar action](chrome-extension.md#context-menus-on-the-toolbar-action)
     for the full story, including the 8e100d1 regression this caused.
 
+- **Image right-click menu.** Image-context entries (currently
+  Capture… and Save screenshot) surface in `contexts: ['image']`
+  when the user right-clicks any image on a page; Chrome
+  auto-groups them under a `SeeWhatISee` submenu inside the page
+  context menu (no parent created in code).
+
+  - **Capture...** routes to `startCaptureWithDetailsFromImage(tab,
+    info.srcUrl)`. Builds an `InMemoryCapture` whose
+    `screenshotDataUrl` is the right-clicked image's bytes (instead
+    of `captureVisibleTab`), skips the page HTML scrape entirely
+    (the user's intent is "this image," not "this page") but still
+    scrapes the selection (might be a caption), and opens
+    `capture.html` next to the source tab.
+    - Records carry a top-level `imageUrl` field — the URL of the
+      right-clicked source image — emitted **independently of the
+      `screenshot` artifact**: even if the user unchecks Save
+      Screenshot in the Capture page, the URL survives in
+      `log.json` so a downstream agent can resolve the image via
+      its source.
+    - The Capture page receives `htmlUnavailable: true` on the
+      session response and quiet-disables the Save HTML row
+      (no `has-error` class, no error icon — the absence is by
+      design, not a failure).
+    - Image-flow defaults are synthetic: Save Screenshot ✓ + Save
+      Selection ✓ when a selection exists, Save HTML always
+      false. Inherits the user's selection-format preference plus
+      `defaultButton` / `promptEnter` so the rest of the page
+      behaves the same. The user's stored
+      `capturePageDefaults` is not mutated.
+    - Highlights / redactions / crop flags still surface on the
+      saved record's `screenshot` artifact the same way they do
+      on the toolbar path.
+  - **Save screenshot** routes to `captureImageAsScreenshot(tab,
+    info.srcUrl)` — writes the image bytes directly under
+    `screenshot-<ts>.<ext>`, records `screenshot` + `imageUrl` in
+    `log.json`. No Capture page round-trip; no HTML scrape.
+  - **Image fetch.** Both paths call `fetchImageInPage(tabId,
+    srcUrl)`, an `executeScript` in the page's isolated world that
+    tries two strategies in order.
+    - **fetch().** Carries the user's cookies for the URL's origin
+      and respects the page-side CORS environment. Lossless for
+      JPEG / GIF / etc. (encoded bytes pass through verbatim).
+    - **Canvas snapshot.** When fetch fails (403 from logged-in
+      sites, hot-link protection rejecting `Sec-Fetch-Site`,
+      expired signed-URL params), the fallback finds an `<img>`
+      whose `currentSrc` or `src` matches and reads PNG bytes via
+      `canvas.toDataURL('image/png')`. Lossy for JPEG sources but
+      preserves what the user already saw painted.
+    - **Tainted canvas.** Cross-origin `<img>` without
+      `crossorigin="anonymous"` throws on `toDataURL`; surfaced as
+      a clear toolbar tooltip error.
+    - The injected function catches its own errors and returns an
+      `error` field; `executeScript` discards page-side rejections,
+      so the IPC won't propagate them otherwise.
+  - **Filename extension.** `imageExtensionFor(mime, srcUrl)` picks
+    an extension via a three-step ladder.
+    - Known MIMEs hit a static table (`png` / `jpg` / `webp` /
+      `gif` / `svg` / `avif` / `bmp` / `ico`).
+    - Off-table MIMEs fall through to the URL pathname extension
+      (e.g. `/photo.heic` → `heic`).
+    - Final fallback is `unknown` — never `.png`, because misnaming
+      bytes by guessing was the JPEG-as-PNG bug we fixed.
+  - **Bake-in always emits PNG.** `renderHighlightedPng` →
+    `canvas.toDataURL('image/png')` is rasterized PNG regardless of
+    the source format. `ensureScreenshotDownloaded` swaps the
+    filename's extension to `.png` before write whenever
+    `screenshotOverride` is set, and reverts to
+    `screenshotOriginalExt` when the user undoes back to clean.
+
 - **Keyboard commands.** The manifest's `commands` block exposes
   ten entries: two meta-commands (`_execute_action`,
   `01-secondary-action`) plus one per base capture action. Capture

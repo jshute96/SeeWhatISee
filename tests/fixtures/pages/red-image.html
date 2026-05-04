@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>red-image</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; }
+      body { background: #c0c0c0; font-family: sans-serif; padding: 40px; box-sizing: border-box; }
+      img { width: 200px; height: 200px; display: block; }
+      figcaption { margin-top: 8px; max-width: 320px; }
+    </style>
+  </head>
+  <body>
+    <figure>
+      <img id="target" src="/red-pixel.png" alt="red square" />
+      <figcaption id="caption">A small red square — the canonical 8x8 PNG fixture used by the image-context capture e2e tests.</figcaption>
+    </figure>
+    <!--
+      Inline 1x1 white JPEG embedded as a data: URL so the e2e tests
+      can exercise the data: scheme branch of `fetchImageInPage` and
+      the JPEG MIME → `.jpg` extension branch of `imageExtensionFor`
+      without a second binary fixture.
+    -->
+    <img
+      id="inline-jpeg"
+      width="80" height="80"
+      src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wgARCAABAAEDAREAAhEBAxEB/8QAFAABAQAAAAAAAAAAAAAAAAAAAAr/xAAUAQEAAAAAAAAAAAAAAAAAAAAK/9oADAMBAAIQAxAAAAFX/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k="
+      alt="inline jpeg"
+    />
+    <!--
+      Real 200x200 JPEG served over http with `Content-Type:
+      image/jpeg` from the fixture server. Bigger natural size makes
+      the Capture page's overlay drag-rect helper happy, and the
+      real JPEG header survives the page-side fetch + canvas-bake
+      round-trip we test in the JPEG-edit-bake spec.
+    -->
+    <img id="http-jpeg" src="/red-pixel.jpg" alt="http jpeg" />
+  </body>
+</html>

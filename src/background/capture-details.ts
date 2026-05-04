@@ -1,5 +1,6 @@
 import {
   captureBothToMemory,
+  captureImageToMemory,
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
@@ -11,7 +12,47 @@ import {
   type SelectionFormat,
 } from '../capture.js';
 import { clearCaptureError } from './error-reporting.js';
-import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
+import {
+  getCaptureDetailsDefaults,
+  type CaptureDetailsDefaults,
+} from './capture-page-defaults.js';
+
+/**
+ * Synthetic Capture-page defaults for the image-context flow. The
+ * user's stored defaults are kept untouched (they're a global
+ * preference for the toolbar / hotkey path); this object is what
+ * gets shipped on the wire when the session was opened by the
+ * image right-click. Rules:
+ *
+ *   - Save Screenshot: always true. The screenshot *is* the image
+ *     the user just right-clicked.
+ *   - Save HTML: always false. Page HTML wasn't even scraped — the
+ *     Save HTML row will also be quiet-disabled by `htmlUnavailable`.
+ *   - Save Selection: true. If a selection is present, it's likely
+ *     a caption / context for the image — easy path is "save the
+ *     image plus its caption together." When no selection exists
+ *     the page leaves the master row disabled and the checkbox state
+ *     never shows.
+ *   - Selection format: inherited from the user's stored default
+ *     (or fall back to whichever has content) so a Markdown-loving
+ *     user doesn't get HTML for image-context selections either.
+ *   - `defaultButton` / `promptEnter`: inherited from the user's
+ *     stored defaults — image-flow shouldn't change which button
+ *     is highlighted or how Enter behaves in the prompt.
+ */
+function imageFlowDefaults(user: CaptureDetailsDefaults): CaptureDetailsDefaults {
+  return {
+    withoutSelection: { screenshot: true, html: false },
+    withSelection: {
+      screenshot: true,
+      html: false,
+      selection: true,
+      format: user.withSelection.format,
+    },
+    defaultButton: user.defaultButton,
+    promptEnter: user.promptEnter,
+  };
+}
 
 // "Capture page" flow. We grab both the screenshot and
 // the HTML up-front (so the user can decide which to save without
@@ -222,26 +263,55 @@ export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   // tab strip hasn't moved between captureBothToMemory's query
   // and now (no async user input in between), so this resolves to
   // the same tab the screenshot came from.
-  //
-  // We also tried `index: active.index` (left of the opener) on
-  // the theory that Chrome's "activate the right neighbor on
-  // close" behavior would naturally restore focus to the opener
-  // and let us drop the explicit re-activation in `saveDetails`.
-  // It didn't pan out: in the headless Playwright tests, after
-  // closing a programmatically-opened tab Chrome activates the
-  // tab two positions to the right of the closed slot in the
-  // original ordering, not the immediate right neighbor. The
-  // e2e test caught this. We stick with right-of-active position
-  // + explicit re-activation in the finally block.
-  //
-  // openerTabId helps Chrome group the new tab visually with
-  // its opener; it has no role in close-time activation.
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  await openCapturePageWithSession(data, active);
+}
+
+/**
+ * Image-context-menu sibling of `startCaptureWithDetails`. Builds an
+ * `InMemoryCapture` whose screenshot is the right-clicked image
+ * (instead of `captureVisibleTab`) and opens the Capture page
+ * positioned next to the source tab — same flow downstream, no
+ * image-aware branches in the page itself.
+ */
+export async function startCaptureWithDetailsFromImage(
+  tab: chrome.tabs.Tab,
+  srcUrl: string,
+): Promise<void> {
+  const data = await captureImageToMemory(tab, srcUrl);
+  await openCapturePageWithSession(data, tab);
+}
+
+/**
+ * Open the Capture page tab next to `opener` and stash the
+ * `InMemoryCapture` under the new tab's session-storage key so the
+ * page can fetch it via `getDetailsData`. Shared by
+ * `startCaptureWithDetails` (toolbar / hotkey path) and
+ * `startCaptureWithDetailsFromImage` (image right-click path) so the
+ * tab placement, opener bookkeeping, and session-storage key are
+ * identical between paths.
+ *
+ * Also tested removing the right-of-active positioning and relying on
+ * Chrome's natural "activate the right neighbor on close" behavior to
+ * restore focus to the opener. It didn't pan out: in the headless
+ * Playwright tests, after closing a programmatically-opened tab
+ * Chrome activates the tab two positions to the right of the closed
+ * slot in the original ordering, not the immediate right neighbor.
+ * The e2e test caught this. We stick with right-of-active position +
+ * explicit re-activation in the `saveDetails` finally block.
+ *
+ * `openerTabId` helps Chrome group the new tab visually with its
+ * opener; it has no role in close-time activation.
+ */
+async function openCapturePageWithSession(
+  data: InMemoryCapture,
+  opener: chrome.tabs.Tab | undefined,
+): Promise<void> {
   const createProps: chrome.tabs.CreateProperties = {
     url: chrome.runtime.getURL('capture.html'),
   };
-  if (active?.index !== undefined) createProps.index = active.index + 1;
-  if (active?.id !== undefined) createProps.openerTabId = active.id;
+  if (opener?.index !== undefined) createProps.index = opener.index + 1;
+  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
 
   const tab = await chrome.tabs.create(createProps);
   if (tab.id === undefined) {
@@ -249,7 +319,7 @@ export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   }
   const session: DetailsSession = {
     capture: data,
-    openerTabId: active?.id,
+    openerTabId: opener?.id,
     // Snapshot the original (un-bumped) artifact filenames so the
     // multi-capture filename strategy can produce stable
     // `<base>-1.<ext>` names even after `capture.<x>Filename` gets
@@ -617,12 +687,28 @@ async function rebumpFilenameIfLocked(
  * `shouldCommit` predicate keeps a slow v1 download from clobbering
  * a v2 entry that's already landed; the wait-for-complete latency
  * is the only window where this matters.
+ *
+ * The pre-rewrite of `screenshotFilename` below is its own non-atomic
+ * read-modify-write on session, separate from the re-read inside
+ * `ensureArtifactDownloaded`. Two concurrent calls with different
+ * override states could in theory write bytes from override A under
+ * a filename derived from override B; the cache `shouldCommit`
+ * predicate still picks the right winner for `recordDetailedCapture`,
+ * so `log.json` stays correct, but a stray on-disk file may carry
+ * mismatched bytes. Real users can't click fast enough to hit this;
+ * a per-tab mutex would close it if needed.
  */
 export async function ensureScreenshotDownloaded(
   tabId: number,
   editVersion: number,
   screenshotOverride: string | undefined,
 ): Promise<string> {
+  // Re-pin the filename for any previous lock (multi-capture bump
+  // strategy) before we sync its extension below — order matters:
+  // bumpedFilename splices `-N` into the stem while preserving the
+  // existing extension, so doing the bump first and the extension
+  // rewrite second produces the right `<stem>-N.png` for an
+  // override-on-edit save against an originally-non-PNG image.
   await rebumpFilenameIfLocked(tabId, {
     getBase: (s) => s.bases?.screenshot,
     getCurrentFilename: (s) => s.capture.screenshotFilename,
@@ -637,6 +723,31 @@ export async function ensureScreenshotDownloaded(
       }
     },
   });
+  // Sync the filename's extension to the bytes we're about to write.
+  // The Capture-page bake (`renderHighlightedPng` →
+  // `canvas.toDataURL('image/png')`) always produces PNG, so when an
+  // override is present the on-disk file must end in `.png`. With no
+  // override we write the original bytes verbatim and the filename
+  // reverts to the pre-bake extension (tracked in
+  // `screenshotOriginalExt`). Doing the rewrite before download — and
+  // persisting the session — keeps `recordDetailedCapture` (which
+  // reads `capture.screenshotFilename`) in sync with the actual bytes
+  // even when the user toggles edits between Copy and Capture clicks.
+  const pre = await requireDetailsSession(tabId);
+  const targetExt = screenshotOverride ? 'png' : pre.capture.screenshotOriginalExt;
+  // Skip the rewrite if `screenshotOriginalExt` is empty — currently
+  // unreachable (every constructor sets it) but the regex would
+  // otherwise produce a trailing-dot filename.
+  if (targetExt) {
+    const targetFilename = pre.capture.screenshotFilename.replace(
+      /\.[^.]+$/,
+      `.${targetExt}`,
+    );
+    if (targetFilename !== pre.capture.screenshotFilename) {
+      pre.capture.screenshotFilename = targetFilename;
+      await saveDetailsSession(tabId, pre);
+    }
+  }
   return ensureArtifactDownloaded(tabId, {
     getCachedPath: (s) => {
       const c = s.downloads?.screenshot;
@@ -909,6 +1020,27 @@ function applyArtifactEdit(
   kind: EditableArtifactKind,
   value: string,
 ): void {
+  // Image-flow sessions never scrape page HTML, so a stray
+  // `updateArtifact { kind: 'html' }` would otherwise quietly seed
+  // `capture.html` from `''` to whatever the user typed — and then
+  // `ensureHtmlDownloaded` would happily materialize it. The
+  // page-side Edit HTML button is disabled on `htmlUnavailable`, so
+  // this is unreachable in practice; the guard is defense-in-depth
+  // matching the `*Error` guard below.
+  if (kind === 'html' && session.capture.htmlUnavailable === true) {
+    throw new Error('Cannot edit html: HTML was not captured');
+  }
+  // Selection-edit on a session that never scraped a selection at
+  // all (no `selections`, no `selectionError`). The body-write
+  // helper short-circuits in this case but still flips the
+  // sticky `selectionEdited[fmt]` flag, which would then ride on a
+  // record whose ensureSelectionDownloaded precondition correctly
+  // refuses to materialize the file. Refuse the edit upfront so
+  // the flag never lands. Same image-flow no-selection scenario
+  // as the html guard above.
+  if (kind !== 'html' && !session.capture.selections) {
+    throw new Error('Cannot edit selection: no selection was captured');
+  }
   const reason = session.capture[EDIT_GUARD_ERROR[kind]];
   if (reason) {
     throw new Error(`Cannot edit ${kind}: ${reason}`);
@@ -960,7 +1092,26 @@ export function installDetailsMessageHandlers(): void {
         // checkboxes + the format radio reflects what the user picked
         // on the Options page — independent of the with-selection
         // click default.
-        const capturePageDefaults = await getCaptureDetailsDefaults();
+        //
+        // Image-context sessions get a synthetic defaults object that
+        // overrides Save HTML to false (it's not even captured) and
+        // checks Save Selection by default if a selection was scraped
+        // — the right-clicked image plus its caption is the
+        // expected pairing in this flow. The user's own
+        // `capturePageDefaults` is preserved for the toolbar /
+        // hotkey path.
+        //
+        // Gated on `imageUrl` (the user-facing field that names the
+        // flow) rather than `htmlUnavailable` (an implementation
+        // detail of how it's currently realized). A future flow that
+        // sets `imageUrl` without skipping HTML — or vice versa —
+        // would otherwise drift coherence between the wire defaults
+        // and the page's row-level handling.
+        const isImageFlow = session.capture.imageUrl !== undefined;
+        const userDefaults = await getCaptureDetailsDefaults();
+        const capturePageDefaults = isImageFlow
+          ? imageFlowDefaults(userDefaults)
+          : userDefaults;
         sendResponse({
           screenshotDataUrl: session.capture.screenshotDataUrl,
           html: session.capture.html,
@@ -970,6 +1121,11 @@ export function installDetailsMessageHandlers(): void {
           htmlError: session.capture.htmlError,
           selectionError: session.capture.selectionError,
           screenshotError: session.capture.screenshotError,
+          // Image-context flag the page reads to disable Save HTML
+          // quietly (no error icon — the absence is intentional, not
+          // a failure).
+          htmlUnavailable: session.capture.htmlUnavailable,
+          imageUrl: session.capture.imageUrl,
           capturePageDefaults,
         });
       })();
@@ -1061,7 +1217,11 @@ export function installDetailsMessageHandlers(): void {
             await ensureSelectionDownloaded(tabId, msg.selectionFormat);
           }
           // Re-load after the ensure*Downloaded calls so we pass
-          // their (possibly bumped) filenames to recordDetailedCapture.
+          // their (possibly bumped or extension-rewritten) filenames
+          // to recordDetailedCapture. The local `session` captured at
+          // the top of this handler is otherwise stale — both the
+          // multi-capture bump and the screenshot extension rewrite
+          // mutate `capture.<x>Filename` in place.
           const postEnsure = await requireDetailsSession(tabId);
           await recordDetailedCapture({
             capture: postEnsure.capture,

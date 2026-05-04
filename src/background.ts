@@ -6,6 +6,7 @@
 
 import {
   captureBothToMemory,
+  captureImageAsScreenshot,
   captureSelection,
   captureVisible,
   clearCaptureLog,
@@ -46,6 +47,8 @@ import {
   COPY_LAST_HTML_MENU_ID,
   COPY_LAST_SCREENSHOT_MENU_ID,
   COPY_LAST_SELECTION_MENU_ID,
+  IMAGE_CAPTURE_MENU_ID,
+  IMAGE_SAVE_SCREENSHOT_MENU_ID,
   PIN_ASK_TARGET_MENU_ID,
   SNAPSHOTS_DIR_MENU_ID,
   copyLastHtmlFilename,
@@ -64,6 +67,7 @@ import {
   ensureSelectionDownloaded,
   installDetailsMessageHandlers,
   startCaptureWithDetails,
+  startCaptureWithDetailsFromImage,
 } from './background/capture-details.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import {
@@ -285,6 +289,32 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
+  // Image right-click: open the Capture page with the right-clicked
+  // image as the screenshot. `info.srcUrl` is the absolute URL of the
+  // image element Chrome attached this menu to; `tab` is the page it
+  // lives on, used both for the source URL/title on the record and
+  // for the page-side fetch that actually pulls the image bytes.
+  if (id === IMAGE_CAPTURE_MENU_ID) {
+    if (tab && info.srcUrl) {
+      await runWithErrorReporting(() =>
+        startCaptureWithDetailsFromImage(tab, info.srcUrl!),
+      );
+    }
+    return;
+  }
+  // Image right-click: save the image bytes as a screenshot record,
+  // no Capture page round-trip. Sibling of the toolbar's Save
+  // screenshot entry, but on an arbitrary image rather than the
+  // visible tab.
+  if (id === IMAGE_SAVE_SCREENSHOT_MENU_ID) {
+    if (tab && info.srcUrl) {
+      await runWithErrorReporting(() =>
+        captureImageAsScreenshot(tab, info.srcUrl!),
+      );
+    }
+    return;
+  }
+
   // Toggle the Ask pin on/off for the active tab. The menu's title
   // and enabled state are kept in sync by `refreshPinAskTargetMenu`,
   // so by the time the user clicks here the entry reflects what
@@ -333,6 +363,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   ensureHtmlDownloaded,
   ensureSelectionDownloaded,
   startCaptureWithDetails,
+  startCaptureWithDetailsFromImage,
+  captureImageAsScreenshot,
   clearCaptureLog,
   openSnapshotsDirectory,
   copyLastScreenshotFilename,

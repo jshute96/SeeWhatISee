@@ -502,6 +502,98 @@ export async function readButtonClickSpy(page: Page): Promise<string[]> {
   );
 }
 
+// Open a fixture page that contains an `<img>`, resolve its URL, and
+// trigger the image-context Capture page flow via
+// `SeeWhatISee.startCaptureWithDetailsFromImage(tab, srcUrl)`. Mirror
+// of `openDetailsFlow` for the image-right-click path: same download
+// spy, same `capturePage` wait, same `seedStorage` hook so
+// withSelection-default tests can pre-seed `capturePageDefaults`.
+//
+// `imageSelector` defaults to `#target` (the id used by
+// `red-image.html`); pass a different selector when adding a new
+// image fixture page.
+export async function openImageDetailsFlow(
+  extensionContext: BrowserContext,
+  fixtureServer: { baseUrl: string },
+  getServiceWorker: () => Promise<Worker>,
+  fixturePath = 'red-image.html',
+  beforeCapture?: (page: Page) => Promise<void>,
+  seedStorage?: Record<string, unknown>,
+  imageSelector = '#target',
+): Promise<{ openerPage: Page; capturePage: Page; imageUrl: string }> {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+  if (seedStorage) {
+    await sw0.evaluate(async (data) => {
+      await chrome.storage.local.set(data);
+    }, seedStorage);
+  }
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/${fixturePath}`);
+  await openerPage.bringToFront();
+
+  // Resolve the image's absolute `src`. The page-side fetch in the
+  // SW reads the same string we're about to send, so use the
+  // browser's resolved URL (handles relative paths automatically).
+  const imageUrl = await openerPage.locator(imageSelector).evaluate(
+    (el) => (el as HTMLImageElement).src,
+  );
+
+  if (beforeCapture) await beforeCapture(openerPage);
+
+  const capturePagePromise = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 5000,
+  });
+
+  const sw = await getServiceWorker();
+  await sw.evaluate(async (src) => {
+    interface SpyState {
+      __seeDl?: { id: number; name: string }[];
+      __seeDlOrig?: typeof chrome.downloads.download;
+    }
+    const g = self as unknown as SpyState;
+    if (!g.__seeDlOrig) {
+      g.__seeDlOrig = chrome.downloads.download.bind(chrome.downloads);
+      (chrome.downloads as { download: typeof chrome.downloads.download }).download =
+        (async (opts: chrome.downloads.DownloadOptions) => {
+          const id = await g.__seeDlOrig!(opts);
+          if (typeof id === 'number') {
+            g.__seeDl!.push({ id, name: opts.filename ?? '' });
+          }
+          return id;
+        }) as typeof chrome.downloads.download;
+    }
+    g.__seeDl = [];
+
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (!active) throw new Error('no active tab to start image-flow capture');
+    await (
+      self as unknown as {
+        SeeWhatISee: {
+          startCaptureWithDetailsFromImage: (
+            tab: chrome.tabs.Tab,
+            srcUrl: string,
+          ) => Promise<void>;
+        };
+      }
+    ).SeeWhatISee.startCaptureWithDetailsFromImage(active, src);
+  }, imageUrl);
+
+  const capturePage = await capturePagePromise;
+  await capturePage.waitForLoadState('domcontentloaded');
+  await capturePage.waitForFunction(() => {
+    const img = document.getElementById('preview') as HTMLImageElement | null;
+    return !!(img && img.complete && img.naturalWidth > 0 && img.clientWidth > 0);
+  });
+
+  return { openerPage, capturePage, imageUrl };
+}
+
 // Inject a <span> into the current page body and select its contents
 // so the SW's scripting call sees a non-empty `window.getSelection`.
 // Shared between the edit-selection tests and the toolbar-dispatch

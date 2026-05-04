@@ -55,6 +55,24 @@ export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 // current page by the time the user opens the menu.
 export const PIN_ASK_TARGET_MENU_ID = 'pin-ask-target';
 
+// Image right-click context entries. Live in `contexts: ['image']` so
+// they only surface when the user right-clicks an `<img>` (or any
+// element Chrome treats as an image), and they read `info.srcUrl` for
+// the image URL. Two entries:
+//   - IMAGE_CAPTURE_MENU_ID: opens the Capture page using the image
+//     bytes as the screenshot (same flow as the toolbar Capture...
+//     entry, but with an arbitrary image instead of `captureVisibleTab`).
+//   - IMAGE_SAVE_SCREENSHOT_MENU_ID: writes the image bytes directly
+//     under `screenshot-<ts>.<ext>` and a matching `log.json` record —
+//     the Save-screenshot equivalent for an image that's already
+//     visible on the page.
+//
+// Chrome auto-groups multi-item page context menus under a submenu
+// labelled with the extension name, so the user sees them as
+// "SeeWhatISee › Capture..." / "SeeWhatISee › Save screenshot".
+export const IMAGE_CAPTURE_MENU_ID = 'image-capture';
+export const IMAGE_SAVE_SCREENSHOT_MENU_ID = 'image-save-screenshot';
+
 // Keyboard shortcuts declared in manifest.json's `commands` block.
 // Command names carry a two-digit ordering prefix (`NN-`) because
 // chrome://extensions/shortcuts lists commands in raw string-sort
@@ -529,6 +547,10 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // left-click when `save-screenshot` is the default — listed in the
 // menu for discoverability so users don't have to know the toolbar
 // click also captures.
+//
+// Image right-click entries are also installed below — see the
+// IMAGE_CAPTURE_MENU_ID / IMAGE_SAVE_SCREENSHOT_MENU_ID doc-comment
+// near the constants for their contract.
 
 export async function installContextMenu(): Promise<void> {
   const platform = await chrome.runtime.getPlatformInfo();
@@ -733,6 +755,22 @@ export async function installContextMenu(): Promise<void> {
     parentId: MORE_PARENT_ID,
     title: 'Clear log history',
     contexts: ['action'],
+  });
+
+  // ── Image right-click entries ───────────────────────────────
+  // Separate context root from the toolbar `action` entries above.
+  // Order here is the order Chrome renders them inside the
+  // auto-generated extension submenu: Capture... first (matches the
+  // toolbar's primary entry), then Save screenshot.
+  chrome.contextMenus.create({
+    id: IMAGE_CAPTURE_MENU_ID,
+    title: 'Capture...',
+    contexts: ['image'],
+  });
+  chrome.contextMenus.create({
+    id: IMAGE_SAVE_SCREENSHOT_MENU_ID,
+    title: 'Save screenshot',
+    contexts: ['image'],
   });
 
   // After all entries exist, sync the Copy-last-… enable state to

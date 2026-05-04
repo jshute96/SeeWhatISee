@@ -76,7 +76,23 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
             res.end();
             return;
           }
-          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          // Serve a sensible Content-Type per extension. Default is
+          // text/html for fixture HTML; PNG/JPG fixtures (used by the
+          // image-right-click tests) need their image MIME so the
+          // page-side `fetch().blob().type` reads back the right
+          // value — `imageExtensionFor()` keys off it.
+          const ext = path.extname(filePath).toLowerCase();
+          const mime = ({
+            '.html': 'text/html; charset=utf-8',
+            '.htm': 'text/html; charset=utf-8',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+          } as Record<string, string>)[ext] ?? 'application/octet-stream';
+          res.setHeader('Content-Type', mime);
           res.end(fs.readFileSync(filePath));
         } catch (err) {
           res.statusCode = 500;

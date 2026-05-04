@@ -77,6 +77,19 @@ interface DetailsData {
    */
   htmlError?: string;
   /**
+   * Image-context flow flag: HTML was deliberately not captured,
+   * not failed. Disables the Save HTML row + Copy / Edit buttons
+   * the same way `htmlError` does, but without the red error icon
+   * — there's no failure to explain.
+   */
+  htmlUnavailable?: boolean;
+  /**
+   * URL of the right-clicked source image when the Capture page
+   * was opened from the image right-click flow. Forwarded to the
+   * SW on save and recorded under `imageUrl` on the log entry.
+   */
+  imageUrl?: string;
+  /**
    * Reason the page selection couldn't be captured. Same handling
    * as `htmlError` but applies uniformly to every Save-selection-as-…
    * row. Fires alongside `htmlError` when the whole `executeScript`
@@ -1703,6 +1716,18 @@ async function loadData(): Promise<void> {
       downloadHtmlBtn.disabled = true;
       htmlRow.classList.add('has-error');
       htmlErrorIcon.title = `Unable to capture HTML contents: ${response.htmlError}`;
+      htmlSizeBadge.hidden = true;
+    } else if (response.htmlUnavailable) {
+      // Image-context flow: HTML wasn't scraped because the user
+      // right-clicked a specific image rather than the whole page.
+      // Quiet-disable Save HTML — same disabled state as the error
+      // path but no `has-error` styling and no error-icon tooltip
+      // (there's nothing to explain; the absence is by design).
+      htmlBox.checked = false;
+      htmlBox.disabled = true;
+      copyHtmlBtn.disabled = true;
+      editHtmlBtn.disabled = true;
+      downloadHtmlBtn.disabled = true;
       htmlSizeBadge.hidden = true;
     } else {
       captured.html = response.html;
