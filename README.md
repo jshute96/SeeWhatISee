@@ -86,6 +86,7 @@ On this page, you can:
   - **Line** / **Arrow** — draws a red line or arrow.
   - **Crop** — drag a rectangular region — image will be cropped to that region. Drag borders to resize.
   - **Redact** — draw a black box to hide part of the image.
+  - **Shrink** — tighten the most recent Box / Redact, or the crop region, around its content. (Strip whitespace or borders around the outer edges.)
   - **Undo** / **Clear** — roll back the most recent edit, or all edits.
   - **Copy** / **Save** — copy the edited image to the clipboard, or download it.
 - Format conversion in **Paste**

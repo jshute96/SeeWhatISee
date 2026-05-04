@@ -114,6 +114,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/ask-inject.ts` | MAIN-world helpers (attach files, type prompt, click submit) callable individually via a `window.postMessage` bridge from the widget; chip-count gate per call |
 | `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
+| `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
 | `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
@@ -152,6 +153,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context with the extension loaded, fixture HTTP server, and a `getServiceWorker()` helper |
 | `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, and verifying capture sidecars |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
+| `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |
+| `tests/fixtures/pages/shrink-nested.html` | Grey page → blue card → red inner block — exercises the two-step Shrink (page bg → card → inner block) e2e |
 | `tests/fixtures/pages/red-image.html` | Fixture page with three `<img>`s (http PNG, inline JPEG data URL, http JPEG) for the image-context capture e2e tests |
 | `tests/fixtures/pages/red-pixel.png` | 200x200 solid-red PNG used as the `<img>` source in `red-image.html` |
 | `tests/fixtures/pages/red-pixel.jpg` | 200x200 solid-red JPEG counterpart for tests that exercise non-PNG bake-in / extension handling |
@@ -200,6 +203,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — covers all Case 1–4 paths, hotkey suffix, save-defaults expansion |
+| `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
 
 ## Design Docs (`docs/`)
 

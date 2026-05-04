@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>shrink-target</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; }
+      body { background: #c0c0c0; }
+      /* A single black block centered ~25% in from each edge gives
+         the Shrink algorithm a clear, deterministic content-vs-bg
+         boundary to find — far enough from the viewport edges that
+         tightening visibly trims margins. */
+      #block {
+        position: absolute;
+        left: 25%;
+        top: 25%;
+        width: 50%;
+        height: 50%;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="block"></div>
+  </body>
+</html>

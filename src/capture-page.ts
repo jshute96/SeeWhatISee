@@ -23,6 +23,7 @@
 
 import { htmlToMarkdown, looksLikeMarkdownSource } from './markdown.js';
 import { excludedSuffix } from './url-helpers.js';
+import { shrink as shrinkRect } from './shrink.js';
 import type { AskProviderId } from './background/ask/providers.js';
 
 /**
@@ -380,6 +381,7 @@ function updateSelectionSizeBadge(): void {
 // hierarchy — TypeScript won't let us cast directly across the
 // branches without a `unknown` bridge.
 const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
+const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
@@ -899,10 +901,19 @@ interface LineEdit {
 }
 type Edit = RectEdit | LineEdit;
 
-// History is an append-only log of edit additions — Undo pops the
-// most recent and removes the matching edit. The only op is "add",
-// so the entry is just the edit's id.
-type HistoryOp = { id: number };
+// History is a log of edit-stack mutations. Undo pops the most
+// recent entry and reverses it:
+//
+//   - No `prev` field — the op was an "add", so undo removes the
+//     matching edit from the stack (the original behaviour).
+//   - `prev` field set — the op was a Shrink that mutated the
+//     matching edit's geometry in place; undo restores those
+//     pre-shrink coordinates so the user can step back through a
+//     chain of shrinks one click at a time.
+type HistoryOp = {
+  id: number;
+  prev?: { x: number; y: number; w: number; h: number };
+};
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Movement under this many CSS pixels counts as a stray click, not
@@ -1374,6 +1385,7 @@ function render(): void {
   const hasEditHistory = editHistory.length > 0;
   undoBtn.disabled = !hasEditHistory;
   clearBtn.disabled = !hasEditHistory;
+  shrinkBtn.disabled = !shrinkTarget();
 }
 
 overlay.addEventListener('mousedown', (e) => {
@@ -1535,7 +1547,22 @@ undoBtn.addEventListener('click', () => {
   const last = editHistory.pop();
   if (!last) return;
   const idx = edits.findIndex((e) => e.id === last.id);
-  if (idx >= 0) edits.splice(idx, 1);
+  if (idx >= 0) {
+    if (last.prev) {
+      // Shrink op — restore the rect's pre-shrink geometry. Only
+      // rect-shaped edits (rect / redact / crop) carry shrinkable
+      // geometry, so this branch is unreachable for line / arrow.
+      const e = edits[idx]!;
+      if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+        e.x = last.prev.x;
+        e.y = last.prev.y;
+        e.w = last.prev.w;
+        e.h = last.prev.h;
+      }
+    } else {
+      edits.splice(idx, 1);
+    }
+  }
   editVersion++;
   render();
 });
@@ -1543,6 +1570,231 @@ undoBtn.addEventListener('click', () => {
 clearBtn.addEventListener('click', () => {
   edits.length = 0;
   editHistory.length = 0;
+  editVersion++;
+  render();
+});
+
+// ─── Shrink ───────────────────────────────────────────────────────
+//
+// The Shrink action tightens a rectangle around its content by
+// reading the pre-edit base image and asking `src/shrink.ts` to
+// trim solid borders. Which rectangle gets shrunk is decided by
+// the currently selected tool:
+//
+//   - 'rect' / 'redact' — the most recent edit of that kind. If
+//     the stack has none, the button is disabled.
+//   - 'crop'            — the active crop, or (if there is none)
+//     the full image: that case commits a *new* crop edit so the
+//     user can shrink straight from "no crop yet" to "crop fitting
+//     the page content".
+//   - 'line' / 'arrow'  — disabled (lines have no rectangular
+//     extent to tighten).
+//
+// We never shrink against the rendered overlay: redactions paint
+// over the object you'd want to wrap, so the algorithm has to see
+// the pristine base image. `previewImg` always holds the raw
+// `captureVisibleTab` data URL — bake-in is computed on demand
+// elsewhere — so reading its natural-resolution pixels gives that
+// pristine view.
+
+type ShrinkTarget =
+  | { kind: 'rect-edit'; edit: RectEdit }
+  | { kind: 'new-crop' };
+
+// Picks the rect that the next Shrink click would act on, or
+// `null` if Shrink would have nothing to do. Used both to gate the
+// button's disabled state (in `render()`) and to look up the
+// target inside the click handler.
+function shrinkTarget(): ShrinkTarget | null {
+  if (selectedTool === 'rect' || selectedTool === 'redact') {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const e = edits[i]!;
+      if (e.kind === selectedTool) return { kind: 'rect-edit', edit: e };
+    }
+    return null;
+  }
+  if (selectedTool === 'crop') {
+    const c = activeCrop();
+    return c ? { kind: 'rect-edit', edit: c } : { kind: 'new-crop' };
+  }
+  return null;
+}
+
+// Cache of the natural-resolution base-image pixel buffer. Reading
+// `previewImg` into a canvas costs ~5–20 ms for a typical viewport
+// screenshot; caching it keeps repeated Shrink clicks responsive.
+// The cache key is `previewImg.src` so a re-capture (which changes
+// the data URL) invalidates without explicit teardown.
+let basePixelsCache: { src: string; buf: ImageData } | null = null;
+function getBasePixels(): ImageData | null {
+  if (basePixelsCache && basePixelsCache.src === previewImg.src) {
+    return basePixelsCache.buf;
+  }
+  const w = previewImg.naturalWidth;
+  const h = previewImg.naturalHeight;
+  if (w === 0 || h === 0) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(previewImg, 0, 0);
+  const buf = ctx.getImageData(0, 0, w, h);
+  basePixelsCache = { src: previewImg.src, buf };
+  return buf;
+}
+
+// Convert a percentage-space rect (matching what edits store) to a
+// natural-pixel rect on the base image, and back. Pixel rects are
+// rounded to integer bounds since the shrink algorithm operates on
+// whole pixels.
+function pctRectToPixels(
+  r: { x: number; y: number; w: number; h: number },
+  natW: number,
+  natH: number,
+): { x: number; y: number; w: number; h: number } {
+  const x = Math.round((r.x / 100) * natW);
+  const y = Math.round((r.y / 100) * natH);
+  const w = Math.round(((r.x + r.w) / 100) * natW) - x;
+  const h = Math.round(((r.y + r.h) / 100) * natH) - y;
+  return { x, y, w, h };
+}
+function pixelsToPctRect(
+  r: { x: number; y: number; w: number; h: number },
+  natW: number,
+  natH: number,
+): { x: number; y: number; w: number; h: number } {
+  return {
+    x: (r.x / natW) * 100,
+    y: (r.y / natH) * 100,
+    w: (r.w / natW) * 100,
+    h: (r.h / natH) * 100,
+  };
+}
+
+shrinkBtn.addEventListener('click', () => {
+  const target = shrinkTarget();
+  if (!target) return;
+  const base = getBasePixels();
+  if (!base) return;
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+
+  const startPct = target.kind === 'rect-edit'
+    ? { x: target.edit.x, y: target.edit.y, w: target.edit.w, h: target.edit.h }
+    : { x: 0, y: 0, w: 100, h: 100 };
+  const startPx = pctRectToPixels(startPct, natW, natH);
+  const isBox = target.kind === 'rect-edit' && target.edit.kind === 'rect';
+
+  const rectsEqual = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ): boolean => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+
+  let tightPx = shrinkRect(base, startPx);
+
+  // Box-mode multi-step drilling: a previously-shrunk Box has its
+  // edges 1 pixel *outside* the content (the +1 expansion), so the
+  // algorithm's snapshot from `startPx` is plain bg and the next
+  // line in is content — no advance. Crop / Redact don't have this
+  // problem because their edges already sit ON the content. To let
+  // Box drill into nested content the same way (e.g. a coarse box
+  // → tight around a text+divider block on click 1 → tight around
+  // just the text on click 2 once the divider's uniform pixels
+  // become the new snapshot), retry from the rect contracted by 1
+  // when the first attempt couldn't advance. The contracted rect's
+  // edges sit on the previous content's outer pixels, mirroring the
+  // Crop / Redact starting state.
+  //
+  // The retry is all-or-nothing: it fires only when the first
+  // attempt advanced *zero* edges. Partially-advanced results (e.g.
+  // top/bottom drill but left/right don't) keep the partial result
+  // — the user can click again to drill the remaining edges.
+  if (isBox && (!tightPx || rectsEqual(tightPx, startPx))) {
+    const contractedW = Math.max(0, startPx.w - 2);
+    const contractedH = Math.max(0, startPx.h - 2);
+    if (contractedW > 0 && contractedH > 0) {
+      const contracted = {
+        x: startPx.x + 1,
+        y: startPx.y + 1,
+        w: contractedW,
+        h: contractedH,
+      };
+      const drilled = shrinkRect(base, contracted);
+      // Only adopt the drilled result if the algorithm actually
+      // advanced past the contracted starting rect — otherwise
+      // we'd be calling a no-op "tighter than contracted" and
+      // shrinking the box for no reason.
+      if (drilled && !rectsEqual(drilled, contracted)) {
+        tightPx = drilled;
+      }
+    }
+  }
+
+  if (!tightPx) return;
+
+  // Algorithm-noop guard: if no edge moved (the start was already
+  // wrapping the content as tightly as the snapshot rule allows
+  // — including the Box drilling retry above), bail *before* the
+  // Box +1 expansion. Without this, repeated Box clicks would
+  // unconditionally re-expand by 1 each click — pulsing on clean
+  // content, growing on noisy content.
+  if (rectsEqual(tightPx, startPx)) return;
+
+  // For Box outlines, the rect is the stroke geometry — the user
+  // wants the stroke centerline to sit just outside the wrapped
+  // object, not painted across it. Expanding the tight content
+  // rect by 1 natural pixel on every side puts the centerline one
+  // pixel outside the content; on a heavily-downscaled preview
+  // the stroke's half-width can still cross the boundary by a
+  // fraction of a display pixel, which is the best we can do
+  // without scaling the expansion to the live display ratio.
+  // Crop and Redact keep the tight rect (crop = exactly the
+  // content, redact = covers exactly the content).
+  let finalPx;
+  if (isBox) {
+    // Compute the box-stroke rect as the tight content rect
+    // expanded by 1 pixel on every side, clamped to the image so
+    // a content rect at the image edge doesn't get pushed off the
+    // canvas. Pulling the clamped origin into locals first makes
+    // the `right - left = width` shape obvious.
+    const fx = Math.max(0, tightPx.x - 1);
+    const fy = Math.max(0, tightPx.y - 1);
+    const fr = Math.min(natW, tightPx.x + tightPx.w + 1);
+    const fb = Math.min(natH, tightPx.y + tightPx.h + 1);
+    finalPx = { x: fx, y: fy, w: fr - fx, h: fb - fy };
+  } else {
+    finalPx = tightPx;
+  }
+
+  const finalPct = pixelsToPctRect(finalPx, natW, natH);
+
+  // No-op guard: if rounding (or already-tight content) produces
+  // the same percentage rect, don't push a no-op onto the history
+  // stack — Undo would then have to walk past silent entries.
+  const same =
+    Math.abs(finalPct.x - startPct.x) < 0.001 &&
+    Math.abs(finalPct.y - startPct.y) < 0.001 &&
+    Math.abs(finalPct.w - startPct.w) < 0.001 &&
+    Math.abs(finalPct.h - startPct.h) < 0.001;
+  if (same) return;
+
+  if (target.kind === 'rect-edit') {
+    const e = target.edit;
+    editHistory.push({
+      id: e.id,
+      prev: { x: e.x, y: e.y, w: e.w, h: e.h },
+    });
+    e.x = finalPct.x;
+    e.y = finalPct.y;
+    e.w = finalPct.w;
+    e.h = finalPct.h;
+  } else {
+    // Promote the implicit full-image crop to a real crop edit.
+    const id = nextEditId++;
+    edits.push({ id, kind: 'crop', ...finalPct });
+    editHistory.push({ id });
+  }
   editVersion++;
   render();
 });
@@ -1574,6 +1826,10 @@ function setSelectedTool(tool: Tool): void {
     btn.classList.toggle('selected', isMine);
     btn.setAttribute('aria-pressed', isMine ? 'true' : 'false');
   }
+  // Shrink's enabled state depends on the selected tool (it
+  // operates on the last matching edit, or on the crop region in
+  // Crop mode), so a re-render keeps its disabled flag in sync.
+  render();
 }
 for (const btn of toolButtons) {
   // Switch on mousedown (not click) so the previously-selected tool
@@ -3817,4 +4073,14 @@ void loadData();
   },
   flags: () => editFlags(),
   editKinds: () => edits.map((e) => e.kind),
+  // Bounds of the most-recent edit matching `kind` (used by the
+  // Shrink e2e to assert that a click really did mutate geometry —
+  // not just that the editKinds list is unchanged).
+  lastRectBounds: (kind: 'rect' | 'redact' | 'crop') => {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const e = edits[i]!;
+      if (e.kind === kind) return { x: e.x, y: e.y, w: e.w, h: e.h };
+    }
+    return null;
+  },
 };

@@ -1048,9 +1048,13 @@
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
-  /* Visual gaps between the three palette clusters: tool selectors
-   * → Undo/Clear → Copy/Download image. Larger than the regular
-   * 6px row gap so each group reads as its own cluster. */
+  /* Visual gaps between the four palette clusters: tool selectors
+   * → Shrink → Undo/Clear → Copy/Download image. Shrink lives in
+   * its own cluster because it operates on the image content (a
+   * pixel-level transform), while Undo/Clear are edit-stack
+   * actions. Larger than the regular 6px row gap so each group
+   * reads as its own cluster. */
+  .highlight-buttons #shrink,
   .highlight-buttons #undo,
   .highlight-buttons #copy-image-btn {
     margin-top: 14px;
@@ -1579,6 +1583,17 @@
                 type="button" data-tool="redact"
                 title="Drag to add a black redaction box"
                 aria-pressed="false">Redact</button>
+        <!--
+          Shrink is an action (not a tool mode): it tightens the
+          current tool's last-drawn rect (Box / Redact) — or the
+          active crop region (Crop), virtually starting from the
+          full image when no crop exists yet — to the smallest box
+          that still encloses the same content. Disabled when there
+          is nothing to shrink (Line / Arrow modes, or Box / Redact
+          modes with no matching edit on the stack).
+        -->
+        <button id="shrink" class="btn" disabled
+                title="Shrink the last Box/Redact, or the crop region, to fit its content">Shrink</button>
         <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
         <button id="clear" class="btn" disabled

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>shrink-nested</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; }
+      /* Outer page is grey. */
+      body { background: #c0c0c0; }
+      /* A blue "card" sits at 10%–90% with a red inner block at
+         25%–75%. The blue band between the card edge and the
+         inner block is *uniform* — that's what makes the second
+         Shrink click meaningful: pass 1 trims the grey margins to
+         the card; pass 2 finds the card's edge rows are uniform
+         blue and trims further to expose the red inner block. */
+      #card {
+        position: absolute;
+        left: 10%;
+        top: 10%;
+        width: 80%;
+        height: 80%;
+        background: #2244ff;
+      }
+      #inner {
+        position: absolute;
+        left: 25%;
+        top: 25%;
+        width: 50%;
+        height: 50%;
+        background: #ff2244;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card"></div>
+    <div id="inner"></div>
+  </body>
+</html>

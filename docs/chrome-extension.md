@@ -663,8 +663,8 @@ This section is split by topic:
 ### Image annotation pane
 
 The screenshot preview is layered with an SVG overlay driven by a
-modal *tool palette* on the left. Exactly one of four tool buttons
-is selected at a time; a left-button drag commits an edit of that
+modal *tool palette* on the left. Exactly one tool button is
+selected at a time; a left-button drag commits an edit of that
 tool's kind. There's no right-click drawing, and no in-place
 "convert this rect to a crop / redact" — every drag is a fresh edit.
 
@@ -676,6 +676,8 @@ tool's kind. There's no right-click drawing, and no in-place
 - Buttons stack vertically, all sized to the widest label. The
   column has clusters separated by 14px gaps:
   - Box, Line, Arrow, Crop, Redact (tool selectors).
+  - Shrink (image-content transform — its own cluster because it
+    rewrites a rect's geometry from pixel data, not the edit stack).
   - Undo, Clear (edit-stack actions).
   - Copy, Save (image-level actions — Copy puts the *current* PNG
     bytes on the clipboard; Save opens the native save-as dialog).
@@ -687,11 +689,11 @@ tool's kind. There's no right-click drawing, and no in-place
   `click`) so the previously-selected tool deselects the moment the
   user presses a new one — otherwise both old `.selected` and new
   `:active` paint at once.
-- Action buttons (Undo / Clear / Copy / Save) are *actions*, not
-  modes — they never get `.selected`. They share a `.btn` press-look
-  with every other primary button on the page (header Options,
-  Capture, Ask, edit-dialog Cancel/Save/Download), so all
-  click-feedback uses one shared visual vocabulary.
+- Action buttons (Shrink / Undo / Clear / Copy / Save) are
+  *actions*, not modes — they never get `.selected`. They share a
+  `.btn` press-look with every other primary button on the page
+  (header Options, Capture, Ask, edit-dialog Cancel/Save/Download),
+  so all click-feedback uses one shared visual vocabulary.
 - Copy / Save disable when the screenshot capture errored — same
   gate as the per-row `.copy-btn` / `#download-screenshot-btn` next
   to the Save-screenshot checkbox above.
@@ -711,6 +713,74 @@ tool's kind. There's no right-click drawing, and no in-place
 - **Redact** — drag paints a filled black rectangle live, matching
   the committed appearance — opaque fill that hides whatever was
   underneath in the saved PNG.
+
+#### Shrink action
+
+- Tightens a rectangle around its content by reading the *base*
+  (pre-edit) image and trimming solid borders. Operates on the
+  most recent edit of the selected tool's kind for Box / Redact,
+  on the active crop for Crop, or commits a new crop edit when
+  Crop has no active region (using the full image as the start).
+- Disabled in Line / Arrow modes. Disabled in Box / Redact modes
+  when no edit of that kind exists. The `render()` pass refreshes
+  the disabled flag, and `setSelectedTool` re-renders so the
+  button tracks the active tool.
+- Backed by `src/shrink.ts` — a pure pixel-buffer operator with
+  unit tests. Each edge advances inward as long as the line one
+  step deeper still matches the *original* edge line, sliced to
+  the current perpendicular range.
+- Snapshot vs. neighbour: comparing every candidate against the
+  *original* edge keeps the algorithm anchored to "what bg looked
+  like" — avoids the over-shrink an iterative compare-to-neighbour
+  rule hits once the perpendicular range narrows onto solid
+  content.
+- Per-channel tolerance (default 3) absorbs JPEG noise / mild
+  anti-aliasing.
+- Box mode expands the tight content bbox by 1 natural pixel on
+  every side (clamped to the image) so the stroke centerline sits
+  just outside the wrapped object. The stroke's half-width can
+  still cross by a fraction of a display pixel on a downscaled
+  preview. Crop / Redact use the tight bbox unchanged.
+- Cache: the natural-resolution `ImageData` is materialized on
+  first click and cached keyed by `previewImg.src` — repeated
+  clicks on the same capture skip the canvas decode.
+- Each click is its own undoable step:
+  - Rect-edit shrinks mutate the existing edit's geometry and push
+    a `HistoryOp` carrying the *previous* `{x, y, w, h}`. Undo
+    restores those coordinates in place.
+  - The new-crop case (Crop mode, no active crop) appends a fresh
+    `'crop'` edit and pushes a regular `add` op. Undo removes it,
+    returning to "no crop yet".
+- Box-mode drilling retry:
+  - A Box rect's edges sit 1 pixel *outside* the wrapped content
+    (the +1 expansion), so a fresh algorithm call from the box
+    edge sees plain bg as the snapshot.
+  - That snapshot can't reach the previous content's outline, so
+    the algorithm doesn't advance — Box would lose the multi-step
+    drilling that Crop / Redact get for free.
+  - The click handler retries with the rect contracted by 1 when
+    the first attempt couldn't advance. That puts the snapshot ON
+    the previous content's outer pixels, matching Crop / Redact's
+    starting state — successive Box clicks then drill into nested
+    content the same way.
+- Algorithm-noop guard — when neither attempt advances (the rect
+  already wraps as tightly as the snapshot rule allows), the
+  click is a silent no-op. The Box +1 expansion fires only when
+  the algorithm actually contracted at least one edge. Without
+  this guard, repeat Box clicks would re-expand by 1 each time —
+  pulsing on clean content, growing on noisy content.
+- Multi-step refinement (all rect modes) — successive clicks can
+  legitimately keep shrinking when an earlier click landed on a
+  uniform stripe (e.g. a button border). On the next click that
+  stripe becomes the new bg snapshot, and the algorithm walks
+  past it to the next layer of content. The `shrink:` e2e tests
+  pin every behaviour: idempotent on Box, drills further on Box
+  *and* Crop using the nested-content fixture.
+- Known limitation — the algorithm assumes the starting edges sit
+  on background. If the rect is already flush with content (or
+  drawn entirely inside a uniform region), `shrink()` returns
+  `null` and the click is a silent no-op rather than producing a
+  mis-tightened rect.
 
 #### Crop-edge handles (drag-to-crop / drag-to-resize)
 
@@ -750,10 +820,15 @@ tool's kind. There's no right-click drawing, and no in-place
 
 #### Edit stack & geometry
 
-- **Undo / Clear** — single edit-history stack of `add` ops only
-  (no convert ops in the new model). Undo removes the
-  last-added edit; Clear wipes everything. Both disable when the
-  stack is empty.
+- **Undo / Clear** — single edit-history stack of two op kinds:
+  - `add` ops — drag-committed edits. Undo removes the matching
+    edit from the stack.
+  - shrink ops — carry the pre-shrink geometry of an existing
+    rect / redact / crop edit. Undo restores those coordinates in
+    place instead of removing the edit.
+
+  Clear wipes everything. Both buttons disable when the stack is
+  empty.
 - **Resize-stable coordinates** — edits are stored as percentages
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
