@@ -644,10 +644,6 @@ function renderAskProvidersTable(data: OptionsData): void {
     defaultRadio.dataset.askDefault = provider.id;
     defaultRadio.checked = data.askProviderSettings.default === provider.id;
     defaultRadio.disabled = !enabledBox.checked;
-    // Picking a different Ask default needs to live-update the
-    // "Ask <provider>" label in the Default-submit-button table so
-    // it always mirrors what the Capture page would show.
-    defaultRadio.addEventListener('change', refreshDefaultButtonAskLabel);
     defaultCell.appendChild(defaultRadio);
 
     tbody.appendChild(tr);
@@ -701,36 +697,6 @@ function onAskEnabledChange(toggledId: string): void {
     newDefault = toggledId;
   }
   applyAskRadioState(orderedIds, enabled, newDefault);
-  // Auto-rotation may have moved the default — keep the
-  // Default-submit-button "Ask <provider>" label in sync.
-  refreshDefaultButtonAskLabel();
-}
-
-/**
- * Update the "Ask <provider>" label in the Default-submit-button
- * table to match whichever provider is currently picked as the Ask
- * default in the providers table above. Mirrors the Capture page's
- * `#ask-target-label` so the user sees the same text in both places.
- *
- * Falls back to a bare "Ask" when no provider is enabled (default is
- * null) — there's nothing concrete to point the user at in that case.
- */
-function refreshDefaultButtonAskLabel(): void {
-  if (!latest) return;
-  const target = document.getElementById('cp-default-button-ask-target');
-  if (!target) return;
-  const { defaultId } = readAskProvidersFromDom();
-  // Mirror the Capture page's #ask-target-label fallback: when no
-  // provider is enabled, the page renders "Ask AI" (not just "Ask"
-  // with a trailing space inside an <i>). Keep both surfaces in sync.
-  if (!defaultId) {
-    target.textContent = 'AI';
-    return;
-  }
-  const provider = latest.askProviders.find((p) => p.id === defaultId);
-  // The HTML already has a literal space before the <span>, so the
-  // span's content is the bare provider label.
-  target.textContent = provider ? provider.label : 'AI';
 }
 
 function applyAskRadioState(
@@ -763,9 +729,6 @@ function renderForm(data: OptionsData): void {
   renderWithTable(data);
   renderCaptureDetailsDefaults(data);
   renderAskProvidersTable(data);
-  // Must run after `renderAskProvidersTable` — it reads the live DOM
-  // radio state to find the current Ask default.
-  refreshDefaultButtonAskLabel();
 }
 
 function renderAll(data: OptionsData): void {

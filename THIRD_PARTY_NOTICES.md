@@ -40,3 +40,21 @@ text is short and reproduced below for convenience:
 > either express or implied. See the License for the specific
 > language governing permissions and limitations under the
 > License.
+
+## Provider brand logos (used as Ask-button icons for links to those sites)
+
+The Capture page's per-provider Ask buttons display each
+destination site's brand logo. The bundled files are downloaded
+from each provider's published `link rel="icon"`:
+
+| File                       | Source                              |
+|----------------------------|-------------------------------------|
+| `src/icons/claude.svg`     | <https://claude.ai/favicon.ico>     |
+| `src/icons/gemini.svg`     | <https://gemini.google.com/>        |
+| `src/icons/chatgpt.ico`    | <https://chatgpt.com/favicon.ico>   |
+| `src/icons/google.ico`     | <https://www.google.com/favicon.ico> |
+
+Logos are unmodified copies. They're trademarks of their
+respective owners (Anthropic, Google, OpenAI) and are used here
+as nominative identifiers — pointing the user at "the button that
+sends to <site>" — with no implied endorsement.

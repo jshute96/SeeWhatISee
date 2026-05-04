@@ -24,6 +24,7 @@ export const geminiProvider: AskProvider = {
     'https://gemini.google.com/settings*',
   ],
   newTabUrl: 'https://gemini.google.com/app',
+  iconFilename: 'gemini.svg',
   enabled: true,
   selectors: {
     // Gemini doesn't put a file input in the page until the user

@@ -69,7 +69,7 @@ test('url variant: pre-send guard refuses HTML/selection on image-only destinati
   });
 
   // Open the menu and pick the existing fake-Claude tab.
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -123,7 +123,7 @@ test('url variant: image + prompt only → sends end-to-end (Claude Code happy p
     prompt: 'help me debug this screenshot',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -180,7 +180,7 @@ test('url variant: HTML/selection unchecked plus image → sends, no skip suffix
     prompt: 'go',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 

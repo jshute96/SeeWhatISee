@@ -196,91 +196,82 @@
     display: none;
   }
   /*
-   * Controls-row layout. This block is intentionally NOT a grid —
-   * here's why the structure looks the way it does. Read top to
-   * bottom before changing it; each piece is load-bearing.
+   * Controls-row layout: two columns.
    *
    *   .controls (flex row)
    *     .checkboxes              [col 1: Save-row controls]
-   *     .left-stack (flex col)   [col 2]
-   *       .left-stack-row        [row 1: buttons | "Prompt:" label]
-   *         .button-stack          [Capture / Ask Claude buttons]
-   *         <label for="prompt-text">
-   *       #ask-status            [row 2: spans the row above; wraps]
-   *     <textarea id="prompt-text">  [col 3: independent height]
+   *     .right-stack (flex col)  [col 2: stacked rows]
+   *       .prompt-row              [row 1: "Prompt:" label + textarea]
+   *       .button-row              [row 2: Capture + Ask buttons,
+   *                                 horizontal, wraps to additional
+   *                                 lines when the column isn't wide]
+   *       #ask-status              [row 3: Capture/Ask status text]
    *
-   * Three intents the structure is built around:
-   *
-   * (1) "Status sits directly under the buttons+label, NOT under
-   *     the textarea." The status is a child of `.left-stack`
-   *     (row 2 of the column). It is *not* in any grid that the
-   *     textarea participates in. Consequence: a tall textarea
-   *     grows in its own flex cell and doesn't push the status
-   *     down. If you ever try to put the textarea inside
-   *     `.left-stack` (or make .controls a grid where status spans
-   *     under the textarea), the status will move with the
-   *     textarea's height — that's the bug we keep landing on.
-   *
-   * (2) "A long error message wraps; it does NOT widen the column
-   *     or squash the textarea." The status's rendered width must
-   *     equal the buttons+label row's natural width — but the
-   *     status's *content* must not influence that width. We get
-   *     this via `width: 0; min-width: 100%` on `#ask-status`
-   *     (see below). `width: 0` removes the status from
-   *     `.left-stack`'s intrinsic-size calculation; `min-width:
-   *     100%` then renders it at the column's post-layout width
-   *     (= the row's max-content). Removing either one breaks
-   *     this — a CSS-grid spanning approach would also break it
-   *     because spanning items expand `max-content` tracks.
-   *
-   * (3) "Asymmetric gaps without spacer columns." `.controls` has
-   *     a uniform `gap: 24px` (checkboxes ↔ left-stack ↔
-   *     textarea), but the visual gap between the "Prompt:" label
-   *     and the textarea should be 8px to match the original
-   *     design. We cancel 16px of the 24px gap with
-   *     `margin-left: -16px` on the textarea so the effective
-   *     space is 8px. Inside `.left-stack-row`, the
-   *     button-stack ↔ label gap is its own `gap: 24px`.
+   * The textarea grows vertically with the user's input (its own
+   * `auto-grow` JS sizes the row count). The button row sits below
+   * it and wraps so a narrow viewport stacks the buttons across
+   * multiple lines instead of clipping past the page edge.
    */
   .controls {
-    /* --controls-gap is referenced by the negative-margin trick on
-     * the textarea below (intent 3). Define once, use in both
-     * places so the math stays in sync if the spacing is retuned. */
-    --controls-gap: 24px;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--controls-gap);
-    /* On a narrow viewport, prefer wrapping the buttons-and-label
-     * row to a new line over overflowing past the page edge. The
-     * textarea's `flex: 1` keeps it greedy on wide viewports. */
-    flex-wrap: wrap;
-  }
-  /* Column holding the buttons+label row on top of the Ask status
-   * line. Column width is set by `.left-stack-row` only — see (2)
-   * above for why `#ask-status` is excluded from that calc. */
-  .left-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  /* Top row of `.left-stack`: buttons on the left, "Prompt:" label
-   * on the right. Sized to the natural width of its content; the
-   * status row below inherits this width as its render target. */
-  .left-stack-row {
     display: flex;
     align-items: flex-start;
     gap: 24px;
+    /* Wrap the right-stack column to a new line on a very narrow
+     * viewport rather than overflowing the page width. */
+    flex-wrap: wrap;
   }
-  /* Textarea sits as a plain flex sibling of `.left-stack`. Its
-   * height is therefore independent of the column's row heights —
-   * intent (1) above. The negative margin cancels (parent gap −
-   * 8px) of the parent's `gap`, netting an 8px visual gap between
-   * the "Prompt:" label and the textarea — intent (3). The math
-   * is keyed to `--controls-gap` so retuning the parent gap
-   * automatically retunes this. */
-  .controls > #prompt-text {
+  .right-stack {
     flex: 1;
-    margin-left: calc(-1 * var(--controls-gap) + 8px);
+    /* Take all the remaining controls-strip width. The prompt row
+     * fills it; the button row wraps inside it; the status reads
+     * within it. */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  /* Prompt label + textarea sit on one row; the textarea takes
+   * the remaining width and grows vertically as the user types
+   * (capture-page.ts's `autoGrowPrompt` sizes the rows). */
+  .prompt-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .prompt-row > #prompt-text {
+    flex: 1;
+    /* `min-width: 0` lets the textarea actually shrink in narrow
+     * viewports — without it, flex defaults to the textarea's
+     * intrinsic min-content and the row would overflow. */
+    min-width: 0;
+  }
+  .prompt-row > label[for="prompt-text"] {
+    /* Match the textarea's text baseline — its 6px top padding
+     * + 1px border puts the first line of text 7px from the row
+     * top, which is where the bold "Prompt:" label aligns to. */
+    padding-top: 7px;
+  }
+  /* Capture + Ask action buttons. Horizontal flex with wrap so a
+   * narrow column stacks the buttons across multiple lines rather
+   * than overflowing.
+   *
+   * `margin-top: 4px` adds to the parent `.right-stack`'s 8px
+   * `gap`, netting a 12px gap above the buttons (50% more than
+   * the gap below, which is just the parent's 8px). The extra
+   * breathing room separates the buttons from the prompt input
+   * — they're a distinct action surface, not a continuation. */
+  .button-row {
+    margin-top: 4px;
+    /* Define the action-button height once and apply it to every
+     * button kind in the row (Capture, the Ask split, the
+     * favicon squares). Same height across all kinds keeps the
+     * row visually flush even after wrapping; the favicon
+     * buttons pick up `width: var(--ask-btn-h)` for square. */
+    --ask-btn-h: 34px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
   }
   /*
    * Single grid for every Save row (screenshot / HTML / selection
@@ -622,12 +613,12 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  /* "Prompt:" label lives in `.left-stack-row` next to the buttons.
-   * Textarea is a flex sibling of `.left-stack` inside `.controls`. */
-  .left-stack-row > label[for="prompt-text"] {
+  /* "Prompt:" label lives in `.prompt-row` to the left of the
+   * textarea. The padding-top alignment trick lives on the
+   * `.prompt-row > label` rule inside the .controls block above. */
+  label[for="prompt-text"] {
     font-size: 14px;
     font-weight: bold;
-    padding-top: 7px;
   }
   #prompt-text {
     padding: 6px 8px;
@@ -642,115 +633,168 @@
     box-sizing: border-box;
   }
   button#capture,
-  button#ask-btn,
-  button#ask-caret {
-    padding: 8px 16px;
-    font-size: 14px;
-    font-weight: 500;
+  button.ask-row,
+  button.ask-caret-btn,
+  button.ask-provider-btn {
+    /* Pin every action-row button to the same height so the row
+     * stays visually flush after wrapping. Vertical padding is
+     * dropped because `height` + flex-center positions the label
+     * with no risk of clipping; horizontal padding stays for the
+     * text rows. */
+    height: var(--ask-btn-h);
     border: 1px solid #555;
     background: #f5f5f5;
     cursor: pointer;
+    box-sizing: border-box;
   }
-  /* width:100% paired with the .button-stack grid below makes the
-   * buttons render at the widest button's natural width, regardless
-   * of which label is longer. The Ask split's outer wrapper takes
-   * the column width and divides it between #ask-btn and #ask-caret. */
+  button#capture,
+  button.ask-row {
+    padding: 0 16px;
+    font-size: 14px;
+    font-weight: 500;
+  }
   button#capture {
-    width: 100%;
     border-radius: 4px;
+  }
+  /*
+   * Highlight the two primary actions — Capture and the
+   * resolved-default Ask button — with bold deep-purple text
+   * (`#512da8`, the same brand colour the title in `.app-header`
+   * uses). Button chrome stays neutral grey so the highlighting
+   * comes purely from the label, which keeps the per-provider
+   * `.ask-provider-btn` favicon buttons (no text to colour)
+   * reading as visibly secondary alongside the primary pair.
+   */
+  button#capture,
+  button#ask-btn {
+    color: #512da8;
+    font-weight: 700;
   }
   /*
    * Default-button highlight — the user picks Capture or Ask as the
    * "default" in Options; whichever wins gets `.is-default` from
    * capture-page.ts and shows a subtle outer ring so it reads as
-   * "primary" even when nothing on the page has focus. Using box-shadow
-   * (not a thicker border) keeps geometry identical to its sibling so
-   * the two buttons still align in the .button-stack column.
+   * "primary" even when nothing on the page has focus.
    *
-   * `.ask-split.is-default` rings the whole split widget (main label
-   * + caret) so the highlight reads as one button rather than ringing
-   * just the left half.
+   * For Ask, the ring traces only `#ask-btn` (the row that fires on
+   * Alt+A and on Enter when defaultButton=ask) — not the whole
+   * Ask-button stack. The other rows (Ask…, per-provider) are
+   * lateral-mode entries; ringing them too would dilute the "this
+   * is the default" signal.
    */
-  button#capture.is-default,
-  .ask-split.is-default {
-    /* The split-button's inner buttons each round their outer corners
-     * to 4px; matching that here so the ring traces the visible
-     * outline rather than a bigger square around it. Uses `outline`
-     * (not `box-shadow`) so the ring stays independent of `.btn`'s
-     * raised drop shadow + the inset pressed shadow — multiple
-     * `box-shadow` sources don't stack across CSS rules, but
-     * `outline` is its own property. */
+  /*
+   * Default-button highlight ring. Inset rather than outline so it
+   * doesn't visibly shrink the adjacent `.button-row` gaps by 2px
+   * on each side.
+   *
+   * Capture is a single button with its own background, so an
+   * inset `box-shadow` paints over that background and reads as
+   * an inner ring directly.
+   *
+   * `.ask-split` is a flex wrapper whose inner buttons paint their
+   * own backgrounds — an inset `box-shadow` on the wrapper would
+   * be hidden behind those children. A `::after` pseudo-element
+   * overlay paints on top of the children instead, drawing a
+   * single ring around the whole split (main button + caret) at
+   * exact wrapper bounds with `pointer-events: none` so clicks
+   * still pass through to the underlying buttons.
+   */
+  button#capture.is-default {
     border-radius: 4px;
-    outline: 2px solid rgba(0, 95, 204, 0.35);
-    outline-offset: 0;
+    box-shadow: inset 0 0 0 2px rgba(0, 95, 204, 0.35);
+  }
+  .ask-split.is-default::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid rgba(0, 95, 204, 0.35);
+    border-radius: 4px;
+    pointer-events: none;
   }
   /*
-   * Split button: main "Ask <provider>" label on the left flexes to
-   * fill, caret button on the right is a fixed-width chevron. They
-   * share a continuous border by joining at a common edge — the
-   * caret's left-border is dropped, the main button's right-border
-   * is still drawn so the join reads as a divider. Outer radii at
-   * the start of the main button and the end of the caret only.
+   * Ask split button: #ask-btn (the main "Ask <provider>" label)
+   * and #ask-menu-btn (the chevron-only square that opens the
+   * destination-picker menu) sit inside `.ask-split` and share a
+   * single visual chrome — common border at the seam, outer radii
+   * at the start of the main button and the end of the caret.
+   * `.ask-split` is also the popup menu's `position: relative`
+   * anchor so the menu lands directly under the caret rather than
+   * the row's left edge.
    */
   .ask-split {
+    position: relative;
     display: flex;
-    width: 100%;
+    /* Match the heights of the inner buttons exactly so the wrap
+     * row aligns with sibling buttons across the .button-row. */
+    height: var(--ask-btn-h);
   }
-  button#ask-btn {
-    flex: 1;
+  button.ask-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     border-top-left-radius: 4px;
     border-bottom-left-radius: 4px;
   }
-  button#ask-caret {
-    /* Squarish target sized to the chevron glyph; mirrors the
-     * 8px vertical padding of the main button so they line up. */
-    padding: 8px 10px;
+  .ask-row-label {
+    /* Inline-block so the underline on the hotkey letter renders
+     * cleanly inside the flex item. */
+    display: inline-block;
+  }
+  .ask-row-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  /* Caret button: chevron-only sliver attached to the right edge
+   * of #ask-btn. Narrower than the square button height — the
+   * chevron is small (10×10) and only needs enough horizontal
+   * room to look like a deliberate split-button divider rather
+   * than a second equal-weight button. Border-left dropped so the
+   * seam reads as a divider, outer radii on the right corners
+   * only. */
+  button.ask-caret-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    padding: 0;
     border-left: none;
     border-top-right-radius: 4px;
     border-bottom-right-radius: 4px;
   }
-  button#ask-caret svg {
+  button.ask-caret-btn svg {
     width: 10px;
     height: 10px;
     display: block;
   }
-  /* Trailing destination glyph on the #ask-btn label, after the
-   * provider name. `capture-page.ts` swaps the inner <use> between
-   * #pin-icon (default = existing pinned tab) and #new-window-icon
-   * (default = new tab) so the user can tell at a glance which path
-   * plain-Ask will take. Sized to match the label's cap height;
-   * vertical-align keeps it on the text baseline. */
-  button#ask-btn .ask-btn-icon {
-    width: 14px;
-    height: 14px;
-    vertical-align: -2px;
-    margin-left: 8px;
-  }
   button#capture:disabled,
-  button#ask-btn:disabled,
-  button#ask-caret:disabled {
+  button.ask-row:disabled,
+  button.ask-caret-btn:disabled,
+  button.ask-provider-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
   /*
-   * Single-column grid sized to max-content of its widest item.
-   * Both buttons stretch (via width:100% above) to that cell width,
-   * so Capture and "Ask <provider>" stay aligned even as the Ask
-   * label grows ("Ask Claude" → "Ask ChatGPT" → etc.).
+   * Per-provider Ask buttons. No text label — just the destination
+   * site's bundled logo. Square, matching the row's button height.
+   * The icon takes most of the button area so the brand mark
+   * reads clearly even at this small size.
    */
-  .button-stack {
-    display: grid;
-    grid-template-columns: max-content;
-    gap: 8px;
+  button.ask-provider-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--ask-btn-h);
+    padding: 0;
+    border-radius: 4px;
   }
-  /*
-   * Wrap so the popup menu can position itself relative to the Ask
-   * button without escaping the layout. `display: block` (rather
-   * than inline-block) so the wrap fills its grid cell, letting the
-   * inner button's width:100% match the wider button.
-   */
-  .ask-wrap {
-    position: relative;
+  button.ask-provider-btn img {
+    /* ~20px on a 34px button — comfortable inset that lets the
+     * brand mark read clearly without crowding the button edge. */
+    width: 20px;
+    height: 20px;
+    /* `display: block` removes the inline-image baseline gap so
+     * the icon centres precisely inside the square button. */
     display: block;
   }
   /*
@@ -881,17 +925,15 @@
     padding: 0;
   }
   /*
-   * Result line for the last Ask attempt. Sits in row 2 of
-   * `.left-stack`. The `width: 0` + `min-width: 100%` pair is
-   * load-bearing — see intent (2) on the `.controls` block above.
+   * Result line for the last Ask / Capture attempt. Bottom row of
+   * `.right-stack`; sized by its parent flex column.
    * `overflow-wrap: anywhere` handles long unbreakable tokens
    * (e.g. URLs in error messages) so they wrap mid-word instead
-   * of forcing horizontal overflow that would still squash the
-   * textarea.
+   * of forcing horizontal overflow.
    */
   #ask-status {
-    width: 0;
-    min-width: 100%;
+    /* Plain block sized by its parent flex column. A long error
+     * message wraps inside the column rather than widening it. */
     font-size: 13px;
     min-height: 1em;
     word-wrap: break-word;
@@ -908,18 +950,13 @@
   hr {
     border: none;
     border-top: 2px solid #555;
-    /* Asymmetric on purpose: the preceding `.controls` flex row
-     * always reserves 1em of vertical space at its bottom for the
-     * empty `#ask-status` line (so a future status message doesn't
-     * shift the layout). That ~13px of invisible space sits inside
-     * `.controls` but visibly above the rule, so a symmetric 32/32
-     * margin reads as ~45 above vs. 32 below. Trim ~13px off the
-     * top here to balance the visible gap.
-     *
-     * Note: `.controls` itself has no `margin-bottom` — the slack
-     * above the rule comes entirely from the reserved `#ask-status`
-     * line, not from a sibling margin. Don't add one back unless
-     * you also retune the `19px` here. */
+    /* Asymmetric on purpose: the preceding `.controls` strip ends
+     * with the `#ask-status` row, which has `min-height: 1em` so
+     * a future status message doesn't shift the layout. That
+     * ~13px of invisible space sits inside `.controls` but visibly
+     * above the rule, so a symmetric 32/32 margin would read as
+     * ~45 above vs. 32 below. Trim ~13px off the top here to
+     * balance the visible gap. */
     margin: 19px 0 32px 0;
   }
   /*
@@ -1388,60 +1425,78 @@
       (intents 1–3); change that block alongside any restructure
       here so the comment stays the source of truth.
     -->
-    <div class="left-stack">
-      <div class="left-stack-row">
-        <!--
-          Both buttons live inside a single-column grid (.button-stack)
-          whose column is sized to max-content of its widest child.
-          Combined with `width: 100%` on each button, that pins them
-          to the same width regardless of label length — "Capture" vs
-          "Ask Claude" / "Ask Gemini" / "Ask ChatGPT".
-        -->
-        <div class="button-stack">
-          <button id="capture" class="btn"
-                  title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
-          <!--
-            Split "Ask" widget. Two buttons sharing a single visual
-            chrome:
-              - #ask-btn   sends straight to the resolved default
-                           destination — the pinned tab from the last
-                           Ask if it still exists, otherwise a new
-                           window in the first enabled provider.
-              - #ask-caret opens the menu of providers + matching
-                           open tabs. The menu marks (with a leading
-                           check) whichever item plain-Ask would have
-                           targeted, so the user always sees what the
-                           main button is about to do.
-            The trailing #ask-target-label and the button's tooltip
-            track the resolved default — they show "Ask Claude" while
-            the pin lives on a Claude tab, "Ask ChatGPT" once the user
-            picks a ChatGPT tab from the menu, and so on. Alt+A is
-            wired to the caret (open the menu) so the keyboard path
-            still gives the user a chance to pick a different target.
-          -->
-          <div class="ask-wrap">
-            <div class="ask-split">
-              <button id="ask-btn" type="button" class="btn"
-                      title="Send to Claude on web"><u>A</u>sk <span id="ask-target-label">Claude</span><svg
-                  id="ask-btn-icon" class="ask-btn-icon" aria-hidden="true"
-                ><use href="#new-window-icon"></use></svg></button>
-              <button id="ask-caret" type="button" class="btn"
-                      aria-haspopup="menu" aria-expanded="false"
-                      aria-controls="ask-menu"
-                      aria-label="Choose Ask target">
-                <svg aria-hidden="true"><use href="#caret-down-icon"></use></svg>
-              </button>
-            </div>
-            <div id="ask-menu" class="ask-menu" role="menu" hidden>
-              <ul></ul>
-            </div>
+    <!--
+      Right side of the controls strip: three stacked rows.
+        Row 1: "Prompt:" label + the prompt textarea (textarea
+               grows vertically as the user types).
+        Row 2: Capture + Ask buttons, laid out horizontally and
+               wrapping to additional lines if the controls strip
+               isn't wide enough.
+        Row 3: #ask-status (Capture / Ask success or error text).
+    -->
+    <div class="right-stack">
+      <div class="prompt-row">
+        <label for="prompt-text">Prompt:</label>
+        <textarea id="prompt-text" rows="1"></textarea>
+      </div>
+      <!--
+        Action buttons, in source order (== visual order):
+          - #capture sits first to match the save-then-send
+            reading order users started with.
+          - .ask-split is a split button: #ask-btn (the main
+            "Ask <provider>" label) plus #ask-menu-btn (a
+            chevron-only square attached to its right edge that
+            opens the destination-picker menu). They share a
+            visual chrome — common border at the seam, outer
+            radii at the start of #ask-btn and the end of
+            #ask-menu-btn.
+              · #ask-btn fires the resolved default destination —
+                pinned tab if alive, else a new window in the
+                preferred / Options-default provider. Carries
+                the Alt+A hotkey. Trailing #ask-target-label +
+                the button's tooltip track the resolved default;
+                the trailing icon flips between the pin glyph
+                (existing pinned tab) and the new-window glyph
+                (new-tab fallback).
+              · #ask-menu-btn opens the destination-picker menu.
+                Picking a row shifts the default for the next
+                plain-Ask click but does not send.
+          - One favicon-only `.ask-provider-btn` per enabled
+            provider, appended directly into `.button-row` after
+            `.ask-split` by `refreshAskTargetLabel()`. They're
+            real flex children of the row (no wrapper) so each
+            wraps independently AND the row's `gap` spaces them
+            evenly with the static buttons — `display: contents`
+            wrappers can perturb gap math. The "currently
+            selected" provider also appears as the #ask-btn label,
+            so picking the same provider here equates to "open a
+            fresh tab on the same site you already had pinned."
+        The popup menu anchors to `.ask-split` (its position-
+        relative parent), so it lands right under the caret
+        rather than the button row's left edge.
+      -->
+      <div class="button-row">
+        <button id="capture" class="btn"
+                title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
+        <div class="ask-split">
+          <button id="ask-btn" type="button" class="btn ask-row"
+                  title="Send to Claude on web">
+            <span class="ask-row-label"><u>A</u>sk <span id="ask-target-label">Claude</span></span>
+            <svg id="ask-btn-icon" class="ask-row-icon" aria-hidden="true"><use href="#new-window-icon"></use></svg>
+          </button>
+          <button id="ask-menu-btn" type="button" class="btn ask-caret-btn"
+                  title="Choose Ask target"
+                  aria-haspopup="menu" aria-expanded="false"
+                  aria-controls="ask-menu" aria-label="Choose Ask target">
+            <svg aria-hidden="true"><use href="#caret-down-icon"></use></svg>
+          </button>
+          <div id="ask-menu" class="ask-menu" role="menu" hidden>
+            <ul></ul>
           </div>
         </div>
-        <label for="prompt-text">Prompt:</label>
       </div>
       <div id="ask-status" role="status" aria-live="polite"></div>
     </div>
-    <textarea id="prompt-text" rows="1"></textarea>
   </div>
 
   <hr>

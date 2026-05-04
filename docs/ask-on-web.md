@@ -25,47 +25,90 @@ additional providers additive.
 
 ### Button stack
 
-- `#capture` and the Ask split widget (`.ask-split`) sit one above
-  the other in a `.button-stack` grid that's sized to `max-content`
-  of the wider child. The Capture button has `width: 100%`; the
-  Ask split is a flex row that fills its grid cell and divides the
-  space between its two halves.
-- Ask split is two buttons sharing a single visual chrome:
-  - `#ask-btn` — the main "Ask `<provider>`" label. Click sends
-    straight to the resolved default destination (no menu).
-  - `#ask-caret` — chevron-only square button on the right edge.
-    Click opens the menu so the user can shift the default to a
-    different target. Picking a menu item updates the default
-    (writes the pin or the preferred-new-tab provider) and refreshes
-    the button label, but does *not* send — the actual Ask fires on
-    the next click of `#ask-btn`.
-- The trailing label `#ask-target-label` and the main button's
-  tooltip are updated by `refreshAskTargetLabel()` to match
-  whichever provider the resolved default points at — "Ask Claude"
-  while the pin lives on a Claude tab, "Ask ChatGPT" once the user
-  picks a ChatGPT tab from the menu, and so on.
-- Trailing destination glyph (`#ask-btn-icon`) sits after the
-  provider label and mirrors the resolved default's *kind* — pin
-  glyph (`#pin-icon`) for an existing pinned tab, new-window glyph
-  (`#new-window-icon`) for a new-tab destination. Same source
-  symbols the menu's leading indicator slot uses, so the on-button
-  hint and the in-menu hint stay visually consistent.
-- Tooltip phrasing reflects the destination kind: "Send to existing
-  Claude window" when a pinned tab is alive, "Send to new Claude
-  window" when the fallback is in play.
+- `.right-stack` (the column right of the Save checkboxes) holds
+  three rows: the prompt textarea on top (label + textarea, with
+  the textarea growing vertically as the user types), the
+  horizontal action-button row in the middle, and the
+  `#ask-status` line on the bottom.
+- `.button-row` holds `#capture` followed by every Ask button,
+  laid out as a flex row with `flex-wrap` so a narrow viewport
+  stacks them across multiple lines instead of overflowing. The
+  row is also the popup menu's `position: relative` anchor.
+- Each Ask button uses the `.ask-row` class — content-sized flex
+  with a label and a trailing icon, separated by a 6px gap.
+- The Ask split: `.ask-split` wraps `#ask-btn` (the main "Ask
+  `<provider>`" label) and `#ask-menu-btn` (a chevron-only sliver
+  attached to its right edge that opens the destination-picker
+  menu). They share a visual chrome — common border at the seam,
+  outer radii at the start of the main button and the end of the
+  caret. `.ask-split` is also the popup menu's `position:
+  relative` anchor.
+  - `#ask-btn` sends straight to the resolved default destination
+    — pinned tab if alive, else a new window in the preferred /
+    Options-default provider. Carries `Alt+A`. Sits immediately
+    after `#capture` so the user's most-likely Ask click is the
+    second button on the row, with no preamble. The trailing
+    `#ask-target-label` and the button's tooltip are updated by
+    `refreshAskTargetLabel()` to match whichever provider the
+    resolved default points at. Trailing icon (`#ask-btn-icon`)
+    flips between the pin glyph (`#pin-icon`, existing pinned
+    tab) and the new-window glyph (`#new-window-icon`, new-tab
+    destination) so the user sees at a glance what plain-Ask is
+    about to do.
+  - `#ask-menu-btn` opens the menu. Picking a row shifts the
+    default (writes the pin or the preferred-new-tab provider)
+    and refreshes the labels — does *not* send.
+- After `.ask-split` come the per-provider Ask buttons. One
+  `.ask-provider-btn` per enabled provider, appended directly
+  into `.button-row` by `refreshAskTargetLabel()` — they're real
+  flex children of the row so the row's `gap` spaces them evenly
+  with the static buttons (a `display: contents` wrapper would
+  perturb the gap math). Compact squares with no text label;
+  identified by the bundled brand logo from `src/icons/`
+  (`AskProvider.iconFilename` — `claude.svg`, `gemini.svg`,
+  `chatgpt.ico`, `google.ico`), resolved on the page via
+  `chrome.runtime.getURL('icons/' + iconFilename)`. Bundled
+  rather than fetched at runtime because some providers' favicons
+  require auth, redirect, or 404 from a fresh extension context.
+  Each click sends straight to a *new tab* on that provider,
+  bypassing the resolved default. `sendToAi` still pins on
+  success, so a per-provider click shifts the default for the
+  next plain-Ask.
+- Capture and `#ask-btn` carry `color: #512da8; font-weight: 700;`
+  (the same deep-purple as the page header's brand title) so the
+  two primary actions read as more prominent than the neutral
+  per-provider squares.
+- Tooltip phrasing on `#ask-btn` reflects the destination kind:
+  "Send to existing Claude window" when a pinned tab is alive,
+  "Send to new Claude window" when the fallback is in play.
+  Per-provider buttons say "Ask `<provider>` in new tab".
+- `.is-default` highlight ring (the user's chosen default submit
+  button, set on the Options page):
+  - Capture uses `box-shadow: inset 0 0 0 2px` so the ring paints
+    over its own background.
+  - `.ask-split` uses an `::after` pseudo-element overlay
+    (absolute, inset:0, 2px border, `pointer-events: none`).
+    An inset shadow on the wrapper would be hidden behind the
+    inner buttons' own backgrounds; the pseudo paints on top.
+  - Both choices are inset / overlay rather than `outline` so the
+    ring doesn't extend past the button edge into the
+    `.button-row` gap and visibly shrink the spacing on either
+    side of the highlighted item.
 
 ### Hotkeys
 
 - `Alt+C` — Capture (clicks `#capture`).
 - `Alt+A` — Ask (clicks `#ask-btn`); fires the send against the
-  currently-resolved default destination. Use the caret with the
-  mouse to shift the default first.
+  currently-resolved default destination. Use the "Ask…" row or
+  one of the per-provider rows with the mouse to send against a
+  different target.
 - Both no-op when their button is `disabled` (in-flight save / Ask).
 - The underlines on `C` / `A` mirror the hotkeys.
 
 ### Click modifiers (Capture and Ask)
 
-Both `#capture` and `#ask-btn` apply the same modifier semantics:
+`#capture`, `#ask-btn`, and every per-provider Ask row apply the
+same modifier semantics:
 
 - **Plain click** — each button's own default. Capture closes the
   page after the save; Ask leaves it open.
@@ -250,8 +293,8 @@ no page reload needed.
 
 ### Status line
 
-`#ask-status` sits directly below the buttons + "Prompt:" label,
-inside the same flex column (`.left-stack`). Displays:
+`#ask-status` is the bottom row of the `.right-stack` column.
+Displays:
 
 - "Sending…" while the round-trip is in flight.
 - "Sent." on success.
@@ -260,13 +303,13 @@ inside the same flex column (`.left-stack`). Displays:
 Layout intent (full rationale in the `.controls` CSS comment in
 `src/capture.html`):
 
-- The textarea is a sibling of `.left-stack`, not a child — its
-  height is independent so a tall prompt does not push the status
-  away from the buttons.
-- A long error wraps inside the buttons + label width instead of
-  widening the column or squashing the textarea. The width pinning
-  uses `width: 0; min-width: 100%` on `#ask-status` so its content
-  doesn't contribute to the column's intrinsic size.
+- Stacked rows: prompt textarea, then the button row, then the
+  status. The textarea grows vertically without pushing the
+  status off-screen because its growth is bounded by `max-height`.
+- A long error wraps inside the column width instead of widening
+  the column or overflowing the page. `min-height: 1em` reserves
+  space when empty so a future status message doesn't shift the
+  layout below.
 
 ## Architecture
 
@@ -515,7 +558,7 @@ uses.
 
 ```
 Capture page (capture-page.ts)
-  click #ask-caret ───────────────────────────────────┐
+  click #ask-menu-btn ("Ask…") ───────────────────────┐
     sendMessage({ action: 'askListProviders' }) ──▶   │
       background/ask/index.ts                         │
         listAskProviders() + resolveAsk()             │
@@ -528,12 +571,15 @@ Capture page (capture-page.ts)
       background/ask/index.ts
         setAskDefault() — writes 'askPin' (existingTab) or
                           'askPreferredNewTabProvider' (newTab)
-    refresh #ask-target-label (no send)
+    refresh labels + per-provider rows (no send)
 
   click #ask-btn (or Alt+A) ─────────────────────────────────► ▼
     sendMessage({ action: 'askAiDefault', payload }) ──▶        │
+                                                                │
+  click "Ask <Provider>" (one of the per-provider rows) ─────► ▼
+    sendMessage({ action: 'askAi', destination, payload }) ──▶  │
       background/ask/index.ts                                   │
-        resolveAsk()                                            │
+        (askAiDefault: resolveAsk() picks destination)          │
         sendToAi() ◀───────────────────────────────────────────┘
           ├── resolve tab (existing or new — wait 'complete' up to 15s)
           ├── focus tab + window
@@ -543,7 +589,7 @@ Capture page (capture-page.ts)
           │     widget walks each item via the bridge — see ask-widget.md
           └── on success: write 'askPin' = { provider, tabId }
     show #ask-status: "Sent." or error
-    refresh #ask-target-label (the pin may have moved)
+    refresh labels + per-provider rows (the pin may have moved)
     if ctrl-click: sendMessage({ action: 'closeCapturePage' })
 ```
 

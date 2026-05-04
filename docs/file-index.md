@@ -8,7 +8,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `README.md` | Primary project documentation: setup, usage, commands |
 | `privacy_policy.md` | User-facing privacy policy linked from the Chrome Web Store listing |
-| `THIRD_PARTY_NOTICES.md` | Attribution + license terms for bundled third-party assets (currently the Material Symbols pin / pin-off / new-window icons) |
+| `THIRD_PARTY_NOTICES.md` | Attribution + license terms for bundled third-party assets — Material Symbols icons + provider brand logos (Claude / Gemini / ChatGPT / Google) |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |
@@ -126,6 +126,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
 | `src/icons/icon-error-{16,48,128}.png` | Error-state variants of the action icons |
+| `src/icons/{claude.svg,gemini.svg,chatgpt.ico,google.ico}` | Provider brand logos used by the Capture page's per-provider Ask buttons (favicon-only squares) |
 
 ## Scripts (`scripts/`)
 

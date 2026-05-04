@@ -160,6 +160,17 @@ export interface AskProvider {
   excludeUrlPatterns?: string[];
   /** URL we open for "New window in <provider>". */
   newTabUrl: string;
+  /**
+   * Filename (relative to the extension's `icons/` directory) of
+   * the provider's logo. Used by the Capture page's per-provider
+   * Ask buttons, which are favicon-only — no text label, just the
+   * brand mark people recognise from the address bar. We bundle
+   * the logo files (`src/icons/<name>.{ico,svg}`) rather than
+   * fetching `${origin}/favicon.ico` at runtime because some
+   * providers' favicons require auth, redirect, or 404 from a
+   * fresh extension context.
+   */
+  iconFilename: string;
   selectors: AskInjectSelectors;
   /**
    * `true` once the adapter has been validated end-to-end. The Ask

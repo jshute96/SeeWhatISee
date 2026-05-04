@@ -2,7 +2,7 @@
 //
 // Ask remembers the destination of the last successful send and
 // reuses it on the next plain `#ask-btn` click. The menu marks the
-// pinned target with a leading pin glyph; `#ask-caret` always opens
+// pinned target with a leading pin glyph; `#ask-menu-btn` always opens
 // the menu so the user can pick a different target.
 //
 // Split out from `ask.spec.ts` so the pin lifecycle (sending, then
@@ -37,7 +37,7 @@ test('pin: with no pin, the "New window in" item shows the default pin', async (
   const sw = await getServiceWorker();
   await overrideAskProviders(sw, fixtureServer.baseUrl);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   const newClaude = capturePage
@@ -105,7 +105,7 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -114,7 +114,7 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
 
   // Reopen the menu — the existing-tab item should now carry the
   // default pin, and the "New window in Claude" item should not.
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   const existing = capturePage
@@ -151,7 +151,7 @@ test('pin: subsequent plain Ask reuses the pinned tab (no new tab opened)', asyn
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -207,7 +207,7 @@ test('pin: closed tab falls back to a new window', async ({
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -257,7 +257,7 @@ test('pin: tab navigated away from the provider invalidates the pin', async ({
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -316,7 +316,7 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -380,7 +380,7 @@ test('pin: stale pin shows greyed-out crossed pin on the wrong-page row', async 
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -391,7 +391,7 @@ test('pin: stale pin shows greyed-out crossed pin on the wrong-page row', async 
   // the default but should surface in the next menu render as a
   // stale row alongside the new "New window in" default.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   const stale = capturePage
@@ -444,7 +444,7 @@ test('pin: navigating back from a wrong page restores the pin', async ({
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -457,7 +457,7 @@ test('pin: navigating back from a wrong page restores the pin', async ({
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html`);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   // `is-default` on the existing-tab row only happens when
@@ -495,7 +495,7 @@ test('pin: disabled provider invalidates the pin and falls back', async ({
     saveHtml: false,
     prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {

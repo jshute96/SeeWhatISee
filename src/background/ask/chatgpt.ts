@@ -32,6 +32,7 @@ export const chatgptProvider: AskProvider = {
     'https://chatgpt.com/share/*',
   ],
   newTabUrl: 'https://chatgpt.com/',
+  iconFilename: 'chatgpt.ico',
   enabled: true,
   selectors: {
     fileInput: [

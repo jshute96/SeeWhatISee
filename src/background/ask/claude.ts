@@ -27,6 +27,7 @@ export const claudeProvider: AskProvider = {
     'https://claude.ai/recents*',
   ],
   newTabUrl: 'https://claude.ai/new',
+  iconFilename: 'claude.svg',
   enabled: true,
   // Claude Code (`claude.ai/code`) shares the host but its composer
   // is image-only and requires repo-selection setup, so we don't

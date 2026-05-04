@@ -122,6 +122,10 @@ export async function overrideAskProviders(
           urlPatterns: [urlPattern],
           excludeUrlPatterns: excludes,
           newTabUrl,
+          // Reuses the production Claude logo so the per-provider
+          // button's <img> resolves to a real bundled file. Tests
+          // don't assert on the image bytes, just on the URL shape.
+          iconFilename: 'claude.svg',
           enabled: true,
           urlVariants,
           selectors: {

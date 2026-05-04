@@ -65,7 +65,7 @@ test('ask menu: lists "New window in" plus an open fake-Claude tab', async ({
 
   const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   await expect(
@@ -92,7 +92,7 @@ test('ask menu: "Existing window in" section omitted when no tab matches', async
   const sw = await getServiceWorker();
   await overrideAskProviders(sw, fixtureServer.baseUrl);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   await expect(
@@ -121,7 +121,7 @@ test('ask menu: excludeUrlPatterns shows tabs disabled with suffix', async ({
 
   const claudePage = await openFakeClaudeTab(extensionContext, fixtureServer);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
   // Excluded tabs still surface in the menu, but disabled with a
@@ -168,7 +168,7 @@ test('ask: "Nothing to send" guard fires before any SW round-trip', async ({
     prompt: '',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickNewClaudeItem(capturePage);
 
@@ -313,7 +313,7 @@ for (const c of matrixCases) {
 
     await configureCapture(capturePage, c);
 
-    await capturePage.locator('#ask-caret').click();
+    await capturePage.locator('#ask-menu-btn').click();
     await waitForAskMenuReady(capturePage);
     await clickExistingFakeClaudeItem(capturePage);
 
@@ -375,7 +375,7 @@ test('ask: edited HTML body is sent (not the original capture)', async ({
     prompt: 'review my edits',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -428,7 +428,7 @@ test('ask: edited selection body is sent (not the original capture)', async ({
     prompt: 'use my edited summary',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -475,7 +475,7 @@ test('ask: drawing a highlight bakes the modified PNG into the attachment', asyn
       prompt: 'analyze',
     });
 
-    await capturePage.locator('#ask-caret').click();
+    await capturePage.locator('#ask-menu-btn').click();
     await waitForAskMenuReady(capturePage);
     await clickExistingFakeClaudeItem(capturePage);
     await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
@@ -528,7 +528,7 @@ test('ask: multi-line prompt produces paragraph breaks, not premature submit', a
   const promptText = 'first line\nsecond line\n\nfourth after blank';
   await capturePage.locator('#prompt-text').fill(promptText);
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -589,7 +589,7 @@ test('ask error: missing file-input selector → status reports the failure', as
     prompt: 'will fail',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -631,7 +631,7 @@ test('ask error: missing prompt-input selector → status reports the failure', 
     prompt: 'this prompt cannot be typed',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -671,7 +671,7 @@ test('ask: attachment-preview verification confirms each chip appeared', async (
     prompt: 'happy verification',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -730,7 +730,7 @@ test('ask error: destination silently drops non-image attachment → HTML item f
     prompt: 'will be rejected',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -789,7 +789,7 @@ test('ask error: preview selectors that match nothing → "could not verify" mes
     prompt: 'cannot verify',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -837,7 +837,7 @@ test('pin: existing-tab pick falls back to a new tab when the pinned tab closes 
   // Pick the fake-Claude tab as the default destination, then kill
   // it. The Ask click that follows hits resolveAsk, which clears
   // the dead pin lazily and falls through to a fresh new-tab.
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
@@ -883,7 +883,7 @@ test('pin: existing-tab pick falls back when the pinned tab navigates off the pr
     prompt: 'pin then navigate off',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
@@ -937,7 +937,7 @@ test('pin: existing-tab pick falls back when the pinned tab navigates to an excl
     prompt: 'pin then to excluded',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' })
@@ -1090,6 +1090,134 @@ test('ask: ctrl-click closes the Capture page and leaves focus on the provider t
   expect(activeUrl).toContain('/fake-claude.html');
 
   await claudePage.close();
+  await openerPage.close();
+});
+
+// ─── Per-provider Ask buttons ────────────────────────────────────
+
+test('ask: per-provider Ask <X> button sends to a fresh tab on that provider', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The Ask button row appends one favicon-only `.ask-provider-btn`
+  // per enabled provider (after `.ask-split`). Each click sends
+  // straight to a *new tab* on that provider, bypassing the
+  // resolved default — useful when the user wants a fresh
+  // conversation without first walking through the Ask… menu to
+  // set the default. The fake-Claude provider's label here is
+  // "Claude", so the button's aria-label reads "Ask Claude in
+  // new tab".
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  // overrideAskProviders mutates ASK_PROVIDERS in-place but fires
+  // no storage event, so the Capture page is still showing the
+  // pre-override per-provider rows it built on first load. Reload
+  // forces refreshAskTargetLabel to fetch fresh state and rebuild
+  // the rows from the (now single-provider) override.
+  await capturePage.reload();
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'per-provider ask',
+  });
+
+  const providerRows = capturePage.locator('.button-row .ask-provider-btn');
+  await expect(providerRows).toHaveCount(1);
+  // Favicon-only button — no text content. Identified via the
+  // aria-label so screen readers know which destination it
+  // targets, and via the favicon `<img>` whose src derives from
+  // the provider's newTabUrl origin.
+  await expect(providerRows.first()).toHaveAttribute(
+    'aria-label',
+    /Ask Claude in new tab/,
+  );
+  await expect(providerRows.first().locator('img')).toHaveAttribute(
+    'src',
+    /\/icons\/claude\.svg$/,
+  );
+
+  // Snapshot the existing fake-claude pages so we measure only the
+  // tab the per-provider click opens — earlier tests in the same
+  // worker can leave stragglers around (each test cleans up its
+  // own opens, but the cleanup is best-effort).
+  const before = new Set(
+    extensionContext
+      .pages()
+      .filter((p) => p.url().endsWith('/fake-claude.html')),
+  );
+
+  await providerRows.first().click();
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+
+  const opened = extensionContext
+    .pages()
+    .filter((p) => p.url().endsWith('/fake-claude.html') && !before.has(p));
+  expect(opened).toHaveLength(1);
+  const state = await fakeClaudeState(opened[0]);
+  expect(state.attachedFiles.map((f) => f.name)).toEqual(['screenshot.png']);
+  expect(state.submitClicks).toBe(1);
+
+  await opened[0].close();
+  await openerPage.close();
+});
+
+test('ask: per-provider Ask <X> button respects ctrl-click (closes Capture page)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Per-provider rows honour the same shift/ctrl modifier semantics
+  // as the default Ask row. ctrl-click → close the Capture page on
+  // success, leaving focus on the destination provider tab.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+  // See the sibling per-provider test for why a reload is needed
+  // after `overrideAskProviders`.
+  await capturePage.reload();
+  await capturePage.waitForLoadState('domcontentloaded');
+
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'per-provider ctrl ask',
+  });
+
+  const providerRows = capturePage.locator('.button-row .ask-provider-btn');
+  await expect(providerRows).toHaveCount(1);
+
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    providerRows.first().click({ modifiers: ['Control'] }),
+  ]);
+  expect(capturePage.isClosed()).toBe(true);
+
+  // Active tab is the freshly-opened provider tab, not the opener.
+  const activeUrl = await sw.evaluate(async () => {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return active?.url ?? '';
+  });
+  expect(activeUrl).toContain('/fake-claude.html');
+
+  // Clean up the spawned provider tab.
+  const opened = extensionContext
+    .pages()
+    .filter((p) => p.url().endsWith('/fake-claude.html'));
+  for (const p of opened) await p.close();
   await openerPage.close();
 });
 

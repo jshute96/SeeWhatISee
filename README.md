@@ -88,6 +88,7 @@ On this page, you can:
   - In the HTML editors, the HTML source is pasted.
   - *Paste as plain text* (*Ctrl-Shift-V*) always pastes plain text.
 - **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. The button is split: clicking **Ask** sends to the tab you used last (or, on first use, opens a new tab in the default provider); the chevron on the right opens a menu where you can pick a different target — a new tab in Claude, Gemini, ChatGPT, or Google, or any tab you already have open (including Claude Code on `claude.ai/code`). Google is new-tab-only — it doesn't appear in the existing-window list and can't be pinned. The menu marks the current target with a check. Picking a menu item shifts the default but doesn't send — use **Ask** (or *Alt+A*) to fire. *Alt+A* sends to the resolved default. If you typed a prompt, it's auto-submitted.
+  - Right of the **Ask** split, one small favicon button per enabled provider — click to open a fresh tab on that provider, bypassing whichever target the **Ask** button is currently set to.
   - Modifier keys on **Capture** and **Ask** — *Shift-click* keeps the Capture page open after the action (which allows saving multiple capture varations from the same screenshot). *Ctrl-click* closes the page.
 
 If you add a prompt, the agent will follow it when reading this snapshot,

@@ -49,7 +49,7 @@ function seed(overrides: {
 
 // ─── Default-submit-button highlight ─────────────────────────────
 
-test('default settings: highlight ring is on #capture, not on .ask-split', async ({
+test('default settings: highlight ring is on #capture, not on #ask-btn', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -67,7 +67,7 @@ test('default settings: highlight ring is on #capture, not on .ask-split', async
   await openerPage.close();
 });
 
-test('defaultButton=ask: highlight ring moves to .ask-split, off #capture', async ({
+test('defaultButton=ask: highlight ring moves to #ask-btn, off #capture', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,

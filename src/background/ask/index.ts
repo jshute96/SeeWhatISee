@@ -5,9 +5,10 @@
 // Wire layout (see also src/ask-inject.ts, src/ask-widget.ts, and
 // src/capture-page.ts):
 //
-//   capture-page.ts ──{action: 'askAiDefault', payload}──▶
+//   capture-page.ts ──{action: 'askAiDefault' | 'askAi', payload}──▶
 //     installAskMessageHandler() (this file) ──▶
-//       resolveAsk() + sendToAi() ──▶ writeWidgetRecord + executeScript:
+//       resolveAsk() (default path) + sendToAi() ──▶
+//         writeWidgetRecord + executeScript:
 //         - dist/ask-inject.js (MAIN world) installs the postMessage
 //           bridge listener on window
 //         - dist/ask-widget.js (ISOLATED world) mounts the status
@@ -146,6 +147,15 @@ export interface AskProviderListing {
   id: AskProviderId;
   label: string;
   enabled: boolean;
+  /**
+   * Filename (under the extension's `icons/` dir) of the
+   * provider's logo. The Capture page resolves it via
+   * `chrome.runtime.getURL('icons/' + iconFilename)` and uses the
+   * resulting URL as the `<img>` src on the per-provider Ask
+   * button — those buttons carry no text label, so the bundled
+   * logo is what visually identifies them.
+   */
+  iconFilename: string;
   /**
    * Provider-default accepted kinds for "New window in <X>" rows.
    * `undefined` means "no restriction." Mirrors the per-tab
@@ -481,6 +491,7 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
       id: provider.id,
       label: provider.label,
       enabled: provider.enabled,
+      iconFilename: provider.iconFilename,
       newTabAcceptedAttachmentKinds:
         resolveAcceptedKinds(provider, provider.newTabUrl) ?? undefined,
       existingTabs: tabs
@@ -974,7 +985,7 @@ function friendlyInjectError(err: unknown): string {
 }
 
 interface AskMessage {
-  action: 'askAiDefault' | 'askListProviders' | 'askSetDefault';
+  action: 'askAi' | 'askAiDefault' | 'askListProviders' | 'askSetDefault';
   destination?: AskDestination;
   payload?: AskPayload;
 }
@@ -990,6 +1001,10 @@ interface AskMessage {
  *   destination (writes the pin or the preferred-new-tab provider).
  *   Doesn't send; the page fires the actual Ask on the next click
  *   of `#ask-btn`.
+ * - `askAi` — send to a specific destination, bypassing the
+ *   resolved default. Used by the per-provider Ask <X> buttons.
+ *   `sendToAi` still pins the destination on success, so a
+ *   per-provider send shifts the default for the next plain-Ask.
  * - `askAiDefault` — resolve + send to the current default. Lets
  *   the page invoke pin-or-fallback in one round-trip.
  *
@@ -1025,6 +1040,14 @@ export function installAskMessageHandler(): void {
               error: err instanceof Error ? err.message : String(err),
             });
           });
+        return true;
+      }
+      if (msg?.action === 'askAi') {
+        if (!msg.destination || !msg.payload) {
+          sendResponse({ ok: false, error: 'Missing destination or payload' });
+          return false;
+        }
+        void sendToAi(msg.destination, msg.payload).then(sendResponse);
         return true;
       }
       if (msg?.action === 'askAiDefault') {

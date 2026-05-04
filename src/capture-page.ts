@@ -649,9 +649,13 @@ function closeAfterFromModifiers(e: MouseEvent, defaultClose: boolean): boolean 
 
 /**
  * Apply / refresh the `.is-default` class so exactly one of the
- * Capture button or the Ask split widget shows the "default action"
- * highlight ring. Looking up the .ask-split element lazily so this
- * helper is safe to call before that node is queried into a const.
+ * Capture button or the Ask split widget shows the "default
+ * action" highlight ring. The ring on the Ask side traces the
+ * whole `.ask-split` (main button + caret) so the highlight reads
+ * as one button — the per-provider favicon buttons stay un-ringed
+ * since they're lateral-mode entries that don't fire on Alt+A or
+ * Enter. Looking up `.ask-split` lazily so this helper stays safe
+ * to call before that node is queried.
  */
 function applyDefaultButtonHighlight(which: 'capture' | 'ask'): void {
   currentDefaultButton = which;
@@ -668,7 +672,7 @@ function applyDefaultButtonHighlight(which: 'capture' | 'ask'): void {
  * a save is in flight.
  *
  * The Ask path clicks `#ask-btn` (send-to-default) rather than
- * `#ask-caret` (open menu) — the user has already made a steering
+ * `#ask-menu-btn` (open menu) — the user has already made a steering
  * decision via Options, so honouring that without forcing a menu pick
  * keeps the keyboard path symmetric with Capture's.
  *
@@ -2803,26 +2807,39 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
 
 // ─── Ask flow ─────────────────────────────────────────────────────
 //
-// Two click targets in the Ask split widget — only `#ask-btn` ever
-// sends:
-//   - `#ask-btn`   → resolve default destination via the SW (pinned
-//                    tab if alive, else preferred-new-tab provider,
-//                    else the user's Options-page default) and send
-//                    to it. shift-click keeps the page open after;
-//                    ctrl-click closes it on success.
-//   - `#ask-caret` → fetch the providers + their open tabs + the
-//                    same resolved default → render the menu with a
-//                    leading check on whichever item plain-Ask would
-//                    have hit. Picking an item updates the default
-//                    (writes the pin or the preferred-new-tab
-//                    provider) and refreshes the button label, but
-//                    does NOT send. The user fires the send with a
-//                    follow-up click on `#ask-btn` (or Alt+A).
+// Horizontal Ask button row (`.button-row`, wraps to multiple
+// lines on a narrow viewport). Three button kinds, in source
+// order after `#capture`:
+//   - `#ask-btn`   ("Ask <provider>") resolves the default
+//                    destination via the SW (pinned tab if alive,
+//                    else preferred-new-tab provider, else the
+//                    user's Options-page default) and sends to
+//                    it. Carries Alt+A. Sits inside `.ask-split`
+//                    paired with #ask-menu-btn — they share a
+//                    visual chrome (split button).
+//   - `#ask-menu-btn` chevron-only sliver attached to #ask-btn.
+//                    Opens the destination-picker menu. Picking
+//                    a row updates the default (pin / preferred
+//                    new-tab provider) and refreshes the labels —
+//                    does NOT send.
+//   - `.ask-provider-btn` favicon-only squares appended into
+//                    `.button-row` by `refreshAskTargetLabel`,
+//                    one per enabled provider. Each click sends
+//                    straight to a new tab on that provider —
+//                    quick override that doesn't first walk
+//                    through the menu's "set default"
+//                    intermediate. Identified by the bundled
+//                    brand logo (`AskProvider.iconFilename` →
+//                    `chrome.runtime.getURL('icons/<file>')`).
+//
+// Every button kind honours the shift/ctrl modifier semantics:
+// shift-click keeps the page open, ctrl-click closes it on success
+// (Ask-side close leaves focus on the destination provider tab).
 //
 // The payload is built from the Capture-page state the Capture
 // button reads. The SW handles tab focus + script injection, and
-// pins the chosen destination so the next plain-Ask reuses the
-// same tab.
+// pins the chosen destination on every successful send so the next
+// plain-Ask reuses the same tab.
 
 interface AskTabSummary {
   tabId: number;
@@ -2842,6 +2859,13 @@ interface AskProviderListing {
   id: AskProviderId;
   label: string;
   enabled: boolean;
+  /** Bundled logo filename under the extension's `icons/` dir
+   *  (e.g. `claude.svg`). The page resolves it via
+   *  `chrome.runtime.getURL` and uses the result as the `<img>`
+   *  src on the per-provider Ask button — those buttons carry
+   *  no text label, so the bundled logo is what identifies
+   *  each one visually. */
+  iconFilename: string;
   existingTabs: AskTabSummary[];
   newTabAcceptedAttachmentKinds?: ('image' | 'text')[];
 }
@@ -2850,13 +2874,18 @@ type AskDestination =
   | { kind: 'existingTab'; provider: AskProviderId; tabId: number };
 
 const askBtn = document.getElementById('ask-btn') as HTMLButtonElement;
-const askCaret = document.getElementById('ask-caret') as HTMLButtonElement;
+const askMenuBtn = document.getElementById('ask-menu-btn') as HTMLButtonElement;
 const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
 const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
 const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
 const askBtnIconUse = document.querySelector(
   '#ask-btn-icon use',
 ) as SVGUseElement;
+// Per-provider Ask buttons are appended directly into `.button-row`
+// (not a wrapper div) so they're real flex children of the row —
+// `display: contents` wrappers can perturb the row's `gap` math
+// and visually unbalance the spacing between buttons.
+const askButtonRow = document.querySelector('.button-row') as HTMLDivElement;
 
 // Swap the trailing glyph on #ask-btn between the pin (existing
 // pinned tab) and new-window glyphs so the user sees at a glance
@@ -2953,25 +2982,28 @@ async function refreshAskTargetLabel(): Promise<void> {
   currentDefaultDisplayName = defaultDestinationDisplayName;
   // `listAskProviders` already filters out user-disabled providers,
   // so an empty (or all-statically-disabled) listing means the user
-  // has nothing to Ask. Block both halves of the split button until
-  // they re-enable a provider on the Options page.
+  // has nothing to Ask. Block every Ask row (menu opener, default,
+  // per-provider) until they re-enable a provider on the Options
+  // page. Drop the per-provider buttons too — they're built fresh
+  // from the enabled-provider list right after.
   const enabled = providers.filter((p) => p.enabled);
   const noProvidersTooltip = 'No Ask providers enabled; Update in Options';
+  renderAskProviderButtons(enabled);
   if (enabled.length === 0) {
     askBtn.disabled = true;
-    askCaret.disabled = true;
+    askMenuBtn.disabled = true;
     askBtn.title = noProvidersTooltip;
-    askCaret.title = noProvidersTooltip;
+    askMenuBtn.title = noProvidersTooltip;
     askTargetLabel.textContent = 'AI';
     setAskBtnIcon('new-window');
     return;
   }
-  // At least one provider is available — re-enable the split button
-  // (a previous "all disabled" render may have disabled it) and pick
+  // At least one provider is available — re-enable the rows (a
+  // previous "all disabled" render may have disabled them) and pick
   // a label/tooltip from the resolved default.
   askBtn.disabled = false;
-  askCaret.disabled = false;
-  askCaret.title = '';
+  askMenuBtn.disabled = false;
+  askMenuBtn.title = 'Choose Ask target';
   if (defaultDestination) {
     const provider = providers.find((p) => p.id === defaultDestination.provider);
     if (provider) {
@@ -2994,6 +3026,73 @@ async function refreshAskTargetLabel(): Promise<void> {
   } else {
     askTargetLabel.textContent = 'AI';
     askBtn.title = 'Send to an AI on web';
+  }
+}
+
+/**
+ * Rebuild the per-provider Ask button rows under the default Ask
+ * button — one "Ask <Label>" button per enabled provider, each
+ * sending straight to a new tab on that provider. Modifier keys
+ * follow the same shift/ctrl rules as the default Ask row.
+ *
+ * Re-rendered on every `refreshAskTargetLabel` so the row set
+ * tracks the live `askProviderSettings` (Options-page enable
+ * toggles, cross-tab storage events). For an empty list the
+ * container is left empty and CSS collapses it to zero height.
+ *
+ * Rebuild during an in-flight Ask is safe: the click handler
+ * captures `dest` / `acceptedKinds` / `provider.label` from the
+ * closure of the *outgoing* button, so a click that lands on the
+ * about-to-be-replaced button still fires `runAskFor` correctly,
+ * and `runAskFor` immediately disables every button via
+ * `setAskProviderButtonsDisabled` on entry. Subsequent
+ * `replaceChildren` removes the now-detached old button without
+ * affecting the in-flight async call.
+ */
+function renderAskProviderButtons(enabled: AskProviderListing[]): void {
+  // Wipe the previous render's per-provider buttons (identified by
+  // class) without disturbing the static `#capture` / `.ask-split`
+  // children. Then append the fresh set into `.button-row` so each
+  // new button is a direct flex child of the row.
+  askButtonRow
+    .querySelectorAll('.ask-provider-btn')
+    .forEach((el) => el.remove());
+  for (const provider of enabled) {
+    const dest: AskDestination = { kind: 'newTab', provider: provider.id };
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    // Compact square button — no text label, just the destination
+    // site's favicon. Visual identification of each provider via
+    // the favicon people already recognise from the address bar
+    // beats spelling out "Ask Claude / Ask Gemini / …" alongside
+    // the existing default-Ask row that already says it.
+    btn.className = 'btn ask-provider-btn';
+    btn.title = `Ask ${provider.label} in new tab`;
+    btn.setAttribute('aria-label', `Ask ${provider.label} in new tab`);
+    const favicon = document.createElement('img');
+    // Bundled logo from `src/icons/` (built into `dist/icons/`
+    // by `scripts/build.mjs`). We download these once at
+    // build-time rather than fetching `${origin}/favicon.ico`
+    // because some providers' favicons require auth, redirect,
+    // or 404 from a fresh extension context.
+    favicon.src = chrome.runtime.getURL(`icons/${provider.iconFilename}`);
+    favicon.alt = '';
+    // Width/height attributes match the rendered size set by the
+    // `.ask-provider-btn img` CSS rule, so layout is stable even
+    // before the stylesheet has applied (e.g. on the very first
+    // paint of a fresh tab). Update both together if either drifts.
+    favicon.width = 20;
+    favicon.height = 20;
+    btn.appendChild(favicon);
+    btn.addEventListener('click', (e) => {
+      void runAskFor(
+        dest,
+        provider.newTabAcceptedAttachmentKinds,
+        provider.label,
+        closeAfterFromModifiers(e, false),
+      );
+    });
+    askButtonRow.appendChild(btn);
   }
 }
 void refreshAskTargetLabel();
@@ -3055,7 +3154,7 @@ let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
 
 function closeAskMenu(): void {
   askMenu.hidden = true;
-  askCaret.setAttribute('aria-expanded', 'false');
+  askMenuBtn.setAttribute('aria-expanded', 'false');
   if (askListenerAttachTimer !== null) {
     clearTimeout(askListenerAttachTimer);
     askListenerAttachTimer = null;
@@ -3073,7 +3172,7 @@ function onDocumentClickWhileAskOpen(e: MouseEvent): void {
   const target = e.target as Node | null;
   if (
     askMenu.contains(target) ||
-    askCaret.contains(target) ||
+    askMenuBtn.contains(target) ||
     askBtn.contains(target)
   ) return;
   closeAskMenu();
@@ -3083,7 +3182,7 @@ function onKeydownWhileAskOpen(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault();
     closeAskMenu();
-    askCaret.focus();
+    askMenuBtn.focus();
   }
 }
 
@@ -3177,7 +3276,7 @@ async function openAskMenu(): Promise<void> {
   loading.textContent = 'Loading…';
   askMenuList.appendChild(loading);
   askMenu.hidden = false;
-  askCaret.setAttribute('aria-expanded', 'true');
+  askMenuBtn.setAttribute('aria-expanded', 'true');
   // Defer listener attach so the click that opened the menu doesn't
   // immediately close it on the same event-loop tick. Track the timer
   // and check `askMenu.hidden` at fire time so a close-before-fire
@@ -3283,7 +3382,7 @@ async function openAskMenu(): Promise<void> {
   }
 }
 
-askCaret.addEventListener('click', () => {
+askMenuBtn.addEventListener('click', () => {
   void openAskMenu();
 });
 
@@ -3322,7 +3421,8 @@ askBtn.addEventListener('click', (e) => {
  */
 async function setAskDefaultDestination(destination: AskDestination): Promise<void> {
   askBtn.disabled = true;
-  askCaret.disabled = true;
+  askMenuBtn.disabled = true;
+  setAskProviderButtonsDisabled(true);
   try {
     const response = (await chrome.runtime.sendMessage({
       action: 'askSetDefault',
@@ -3449,14 +3549,19 @@ function buildAskPayload(): {
  * pinned a different destination.
  */
 async function runAskWithMessage(
-  message: {
+  message: ({
     action: 'askAiDefault';
+  } | {
+    action: 'askAi';
+    destination: AskDestination;
+  }) & {
     payload: NonNullable<ReturnType<typeof buildAskPayload>>;
   },
   closeAfter: boolean,
 ): Promise<void> {
   askBtn.disabled = true;
-  askCaret.disabled = true;
+  askMenuBtn.disabled = true;
+  setAskProviderButtonsDisabled(true);
   setStatusMessage('Sending…', 'info');
   try {
     const response = (await chrome.runtime.sendMessage(message)) as
@@ -3498,15 +3603,27 @@ async function runAskWithMessage(
     );
   } finally {
     askBtn.disabled = false;
-    askCaret.disabled = false;
+    askMenuBtn.disabled = false;
+    setAskProviderButtonsDisabled(false);
     // Re-resolve the disabled state from the latest provider settings
     // so a mid-Ask Options-page change (e.g. user disabled every
     // provider while we were waiting on the SW) doesn't leave the
     // buttons re-enabled. The `chrome.storage.onChanged` listener
     // would also catch this on the next tick, but doing it here
     // closes the brief "buttons clickable but no providers" window.
+    // refreshAskTargetLabel also re-renders the per-provider rows.
     void refreshAskTargetLabel();
   }
+}
+
+/** Toggle the disabled state of every per-provider button as a
+ *  group. Used to gate the dynamic Ask <Provider> rows during an
+ *  in-flight send / setDefault round-trip — same protection the
+ *  static `#ask-btn` / `#ask-menu-btn` get. */
+function setAskProviderButtonsDisabled(disabled: boolean): void {
+  askButtonRow.querySelectorAll('.ask-provider-btn').forEach((btn) => {
+    (btn as HTMLButtonElement).disabled = disabled;
+  });
 }
 
 async function runAskDefault(closeAfter: boolean): Promise<void> {
@@ -3519,6 +3636,25 @@ async function runAskDefault(closeAfter: boolean): Promise<void> {
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAiDefault', payload }, closeAfter);
+}
+
+/**
+ * Send the staged payload to a specific destination. Used by the
+ * per-provider Ask buttons (each one targets a new tab on a
+ * specific provider) and any future caller that needs to override
+ * the resolved default for a single send. Honours the same modifier
+ * semantics as `runAskDefault` via the `closeAfter` parameter.
+ */
+async function runAskFor(
+  destination: AskDestination,
+  acceptedKinds: ('image' | 'text')[] | undefined,
+  displayName: string | undefined,
+  closeAfter: boolean,
+): Promise<void> {
+  if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
+  const payload = buildAskPayload();
+  if (!payload) return;
+  await runAskWithMessage({ action: 'askAi', destination, payload }, closeAfter);
 }
 
 /**

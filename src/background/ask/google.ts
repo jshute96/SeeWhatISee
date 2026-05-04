@@ -31,6 +31,7 @@ export const googleProvider: AskProvider = {
   // for completeness in case the flag is ever relaxed.
   urlPatterns: ['https://www.google.com/'],
   newTabUrl: 'https://www.google.com/',
+  iconFilename: 'google.ico',
   enabled: true,
   newTabOnly: true,
   // Google's "Upload image" file input is `image/*` only; "Upload

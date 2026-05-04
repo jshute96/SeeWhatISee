@@ -56,7 +56,7 @@ test('widget: appears on destination, transitions to success, auto-collapses', a
     prompt: 'widget happy path',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -111,7 +111,7 @@ test('widget: error path → stays expanded with the error text', async ({
     prompt: 'will fail',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -161,7 +161,7 @@ test('widget: Content section has copy buttons; copy populates clipboard', async
     prompt: 'copy-buttons test',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -220,7 +220,7 @@ test('widget: Source section shows URL/title from the captured opener', async ({
     prompt: 'page section test',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -266,7 +266,7 @@ test('widget: × removes widget AND clears the storage record', async ({
     prompt: 'close-button test',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -320,7 +320,7 @@ test('widget: minimize collapses; clicking the strip re-expands', async ({
     prompt: 'minimize test',
   });
 
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -363,7 +363,7 @@ test('widget: re-Asking the same tab overwrites the prior record', async ({
     saveHtml: false,
     prompt: 'first send',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -383,7 +383,7 @@ test('widget: re-Asking the same tab overwrites the prior record', async ({
     saveHtml: false,
     prompt: 'second send',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -423,7 +423,7 @@ test('widget: re-Ask while collapsed re-expands during injecting', async ({
   await configureCapture(capturePage, {
     saveScreenshot: false, saveHtml: false, prompt: 'first',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -439,7 +439,7 @@ test('widget: re-Ask while collapsed re-expands during injecting', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'second',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
@@ -475,7 +475,7 @@ test('widget: selection-markdown attachment renders the markdown label', async (
     selectionFormat: 'markdown',
     prompt: 'markdown test',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -509,7 +509,7 @@ test('widget: Screenshot copy writes a PNG to the clipboard', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: '',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -562,7 +562,7 @@ test('widget: × on the collapsed strip also closes the widget', async ({
   await configureCapture(capturePage, {
     saveScreenshot: false, saveHtml: false, prompt: 'collapsed-close',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -601,7 +601,7 @@ test('widget: collapsed strip reads bottom-to-top icon→name→status→×', as
   await configureCapture(capturePage, {
     saveScreenshot: false, saveHtml: false, prompt: 'order test',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -654,7 +654,7 @@ test('widget: clicking the expanded title bar collapses it', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'titlebar-toggle',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(widget(claudePage).locator('#expanded')).toBeVisible({
@@ -690,7 +690,7 @@ test('widget: collapsed and expanded share the same top edge', async ({
   await configureCapture(capturePage, {
     saveScreenshot: false, saveHtml: false, prompt: 'top-edge test',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -735,7 +735,7 @@ test('widget: third section header reads "Source" (not "Page")', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'source heading',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -772,7 +772,7 @@ test('widget: Source section title also has a Copy button', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'page-title-copy',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -820,7 +820,7 @@ test('widget: per-item rows show ✓ on each item after a happy-path run', async
     saveHtml: true,
     prompt: 'per-item happy',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -870,7 +870,7 @@ test('widget: failed item gets a retry button; siblings still succeed', async ({
     saveHtml: false,
     prompt: 'partial fail',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText(
@@ -930,7 +930,7 @@ test('widget: retry on a failed item recovers it after fixing the selector', asy
     saveHtml: false,
     prompt: 'retry-test',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(widget(claudePage).locator('#expanded')).toBeVisible({
@@ -985,7 +985,7 @@ test('widget: re-Ask cancels and replaces — exactly one host on the page', asy
     await configureCapture(capturePage, {
       saveScreenshot: false, saveHtml: false, prompt,
     });
-    await capturePage.locator('#ask-caret').click();
+    await capturePage.locator('#ask-menu-btn').click();
     await waitForAskMenuReady(capturePage);
     await clickExistingFakeClaudeItem(capturePage);
     await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -1035,7 +1035,7 @@ test('widget: retry button is enabled once the orchestration error settles', asy
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'retry-enabled',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText(
@@ -1086,7 +1086,7 @@ test('widget: in-flight row icon carries the spinner CSS', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'in-flight spinner',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
   await expect(capturePage.locator('#ask-status')).toContainText('Sent', {
@@ -1153,7 +1153,7 @@ test('widget: retry that fails again still updates the Status text', async ({
   await configureCapture(capturePage, {
     saveScreenshot: true, saveHtml: false, prompt: 'retry-fail-again',
   });
-  await capturePage.locator('#ask-caret').click();
+  await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
   await clickExistingFakeClaudeItem(capturePage);
 
