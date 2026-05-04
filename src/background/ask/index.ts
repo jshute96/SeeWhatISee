@@ -29,6 +29,7 @@ import {
 import { getAskProviderSettings } from './settings.js';
 import {
   patchWidgetRecord,
+  readWidgetRecord,
   writeWidgetRecord,
   type AskWidgetRecord,
 } from './widget-store.js';
@@ -635,18 +636,57 @@ export async function sendToAi(
   // redundant `chrome.tabs.get` so a tab close in the intervening
   // microseconds still surfaces our clean guard message rather than
   // a legacy "Could not open <Provider>: …" path.
+  // Build the record once — same shape regardless of path. The
+  // newTab path writes it as `placeholder` early (before the page
+  // has loaded) so the widget can mount and show "Waiting for
+  // <provider> to load…", then re-writes with status `injecting`
+  // and a fresh runId once the page is ready (which the widget's
+  // storage listener picks up as the orchestration trigger).
+  // The existingTab path skips the placeholder phase — the page
+  // is already loaded — and writes `injecting` directly.
+  const items = buildItems(payload);
+  const recordTemplate: Omit<AskWidgetRecord, 'status' | 'runId' | 'updatedAt'> = {
+    destinationLabel,
+    sourceUrl: payload.sourceUrl ?? '',
+    sourceTitle: payload.sourceTitle ?? '',
+    attachments: payload.attachments.map((a) => ({
+      kind: a.kind,
+      mimeType: a.mimeType,
+      filename: a.filename,
+      data: a.data,
+    })),
+    promptText: payload.promptText,
+    items,
+    autoSubmit: payload.autoSubmit,
+    selectors: provider.selectors,
+  };
+
   let tabId: number;
   if (destination.kind === 'existingTab') {
     tabId = destination.tabId;
   } else {
     try {
-      tabId = await openNewProviderTab(provider);
+      tabId = await openNewProviderTabWithPlaceholder(provider, recordTemplate);
     } catch (err) {
       return {
         ok: false,
         error: `Could not open ${provider.label}: ${describe(err)}`,
       };
     }
+  }
+
+  // Cancel detection (newTab path only). The widget's × handler
+  // clears its storage record on dismiss, so a missing record
+  // here means the user dismissed the placeholder widget during
+  // the page-load wait. Bail before the real widget / bridge ever
+  // mount; the tab stays open so the user can interact with the
+  // page themselves. Storage-based rather than a runtime message
+  // so the cancel is fully ordered with the SW's read — a runtime
+  // sendMessage can land *after* the SW's check, which would let
+  // the widget re-pop on the user.
+  if (destination.kind === 'newTab') {
+    const stillStaged = await readWidgetRecord(tabId);
+    if (!stillStaged) return { ok: false, error: 'Cancelled' };
   }
 
   // Best-effort focus. If this fails we still try to inject — the
@@ -661,28 +701,13 @@ export async function sendToAi(
     // Swallow — see comment above.
   }
 
-  // The widget owns the inject. The SW writes the initial record
-  // (items: 'pending', overall status: 'injecting'), loads the
-  // MAIN-world helper file (the bridge), mounts the widget, and then
-  // awaits the overall status to leave 'injecting' before resolving
-  // to the capture page. The widget walks the items via the bridge
-  // and patches per-item state along the way.
-  const items = buildItems(payload);
+  // Promote the placeholder record (or write afresh on the
+  // existing-tab path) to status `injecting` with a new runId.
+  // The fresh runId is what the widget's storage listener latches
+  // onto to fire `tryStartRun` and walk the items.
   const widgetRecord: AskWidgetRecord = {
+    ...recordTemplate,
     status: 'injecting',
-    destinationLabel,
-    sourceUrl: payload.sourceUrl ?? '',
-    sourceTitle: payload.sourceTitle ?? '',
-    attachments: payload.attachments.map((a) => ({
-      kind: a.kind,
-      mimeType: a.mimeType,
-      filename: a.filename,
-      data: a.data,
-    })),
-    promptText: payload.promptText,
-    items,
-    autoSubmit: payload.autoSubmit,
-    selectors: provider.selectors,
     runId: Date.now(),
     updatedAt: Date.now(),
   };
@@ -700,15 +725,19 @@ export async function sendToAi(
   }
 
   try {
-    // Load the MAIN-world helper file once before the widget mounts,
-    // so the bridge is listening when the widget posts its first
-    // request. Re-loads are no-ops via the IIFE's
-    // `__seeWhatISeeAskBridgeInstalled` flag.
+    // Load the MAIN-world helper file once before the widget walks
+    // its first item — the bridge needs to be listening when the
+    // widget posts its first request. Re-loads are no-ops via the
+    // IIFE's `__seeWhatISeeAskBridgeInstalled` flag.
     await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       files: ['ask-inject.js'],
     });
+    // Re-mount the widget. Idempotent — if the early placeholder
+    // mount survived the navigation, this is a no-op refresh; if
+    // it died on a transient document, this is the first real
+    // mount and reads the now-`injecting` record straight away.
     await mountAskWidget(tabId);
   } catch (err) {
     const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
@@ -838,9 +867,19 @@ function waitForWidgetCompletion(
  * and just calls `refresh()`). Safe to call before every Ask.
  */
 async function mountAskWidget(tabId: number): Promise<void> {
+  // `injectImmediately: true` runs the script as soon as the
+  // document exists rather than waiting for `document_idle`
+  // (post-DOMContentLoaded). On the new-tab placeholder path this
+  // is the difference between the widget appearing within a few
+  // hundred ms vs. only after the provider's framework has parsed
+  // and started rendering. On the post-load mount path the page is
+  // already loaded so the flag is a no-op. The widget itself
+  // attaches to `documentElement` (which exists almost
+  // immediately) so an early mount is safe.
   await chrome.scripting.executeScript({
     target: { tabId },
     world: 'ISOLATED',
+    injectImmediately: true,
     func: (tid: number) => {
       (window as unknown as { __seeWhatISeeWidgetTabId?: number })
         .__seeWhatISeeWidgetTabId = tid;
@@ -850,6 +889,7 @@ async function mountAskWidget(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({
     target: { tabId },
     world: 'ISOLATED',
+    injectImmediately: true,
     files: ['ask-widget.js'],
   });
 }
@@ -891,7 +931,24 @@ function filterAttachmentsByKinds(
 }
 
 
-async function openNewProviderTab(provider: AskProvider): Promise<number> {
+/**
+ * Open a new tab on `provider.newTabUrl`, write a `placeholder`
+ * widget record so the in-page widget can render "Waiting for
+ * `<provider>` to load…" the moment it mounts, fire a best-effort
+ * early widget mount on the first `'loading'` event, and then
+ * wait for the page to fully load before returning. The early
+ * mount is a UX win when it lands on the committed-but-still-
+ * loading provider document; if it lands on a transient about:blank
+ * / chrome://newtab document the navigation tears down, the
+ * widget dies with it and we fall back to today's "delay before
+ * widget appears" behaviour. The caller's bridge + re-mount call
+ * after `waitForTabComplete` covers that case — `mountAskWidget`
+ * is idempotent and the second mount sees the same record.
+ */
+async function openNewProviderTabWithPlaceholder(
+  provider: AskProvider,
+  recordTemplate: Omit<AskWidgetRecord, 'status' | 'runId' | 'updatedAt'>,
+): Promise<number> {
   const created = await chrome.tabs.create({
     url: provider.newTabUrl,
     active: true,
@@ -899,9 +956,57 @@ async function openNewProviderTab(provider: AskProvider): Promise<number> {
   if (created.id === undefined) {
     throw new Error('Could not create new tab');
   }
-  await waitForTabComplete(created.id, NEW_TAB_LOAD_TIMEOUT_MS);
-  return created.id;
+  const tabId = created.id;
+  // Write the placeholder record before the early widget mount so
+  // the widget reads `status: 'placeholder'` on its first paint
+  // (status section reads "Waiting for <provider> to load…", no
+  // orchestration walk).
+  void writeWidgetRecord(tabId, {
+    ...recordTemplate,
+    status: 'placeholder',
+    runId: Date.now(),
+    updatedAt: Date.now(),
+  }).catch(() => {
+    // Best-effort placeholder. The promote-to-injecting write below
+    // re-creates the record if this fails.
+  });
+  void mountAskWidgetOnFirstLoading(tabId);
+  await waitForTabComplete(tabId, NEW_TAB_LOAD_TIMEOUT_MS);
+  return tabId;
 }
+
+/**
+ * Best-effort early widget mount: listen for the new tab's first
+ * `'loading'` event and run `mountAskWidget` against it. The
+ * widget reads the `placeholder` record the SW just wrote and
+ * paints the placeholder UI. No bridge yet — the placeholder
+ * doesn't post bridge requests; the bridge is loaded in the
+ * caller after `waitForTabComplete`.
+ *
+ * Failures are swallowed: if the script never fires (tab closed,
+ * executeScript races the navigation), we just fall back to the
+ * post-load mount. The mount is idempotent so doing it twice is
+ * harmless.
+ */
+function mountAskWidgetOnFirstLoading(tabId: number): void {
+  const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo): void => {
+    if (id !== tabId) return;
+    if (info.status !== 'loading' && info.status !== 'complete') return;
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+    void mountAskWidget(tabId).catch(() => {
+      // Swallow — see comment above.
+    });
+  };
+  chrome.tabs.onUpdated.addListener(onUpdated);
+  // Self-clean: if no 'loading' event ever fires (e.g. the tab
+  // closes before navigation starts), drop the listener after the
+  // load timeout so it doesn't accumulate.
+  setTimeout(
+    () => chrome.tabs.onUpdated.removeListener(onUpdated),
+    NEW_TAB_LOAD_TIMEOUT_MS,
+  );
+}
+
 
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -985,7 +1090,11 @@ function friendlyInjectError(err: unknown): string {
 }
 
 interface AskMessage {
-  action: 'askAi' | 'askAiDefault' | 'askListProviders' | 'askSetDefault';
+  action:
+    | 'askAi'
+    | 'askAiDefault'
+    | 'askListProviders'
+    | 'askSetDefault';
   destination?: AskDestination;
   payload?: AskPayload;
 }
@@ -1009,6 +1118,12 @@ interface AskMessage {
  *   the page invoke pin-or-fallback in one round-trip.
  *
  * Installed once from background.ts.
+ *
+ * Placeholder-dismiss cancellation doesn't go through here — the
+ * widget's × handler simply clears its storage record, which the
+ * SW reads after the new-tab page-load wait. Storage-based rather
+ * than runtime messages so the cancel is fully ordered against
+ * the SW's read.
  */
 export function installAskMessageHandler(): void {
   chrome.runtime.onMessage.addListener(

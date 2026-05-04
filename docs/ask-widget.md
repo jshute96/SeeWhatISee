@@ -67,7 +67,28 @@ laid out, the cross-world architecture that lets it drive the inject.
 - A new send re-expands a collapsed widget so the user sees the
   in-flight Status without having to click the strip.
 - `×` removes the widget DOM AND clears that tab's storage record
-  (full dismiss). `_` just collapses the UI; the record stays.
+  (full dismiss). It also posts `askPlaceholderClosed` to the SW so
+  an in-flight new-tab Ask waiting on page-load skips the
+  promote-to-injecting step (the user wants the bare loaded page,
+  not the widget). `_` just collapses the UI; the record stays.
+
+### Status lifecycle
+
+Mirrors `AskWidgetStatus` in `widget-store.ts`:
+
+- `placeholder` — new-tab Ask only. The SW writes this *before*
+  the destination tab finishes loading so the widget can mount
+  early and show "Waiting for `<provider>` to load…" in the
+  Status section. Same chrome (spinner, sections) as `injecting`,
+  but `shouldStartOrchestration` gates on `'injecting'` only so
+  the items don't start walking.
+- `injecting` — orchestration is walking the items. The SW patches
+  `placeholder` → `injecting` (with a fresh `runId`) once the page
+  is ready. The fresh `runId` is what the storage listener latches
+  onto to fire `tryStartRun`. The transition is in-place — no
+  DOM tear-down — so the user sees a status text change rather
+  than a re-mount.
+- `success` / `error` — terminal.
 
 ## Architecture: widget owns the inject
 
@@ -161,13 +182,33 @@ into MAIN-world helpers in `ask-inject.ts`.
 ## Wire layout
 
 ```
-SW sendToAi() ─┬─▶ writeWidgetRecord(tabId, {status:'injecting',
-              │     items:[…pending], selectors, runId, …})
-              ├─▶ executeScript MAIN: load ask-inject.js (bridge)
-              ├─▶ executeScript ISOLATED: stash tabId on window
-              ├─▶ executeScript ISOLATED: load ask-widget.js
-              └─▶ waitForWidgetCompletion(tabId)  ─── awaits storage
-                                                      onChanged
+SW sendToAi():
+  ── new-tab path only ──────────────────────────────────────────
+  ├─▶ openNewProviderTabWithPlaceholder(provider, recordTemplate):
+  │     ├─▶ chrome.tabs.create(provider.newTabUrl)
+  │     ├─▶ writeWidgetRecord(tabId, {status:'placeholder', …})
+  │     ├─▶ on first tabs.onUpdated 'loading':
+  │     │     mountAskWidget(tabId)  ── early best-effort mount;
+  │     │                                widget paints "Waiting
+  │     │                                for <provider> to load…"
+  │     └─▶ await waitForTabComplete(tabId, …)
+  │
+  ├─▶ if cancelledTabs.delete(tabId): clearWidgetRecord + return
+  │   "Cancelled" — user dismissed via × during page load
+  ── both paths ─────────────────────────────────────────────────
+  ├─▶ writeWidgetRecord(tabId, {status:'injecting',
+  │     items:[…pending], selectors, runId:NEW, …})
+  │     ── newTab: promotes the placeholder record (storage event
+  │        fires; widget storage listener picks up the runId bump
+  │        and starts tryStartRun)
+  │     ── existingTab: first write of the record
+  ├─▶ executeScript MAIN: load ask-inject.js (bridge)
+  ├─▶ executeScript ISOLATED: stash tabId on window
+  ├─▶ executeScript ISOLATED: load ask-widget.js  (idempotent —
+  │     re-mount on the loaded page if the early one died on a
+  │     transient document)
+  └─▶ waitForWidgetCompletion(tabId)  ─── awaits storage
+                                          onChanged
 
   Widget                                    MAIN-world bridge
   ───────                                   ─────────────────

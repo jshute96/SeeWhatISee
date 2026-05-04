@@ -28,7 +28,21 @@ export interface AskWidgetAttachment {
   data: string;
 }
 
-export type AskWidgetStatus = 'injecting' | 'success' | 'error';
+/**
+ * Lifecycle states for an Ask record.
+ *
+ * - `placeholder` — new-tab Ask only. The SW writes this *before*
+ *   the destination tab finishes loading so the widget can mount
+ *   early and show a "Waiting for `<provider>` to load…" status.
+ *   The widget renders the same chrome as `injecting` (spinner,
+ *   sections) but doesn't walk items — `shouldStartOrchestration`
+ *   gates on `'injecting'` only. The SW patches the record to
+ *   `injecting` (with a fresh `runId`) once the page is ready,
+ *   which transitions the same in-place widget to active mode.
+ * - `injecting` — orchestration is walking the items.
+ * - `success` / `error` — terminal.
+ */
+export type AskWidgetStatus = 'placeholder' | 'injecting' | 'success' | 'error';
 
 export type AskWidgetItemStatus =
   | 'pending'
@@ -139,6 +153,26 @@ export async function writeWidgetRecord(
 ): Promise<void> {
   await accessLevelReady;
   await chrome.storage.session.set({ [key(tabId)]: record });
+}
+
+/**
+ * Read the current record for a tab, or `null` when no record
+ * exists. Used by the SW after the new-tab page-load wait to
+ * detect a placeholder dismissal: the widget's × handler clears
+ * the record, so a missing record post-load is the signal to
+ * skip the promote-to-injecting step.
+ */
+export async function readWidgetRecord(
+  tabId: number,
+): Promise<AskWidgetRecord | null> {
+  try {
+    await accessLevelReady;
+    const got = await chrome.storage.session.get(key(tabId));
+    const v = got[key(tabId)] as AskWidgetRecord | undefined;
+    return v ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

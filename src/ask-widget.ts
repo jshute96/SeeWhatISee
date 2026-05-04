@@ -42,7 +42,10 @@
     data: string;
   }
 
-  type AskWidgetStatus = 'injecting' | 'success' | 'error';
+  // Mirror of `widget-store.ts`'s exported `AskWidgetStatus`. Kept
+  // local because this file is a non-module IIFE injected via
+  // `executeScript({files: [...]})` and can't import.
+  type AskWidgetStatus = 'placeholder' | 'injecting' | 'success' | 'error';
 
   type AskWidgetItemStatus =
     | 'pending'
@@ -734,6 +737,12 @@
         // closing over a `storageKey` from `init()` — keeps
         // `mountWidget` self-contained, and the cost is one string
         // template per click.
+        //
+        // Cleared record doubles as the cancel signal during the
+        // new-tab `placeholder` phase: the SW reads the record
+        // after the page-load wait and treats a missing one as
+        // "user dismissed, skip the promote-to-injecting step."
+        // No runtime message needed — storage ordering is enough.
         void chrome.storage.session
           .remove(widgetStorageKey(tabIdLocal))
           .catch(() => {});
@@ -833,6 +842,9 @@
   }
 
   function statusLabel(record: AskWidgetRecord): string {
+    if (record.status === 'placeholder') {
+      return `Waiting for ${record.destinationLabel} to load…`;
+    }
     if (record.status === 'injecting') {
       const what = describeAttachments(record.attachments, record.promptText);
       return `Injecting ${what} into ${record.destinationLabel}…`;
@@ -1387,12 +1399,15 @@
       font-weight: 700;
       line-height: 1;
     }
-    /* Spinner ring fires for both vocabularies:
-     *   - "injecting" (overall record.status, used by the title-bar
-     *     status icons in expanded + collapsed views)
+    /* Spinner ring fires for the in-flight vocabularies:
+     *   - "placeholder" (record.status while waiting for a fresh
+     *     new tab's page to load — same spinner the user gets
+     *     during inject; the only difference is the Status text)
+     *   - "injecting" (overall record.status during the actual walk)
      *   - "in_progress" (per-item status, used by the per-row
      *     status icons in the Content section)
-     * Same visual; just different naming for the two scopes. */
+     * Same visual; just different naming for the three scopes. */
+    .swis-status-icon[data-status="placeholder"],
     .swis-status-icon[data-status="injecting"],
     .swis-status-icon[data-status="in_progress"] {
       border: 2px solid #e5e5e5;
