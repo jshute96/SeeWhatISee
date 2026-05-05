@@ -210,8 +210,11 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `file-index.md` | This file — one-line descriptions of every source file |
-| `architecture.md` | High-level architecture of the extension and capture flow |
-| `chrome-extension.md` | Chrome-extension implementation notes (SW lifecycle, permissions, error surface, Capture page flow, Playwright patterns) |
+| `architecture.md` | High-level architecture: components, storage model, sidecar JSON shape, handoff to coding agents |
+| `capture-actions.md` | Action catalog (`CAPTURE_ACTIONS`), default-click dispatch, toolbar / image / keyboard menus, adding a new capture mode |
+| `capture-page.md` | Capture-page flow, image annotation, edit dialogs, copy-filename buttons, save and close, multi-capture filename strategy |
+| `chrome-extension.md` | Chrome MV3 hazards: SW lifecycle, permissions rationale, error surface, context-menu gotchas, image-fetch strategies |
+| `testing.md` | Playwright + devtools-console patterns for testing the extension |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |

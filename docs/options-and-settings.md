@@ -234,7 +234,7 @@ than naming a specific action:
 The remaining manifest commands (`05-capture`, `11-save-defaults`,
 `12-save-screenshot`, etc.) name specific actions and route through
 `findCaptureAction` —
-see `architecture.md` → "Keyboard commands" for that side.
+see [`capture-actions.md` → Keyboard commands](capture-actions.md#keyboard-commands) for that side.
 
 ## Options page (`options.html`)
 
