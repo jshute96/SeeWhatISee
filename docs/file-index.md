@@ -172,6 +172,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureAll` (PNG + HTML + selection-if-any + record) |
 | `tests/e2e/capture-image-context.spec.ts` | E2E for the image right-click flow — Save-screenshot bytes/path, Capture-page defaults, `imageUrl` persistence (incl. screenshot-unchecked), quiet-disabled HTML |
+| `tests/e2e/upload-image.spec.ts` | E2E tests for the "Upload image to Capture..." menu action (validation, PNG/JPG, edit highlights bakes) |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |

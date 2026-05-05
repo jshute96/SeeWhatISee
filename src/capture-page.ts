@@ -1871,6 +1871,72 @@ previewImg.addEventListener('load', fitImage);
 
 // ─── Initial data load ────────────────────────────────────────────
 
+async function handleUploadFlow(): Promise<void> {
+  // Reveal the body so the upload landing is visible.
+  document.body.style.visibility = 'visible';
+
+  // Hide main capture content
+  document.querySelectorAll<HTMLElement>('[data-capture-main]').forEach((el) => {
+    el.hidden = true;
+  });
+
+  const landing = document.getElementById('upload-landing') as HTMLDivElement | null;
+  if (landing) landing.hidden = false;
+
+  const chooseBtn = document.getElementById('upload-choose-btn') as HTMLButtonElement;
+  const fileInput = document.getElementById('upload-file-input') as HTMLInputElement;
+
+  const triggerPicker = () => {
+    fileInput.click();
+  };
+
+  chooseBtn.addEventListener('click', triggerPicker);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Uploaded file is not in a supported image format');
+      fileInput.value = ''; // Reset file input
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+
+      // Initialize session in background
+      const initRes = await chrome.runtime.sendMessage({
+        action: 'initializeUploadSession',
+        dataUrl,
+        filename: file.name,
+        mimeType: file.type
+      });
+
+      if (initRes && initRes.ok) {
+        // Hide landing
+        if (landing) landing.hidden = true;
+
+        // Reveal main capture content for subsequent loadData
+        document.querySelectorAll<HTMLElement>('[data-capture-main]').forEach((el) => {
+          el.hidden = false;
+        });
+
+        // Clear ?upload=true from URL so it behaves like a normal capture page now
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        // Trigger normal loadData happy path!
+        await loadData();
+      } else {
+        const errMsg = initRes?.error || 'Unknown error';
+        alert(`Failed to initialize upload session: ${errMsg}`);
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function loadData(): Promise<void> {
   try {
     // Catch sendMessage rejections (SW not yet alive, "Could not
@@ -1884,6 +1950,10 @@ async function loadData(): Promise<void> {
       response = undefined;
     }
     if (!response) {
+      if (window.location.search === '?upload=true') {
+        await handleUploadFlow();
+        return;
+      }
       // No SW-side session for this tab — the user likely opened the
       // capture.html URL directly (e.g. an old bookmark, or a tab
       // restored after a browser restart without the session entry
@@ -2140,20 +2210,47 @@ async function loadData(): Promise<void> {
 // Page-card Copy URL button — copies the captured URL string itself
 // (not a filename or a download path), separate from the per-artifact
 // Copy buttons which materialize a file and copy its absolute path.
-copyUrlBtn.addEventListener('click', () => {
+copyUrlBtn.addEventListener('click', async () => {
   if (!capturedUrl) return;
-  void navigator.clipboard.writeText(capturedUrl);
+  copyUrlBtn.classList.add('pressed');
+  try {
+    const copyRes = (await chrome.runtime.sendMessage({
+      action: 'copyToClipboard',
+      text: capturedUrl,
+    })) as { ok?: boolean; error?: string } | undefined;
+    if (copyRes && copyRes.error) {
+      console.warn('[SeeWhatISee] clipboard copy URL via background failed:', copyRes.error);
+    }
+  } finally {
+    copyUrlBtn.classList.remove('pressed');
+  }
 });
 
-copyScreenshotBtn.addEventListener('click', () => {
-  void copyArtifactPath('screenshot');
+copyScreenshotBtn.addEventListener('click', async () => {
+  copyScreenshotBtn.classList.add('pressed');
+  try {
+    await copyArtifactPath('screenshot');
+  } finally {
+    copyScreenshotBtn.classList.remove('pressed');
+  }
 });
-copyHtmlBtn.addEventListener('click', () => {
-  void copyArtifactPath('html');
+copyHtmlBtn.addEventListener('click', async () => {
+  copyHtmlBtn.classList.add('pressed');
+  try {
+    await copyArtifactPath('html');
+  } finally {
+    copyHtmlBtn.classList.remove('pressed');
+  }
 });
 for (const format of SELECTION_FORMATS) {
-  selectionRows[format].copyBtn.addEventListener('click', () => {
-    void copyArtifactPath(SELECTION_WIRE_KIND[format]);
+  const btn = selectionRows[format].copyBtn;
+  btn.addEventListener('click', async () => {
+    btn.classList.add('pressed');
+    try {
+      await copyArtifactPath(SELECTION_WIRE_KIND[format]);
+    } finally {
+      btn.classList.remove('pressed');
+    }
   });
 }
 
@@ -2870,6 +2967,7 @@ async function copyArtifactPath(
     kind,
     editVersion,
     screenshotOverride,
+    hasEdits: hasBakeableEdits(),
   })) as { path?: string; error?: string } | undefined;
   if (!response || response.error || !response.path) {
     console.warn(
@@ -2879,7 +2977,13 @@ async function copyArtifactPath(
     return;
   }
   if (kind === 'screenshot') lastSentScreenshotEditVersion = editVersion;
-  await navigator.clipboard.writeText(response.path);
+  const copyRes = (await chrome.runtime.sendMessage({
+    action: 'copyToClipboard',
+    text: response.path,
+  })) as { ok?: boolean; error?: string } | undefined;
+  if (copyRes && copyRes.error) {
+    console.warn('[SeeWhatISee] clipboard copy via background failed:', copyRes.error);
+  }
 }
 
 // Render the preview image with all current edits baked into the

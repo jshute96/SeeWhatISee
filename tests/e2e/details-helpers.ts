@@ -246,21 +246,27 @@ export async function dragRect(
 // spy installs a per-page array of all text writes so the test can
 // inspect them without needing clipboard-read permission (which
 // additionally requires user activation to actually read back).
-export async function installClipboardSpy(page: Page): Promise<void> {
-  await page.evaluate(() => {
+function getSW(pageOrSw: Page | Worker): Worker {
+  if ('context' in pageOrSw) {
+    const sw = pageOrSw.context().serviceWorkers()[0];
+    if (!sw) throw new Error('No service worker found in page context');
+    return sw;
+  }
+  return pageOrSw;
+}
+
+export async function installClipboardSpy(pageOrSw: Page | Worker): Promise<void> {
+  const sw = getSW(pageOrSw);
+  await sw.evaluate(() => {
     interface SpyState { __seeClip?: string[] }
     const g = self as unknown as SpyState;
     g.__seeClip = [];
-    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
-    navigator.clipboard.writeText = async (text: string) => {
-      g.__seeClip!.push(text);
-      return orig(text);
-    };
   });
 }
 
-export async function readClipboardSpy(page: Page): Promise<string[]> {
-  return await page.evaluate(
+export async function readClipboardSpy(pageOrSw: Page | Worker): Promise<string[]> {
+  const sw = getSW(pageOrSw);
+  return await sw.evaluate(
     () => (self as unknown as { __seeClip?: string[] }).__seeClip ?? [],
   );
 }
@@ -268,13 +274,17 @@ export async function readClipboardSpy(page: Page): Promise<string[]> {
 // Wait until the clipboard spy has recorded `n` writes. Copy click
 // handlers are async (SW round-trip + wait-for-download-complete),
 // so a Playwright `.click()` resolves before the write lands.
-export async function waitForClipboardWrites(page: Page, n: number): Promise<void> {
-  await page.waitForFunction(
-    (count) =>
-      ((self as unknown as { __seeClip?: string[] }).__seeClip?.length ?? 0) >= count,
-    n,
-    { timeout: 5000 },
-  );
+export async function waitForClipboardWrites(pageOrSw: Page | Worker, n: number): Promise<void> {
+  const sw = getSW(pageOrSw);
+  const start = Date.now();
+  while (Date.now() - start < 5000) {
+    const len = await sw.evaluate(
+      () => (self as unknown as { __seeClip?: string[] }).__seeClip?.length ?? 0,
+    );
+    if (len >= n) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`Timeout waiting for ${n} clipboard writes in Service Worker`);
 }
 
 // ─── Image-clipboard spy (palette Copy button) ───────────────────

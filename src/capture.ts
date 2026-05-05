@@ -1568,7 +1568,7 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
  * produces `20260408-203012-345`.
  */
-function compactTimestamp(d: Date): string {
+export function compactTimestamp(d: Date): string {
   const pad2 = (n: number) => String(n).padStart(2, '0');
   const pad3 = (n: number) => String(n).padStart(3, '0');
   return (
@@ -1576,4 +1576,72 @@ function compactTimestamp(d: Date): string {
     `-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}` +
     `-${pad3(d.getMilliseconds())}`
   );
+}
+
+/**
+ * Resolve the absolute on-disk directory where this extension writes
+ * its captures (<downloads>/SeeWhatISee/). The user's downloads root
+ * is OS- and config-dependent and not exposed by any Chrome API, so we
+ * derive it by searching chrome.downloads.search for our log.json
+ * record.
+ */
+export async function getCaptureDirectory(): Promise<string> {
+  const candidates = await chrome.downloads.search({
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
+    orderBy: ['-startTime'],
+  });
+  const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id);
+  const fullPath = ours?.filename;
+  if (!fullPath) {
+    throw new Error(
+      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
+    );
+  }
+  return fullPath.replace(/[/\\][^/\\]+$/, '');
+}
+
+/**
+ * Join dir and name using whichever separator dir already uses.
+ */
+export function joinCapturePath(dir: string, name: string): string {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return `${dir}${sep}${name}`;
+}
+
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+
+/**
+ * Copy `text` to the system clipboard via an offscreen document.
+ *
+ * MV3 service workers have no DOM and don't expose `navigator.clipboard`,
+ * so we host a hidden offscreen page (`offscreen.html` + `offscreen.ts`)
+ * whose only job is to do the copy via `document.execCommand('copy')`
+ * on a temporary <textarea>.
+ */
+export async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_DOCUMENT_PATH,
+      reasons: [chrome.offscreen.Reason.CLIPBOARD],
+      justification: 'Copy capture filename to the clipboard.',
+    });
+  } catch (err) {
+    // "Only a single offscreen document may be created" — fine, reuse.
+    if (!(err instanceof Error) || !err.message.includes('Only a single offscreen document')) {
+      throw err;
+    }
+  }
+  const response = (await chrome.runtime.sendMessage({
+    target: 'offscreen-copy',
+    text,
+  })) as { ok?: boolean; error?: string } | undefined;
+  // Distinguish "no listener responded" from "listener responded but
+  // execCommand returned false" — the two failure modes have very
+  // different fixes (loader timing vs. browser policy / focus).
+  if (response === undefined) {
+    throw new Error('Offscreen document did not respond (listener not registered yet?)');
+  }
+  if (!response.ok) {
+    throw new Error(`Clipboard copy rejected${response.error ? `: ${response.error}` : ''}`);
+  }
 }

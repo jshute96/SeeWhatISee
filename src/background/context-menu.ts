@@ -11,7 +11,9 @@ import {
   getAskPin,
 } from './ask/index.js';
 import {
-  DOWNLOAD_SUBDIR,
+  copyToClipboard,
+  getCaptureDirectory,
+  joinCapturePath,
   LOG_STORAGE_KEY,
   type CaptureRecord,
 } from '../capture.js';
@@ -35,6 +37,8 @@ export const MORE_PARENT_ID = 'more-parent';
 export const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the "Snapshots directory" entry under the More submenu.
 export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
+// Id used by the "Upload image to Capture..." entry under the More submenu.
+export const UPLOAD_IMAGE_MENU_ID = 'upload-image-to-capture';
 // Ids for the "Copy last …" entries at the top of the More submenu.
 // Their enabled state mirrors whether the most recent capture record
 // carries the matching field (`screenshot` / `contents` / `selection`);
@@ -332,107 +336,9 @@ export async function refreshCopyMenuState(): Promise<void> {
   }
 }
 
-const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 
-/**
- * Copy `text` to the system clipboard via an offscreen document.
- *
- * MV3 service workers have no DOM and don't expose `navigator.clipboard`,
- * so we host a hidden offscreen page (`offscreen.html` + `offscreen.ts`)
- * whose only job is to do the copy via `document.execCommand('copy')`
- * on a temporary <textarea>.
- *
- * The document is created on demand and **kept alive** for the SW
- * lifetime. We deliberately don't close it after each copy:
- *   - Closing creates a race against a second concurrent copy — the
- *     teardown from call A would tear out the document call B is
- *     still mid-message on, and B sees `undefined` (no listener).
- *   - The page is hidden and holds only a single message listener,
- *     so the resource cost is negligible.
- *   - When the SW idles out, Chrome tears down the document with it,
- *     so we don't leak past an SW lifetime either.
- *
- * `createDocument` rejects if the document already exists; we
- * try-catch and reuse rather than calling `hasDocument()` first to
- * keep the *creation* step race-free against a second concurrent
- * copy that arrives while creation is in flight.
- */
-async function copyToClipboard(text: string): Promise<void> {
-  try {
-    await chrome.offscreen.createDocument({
-      url: OFFSCREEN_DOCUMENT_PATH,
-      reasons: [chrome.offscreen.Reason.CLIPBOARD],
-      justification: 'Copy capture filename to the clipboard.',
-    });
-  } catch (err) {
-    // "Only a single offscreen document may be created" — fine, reuse.
-    if (!(err instanceof Error) || !err.message.includes('Only a single offscreen document')) {
-      throw err;
-    }
-  }
-  const response = (await chrome.runtime.sendMessage({
-    target: 'offscreen-copy',
-    text,
-  })) as { ok?: boolean; error?: string } | undefined;
-  // Distinguish "no listener responded" from "listener responded but
-  // execCommand returned false" — the two failure modes have very
-  // different fixes (loader timing vs. browser policy / focus).
-  if (response === undefined) {
-    throw new Error('Offscreen document did not respond (listener not registered yet?)');
-  }
-  if (!response.ok) {
-    throw new Error(`Clipboard copy rejected${response.error ? `: ${response.error}` : ''}`);
-  }
-}
 
-/**
- * Resolve the absolute on-disk directory where this extension writes
- * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
- * is OS- and config-dependent and not exposed by any Chrome API, so we
- * derive it by searching `chrome.downloads.search` for our `log.json`
- * record (every capture overwrites it, so the most recent match points
- * at the live directory — even on a fresh SW load where in-memory
- * state is empty).
- *
- * - Pinning the search to `log.json` rather than any file under a
- *   `SeeWhatISee/` folder avoids false matches in same-named
- *   directories the user happens to use (e.g. `/tmp/SeeWhatISee/`).
- * - `byExtensionId` is checked client-side (the `DownloadQuery` type
- *   doesn't accept it as a filter — it's a result-only field) as a
- *   second guard against an unrelated `log.json` in such a folder.
- *
- * Throws when no capture has happened yet so the caller can surface
- * a "capture once first" message via the icon/tooltip error channel.
- */
-async function getCaptureDirectory(): Promise<string> {
-  const candidates = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
-    orderBy: ['-startTime'],
-  });
-  const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id);
-  const fullPath = ours?.filename;
-  if (!fullPath) {
-    throw new Error(
-      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
-    );
-  }
-  // Strip the basename. `chrome.downloads.search().filename` is
-  // documented to be the absolute path to a file (never ends in a
-  // separator), so this always trims one segment.
-  return fullPath.replace(/[/\\][^/\\]+$/, '');
-}
 
-/**
- * Join `dir` and `name` using whichever separator `dir` already uses.
- * `chrome.downloads.search` returns OS-native paths — backslashes on
- * Windows, forward slashes elsewhere — so reusing the existing
- * separator keeps the result paste-ready in the user's OS shell /
- * file manager.
- */
-function joinCapturePath(dir: string, name: string): string {
-  const sep = dir.includes('\\') ? '\\' : '/';
-  return `${dir}${sep}${name}`;
-}
 
 // The `if (!r) ...` / `if (!r.screenshot) ...` branches below are
 // defensive — under normal use the menu items are greyed out (so the
@@ -743,6 +649,13 @@ export async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
   createSeparator(`${MORE_PARENT_ID}-sep-copy`, MORE_PARENT_ID);
+  chrome.contextMenus.create({
+    id: UPLOAD_IMAGE_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Upload image to Capture...',
+    contexts: ['action'],
+  });
+  createSeparator(`${MORE_PARENT_ID}-sep-upload`, MORE_PARENT_ID);
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,
