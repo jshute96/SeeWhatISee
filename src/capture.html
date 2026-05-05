@@ -22,7 +22,7 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 24px;
-    color: #222;
+    color: #000;
     /*
      * Hidden at first paint. capture-page.ts flips visibility back
      * to `visible` inside loadData once the page-card fields (title,
@@ -104,7 +104,7 @@
     display: block;
     font-size: 14px;
     font-weight: 600;
-    color: #222;
+    color: #000;
     text-decoration: none;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -132,7 +132,7 @@
     flex: 0 0 auto;
     padding: 1px 8px;
     font-size: 11px;
-    color: #666;
+    color: #444;
     background: #fff;
     border: 1px solid #ddd;
     border-radius: 10px;
@@ -181,14 +181,14 @@
   }
   /* When the captured URL isn't linkable (empty, or a non-http(s)
    * scheme like chrome://) we strip the `href` and demote the rows
-   * to plain text. The text stays full-contrast (the title's #222 is
+   * to plain text. The text stays full-contrast (the title's #000 is
    * already inherited; the URL row gets its blue overridden back to
-   * #222 here) so it remains readable — only the click affordance
+   * #000 here) so it remains readable — only the click affordance
    * goes away. The trailing external-link glyph also hides since
    * there's nowhere to navigate. */
   .capture-card-title:not([href]),
   .capture-card-url:not([href]) {
-    color: #222;
+    color: #000;
     cursor: default;
     pointer-events: none;
   }
@@ -380,13 +380,13 @@
     border: 1px solid transparent;
     border-radius: 3px;
     background: transparent;
-    color: #555;
+    color: #333;
     cursor: pointer;
   }
   .copy-btn:hover {
     background: #eee;
     border-color: #bbb;
-    color: #222;
+    color: #000;
   }
   /*
    * Disabled Copy button (e.g. Save selection with no selection
@@ -490,7 +490,7 @@
     font-size: 13px;
     border: none;
     background: #f5f5f5;
-    color: #222;
+    color: #000;
     cursor: pointer;
   }
   .edit-dialog-mode-toggle button + button {
@@ -518,7 +518,7 @@
     border: 1px solid #555;
     border-radius: 4px;
     background: #f5f5f5;
-    color: #222;
+    color: #000;
     cursor: pointer;
   }
   .edit-dialog-download:hover {
@@ -835,7 +835,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #666;
+    color: #444;
   }
   .ask-menu .ask-menu-item {
     /* Two-column row: [indicator slot 16px][label flexes].
@@ -1080,7 +1080,7 @@
     max-width: 640px;
     margin: 16px 0;
     padding: 12px 16px;
-    color: #222;
+    color: #000;
     font-size: 16px;
     line-height: 1.5;
   }

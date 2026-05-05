@@ -1293,7 +1293,7 @@
     :host, * { box-sizing: border-box; }
     .swis-collapsed, .swis-expanded {
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      color: #222;
+      color: #000;
       /* Light-purple body so the widget offsets against mostly-white
        * provider pages (Claude / Gemini / ChatGPT). Slightly paler
        * than the title bar's #ede7f6 (deep-purple-50) so the title
@@ -1533,7 +1533,7 @@
       padding: 0;
       font-size: 14px;
       line-height: 1;
-      color: #555;
+      color: #333;
       background: #fff;
       border: 1px solid #ccc;
       border-radius: 4px;
@@ -1547,7 +1547,7 @@
     .swis-copy-btn {
       padding: 4px 10px;
       font-size: 12px;
-      color: #222;
+      color: #000;
       background: #fff;
       border: 1px solid #ccc;
       border-radius: 4px;
@@ -1592,7 +1592,7 @@
       min-width: 0;
       font-size: 13px;
       font-weight: 600;
-      color: #222;
+      color: #000;
       text-decoration: none;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1619,7 +1619,7 @@
     /* Same demote-when-not-linkable rule as the Capture-page card. */
     .swis-page-title:not([href]),
     .swis-page-url:not([href]) {
-      color: #222;
+      color: #000;
       cursor: default;
       pointer-events: none;
     }
@@ -1630,7 +1630,7 @@
       padding: 0;
       font-size: 12px;
       line-height: 1;
-      color: #555;
+      color: #333;
       background: #fff;
       border: 1px solid #ccc;
       border-radius: 4px;
