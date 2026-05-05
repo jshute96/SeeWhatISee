@@ -1,9 +1,12 @@
 import {
   captureBothToMemory,
   captureImageToMemory,
+  compactTimestamp,
+  copyToClipboard,
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  imageExtensionFor,
   noSelectionContentMessage,
   recordDetailedCapture,
   waitForDownloadComplete,
@@ -384,6 +387,13 @@ interface EnsureDownloadedMessage {
    * matches and we return the existing path.
    */
   screenshotOverride?: string;
+
+  /**
+   * Optional flag to indicate whether the screenshot currently carries active
+   * highlights/edits, even if screenshotOverride is undefined due to caching.
+   * Keeps the JPG -> PNG extension sync robust across subsequent copy clicks.
+   */
+  hasEdits?: boolean;
 }
 interface UpdateArtifactMessage {
   action: 'updateArtifact';
@@ -459,12 +469,24 @@ interface CloseCapturePageMessage {
    */
   action: 'closeCapturePage';
 }
+interface InitializeUploadSessionMessage {
+  action: 'initializeUploadSession';
+  dataUrl: string;
+  filename: string;
+  mimeType: string;
+}
+interface CopyToClipboardMessage {
+  action: 'copyToClipboard';
+  text: string;
+}
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
   | UpdateArtifactMessage
   | SaveDetailsMessage
-  | CloseCapturePageMessage;
+  | CloseCapturePageMessage
+  | InitializeUploadSessionMessage
+  | CopyToClipboardMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -615,7 +637,6 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
 
   const downloadId = await options.startDownload(session.capture);
   const path = await waitForDownloadComplete(downloadId);
-
   const fresh = await requireDetailsSession(tabId);
   const freshCached = options.getCurrentEntry(fresh);
   if (options.shouldCommit(freshCached, fresh)) {
@@ -702,6 +723,7 @@ export async function ensureScreenshotDownloaded(
   tabId: number,
   editVersion: number,
   screenshotOverride: string | undefined,
+  hasEdits = false,
 ): Promise<string> {
   // Re-pin the filename for any previous lock (multi-capture bump
   // strategy) before we sync its extension below — order matters:
@@ -734,7 +756,7 @@ export async function ensureScreenshotDownloaded(
   // reads `capture.screenshotFilename`) in sync with the actual bytes
   // even when the user toggles edits between Copy and Capture clicks.
   const pre = await requireDetailsSession(tabId);
-  const targetExt = screenshotOverride ? 'png' : pre.capture.screenshotOriginalExt;
+  const targetExt = (screenshotOverride || hasEdits) ? 'png' : pre.capture.screenshotOriginalExt;
   // Skip the rewrite if `screenshotOriginalExt` is empty — currently
   // unreachable (every constructor sets it) but the regex would
   // otherwise produce a trailing-dot filename.
@@ -1132,6 +1154,43 @@ export function installDetailsMessageHandlers(): void {
       return true;
     }
 
+    if (msg.action === 'initializeUploadSession') {
+      void (async () => {
+        try {
+          const { dataUrl, filename, mimeType } = msg;
+          const now = new Date();
+          const ts = compactTimestamp(now);
+          const ext = imageExtensionFor(mimeType, filename);
+          
+          const capture: InMemoryCapture = {
+            screenshotDataUrl: dataUrl,
+            html: '',
+            url: `file:${filename}`,
+            title: filename,
+            timestamp: now.toISOString(),
+            screenshotFilename: `screenshot-${ts}.${ext}`,
+            screenshotOriginalExt: ext,
+            contentsFilename: `contents-${ts}.html`,
+            htmlUnavailable: true,
+          };
+          
+          const session: DetailsSession = {
+            capture,
+            bases: {
+              screenshot: capture.screenshotFilename,
+              contents: capture.contentsFilename,
+            }
+          };
+          
+          await chrome.storage.session.set({ [detailsStorageKey(tabId)]: session });
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : String(err) });
+        }
+      })();
+      return true;
+    }
+
     if (msg.action === 'ensureDownloaded') {
       void (async () => {
         try {
@@ -1141,6 +1200,7 @@ export function installDetailsMessageHandlers(): void {
               tabId,
               msg.editVersion ?? 0,
               msg.screenshotOverride,
+              msg.hasEdits === true,
             );
           } else if (msg.kind === 'html') {
             path = await ensureHtmlDownloaded(tabId);
@@ -1305,6 +1365,25 @@ export function installDetailsMessageHandlers(): void {
           // the error without it disappearing. Don't drop the
           // session either — the user might fix the offending
           // artifact and try again.
+        }
+      })();
+      return true;
+    }
+
+    if (msg.action === 'copyToClipboard') {
+      void (async () => {
+        try {
+          await copyToClipboard(msg.text);
+          
+          // Record for E2E test clipboard spy
+          interface SWState { __seeClip?: string[] }
+          const g = self as unknown as SWState;
+          g.__seeClip = g.__seeClip ?? [];
+          g.__seeClip.push(msg.text);
+
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : String(err) });
         }
       })();
       return true;

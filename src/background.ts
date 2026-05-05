@@ -51,6 +51,7 @@ import {
   IMAGE_SAVE_SCREENSHOT_MENU_ID,
   PIN_ASK_TARGET_MENU_ID,
   SNAPSHOTS_DIR_MENU_ID,
+  UPLOAD_IMAGE_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
   copyLastSelectionFilename,
@@ -260,6 +261,22 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // channels tell the user something went wrong.
   if (id === CLEAR_LOG_MENU_ID) {
     await runWithErrorReporting(() => clearCaptureLog());
+    return;
+  }
+
+  if (id === UPLOAD_IMAGE_MENU_ID) {
+    await runWithErrorReporting(async () => {
+      const createProps: chrome.tabs.CreateProperties = {
+        url: chrome.runtime.getURL('capture.html?upload=true'),
+      };
+      if (tab && tab.index !== undefined) {
+        createProps.index = tab.index + 1;
+      }
+      if (tab && tab.id !== undefined) {
+        createProps.openerTabId = tab.id;
+      }
+      await chrome.tabs.create(createProps);
+    });
     return;
   }
 
