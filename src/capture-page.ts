@@ -381,7 +381,12 @@ function updateSelectionSizeBadge(): void {
 // hierarchy — TypeScript won't let us cast directly across the
 // branches without a `unknown` bridge.
 const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
+const imageBox = document.querySelector('.image-box') as HTMLDivElement;
+const highlightControls = document.querySelector(
+  '.highlight-controls',
+) as HTMLDivElement;
 const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
+const zoomBtn = document.getElementById('zoom') as HTMLButtonElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
@@ -638,6 +643,31 @@ function attachHtmlAwarePaste(
     insertAtCaret(el, toInsert);
   });
 }
+
+// Refuse pastes that the X11 middle-click primary-selection
+// machinery dispatched on the prompt while the user was middle-
+// clicking on the image (panning the zoomed view). The paste fires
+// on the focused editable regardless of click target on Linux
+// Chromium, and not every build cancels it via mousedown /
+// mouseup / auxclick preventDefault. Catch it here using a short
+// timestamp window — a real Ctrl-V or right-click → Paste won't
+// be preceded by a middle-click on the image-box, so they pass
+// through. Capture-phase listener so we run before the html-aware
+// paste handler attached just below.
+const PASTE_AFTER_MIDDLE_DOWN_MS = 200;
+promptInput.addEventListener(
+  'paste',
+  (e) => {
+    if (
+      lastImageMiddleDownTime > 0 &&
+      e.timeStamp - lastImageMiddleDownTime < PASTE_AFTER_MIDDLE_DOWN_MS
+    ) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  },
+  true,
+);
 
 attachHtmlAwarePaste(promptInput, 'asMarkdown');
 
@@ -1149,14 +1179,17 @@ function makeFilledRect(
   return el;
 }
 
-function makeLine(x1: number, y1: number, x2: number, y2: number): SVGLineElement {
+function makeLine(
+  x1: number, y1: number, x2: number, y2: number,
+  width = 3,
+): SVGLineElement {
   const el = document.createElementNS(SVG_NS, 'line');
   el.setAttribute('x1', String(x1));
   el.setAttribute('y1', String(y1));
   el.setAttribute('x2', String(x2));
   el.setAttribute('y2', String(y2));
   el.setAttribute('stroke', 'red');
-  el.setAttribute('stroke-width', '3');
+  el.setAttribute('stroke-width', String(width));
   el.setAttribute('stroke-linecap', 'round');
   return el;
 }
@@ -1200,15 +1233,22 @@ function arrowBarbs(
 }
 
 // Draw an arrow (line + arrowhead) onto the SVG overlay. Returns
-// nothing — appends `<line>` shapes to `overlay`.
+// nothing — appends `<line>` shapes to `overlay`. `strokePx` is the
+// stroke width all three lines share; the head-cap argument scales
+// proportionally so a zoomed-in arrow keeps the stroke / head-size
+// ratio constant.
 function appendArrow(
   x1: number, y1: number, x2: number, y2: number,
+  strokePx: number = 3,
 ): void {
-  overlay.appendChild(makeLine(x1, y1, x2, y2));
-  const b = arrowBarbs(x1, y1, x2, y2);
+  overlay.appendChild(makeLine(x1, y1, x2, y2, strokePx));
+  // Scale the head-cap with the stroke so the barbs grow together
+  // with the line at higher zoom levels.
+  const headCap = ARROW_HEAD_MAX_PX * (strokePx / 3);
+  const b = arrowBarbs(x1, y1, x2, y2, headCap);
   if (!b) return;
-  overlay.appendChild(makeLine(b.ax, b.ay, x2, y2));
-  overlay.appendChild(makeLine(b.bx, b.by, x2, y2));
+  overlay.appendChild(makeLine(b.ax, b.ay, x2, y2, strokePx));
+  overlay.appendChild(makeLine(b.bx, b.by, x2, y2, strokePx));
 }
 
 function render(): void {
@@ -1216,6 +1256,13 @@ function render(): void {
   const r = imgRect();
   const w = r.width;
   const h = r.height;
+  // Stroke width for the user's artistic edits (Box / Line / Arrow):
+  // 3 pixels at the image's natural resolution, scaled to display.
+  // So the strokes track the visual size of the image — Fit-mode
+  // strokes look thinner than at 1×; 2× / 4× / 8× modes look
+  // proportionally thicker. Crop dashes and corner grips below
+  // stay at 1px (they're UI affordances, not picture content).
+  const sw = 3 * currentDisplayScale();
 
   for (const e of edits) {
     if (e.kind === 'line' || e.kind === 'arrow') {
@@ -1224,9 +1271,9 @@ function render(): void {
       const ax2 = (e.x2 / 100) * w;
       const ay2 = (e.y2 / 100) * h;
       if (e.kind === 'arrow') {
-        appendArrow(ax1, ay1, ax2, ay2);
+        appendArrow(ax1, ay1, ax2, ay2, sw);
       } else {
-        overlay.appendChild(makeLine(ax1, ay1, ax2, ay2));
+        overlay.appendChild(makeLine(ax1, ay1, ax2, ay2, sw));
       }
     } else if (e.kind === 'rect') {
       overlay.appendChild(makeStrokedRect(
@@ -1235,6 +1282,7 @@ function render(): void {
         (e.w / 100) * w,
         (e.h / 100) * h,
         'red',
+        sw,
       ));
     } else if (e.kind === 'redact') {
       overlay.appendChild(makeFilledRect(
@@ -1336,7 +1384,9 @@ function render(): void {
   // 1px dark outline so they read on both light and dark
   // backgrounds. Grips render centered on the corner and may extend
   // past the image edge — `#overlay` is `overflow: visible` so the
-  // square is fully drawn even at a boundary corner.
+  // square is fully drawn even at a boundary corner. The 4 px
+  // margin on `.image-wrap` keeps the half-outside portion inside
+  // `.image-box`'s clipping area.
   {
     const region = cropPreview ?? { x: 0, y: 0, w: 100, h: 100 };
     const gx0 = (region.x / 100) * w;
@@ -1358,11 +1408,11 @@ function render(): void {
   if (dragStart && dragCurrent) {
     if (selectedTool === 'line') {
       overlay.appendChild(makeLine(
-        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y,
+        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       ));
     } else if (selectedTool === 'arrow') {
       appendArrow(
-        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y,
+        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       );
     } else if (selectedTool === 'rect' || selectedTool === 'redact') {
       // Both tools draw exactly what they'll commit, so the user
@@ -1375,7 +1425,7 @@ function render(): void {
       const dw = Math.abs(dragCurrent.x - dragStart.x);
       const dh = Math.abs(dragCurrent.y - dragStart.y);
       if (selectedTool === 'rect') {
-        overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red'));
+        overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
       } else {
         overlay.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
       }
@@ -1393,7 +1443,18 @@ overlay.addEventListener('mousedown', (e) => {
   // Left button only — there's no right-click drawing in the new
   // tool model. The browser will surface the right-button context
   // menu untouched.
-  if (me.button !== 0) return;
+  if (me.button !== 0) {
+    // For middle-click, suppress the browser's default actions on
+    // the way down — autoscroll mode (the spinning compass icon)
+    // and, on Linux, the X11 primary-selection paste that would
+    // otherwise fire on the *focused* editable (the prompt
+    // textarea) regardless of where the click happened. Doing it
+    // here as well as on `imageBox` mousedown is belt-and-
+    // suspenders: middle clicks on the SVG overlay (which sits
+    // over the image) hit this listener first.
+    if (me.button === 1) me.preventDefault();
+    return;
+  }
   // A drag is already in flight. Ignore so the state machine can't
   // end up with both `cropDrag` and `dragStart` non-null at the
   // same time.
@@ -1845,29 +1906,454 @@ for (const btn of toolButtons) {
   });
 }
 
-// ─── Image fit ────────────────────────────────────────────────────
+// ─── Image fit + Zoom ─────────────────────────────────────────────
 //
-// Shrink the image so it fits within the remaining viewport height —
-// no vertical scroll. The top of the image is determined by elements
-// above it, which don't depend on the image's size, so resetting
-// max-height before measuring gives a stable top.
+// Two display modes:
+//   - 'fit' (default) — image shrinks to the remaining viewport
+//     (height-bounded by `window.innerHeight - imageBoxTop -
+//     reserved`, width-bounded by `.image-box`'s flex slot).
+//   - 1 / 2 / 4 / 8 — image renders at `naturalSize * N` pixels;
+//     `.image-box` shows scrollbars when the wrap overflows. The
+//     overlay scales with the image because it's `100%` of the
+//     image-wrap, which sizes from the image element itself.
+//
+// Zoom doesn't change what gets saved (the bake renders at natural
+// resolution either way) — it only controls what the user sees
+// while editing.
+//
+// `applyZoom()` is the single entry point: writes the box's
+// max-height (so vertical scroll triggers in Nx modes), writes the
+// image's width / height + max-* (mode-dependent), and re-renders
+// so stroke widths track the new display→natural ratio.
 
-function fitImage(): void {
-  previewImg.style.maxHeight = '';
-  const top = previewImg.getBoundingClientRect().top;
-  // 24 = body bottom margin; 2 = wrap top + bottom border (1px each).
-  const reserved = 24 + 2;
-  const avail = window.innerHeight - top - reserved;
-  if (avail > 0) previewImg.style.maxHeight = avail + 'px';
+type ZoomMode = 'fit' | 1 | 2 | 4 | 8;
+const ZOOM_LEVELS: ZoomMode[] = ['fit', 1, 2, 4, 8];
+let zoomMode: ZoomMode = 'fit';
+
+const ZOOM_LABELS: Record<string, string> = {
+  fit: 'Fit',
+  '1': '1×',
+  '2': '2×',
+  '4': '4×',
+  '8': '8×',
+};
+
+// Pixel budgets for sizing the box and the image inside it.
+//
+// The box's outer height (its `maxHeight` cap) is bounded only by
+// the viewport's bottom and the body's bottom margin.
+//
+// The image's available area is the box's content area minus
+//   - 2 × `WRAP_MARGIN` (the .image-wrap's outer margin, which keeps
+//     the corner crop grips from being clipped by the box's
+//     `overflow: auto`).
+//   - 2 px (the .image-wrap's 1 px borders, top and bottom).
+//
+// `imageBox.style.maxHeight` is *not* cleared before measuring: the
+// box's top is set by elements above it in the flex row (the
+// prompt, the page-card), not by its own height — the measurement
+// is stable across re-runs. Clearing maxHeight would briefly
+// remove the overflow constraint, snap `scrollTop` / `scrollLeft`
+// back to 0 (no overflow → no scroll), and the user's pan
+// position would be lost on every applyZoom() call.
+const WRAP_MARGIN = 4;
+
+function availableImageHeight(): { box: number; image: number } {
+  const top = imageBox.getBoundingClientRect().top;
+  const bodyMargin = 24;
+  const wrapBorders = 2;
+  const box = Math.max(0, window.innerHeight - top - bodyMargin);
+  const image = Math.max(0, box - 2 * WRAP_MARGIN - wrapBorders);
+  return { box, image };
+}
+
+function applyZoom(): void {
+  const avail = availableImageHeight();
+  imageBox.style.maxHeight = avail.box + 'px';
+  if (zoomMode === 'fit') {
+    // Fit mode used to rely on `max-width: 100%` + `max-height:
+    // <px>` and let the browser pick aspect-preserving dimensions.
+    // That was unreliable: `.image-wrap` is `display: inline-block`,
+    // making the image's own containing block circular (the wrap
+    // sizes to its child, the image), so `max-width: 100%` doesn't
+    // actually constrain the image's width — vertical scrollbars
+    // would appear when the image rendered taller than the box.
+    //
+    // Instead we compute the displayed dimensions ourselves from
+    // the natural aspect ratio and the available content area, then
+    // assign explicit pixel `width` and `height`. No surprises, no
+    // overflow.
+    const boxW = imageBox.clientWidth;
+    const wMax = Math.max(0, boxW - 2 * WRAP_MARGIN - 2);
+    const hMax = avail.image;
+    const natW = previewImg.naturalWidth;
+    const natH = previewImg.naturalHeight;
+    if (natW > 0 && natH > 0 && wMax > 0 && hMax > 0) {
+      const scale = Math.min(1, wMax / natW, hMax / natH);
+      previewImg.style.width = natW * scale + 'px';
+      previewImg.style.height = natH * scale + 'px';
+      previewImg.style.maxWidth = '';
+      previewImg.style.maxHeight = '';
+    } else {
+      // Image not yet loaded — leave dimensions to the browser's
+      // intrinsic sizing. The load-event handler re-runs
+      // applyZoom with the natural sizes available.
+      previewImg.style.width = '';
+      previewImg.style.height = '';
+      previewImg.style.maxWidth = wMax + 'px';
+      previewImg.style.maxHeight = hMax + 'px';
+    }
+  } else {
+    const n = zoomMode;
+    const w = previewImg.naturalWidth * n;
+    const h = previewImg.naturalHeight * n;
+    // Don't set explicit dimensions before the image has loaded —
+    // would otherwise pin the box to 0×0 until the load handler
+    // re-runs applyZoom and is harmless either way (the load event
+    // runs applyZoom).
+    if (w > 0 && h > 0) {
+      previewImg.style.width = w + 'px';
+      previewImg.style.height = h + 'px';
+    }
+    previewImg.style.maxWidth = 'none';
+    previewImg.style.maxHeight = 'none';
+  }
   render();
+}
+
+// Pre-zoom alias retained because callers historically wired this
+// to the prompt-grow / resize / image-load callbacks. Same entry
+// point now — the function is mode-aware.
+function fitImage(): void {
+  applyZoom();
+}
+
+function updateZoomButtonLabel(): void {
+  zoomBtn.textContent = `Zoom: ${ZOOM_LABELS[String(zoomMode)] ?? 'Fit'}`;
+}
+
+function setZoom(m: ZoomMode): void {
+  zoomMode = m;
+  updateZoomButtonLabel();
+  applyZoom();
+  // Refresh the menu's check marker too, in case the menu is open
+  // (wheel-zoom while it's up should update the visible state).
+  refreshZoomMenuChecks();
+  // applyZoom already calls render(); skip a duplicate.
+}
+
+// Display→natural ratio used to scale overlay stroke widths so
+// red lines and boxes track the visual scale of the image. The
+// bake (`renderHighlightedPng`) is unaffected — it always renders
+// at natural resolution and computes its own stroke from the
+// display→natural inverse.
+function currentDisplayScale(): number {
+  const natW = previewImg.naturalWidth;
+  if (!natW) return 1;
+  return imgRect().width / natW;
+}
+
+// Has the image's *natural size* fit-mode rendering already
+// reached the display size of 1x? Used by the wheel handler to
+// skip the redundant fit ↔ 1× hop when the image already fills
+// fit-mode at native pixels (small images on large screens).
+function fitMatches1x(): boolean {
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+  if (!natW || !natH) return false;
+  // .image-box is the constraint surface. clientWidth excludes its
+  // scrollbars, which would otherwise lie about available width
+  // when overflow:auto has produced one in a previous mode.
+  const boxW = imageBox.clientWidth;
+  const availH = availableImageHeight().image;
+  // Fit-mode shrinks proportionally to whichever axis is tighter
+  // (max-width: 100% + max-height: avail). Scale = 1 → image renders
+  // at natural size in Fit. Strict equality against 1 is too tight:
+  // sub-pixel rounding (border-box vs content-box, scrollbar gutters)
+  // can leave us at 0.998 or similar; clamp to the 0.5 px tolerance
+  // that any visible difference would have to cross to actually
+  // change strokes.
+  const tol = 0.5 / Math.min(natW, natH);
+  return Math.min(boxW / natW, availH / natH) >= 1 - tol;
 }
 
 window.addEventListener('resize', () => {
   // Re-grow the prompt because line wrap points may have changed,
-  // then re-fit the image to whatever space is left.
+  // then re-apply the zoom (which fits the image and reads the
+  // new viewport size).
   autoGrowPrompt();
 });
-previewImg.addEventListener('load', fitImage);
+previewImg.addEventListener('load', applyZoom);
+
+// ─── Zoom menu (popover) ──────────────────────────────────────────
+//
+// Built lazily on first open and inserted into `.highlight-controls`
+// with `position: absolute; left: calc(100% + 6px)` so it floats to
+// the right of the column without taking layout space — opening the
+// menu doesn't push the image, just paints over the gap between the
+// column and the image-box. Inline `top` aligns the menu's top edge
+// with the Zoom button. Toggle is fully controlled by the Zoom
+// button — we deliberately don't add an outside-click closer: it
+// competed with the button's own click handler in a way that could
+// leave the user unable to close the menu via the button. Escape
+// (when the page has focus) and the menu items themselves also
+// close it.
+
+let zoomMenuEl: HTMLDivElement | null = null;
+
+function buildZoomMenu(): HTMLDivElement {
+  const menu = document.createElement('div');
+  menu.className = 'zoom-menu';
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  for (const value of ZOOM_LEVELS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'zoom-menu-item';
+    item.setAttribute('role', 'menuitemradio');
+    item.dataset.zoom = String(value);
+    const check = document.createElement('span');
+    check.className = 'zoom-menu-check';
+    check.textContent = '✓';
+    check.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.textContent = ZOOM_LABELS[String(value)] ?? String(value);
+    item.append(check, label);
+    item.addEventListener('click', () => {
+      setZoom(value);
+      closeZoomMenu();
+      zoomBtn.focus();
+    });
+    menu.appendChild(item);
+  }
+  // Place inside `.highlight-controls` so its `position: absolute`
+  // anchors against the column. `left: calc(100% + 6px)` (in CSS)
+  // floats it just right of the column so it sits in the parent
+  // gap (and over the start of the image, but only by a few
+  // pixels — narrower than putting it inline as a flex sibling,
+  // which would move the image when the menu opens).
+  highlightControls.appendChild(menu);
+  return menu;
+}
+
+function refreshZoomMenuChecks(): void {
+  if (!zoomMenuEl) return;
+  const items = Array.from(
+    zoomMenuEl.querySelectorAll<HTMLButtonElement>('.zoom-menu-item'),
+  );
+  for (const item of items) {
+    const v = item.dataset.zoom!;
+    item.setAttribute('aria-checked', v === String(zoomMode) ? 'true' : 'false');
+  }
+}
+
+function openZoomMenu(): void {
+  if (!zoomMenuEl) zoomMenuEl = buildZoomMenu();
+  refreshZoomMenuChecks();
+  // Align the menu's top with the Zoom button's top within the
+  // column. `offsetTop` is relative to the column (the absolute-
+  // positioned element's offsetParent), so it doesn't drift when
+  // the page scrolls or the prompt grows.
+  zoomMenuEl.style.top = zoomBtn.offsetTop + 'px';
+  zoomMenuEl.hidden = false;
+  zoomBtn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('keydown', onZoomMenuKey);
+}
+
+function closeZoomMenu(): void {
+  if (!zoomMenuEl || zoomMenuEl.hidden) return;
+  zoomMenuEl.hidden = true;
+  zoomBtn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('keydown', onZoomMenuKey);
+}
+
+function onZoomMenuKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    closeZoomMenu();
+    zoomBtn.focus();
+  }
+}
+
+zoomBtn.addEventListener('click', () => {
+  if (zoomMenuEl && !zoomMenuEl.hidden) {
+    closeZoomMenu();
+  } else {
+    openZoomMenu();
+  }
+});
+
+// ─── Wheel zoom ───────────────────────────────────────────────────
+//
+// Wheel over the image cycles through ZOOM_LEVELS. Skips the
+// fit ↔ 1× hop when fit-mode already renders at native pixels
+// (small image on large viewport) so two scroll ticks don't
+// produce one visible change.
+//
+// `Ctrl+wheel` is left alone — that's the browser's page zoom,
+// and grabbing it would surprise users.
+
+function nextZoomIndex(curIdx: number, dir: 1 | -1): number {
+  let i = curIdx + dir;
+  if (i < 0 || i >= ZOOM_LEVELS.length) return curIdx;
+  // Skip fit ↔ 1× when the two are visually identical right now.
+  // If the skip target is out of range (e.g. wheel-down from 1× when
+  // fit and 1× look the same — there's nothing past fit), stay put
+  // rather than performing the silent mode change the skip exists
+  // to prevent.
+  const cur = ZOOM_LEVELS[curIdx];
+  const next = ZOOM_LEVELS[i];
+  if (
+    fitMatches1x() &&
+    ((cur === 'fit' && next === 1) || (cur === 1 && next === 'fit'))
+  ) {
+    const j = i + dir;
+    if (j < 0 || j >= ZOOM_LEVELS.length) return curIdx;
+    return j;
+  }
+  return i;
+}
+
+imageBox.addEventListener('wheel', (e) => {
+  if (e.ctrlKey) return;
+  // Wheel only zooms when the cursor is over the *visible* image —
+  // i.e. inside both the image's rect AND the box's content area.
+  //
+  // Just-imgRect doesn't work in Nx mode where the image extends
+  // past the box bounds (the off-screen part is reachable via
+  // scroll, and a scrollbar then sits over `imgRect`'s right /
+  // bottom edge): a cursor on a scrollbar would still test inside
+  // imgRect and trigger a zoom, which is what the user reported.
+  //
+  // `clientWidth` / `clientHeight` exclude the scrollbar gutters,
+  // so intersecting `imgRect` with the box's rect-clipped-to-
+  // content gives the actually-visible image area on screen.
+  const r = imgRect();
+  const boxRect = imageBox.getBoundingClientRect();
+  const visLeft = Math.max(boxRect.left, r.left);
+  const visTop = Math.max(boxRect.top, r.top);
+  const visRight = Math.min(boxRect.left + imageBox.clientWidth, r.right);
+  const visBottom = Math.min(boxRect.top + imageBox.clientHeight, r.bottom);
+  if (
+    e.clientX < visLeft || e.clientX >= visRight ||
+    e.clientY < visTop || e.clientY >= visBottom
+  ) {
+    return;
+  }
+  const cur = ZOOM_LEVELS.indexOf(zoomMode);
+  if (cur < 0) return;
+  const dir: 1 | -1 = e.deltaY < 0 ? 1 : -1;
+  const next = nextZoomIndex(cur, dir);
+  // No-op (already at min or max for this direction): let the wheel
+  // fall through to native scroll on `.image-box` instead of
+  // swallowing it. Otherwise the user can't scroll a tall image at
+  // 8× by wheeling up while the cursor is over the image.
+  if (next === cur) return;
+  e.preventDefault();
+
+  // Cursor-centered zoom: capture the image-relative fraction the
+  // cursor was over BEFORE we change zoom, then after the image
+  // resizes, scroll so that fraction sits at the same viewport
+  // coordinate — i.e. the point under the cursor stays put. We
+  // use natural fractions (clamped to [0, 1]) rather than the
+  // displayed image's local coords because the displayed image
+  // shrinks/grows around the same natural pixel under the cursor.
+  // Browser clamps `scrollLeft` / `scrollTop` to the new content
+  // bounds automatically, so a target outside the scroll range
+  // simply scrolls maximally that direction.
+  const fx = (e.clientX - r.left) / Math.max(1, r.width);
+  const fy = (e.clientY - r.top) / Math.max(1, r.height);
+
+  setZoom(ZOOM_LEVELS[next]!);
+
+  const r2 = imgRect();
+  // The box's viewport position doesn't change across the zoom
+  // (only the image inside it resizes), so we reuse the boxRect
+  // captured for the visibility check above.
+  const targetScrollLeft = boxRect.left + fx * r2.width - e.clientX;
+  const targetScrollTop  = boxRect.top  + fy * r2.height - e.clientY;
+  imageBox.scrollLeft = targetScrollLeft;
+  imageBox.scrollTop  = targetScrollTop;
+}, { passive: false });
+
+// ─── Middle-click pan ─────────────────────────────────────────────
+//
+// Hold middle-button and drag to scroll the image-box. The drawing
+// `mousedown` handler on the SVG overlay bails on `button !== 0`,
+// so the event bubbles up to image-box undisturbed. We listen on
+// `imageBox` for the press, then on `window` for moves / release
+// so a drag that wanders off the image keeps panning until the
+// user lets the button up.
+
+let panState: { prevX: number; prevY: number } | null = null;
+// Timestamp of the last middle-mousedown on the image-box. Used by
+// the prompt's paste guard below to recognise X11 primary-selection
+// pastes that the OS dispatched in response to the click and refuse
+// them — `preventDefault` on the various mouse events alone has
+// proven not to catch every Linux Chromium build's paste path.
+let lastImageMiddleDownTime = 0;
+
+imageBox.addEventListener('mousedown', (e) => {
+  if (e.button !== 1) return;
+  lastImageMiddleDownTime = e.timeStamp;
+  // Suppress browser default actions for middle-mousedown:
+  //   - Autoscroll mode (the spinning compass icon Chrome enters
+  //     after a middle-click on a scrollable region).
+  //   - On Linux, the X11 primary-selection paste that fires
+  //     against the focused editable element (the prompt
+  //     textarea) on middle-click regardless of click target.
+  // preventDefault here cancels both. We mirror it on the
+  // overlay's mousedown handler for events that target the SVG
+  // overlay sitting on top of the image.
+  e.preventDefault();
+  panState = { prevX: e.clientX, prevY: e.clientY };
+  // Class on body so the cursor change applies even over `#overlay`,
+  // whose own `cursor: crosshair` rule would otherwise outrank a
+  // style set on `imageBox`.
+  document.body.classList.add('panning');
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!panState) return;
+  const dx = e.clientX - panState.prevX;
+  const dy = e.clientY - panState.prevY;
+  panState.prevX = e.clientX;
+  panState.prevY = e.clientY;
+  imageBox.scrollLeft -= dx;
+  imageBox.scrollTop -= dy;
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (e.button !== 1 || !panState) return;
+  // Mirror the mousedown preventDefault on mouseup too. Some
+  // browsers / build configs fire the paste / autoscroll-toggle on
+  // middle-mouseup independently, so `preventDefault` on mousedown
+  // alone isn't always enough.
+  e.preventDefault();
+  panState = null;
+  document.body.classList.remove('panning');
+});
+
+// `auxclick` is the activation event for non-primary mouse buttons
+// (middle, right) — it's where the click-action default lives in
+// modern Chromium. preventDefaulting it on the image-box catches
+// any middle-click whose mousedown / mouseup defaults somehow
+// slipped through, and also covers paste that some Linux builds
+// dispatch on the click rather than the up.
+imageBox.addEventListener('auxclick', (e) => {
+  if (e.button === 1) e.preventDefault();
+});
+
+// Clear pan state if focus leaves the window mid-drag. Without this,
+// a middle-mouseup that lands outside the window doesn't reach our
+// `mouseup` listener — `panState` stays set and the next mousemove
+// after refocus would scroll the image-box.
+window.addEventListener('blur', () => {
+  if (!panState) return;
+  panState = null;
+  document.body.classList.remove('panning');
+});
+
+updateZoomButtonLabel();
 
 // ─── Initial data load ────────────────────────────────────────────
 
@@ -4057,12 +4543,12 @@ function formatAcceptedKinds(kinds: ('image' | 'text')[]): string {
 }
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then
-// internally calls fitImage. That first fitImage runs before the
-// image has loaded (`naturalWidth`/`naturalHeight` are 0), which
-// is harmless — `previewImg.addEventListener('load', fitImage)`
-// re-runs once the screenshot data URL has been decoded. We do
-// this initial pass anyway so the page isn't flashing an unsized
-// preview between layout and image-load.
+// internally calls fitImage → applyZoom. That first applyZoom runs
+// before the image has loaded (`naturalWidth`/`naturalHeight` are 0),
+// which is harmless — `previewImg.addEventListener('load', applyZoom)`
+// re-runs once the screenshot data URL has been decoded. We do this
+// initial pass anyway so the page isn't flashing an unsized preview
+// between layout and image-load.
 autoGrowPrompt();
 void loadData();
 

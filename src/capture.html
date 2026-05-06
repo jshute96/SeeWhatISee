@@ -971,33 +971,108 @@
     align-items: flex-start;
     gap: 24px;
   }
+  /*
+   * Image-box is the scrollable viewport in non-Fit zoom modes.
+   * `block` (not flex) so the inline-block .image-wrap inside is
+   * sized by its content (image natural*N) and overflow:auto kicks
+   * in cleanly when the wrap is bigger than the box. In Fit mode
+   * the image itself caps at max-width/max-height of the box so no
+   * scrollbars appear. JS sets the box's max-height and the
+   * image's sizing on every applyZoom() / resize.
+   */
   .image-box {
     flex: 1;
     min-width: 0;
-    display: flex;
-    /* Left-justify so a shrunken image sits flush next to the
-     * highlight-controls sidebar instead of drifting to the middle
-     * of its (wider) flex slot. */
-    justify-content: flex-start;
+    overflow: auto;
   }
+  /* `margin: 4px` keeps the wrap inset 4px from the .image-box's
+     edges so the corner-aligned crop grips (drawn centered on each
+     corner — half inside, half outside the image) have a halo of
+     box-content area to paint into without hitting `.image-box`'s
+     `overflow: auto` clipping edge. */
   .image-wrap {
     position: relative;
     display: inline-block;
+    /* `vertical-align: top` kills the baseline descender gap an
+       inline-block normally leaves below itself within its parent's
+       line box. Without this, the gap (~3-4px) was pushing the wrap
+       past .image-box's max-height in Fit mode and producing a
+       phantom vertical scrollbar even when the math added up. */
+    vertical-align: top;
     border: 1px solid #888;
     line-height: 0;
     font-size: 0;
+    margin: 4px;
   }
   .image-box img {
     display: block;
-    /* Cap to the flex slot width (image-box) so the sidebar always
-       has room. max-height is set inline by fitImage() to fill
-       remaining viewport. */
+    /* Default (Fit) sizing — capped to .image-box. Nx modes set
+       explicit width / height inline and clear max-* to allow
+       overflow into the scrollable .image-box. */
     max-width: 100%;
     width: auto;
     height: auto;
   }
+  /*
+   * Zoom popover menu. Inserted by capture-page.ts inside
+   * `.highlight-controls` and positioned absolutely against it, so
+   * opening the menu doesn't push the image-box right or change
+   * any other layout. JS sets `top` inline to align with the Zoom
+   * button. The .zoom-menu[hidden] override is needed because the
+   * bare `[hidden]` UA rule (`display: none`) loses to the
+   * class-level `display: flex` below on cascade. `z-index` keeps
+   * the popover above the SVG overlay it overlaps with.
+   */
   .highlight-controls {
+    position: relative;
     flex: 0 0 auto;
+  }
+  .zoom-menu {
+    position: absolute;
+    left: calc(100% + 6px);
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    padding: 4px 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+  }
+  .zoom-menu[hidden] {
+    display: none;
+  }
+  .zoom-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px 5px 8px;
+    background: transparent;
+    border: 0;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    white-space: nowrap;
+  }
+  .zoom-menu-item:hover { background: #e9eef2; }
+  .zoom-menu-check {
+    display: inline-block;
+    width: 14px;
+    text-align: center;
+    visibility: hidden;
+  }
+  .zoom-menu-item[aria-checked="true"] .zoom-menu-check {
+    visibility: visible;
+  }
+  /* Active middle-click pan: force the grabbing cursor everywhere
+     (including over the SVG overlay, which has its own
+     `cursor: crosshair` rule that would otherwise outrank an inline
+     style on `.image-box`). */
+  body.panning,
+  body.panning #overlay {
+    cursor: grabbing !important;
   }
   /* "Edit image" header above the tool palette. Matches the
    * "Prompt:" label's bold + 14px styling so the two field titles
@@ -1049,11 +1124,11 @@
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
   /* Visual gaps between the four palette clusters: tool selectors
-   * → Shrink → Undo/Clear → Copy/Download image. Shrink lives in
-   * its own cluster because it operates on the image content (a
-   * pixel-level transform), while Undo/Clear are edit-stack
-   * actions. Larger than the regular 6px row gap so each group
-   * reads as its own cluster. */
+   * → Shrink + Zoom → Undo/Clear → Copy/Download image. Shrink and
+   * Zoom share a cluster: both act on the picture (Shrink rewrites
+   * pixels, Zoom scales the display), distinct from Undo/Clear
+   * (edit-stack actions). Larger than the regular 6px row gap so
+   * each group reads as its own cluster. */
   .highlight-buttons #shrink,
   .highlight-buttons #undo,
   .highlight-buttons #copy-image-btn {
@@ -1594,6 +1669,21 @@
         -->
         <button id="shrink" class="btn" disabled
                 title="Shrink the last Box/Redact, or the crop region, to fit its content">Shrink</button>
+        <!--
+          Zoom controls how the preview is displayed; it never
+          touches what gets saved. Modes: Fit (default — image
+          shrinks to remaining viewport), 1× / 2× / 4× / 8× (image
+          renders at natural*N pixels with scrollbars on the
+          .image-box when bigger than the viewport). Mouse-wheel
+          over the image cycles modes; middle-click drag pans.
+          Clicking opens a popover menu with the current mode
+          checked; the menu is built lazily inside `.highlight-controls`
+          (absolute-positioned with `left: calc(100% + 6px)`, inline
+          `top` set from `zoomBtn.offsetTop`).
+        -->
+        <button id="zoom" class="btn" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                title="Set image zoom">Zoom: Fit</button>
         <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
         <button id="clear" class="btn" disabled

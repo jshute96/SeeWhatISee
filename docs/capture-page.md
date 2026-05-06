@@ -855,19 +855,96 @@ re-activation is required:
   page flow, `chrome.tabs.update` rejects; we log and proceed
   with the close.
 
-## Image fit-to-viewport
+## Image fit-to-viewport + Zoom
 
-- The preview image must not produce a vertical scrollbar.
-- CSS caps it at `max-width: 100%` of its `.image-box` flex slot
-  (the flex row reserves the tool-palette column on the left, so
-  the slot is the body width minus the palette's natural width).
-- A `fitImage()` function sets `max-height` inline based on the
-  remaining viewport height (`window.innerHeight - top - reserved`).
-- It re-runs on window resize, after the prompt textarea grows
-  (which pushes the image's top down), and after the image loads.
-- Resetting `max-height` before measuring is safe: the image's
-  top is determined by elements above it, which don't depend on
-  the image's own size.
+- Zoom modes: Fit (default), 1×, 2×, 4×, 8×.
+- Switched via:
+  - The **Zoom** button (popover menu with the current mode checked).
+  - Mouse wheel over the visible image (ctrl-less; ctrl-wheel is
+    left to the browser's page-zoom).
+  - Wheel ticks at the min/max zoom fall through to native
+    `.image-box` scroll instead of being swallowed.
+
+### Modes
+
+- **Fit** — image shrinks to the remaining viewport. JS computes
+  explicit pixel `width / height` from the image's natural aspect
+  ratio and the available content area so no scrollbars appear.
+  - `max-width: 100%` doesn't constrain the image because
+    `.image-wrap` is `display: inline-block`, making the wrap's
+    containing block circular (wrap sizes to image, image sizes
+    to wrap).
+  - `.image-wrap` has `vertical-align: top` to suppress the
+    inline-block descender gap. Without it, the wrap takes ~3-4
+    px more than its content height in `.image-box`'s line box,
+    pushing past the JS-set `max-height` and producing a phantom
+    vertical scrollbar even when the math fits exactly.
+- **1× / 2× / 4× / 8×** — image renders at `naturalSize × N`
+  pixels with `max-width / max-height: none`. `.image-box` has
+  `overflow: auto` so it scrolls when the wrap overflows.
+
+### `applyZoom()`
+
+- Single entry point that writes the box's `max-height` and the
+  image's `width / height / max-*` for the current `zoomMode`.
+- Re-runs on window resize, after the prompt textarea grows
+  (image's top moves down), and on image load.
+- Available content height (for the image itself) is the box
+  height minus `2 * WRAP_MARGIN` (4 px each side) and the wrap's
+  borders (1 px each side). See `availableImageHeight()`.
+- Does not clear `imageBox.style.maxHeight` before measuring:
+  doing so briefly removes the overflow constraint, snaps
+  `scrollTop / scrollLeft` to 0, and would lose the user's pan
+  position on every resize / re-fit.
+
+### Wheel + middle-click pan
+
+- Wheel up zooms in, wheel down zooms out, by stepping through
+  `['fit', 1, 2, 4, 8]`. Skips the fit ↔ 1× hop when fit-mode
+  already renders at native pixels (small image / large viewport)
+  so two ticks don't produce one visible change.
+- The wheel handler only fires when the cursor is *inside the
+  image* (clientX/Y vs `imgRect`); a wheel over the box's empty
+  surround or scrollbars falls through to the browser's normal
+  scroll behavior.
+- Cursor-centered zoom: the image-fraction the cursor was over
+  pre-zoom is preserved post-zoom by setting
+  `imageBox.scrollLeft / scrollTop` to `boxRect.left + fx *
+  newWidth - clientX` (and similarly for Y). The browser clamps
+  to the new content bounds, so a cursor near an edge scrolls
+  maximally in that direction without spilling.
+- `Ctrl+wheel` is left untouched — that's the browser's page zoom.
+- Middle-button drag scrolls `.image-box` (`scrollLeft / scrollTop`
+  ± mouse delta). The drawing `mousedown` on `#overlay` bails on
+  `button !== 0`, so middle clicks bubble up to the box untouched.
+
+### Zoom menu
+
+- Inserted into `.highlight-controls` with `position: absolute;
+  left: calc(100% + 6px)`. Floats to the right of the column over
+  the gap to `.image-box` (and a few px into the image's left
+  edge). Choosing this over a flex-sibling layout because making
+  the menu a flex item would push the image right when the menu
+  opened — visible movement of the captured content the user
+  is editing.
+- Inline `top` is set to `zoomBtn.offsetTop` on each open so a
+  prompt-grow that pushed the button down doesn't leave the menu
+  misaligned.
+- Toggle is owned entirely by the Zoom button click handler
+  (open if hidden, close if shown). Escape and clicking a menu
+  item also close it.
+
+### Stroke scaling
+
+- Red Box / Line / Arrow strokes are rendered at `3 × (display /
+  natural)` so they track the visual size of the image: thinner in
+  Fit (typical), 3 px at 1×, proportionally thicker at 2× / 4× /
+  8×. Crop dashed border and corner grips stay at 1 px (UI
+  affordances, not picture content).
+- The bake (`renderHighlightedPng`) is independent — it always
+  renders strokes at `3 × (natural / displayAtBakeTime)` natural
+  pixels so the saved PNG matches what was on screen at the moment
+  of save. Zoom never changes the saved bytes.
 
 ## Chrome-platform gotchas
 
