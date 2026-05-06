@@ -32,8 +32,10 @@ export const geminiProvider: AskProvider = {
     // two buttons ourselves; the runtime patches `input.click()` to
     // a no-op for the duration so the OS picker doesn't surface.
     preFileInputClicks: [
-      'button[aria-label="Open upload file menu"]',
-      'button[aria-label^="Upload files"]',
+      // Matches different versions of the labels we've seen.
+      'button[aria-label="Open upload file menu"], button[aria-label^="Open input area menu"], button[aria-label="Upload & tools"], button[aria-label="Upload and tools"]',
+      // Matches old "Upload files" (starts with) and new alternative "Files" labels (exact).
+      'button[aria-label="Files"], button[aria-label^="Upload files"]',
     ],
     fileInput: [
       // The dynamically-created input has `name="Filedata"`; the
