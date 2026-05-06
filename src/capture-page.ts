@@ -2637,23 +2637,41 @@ async function loadData(): Promise<void> {
 // under a user gesture — no offscreen helper needed (unlike the SW's
 // Copy-last-… menu entries).
 
+// Hold `.pressed` on `btn` for the lifetime of `fn`. The Copy paths
+// run async (SW round-trip → download-complete → writeText) so a
+// fast user can alt-tab and paste before the clipboard has the new
+// value — getting the *previous* clipboard contents and assuming
+// our copy failed. The visible depressed state across the whole
+// operation makes "wait until the button pops back up" obvious and
+// eliminates that race in practice. `finally` ensures the class is
+// removed even if the SW or download throws.
+async function withPressed(btn: HTMLButtonElement, fn: () => Promise<void>): Promise<void> {
+  btn.classList.add('pressed');
+  try {
+    await fn();
+  } finally {
+    btn.classList.remove('pressed');
+  }
+}
+
 // Page-card Copy URL button — copies the captured URL string itself
 // (not a filename or a download path), separate from the per-artifact
 // Copy buttons which materialize a file and copy its absolute path.
 copyUrlBtn.addEventListener('click', () => {
   if (!capturedUrl) return;
-  void navigator.clipboard.writeText(capturedUrl);
+  void withPressed(copyUrlBtn, () => navigator.clipboard.writeText(capturedUrl));
 });
 
 copyScreenshotBtn.addEventListener('click', () => {
-  void copyArtifactPath('screenshot');
+  void withPressed(copyScreenshotBtn, () => copyArtifactPath('screenshot'));
 });
 copyHtmlBtn.addEventListener('click', () => {
-  void copyArtifactPath('html');
+  void withPressed(copyHtmlBtn, () => copyArtifactPath('html'));
 });
 for (const format of SELECTION_FORMATS) {
-  selectionRows[format].copyBtn.addEventListener('click', () => {
-    void copyArtifactPath(SELECTION_WIRE_KIND[format]);
+  const btn = selectionRows[format].copyBtn;
+  btn.addEventListener('click', () => {
+    void withPressed(btn, () => copyArtifactPath(SELECTION_WIRE_KIND[format]));
   });
 }
 
