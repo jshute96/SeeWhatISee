@@ -286,14 +286,16 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseId: 'save-screenshot',
     baseTitle: 'Save screenshot',
     baseTooltipFragment: 'Save screenshot',
-    group: 'primary',
+    group: 'more',
+    showInDelayedSubmenu: true,
     run: (delayMs) => captureVisible(delayMs),
   },
   {
     baseId: 'save-page-contents',
     baseTitle: 'Save HTML contents',
     baseTooltipFragment: 'Save HTML contents',
-    group: 'primary',
+    group: 'more',
+    showInDelayedSubmenu: true,
     run: (delayMs) => savePageContents(delayMs),
   },
   {

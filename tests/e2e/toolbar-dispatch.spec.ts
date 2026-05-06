@@ -23,8 +23,35 @@ import { SCREENSHOT_PATTERN, seedSelection } from './details-helpers';
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
 // Several tests here fire a capture via handleActionClick; without
 // a small cushion the suite occasionally trips the quota.
-test.beforeEach(async () => {
+test.beforeEach(async ({ getServiceWorker }) => {
   await new Promise((r) => setTimeout(r, 600));
+  const sw = await getServiceWorker();
+  await sw.evaluate(() => {
+    interface Stubbed {
+      __origGetAll?: typeof chrome.commands.getAll;
+    }
+    const g = self as unknown as Stubbed;
+    if (!g.__origGetAll) g.__origGetAll = chrome.commands.getAll.bind(chrome.commands);
+    chrome.commands.getAll = (async () => []) as typeof chrome.commands.getAll;
+  });
+});
+
+test.afterEach(async ({ getServiceWorker }) => {
+  const sw = await getServiceWorker();
+  await sw.evaluate(async () => {
+    interface Stubbed {
+      __origGetAll?: typeof chrome.commands.getAll;
+    }
+    const g = self as unknown as Stubbed;
+    if (g.__origGetAll) {
+      chrome.commands.getAll = g.__origGetAll;
+      g.__origGetAll = undefined;
+    }
+    const ctx = self as unknown as {
+      SeeWhatISee: { refreshMenusIfHotkeysChanged: () => Promise<void> };
+    };
+    await ctx.SeeWhatISee.refreshMenusIfHotkeysChanged();
+  });
 });
 
 // ─── captureBothToMemory + handleActionClick dispatch ─────────────

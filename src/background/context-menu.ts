@@ -22,6 +22,12 @@ import {
   type CaptureAction,
 } from './capture-actions.js';
 import {
+  getCaptureDetailsDefaults,
+  isScreenshotOrSelectionDefaults,
+  type CaptureDetailsDefaults,
+} from './capture-page-defaults.js';
+import {
+  findCaptureAction,
   getDefaultActionTooltip,
   getDefaultDblWithoutSelectionId,
   getDefaultWithoutSelectionId,
@@ -30,6 +36,7 @@ import {
 
 export const DELAYED_PARENT_ID = 'delayed-capture-parent';
 export const MORE_PARENT_ID = 'more-parent';
+export const SHORTCUT_SUFFIX = '-shortcut';
 
 // Id used by the "Clear log history" entry under the More submenu.
 export const CLEAR_LOG_MENU_ID = 'clear-log';
@@ -169,11 +176,32 @@ let cachedShortcutFingerprint: string | undefined;
  * with id …" so the same helper works during first install (when
  * some rows don't exist yet) and at runtime.
  */
+async function updateShortcutMenu(
+  menuId: string,
+  actionId: string,
+  defaultId: string,
+  dblId: string,
+  shortcuts: Map<string, string>,
+  defaults: CaptureDetailsDefaults,
+) {
+  const action = findCaptureAction(actionId);
+  if (action) {
+    try {
+      await chrome.contextMenus.update(menuId, {
+        title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+      });
+    } catch {
+      /* menu not installed yet */
+    }
+  }
+}
+
 export async function refreshMenusAndTooltip(
   preloadedCommands?: chrome.commands.Command[],
 ): Promise<void> {
   const defaultId = await getDefaultWithoutSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
+  const defaults = await getCaptureDetailsDefaults();
   const commands = preloadedCommands ?? (await chrome.commands.getAll());
   const shortcuts = commandsToShortcutMap(commands);
   cachedShortcutFingerprint = shortcutFingerprint(commands);
@@ -185,12 +213,24 @@ export async function refreshMenusAndTooltip(
     CAPTURE_ACTIONS.map(async (a) => {
       try {
         await chrome.contextMenus.update(a.id, {
-          title: actionMenuTitle(a, defaultId, dblId, shortcuts),
+          title: actionMenuTitle(a, defaultId, dblId, shortcuts, defaults),
         });
       } catch {
         /* menu not installed yet */
       }
     }),
+  );
+
+  // Update shortcut items on the main menu
+  const shortcutsToUpdate = [
+    { menuId: `capture${SHORTCUT_SUFFIX}`, actionId: 'capture' },
+    { menuId: `save-defaults${SHORTCUT_SUFFIX}`, actionId: 'save-defaults' },
+    { menuId: `capture-2s${SHORTCUT_SUFFIX}`, actionId: 'capture-2s' },
+  ];
+  await Promise.all(
+    shortcutsToUpdate.map((item) =>
+      updateShortcutMenu(item.menuId, item.actionId, defaultId, dblId, shortcuts, defaults),
+    ),
   );
 
   // Tooltip's `Click:` line also folds in the `_execute_action`
@@ -257,13 +297,23 @@ function buildMenuHint(
   return `${HINT_SEPARATOR}(${parts.join(', ')})`;
 }
 
+function delayedTitle(baseTitle: string, delaySec: number): string {
+  if (delaySec === 0) return baseTitle;
+  return `${baseTitle} in ${delaySec}s`;
+}
+
 function actionMenuTitle(
   action: CaptureAction,
   clickId: string,
   doubleClickId: string,
   shortcuts: Map<string, string>,
+  defaults: CaptureDetailsDefaults,
 ): string {
-  return action.title + buildMenuHint(action, clickId, doubleClickId, shortcuts);
+  let title = action.title;
+  if (action.baseId === 'save-defaults' && isScreenshotOrSelectionDefaults(defaults)) {
+    title = delayedTitle('Save screenshot or selection', action.delaySec);
+  }
+  return title + buildMenuHint(action, clickId, doubleClickId, shortcuts);
 }
 
 /**
@@ -598,6 +648,7 @@ export async function installContextMenu(): Promise<void> {
   // Click / Double-click defaults only.
   const defaultId = await getDefaultWithoutSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
+  const defaults = await getCaptureDetailsDefaults();
   const commands = await chrome.commands.getAll();
   const shortcuts = commandsToShortcutMap(commands);
   // Seed the fingerprint so the first post-install call to
@@ -606,20 +657,29 @@ export async function installContextMenu(): Promise<void> {
   // re-renders if a shortcut has actually changed since now.
   cachedShortcutFingerprint = shortcutFingerprint(commands);
 
-  // ── Top-level entries (delay 0, primary group only) ────────
-  // The three undelayed primary capture actions, one per base action.
-  // Titles carry a right-side (Click) / (Double-click) / hotkey hint
-  // when they match the current defaults or have a bound command —
-  // see actionMenuTitle. More-group base actions (save-defaults,
-  // save-url, save-all) live in the More submenu and don't get a
-  // top-level slot.
-  for (const action of captureActionsWithDelay(0, 'primary')) {
-    chrome.contextMenus.create({
-      id: action.id,
-      title: actionMenuTitle(action, defaultId, dblId, shortcuts),
-      contexts: ['action'],
-    });
-  }
+  // ── Top-level entries (shortcuts on main menu) ─────────────
+  // Manually create the three top-level action entries with -shortcut suffix.
+  // They represent primary/common actions but mapped to unique IDs to avoid duplicates.
+  const mainCaptureAction = findCaptureAction('capture')!;
+  chrome.contextMenus.create({
+    id: `capture${SHORTCUT_SUFFIX}`,
+    title: actionMenuTitle(mainCaptureAction, defaultId, dblId, shortcuts, defaults),
+    contexts: ['action'],
+  });
+
+  const mainSaveDefaultsAction = findCaptureAction('save-defaults')!;
+  chrome.contextMenus.create({
+    id: `save-defaults${SHORTCUT_SUFFIX}`,
+    title: actionMenuTitle(mainSaveDefaultsAction, defaultId, dblId, shortcuts, defaults),
+    contexts: ['action'],
+  });
+
+  const mainCapture2sAction = findCaptureAction('capture-2s')!;
+  chrome.contextMenus.create({
+    id: `capture-2s${SHORTCUT_SUFFIX}`,
+    title: actionMenuTitle(mainCapture2sAction, defaultId, dblId, shortcuts, defaults),
+    contexts: ['action'],
+  });
 
   // ── "Set this tab as Ask button target" entry ─────────────
   // Title and enabled state are kept in sync by
@@ -662,7 +722,7 @@ export async function installContextMenu(): Promise<void> {
       chrome.contextMenus.create({
         id: action.id,
         parentId: DELAYED_PARENT_ID,
-        title: actionMenuTitle(action, defaultId, dblId, shortcuts),
+        title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
         contexts: ['action'],
       });
     }
@@ -681,6 +741,17 @@ export async function installContextMenu(): Promise<void> {
     title: 'More',
     contexts: ['action'],
   });
+
+  // Manually insert Capture... at the top of More menu using the clean ID 'capture'.
+  // The main menu uses 'capture-shortcut', so 'capture' is free to be used here.
+  const moreCaptureAction = findCaptureAction('capture')!;
+  chrome.contextMenus.create({
+    id: moreCaptureAction.id,
+    parentId: MORE_PARENT_ID,
+    title: actionMenuTitle(moreCaptureAction, defaultId, dblId, shortcuts, defaults),
+    contexts: ['action'],
+  });
+
   // More-group capture actions (delay 0 only — delayed variants are
   // reachable via the "Capture with delay" submenu when their base
   // sets `showInDelayedSubmenu`). They use the bare CAPTURE_ACTIONS
@@ -689,15 +760,13 @@ export async function installContextMenu(): Promise<void> {
   // without a special case, and `refreshMenusAndTooltip` updates
   // their titles in the same single sweep.
   //
-  // Two separators split the More-group entries into three groups:
+  // Separators split the More-group entries:
   //   1. `save-defaults` (the everyday Save-defaults shortcut), then
-  //   2. the non-selection capture-page shortcuts (`save-url`,
-  //      `save-all`), then
+  //   2. the non-selection capture-page shortcuts (screenshot, html, url, all), then
   //   3. the `save-selection-*` format shortcuts.
-  // Group (1) is the user's most likely Save-without-dialog pick, so
-  // it sits at the top with its own divider. The (2)/(3) split keeps
-  // the always-applicable shortcuts visually distinct from the ones
-  // that only work when text is selected.
+  // Group (1) sits at the top with its own divider (after the manually added Capture...).
+  // The (2)/(3) split keeps the always-applicable shortcuts visually distinct from
+  // the ones that only work when text is selected.
   let moreDefaultsSeparatorInserted = false;
   let moreSelectionSeparatorInserted = false;
   for (const action of captureActionsWithDelay(0, 'more')) {
@@ -712,7 +781,7 @@ export async function installContextMenu(): Promise<void> {
     chrome.contextMenus.create({
       id: action.id,
       parentId: MORE_PARENT_ID,
-      title: actionMenuTitle(action, defaultId, dblId, shortcuts),
+      title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
       contexts: ['action'],
     });
   }

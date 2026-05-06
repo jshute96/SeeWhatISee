@@ -120,3 +120,15 @@ export async function setCaptureDetailsDefaults(value: CaptureDetailsDefaults): 
   const clean = normalize(value);
   await chrome.storage.local.set({ [CAPTURE_DETAILS_DEFAULTS_KEY]: clean });
 }
+
+export function isScreenshotOrSelectionDefaults(defaults: CaptureDetailsDefaults): boolean {
+  const wos = defaults.withoutSelection;
+  const ws = defaults.withSelection;
+  return (
+    wos.screenshot &&
+    !wos.html &&
+    !ws.screenshot &&
+    !ws.html &&
+    ws.selection
+  );
+}

@@ -19,13 +19,16 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
   - If there's text selected on the page, double-click instead saves the selected text immediately.
 - Right-click the icon for more options:
   - **Capture…** Opens the *Capture* page (see below).
-  - **Save screenshot.**
-  - **Save HTML contents** of the page.
+  - **Save default items** — Saves the default items the *Capture* page saves, according to current options (without opening the dialog).
+  - **Capture… in 2s** — Fast 2-second delayed capture shortcut.
   - **Set this tab as Ask button target** — when you're on Claude / Gemini / ChatGPT (including Claude Code on `claude.ai/code`), pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unset this tab as Ask button target** while the current tab is the pin.
-  - **Capture with delay ▸** — Capture the page after a delay, so
+  - **Capture with delay ▸** — Capture the page after a delay (2s or 5s), so
     you can activate hover states, menus, etc.
   - **More ▸**
-    - **Save default items** — Saves the default items the *Capture* page saves, according to current options.
+    - **Capture…** — Same as the top-level Capture... entry.
+    - **Save default items** — Same as the top-level Save default items entry.
+    - **Save screenshot**
+    - **Save HTML contents** of the page.
     - **Save URL** — Record just the current tab's URL, without a screenshot.
     - **Save everything** — Saves the screenshot, the HTML, and the current selection (if any).
     - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
