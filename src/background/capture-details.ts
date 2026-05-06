@@ -1123,15 +1123,14 @@ export function installDetailsMessageHandlers(): void {
         // `capturePageDefaults` is preserved for the toolbar /
         // hotkey path.
         //
-        // Gated on `imageUrl` (the user-facing field that names the
-        // flow) rather than `htmlUnavailable` (an implementation
-        // detail of how it's currently realized). A future flow that
-        // sets `imageUrl` without skipping HTML — or vice versa —
-        // would otherwise drift coherence between the wire defaults
-        // and the page's row-level handling.
-        const isImageFlow = session.capture.imageUrl !== undefined;
+        // Gated on the explicit `useImageFlowDefaults` flag rather
+        // than on `imageUrl` (which the right-click flow sets but the
+        // upload flow does not — upload has no source URL to record)
+        // or `htmlUnavailable` (an implementation detail of how the
+        // flow is currently realized). The flag stays decoupled from
+        // either field so future flows can mix and match.
         const userDefaults = await getCaptureDetailsDefaults();
-        const capturePageDefaults = isImageFlow
+        const capturePageDefaults = session.capture.useImageFlowDefaults
           ? imageFlowDefaults(userDefaults)
           : userDefaults;
         sendResponse({
@@ -1161,19 +1160,30 @@ export function installDetailsMessageHandlers(): void {
           const now = new Date();
           const ts = compactTimestamp(now);
           const ext = imageExtensionFor(mimeType, filename);
-          
+          // `file:<filename>` is opaque-by-design: not a valid `file://`
+          // URL (we can't fabricate the user's on-disk path) but
+          // parseable downstream as "the source was a local file
+          // named X." `imageUrl` is left unset because there's no
+          // separate source URL to record — the file is the source.
           const capture: InMemoryCapture = {
             screenshotDataUrl: dataUrl,
             html: '',
             url: `file:${filename}`,
-            title: filename,
+            // Generic title — the filename is already visible in the
+            // URL row, so use a descriptive label instead of
+            // repeating it.
+            title: 'Uploaded image',
             timestamp: now.toISOString(),
             screenshotFilename: `screenshot-${ts}.${ext}`,
             screenshotOriginalExt: ext,
             contentsFilename: `contents-${ts}.html`,
             htmlUnavailable: true,
+            // Pick the imageFlow defaults branch — without this the
+            // user's `withoutSelection.screenshot=false` pref would
+            // silently leave the upload's screenshot unchecked and
+            // Capture would write nothing.
+            useImageFlowDefaults: true,
           };
-          
           const session: DetailsSession = {
             capture,
             bases: {
@@ -1181,7 +1191,6 @@ export function installDetailsMessageHandlers(): void {
               contents: capture.contentsFilename,
             }
           };
-          
           await chrome.storage.session.set({ [detailsStorageKey(tabId)]: session });
           sendResponse({ ok: true });
         } catch (err) {

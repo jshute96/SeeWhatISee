@@ -118,8 +118,8 @@ test('upload: PNG upload without edits saves as PNG with file: URL', async ({
   // Verify transition to normal capture page
   await expect(page.locator('#upload-landing')).toBeHidden();
   await expect(page.locator('#preview')).toBeVisible();
-  await expect(page.locator('#captured-title')).toHaveText('red-pixel.png');
-  
+  await expect(page.locator('#captured-title')).toHaveText('Uploaded image');
+
   // HTML Save should be disabled (unavailable)
   await expect(page.locator('#cap-html')).toBeDisabled();
   await expect(page.locator('#cap-html')).not.toBeChecked();
@@ -134,7 +134,10 @@ test('upload: PNG upload without edits saves as PNG with file: URL', async ({
   const record = await readLatestRecord(sw);
   expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
   expect(record.url).toBe('file:red-pixel.png');
-  expect(record.title).toBe('red-pixel.png');
+  // No `imageUrl` on upload records — the file is the source, no
+  // separate source URL to point at.
+  expect(record.imageUrl).toBeUndefined();
+  expect(record.title).toBe('Uploaded image');
   expect(record.contents).toBeUndefined();
 
   // File should exist
@@ -158,7 +161,7 @@ test('upload: JPG upload without edits saves as JPG with file: URL', async ({
   // Verify transition
   await expect(page.locator('#upload-landing')).toBeHidden();
   await expect(page.locator('#preview')).toBeVisible();
-  await expect(page.locator('#captured-title')).toHaveText('red-pixel.jpg');
+  await expect(page.locator('#captured-title')).toHaveText('Uploaded image');
 
   // Click Capture
   await Promise.all([
@@ -170,7 +173,8 @@ test('upload: JPG upload without edits saves as JPG with file: URL', async ({
   const record = await readLatestRecord(sw);
   expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.jpg$/);
   expect(record.url).toBe('file:red-pixel.jpg');
-  expect(record.title).toBe('red-pixel.jpg');
+  expect(record.imageUrl).toBeUndefined();
+  expect(record.title).toBe('Uploaded image');
   expect(record.contents).toBeUndefined();
 
   // JPG file should exist
@@ -230,7 +234,8 @@ test('upload: JPG upload with edits converts and saves as PNG but retains origin
   expect(record.screenshot?.hasHighlights).toBe(true);
   // original url must stay .jpg
   expect(record.url).toBe('file:red-pixel.jpg');
-  expect(record.title).toBe('red-pixel.jpg');
+  expect(record.imageUrl).toBeUndefined();
+  expect(record.title).toBe('Uploaded image');
   expect(record.contents).toBeUndefined();
 
   // PNG file should exist on disk
