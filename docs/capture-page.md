@@ -691,14 +691,16 @@ If the user has any edits *and* is saving the screenshot:
     the SW's Copy-last-… menu entries).
 - **Pressed-state feedback**: the button gets `.pressed` for the
   whole async lifetime of the click (SW round-trip + download +
-  writeText) and pops back up once done. Without this, a fast user
-  who alt-tabs and pastes immediately sees the previous clipboard
-  contents — reading like our Copy silently failed. The visible
-  depressed state trains "wait until the button pops back up." The
-  `withPressed(btn, fn)` helper wraps every Copy click handler and
-  uses `finally` so the class is removed even if the inner work
-  throws. `.copy-btn.pressed` styling lives in `shared-styles.css`
-  alongside the corresponding rule for `.btn.pressed`.
+  writeText) and pops back up once done.
+  - Without it, a fast user who alt-tabs and pastes immediately
+    sees the previous clipboard contents — reading like our Copy
+    silently failed.
+  - The visible depressed state trains "wait until the button
+    pops back up."
+  - `withPressed(btn, fn)` wraps every Copy click handler and uses
+    `finally` so the class is removed even if the inner work throws.
+  - `.copy-btn.pressed` styling lives in `shared-styles.css`
+    alongside the corresponding rule for `.btn.pressed`.
 - Each click materializes the file on disk via the SW's
   `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
   `ensureSelectionDownloaded` helpers, then puts the file's

@@ -13,7 +13,7 @@
 // the work throws.
 
 import { test, expect } from '../fixtures/extension';
-import { openDetailsFlow } from './details-helpers';
+import { openDetailsFlow, seedSelection } from './details-helpers';
 
 test.beforeEach(async () => {
   // captureVisibleTab is rate-limited (~2/s per window). Each test
@@ -85,7 +85,7 @@ test('copy screenshot button: .pressed class is held during async SW round-trip 
   await openerPage.close();
 });
 
-test('copy button: .pressed is removed even if the async work throws', async ({
+test('copy button: .pressed is held until throw and then removed in finally', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -96,19 +96,63 @@ test('copy button: .pressed is removed even if the async work throws', async ({
     getServiceWorker,
   );
 
-  // Force writeText to reject so the inner fn throws. The `finally`
-  // in `withPressed` should still remove the class.
+  // Force writeText to reject *after a delay* so we can observe
+  // .pressed mid-flight. Without the delay the throw would resolve
+  // in microtasks before Playwright's first poll, and the test
+  // couldn't distinguish "finally removed it" from "it was never
+  // added in the first place".
   await capturePage.evaluate(() => {
     navigator.clipboard.writeText = async () => {
+      await new Promise((r) => setTimeout(r, 400));
       throw new Error('synthetic clipboard failure');
     };
   });
 
   const btn = capturePage.locator('#copy-url-btn');
-  await btn.click();
-  // The synthetic failure resolves quickly — class should clear
-  // back to absent within the default poll window.
   await expect(btn).not.toHaveClass(/\bpressed\b/);
+  await btn.click();
+  // Held during the 400ms throwing-writeText window:
+  await expect(btn).toHaveClass(/\bpressed\b/);
+  // `finally` clears it once the inner work rejects:
+  await expect(btn).not.toHaveClass(/\bpressed\b/, { timeout: 1500 });
+
+  await openerPage.close();
+});
+
+// Each selection-row Copy button is wired up inside a
+// `for (const format of SELECTION_FORMATS)` loop with `withPressed`
+// closing over a per-iteration `const btn`. This guards the closure
+// capture: if a future refactor accidentally hoists `btn` out of the
+// loop body, every row's click would press the same (last) button.
+test('copy selection-html button: per-row .pressed is held during async write', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+  await slowClipboardWrites(capturePage, 400);
+
+  // The Save-selection-as-HTML row is enabled by loadData when the
+  // SW saw a non-empty selection. Tick its Save box so the row is
+  // active, then exercise its Copy button.
+  await capturePage.locator('#cap-selection-html').check();
+
+  const btn = capturePage.locator('#copy-selection-html-name');
+  const otherBtn = capturePage.locator('#copy-screenshot-name');
+  await expect(btn).not.toHaveClass(/pressed/);
+
+  await btn.click();
+  // Only the clicked row's button gets `.pressed` — guards against
+  // the closure-in-loop capture pitfall.
+  await expect(btn).toHaveClass(/\bpressed\b/);
+  await expect(otherBtn).not.toHaveClass(/\bpressed\b/);
+  await expect(btn).not.toHaveClass(/\bpressed\b/, { timeout: 3000 });
 
   await openerPage.close();
 });

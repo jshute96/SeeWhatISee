@@ -30,13 +30,21 @@
   border-color: #2b3a44;
 }
 /* Clicked / pushed look — `:active` fires while the mouse is held
- * down and the `.pressed` class persists for ~140 ms after mouseup
- * so a fast click still registers visibly (page controllers add and
- * auto-remove `.pressed` on every `.btn` click). Inset shadow +
+ * down and the `.pressed` class persists across an async lifetime
+ * (page controllers add and auto-remove `.pressed`). Inset shadow +
  * darker face mirror the tool-btn `.selected` style so every
- * pressed-look on the page shares one visual vocabulary. */
+ * pressed-look on the page shares one visual vocabulary.
+ *
+ * `.copy-btn` shares this rule even though it has no raised shadow at
+ * rest — page controllers hold `.pressed` on a Copy button for the
+ * full async SW round-trip + clipboard write so the user sees it
+ * stay depressed until the value is on the clipboard, eliminating
+ * the "click → alt-tab → paste old value" race by training them to
+ * wait for the button to pop back up. */
 .btn:active:not(:disabled),
-.btn.pressed:not(:disabled) {
+.btn.pressed:not(:disabled),
+.copy-btn:active:not(:disabled),
+.copy-btn.pressed:not(:disabled) {
   background: #cfd6dc;
   border-color: #2b3a44;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -45,20 +53,6 @@
 .btn:disabled {
   opacity: 0.5;
   box-shadow: none;
-}
-
-/* Copy buttons get the same pressed-look as `.btn` (without the raised
- * shadow at rest — they stay subtle). Page controllers add `.pressed`
- * for the duration of the async SW round-trip + clipboard write so the
- * user sees the button stay depressed until the value is on the
- * clipboard — eliminates the "click → alt-tab → paste old value" race
- * by training the user to wait for the button to pop back up. */
-.copy-btn:active:not(:disabled),
-.copy-btn.pressed:not(:disabled) {
-  background: #cfd6dc;
-  border-color: #2b3a44;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-  transform: translateY(1px);
 }
 
 /*
