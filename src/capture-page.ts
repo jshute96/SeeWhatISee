@@ -2416,10 +2416,9 @@ async function loadData(): Promise<void> {
       capturedUrlLink.href = response.url;
     } else {
       // Keep the markup but inert. The CSS `:not([href])` rule strips
-      // the click affordance (cursor + pointer-events), overrides the
-      // URL row's blue back to #222 so the text reads as plain text,
-      // and hides the trailing external-link glyph since there's
-      // nowhere to navigate.
+      // the click affordance (cursor + pointer-events) and overrides
+      // the URL row's blue back to #000 so the text reads as plain
+      // text.
       capturedTitleLink.removeAttribute('href');
       capturedUrlLink.removeAttribute('href');
     }

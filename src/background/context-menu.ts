@@ -69,7 +69,8 @@ export const PIN_ASK_TARGET_MENU_ID = 'pin-ask-target';
 //
 // Chrome auto-groups multi-item page context menus under a submenu
 // labelled with the extension name, so the user sees them as
-// "SeeWhatISee › Capture..." / "SeeWhatISee › Save screenshot".
+// "SeeWhatISee › Capture... (this image)" /
+// "SeeWhatISee › Save screenshot (this image)".
 export const IMAGE_CAPTURE_MENU_ID = 'image-capture';
 export const IMAGE_SAVE_SCREENSHOT_MENU_ID = 'image-save-screenshot';
 
@@ -764,12 +765,12 @@ export async function installContextMenu(): Promise<void> {
   // toolbar's primary entry), then Save screenshot.
   chrome.contextMenus.create({
     id: IMAGE_CAPTURE_MENU_ID,
-    title: 'Capture...',
+    title: 'Capture... (this image)',
     contexts: ['image'],
   });
   chrome.contextMenus.create({
     id: IMAGE_SAVE_SCREENSHOT_MENU_ID,
-    title: 'Save screenshot',
+    title: 'Save screenshot (this image)',
     contexts: ['image'],
   });
 

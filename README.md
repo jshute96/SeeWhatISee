@@ -35,10 +35,11 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
 - **Right-click an image**:
-  - **SeeWhatISee → Capture…** — Opens the *Capture* page using
-    that image as the screenshot. The page selection (e.g. a
-    caption) is also captured.
-  - **SeeWhatISee → Save screenshot** — Capture and save the image directly.
+  - **SeeWhatISee → Capture… (this image)** — Opens the *Capture*
+    page using that image as the screenshot. The page selection
+    (e.g. a caption) is also captured.
+  - **SeeWhatISee → Save screenshot (this image)** — Capture and
+    save the image directly.
 - **Options** — Opens options page, where you can configure default actions
   for click and double-click, default Save choices on the *Capture* page,
   keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT /

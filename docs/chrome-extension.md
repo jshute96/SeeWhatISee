@@ -464,9 +464,10 @@ the Chrome-platform mechanics of building it.
 
 ## Image right-click context menu
 
-Image-context entries (currently Capture… and Save screenshot)
-live in `contexts: ['image']` and surface in the page context
-menu when the user right-clicks any `<img>`-like element.
+Image-context entries (currently `Capture... (this image)` and
+`Save screenshot (this image)`) live in `contexts: ['image']` and
+surface in the page context menu when the user right-clicks any
+`<img>`-like element.
 Distinct from the toolbar `action` menu above — different context
 root, different click info shape (`info.srcUrl` is set), and not
 subject to the 6-item top-level cap (that limit applies only to
@@ -479,8 +480,8 @@ This section covers the Chrome-platform plumbing.
 - **Auto-grouping.** Chrome bundles all top-level page-context
   entries from a single extension under a parent submenu labeled
   with the extension name. We don't create that parent ourselves
-  — registering two siblings produces "SeeWhatISee ▸ Capture... /
-  Save screenshot".
+  — registering two siblings produces "SeeWhatISee ▸ Capture...
+  (this image) / Save screenshot (this image)".
 - **Click info.** `chrome.contextMenus.onClicked` delivers
   `info.srcUrl` (image URL) and `tab` (the page the image lives
   on). The image URL is typically `http(s):`, `data:`, or

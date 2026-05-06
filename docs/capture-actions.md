@@ -341,12 +341,13 @@ submenu was retired in favor of the Options page.
 
 ## Image right-click menu
 
-Image-context entries (currently Capture… and Save screenshot)
-surface in `contexts: ['image']` when the user right-clicks any
+Image-context entries (currently `Capture... (this image)` and
+`Save screenshot (this image)`) surface in `contexts: ['image']`
+when the user right-clicks any
 image on a page; Chrome auto-groups them under a `SeeWhatISee`
 submenu inside the page context menu (no parent created in code).
 
-- **Capture...** routes to
+- **Capture... (this image)** routes to
   `startCaptureWithDetailsFromImage(tab, info.srcUrl)`. Builds an
   `InMemoryCapture` whose `screenshotDataUrl` is the right-clicked
   image's bytes (instead of `captureVisibleTab`), skips the page
@@ -372,7 +373,7 @@ submenu inside the page context menu (no parent created in code).
   - Highlights / redactions / crop flags still surface on the
     saved record's `screenshot` artifact the same way they do on
     the toolbar path.
-- **Save screenshot** routes to
+- **Save screenshot (this image)** routes to
   `captureImageAsScreenshot(tab, info.srcUrl)` — writes the image
   bytes directly under `screenshot-<ts>.<ext>`, records
   `screenshot` + `imageUrl` in `log.json`. No Capture page

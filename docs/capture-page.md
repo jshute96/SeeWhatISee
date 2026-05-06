@@ -113,13 +113,13 @@ referenced from this doc live in
     selection format) so the displayed bytes track the live
     `captured` body. The Selection pill also updates whenever the
     user picks a different format radio.
-- URL row: monospace blue link with a trailing external-link glyph,
-  followed inline by a 22px Copy URL button matching the per-row
-  `.copy-btn` chrome elsewhere on the page.
+- URL row: monospace blue link, followed inline by a 22px Copy URL
+  button matching the per-row `.copy-btn` chrome elsewhere on the
+  page.
 - When the captured URL isn't linkable (empty, or a non-http(s)
   scheme like `chrome://` / `file://` / `data:`) both rows lose
   their `href` and render as plain black text; the URL row's blue
-  is overridden and the trailing external-link glyph is hidden.
+  is overridden.
   Copy URL stays enabled whenever the URL string is non-empty (so
   you can copy `chrome://...` to the clipboard); it follows the
   `.copy-btn:disabled { display: none }` rule and vanishes when
