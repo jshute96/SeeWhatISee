@@ -50,6 +50,12 @@ export const SHORTCUT_SUFFIX = '-shortcut';
 export const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the "Snapshots directory" entry under the More submenu.
 export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
+// Id used by the "Upload image to Capture..." entry under the More
+// submenu. Unlike the other More entries (which act on existing
+// captures), this one *creates* a Capture-page session from a local
+// image — opens `capture.html?upload=true` so the page shows an
+// upload-landing card before falling into the normal flow.
+export const UPLOAD_IMAGE_MENU_ID = 'upload-image-to-capture';
 // Ids for the "Copy last …" entries at the top of the More submenu.
 // Their enabled state mirrors whether the most recent capture record
 // carries the matching field (`screenshot` / `contents` / `selection`);
@@ -847,6 +853,12 @@ export async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
   createSeparator(`${MORE_PARENT_ID}-sep-copy`, MORE_PARENT_ID);
+  chrome.contextMenus.create({
+    id: UPLOAD_IMAGE_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Upload image to Capture...',
+    contexts: ['action'],
+  });
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,

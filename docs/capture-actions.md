@@ -344,6 +344,26 @@ an existing one. New work goes into the More submenu.
     immediate `sendMessage` would arrive with no listener
     registered. `clipboardWrite` and `offscreen` permissions are
     declared in the manifest.
+- **Upload image to Capture...** — opens `capture.html?upload=true`
+  in a new adjacent tab so the user can pick a local image and
+  drive it through the Capture-page UI.
+  - The page renders an upload-landing card while
+    `getDetailsData` resolves with no session; selecting an image
+    sends `initializeUploadSession` to the SW.
+  - The SW synthesizes an `InMemoryCapture` with
+    `screenshotDataUrl` from the file's `FileReader` data URL,
+    `url: 'file:<filename>'`, `title: 'Uploaded image'`,
+    `htmlUnavailable: true` (no page HTML exists), and
+    `useImageFlowDefaults: true` so `getDetailsData` picks the
+    image-flow defaults branch (Save Screenshot ✓ regardless of
+    the user's `withoutSelection.screenshot` pref).
+  - `imageUrl` is **not** set — the file *is* the source, already
+    named in `url`; setting `imageUrl` to the same value would
+    duplicate that into `log.json` for no extra information.
+  - On success the page strips `?upload=true` from its URL via
+    `replaceState` and falls into the normal `loadData` happy-path.
+  - See [capture-page.md → Upload mode](capture-page.md#upload-mode)
+    for the page-side wiring.
 - **Snapshots directory** — opens the on-disk capture directory
   in a new tab.
   - URL is `file://<downloads>/SeeWhatISee/`.

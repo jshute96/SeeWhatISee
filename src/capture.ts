@@ -674,6 +674,20 @@ export interface InMemoryCapture {
    * page with a relevant caption selected).
    */
   htmlUnavailable?: boolean;
+  /**
+   * Use `imageFlowDefaults` instead of the user's stored
+   * `capturePageDefaults` when seeding the Capture page checkboxes.
+   * Set by flows where "save the screenshot" is the natural intent
+   * regardless of the user's whole-page preferences — currently the
+   * right-click image flow and the upload-image flow.
+   *
+   * Lives separately from `imageUrl` (the *recorded* source URL of a
+   * right-clicked `<img>`) because the upload flow has no source URL
+   * to record but still wants the same defaults; conversely, a future
+   * flow could record an `imageUrl` without wanting image-flow
+   * defaults.
+   */
+  useImageFlowDefaults?: true;
 }
 
 /**
@@ -881,6 +895,7 @@ export async function captureImageToMemory(
   });
   capture.htmlUnavailable = true;
   capture.imageUrl = srcUrl;
+  capture.useImageFlowDefaults = true;
   if (scrape.selectionError !== undefined) capture.selectionError = scrape.selectionError;
   return capture;
 }
@@ -1568,7 +1583,7 @@ function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
  * produces `20260408-203012-345`.
  */
-function compactTimestamp(d: Date): string {
+export function compactTimestamp(d: Date): string {
   const pad2 = (n: number) => String(n).padStart(2, '0');
   const pad3 = (n: number) => String(n).padStart(3, '0');
   return (

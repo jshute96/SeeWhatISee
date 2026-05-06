@@ -1291,6 +1291,27 @@
   </div>
 
   <!--
+    Upload landing pane. Hidden by default; revealed by capture-page.ts
+    when the URL carries `?upload=true` and `getDetailsData` resolves
+    with no session — i.e. the user came from the More-submenu's
+    "Upload image to Capture..." entry. Selecting an image dispatches
+    `initializeUploadSession` to the SW, which seeds a synthetic
+    `DetailsSession`; the page then strips `?upload=true` from the
+    URL and falls into the normal `loadData` happy-path. Reuses the
+    `.missing-session-error` chrome (same yellow stale-page banner) so
+    the visual hierarchy matches the rest of the early-state pages.
+  -->
+  <div id="upload-landing" class="missing-session-error" hidden>
+    <b>Upload an image to Capture.</b><br>
+    <button type="button" id="upload-choose-btn"
+            style="margin-top: 8px; padding: 6px 14px; font-size: 14px;">
+      Choose image…
+    </button>
+    <span id="upload-error" style="display: none; margin-left: 12px; color: #c00;"></span>
+  </div>
+  <input type="file" id="upload-file-input" accept="image/*" style="display: none;">
+
+  <!--
     Captured-page card. Visual: bordered strip with the page title on
     top (clickable, opens the source page in a new tab), the URL
     underneath in monospace blue, an HTML-size pill on the right side

@@ -52,6 +52,7 @@ import {
   PIN_ASK_TARGET_MENU_ID,
   SHORTCUT_SUFFIX,
   SNAPSHOTS_DIR_MENU_ID,
+  UPLOAD_IMAGE_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
   copyLastSelectionFilename,
@@ -281,6 +282,25 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // channels tell the user something went wrong.
   if (id === CLEAR_LOG_MENU_ID) {
     await runWithErrorReporting(() => clearCaptureLog());
+    return;
+  }
+
+  // Open the Capture page in upload mode adjacent to the active
+  // tab. The page renders an upload-landing card; selecting an
+  // image initializes the per-tab session and falls into the
+  // normal Capture-page flow. Mirrors the image-right-click path's
+  // tab placement (`active.index + 1`, `openerTabId` linked) so
+  // the user lands the new tab next to the page they triggered
+  // from.
+  if (id === UPLOAD_IMAGE_MENU_ID) {
+    await runWithErrorReporting(async () => {
+      const createProps: chrome.tabs.CreateProperties = {
+        url: chrome.runtime.getURL('capture.html?upload=true'),
+      };
+      if (tab?.index !== undefined) createProps.index = tab.index + 1;
+      if (tab?.id !== undefined) createProps.openerTabId = tab.id;
+      await chrome.tabs.create(createProps);
+    });
     return;
   }
 

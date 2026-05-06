@@ -1,9 +1,11 @@
 import {
   captureBothToMemory,
   captureImageToMemory,
+  compactTimestamp,
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  imageExtensionFor,
   noSelectionContentMessage,
   recordDetailedCapture,
   waitForDownloadComplete,
@@ -459,12 +461,29 @@ interface CloseCapturePageMessage {
    */
   action: 'closeCapturePage';
 }
+interface InitializeUploadSessionMessage {
+  /**
+   * Sent by the Capture page when it loads with `?upload=true` and
+   * the user has picked a local image file. The page reads the file
+   * via `FileReader.readAsDataURL` and forwards the data URL +
+   * filename + MIME type here. The handler synthesizes an
+   * `InMemoryCapture` (no html, no selection, `htmlUnavailable: true`,
+   * `useImageFlowDefaults: true`) and stashes the matching
+   * `DetailsSession` under this tab's key, so the page can fall back
+   * into the normal `loadData` happy-path on the next round-trip.
+   */
+  action: 'initializeUploadSession';
+  dataUrl: string;
+  filename: string;
+  mimeType: string;
+}
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
   | UpdateArtifactMessage
   | SaveDetailsMessage
-  | CloseCapturePageMessage;
+  | CloseCapturePageMessage
+  | InitializeUploadSessionMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -1126,15 +1145,14 @@ export function installDetailsMessageHandlers(): void {
         // `capturePageDefaults` is preserved for the toolbar /
         // hotkey path.
         //
-        // Gated on `imageUrl` (the user-facing field that names the
-        // flow) rather than `htmlUnavailable` (an implementation
-        // detail of how it's currently realized). A future flow that
-        // sets `imageUrl` without skipping HTML — or vice versa —
-        // would otherwise drift coherence between the wire defaults
-        // and the page's row-level handling.
-        const isImageFlow = session.capture.imageUrl !== undefined;
+        // Gated on the explicit `useImageFlowDefaults` flag rather
+        // than on `imageUrl` (which the right-click flow sets but the
+        // upload flow does not — upload has no source URL to record)
+        // or `htmlUnavailable` (an implementation detail of how the
+        // flow is currently realized). The flag stays decoupled so
+        // future flows can mix and match.
         const userDefaults = await getCaptureDetailsDefaults();
-        const capturePageDefaults = isImageFlow
+        const capturePageDefaults = session.capture.useImageFlowDefaults
           ? imageFlowDefaults(userDefaults)
           : userDefaults;
         sendResponse({
@@ -1330,6 +1348,55 @@ export function installDetailsMessageHandlers(): void {
           // the error without it disappearing. Don't drop the
           // session either — the user might fix the offending
           // artifact and try again.
+        }
+      })();
+      return true;
+    }
+
+    if (msg.action === 'initializeUploadSession') {
+      void (async () => {
+        try {
+          const { dataUrl, filename, mimeType } = msg;
+          const now = new Date();
+          const ts = compactTimestamp(now);
+          // `imageExtensionFor` falls back to URL-suffix extraction
+          // when the MIME isn't in its known table. Synthesize a
+          // parseable URL out of the filename so the suffix lookup
+          // succeeds for `image/x-icon` etc. that aren't in the table.
+          const ext = imageExtensionFor(
+            mimeType,
+            `file:///${encodeURIComponent(filename)}`,
+          );
+          // `file:<filename>` is opaque-by-design: not a valid
+          // `file://` URL (we can't fabricate the user's on-disk
+          // path) but parseable downstream as "the source was a
+          // local file named X." `imageUrl` is left unset because
+          // there's no separate source URL to record — the file
+          // itself is the source, already named in `url`.
+          const capture: InMemoryCapture = {
+            screenshotDataUrl: dataUrl,
+            html: '',
+            url: `file:${filename}`,
+            // Generic title — the filename is already visible in the
+            // URL row, so use a descriptive label instead of
+            // repeating it.
+            title: 'Uploaded image',
+            timestamp: now.toISOString(),
+            screenshotFilename: `screenshot-${ts}.${ext}`,
+            screenshotOriginalExt: ext,
+            contentsFilename: `contents-${ts}.html`,
+            htmlUnavailable: true,
+            // Pick the imageFlow defaults branch — without this the
+            // user's `withoutSelection.screenshot=false` pref would
+            // silently leave the upload's screenshot unchecked and
+            // Capture would write nothing.
+            useImageFlowDefaults: true,
+          };
+          const session: DetailsSession = { capture };
+          await saveDetailsSession(tabId, session);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : String(err) });
         }
       })();
       return true;

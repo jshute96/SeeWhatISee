@@ -34,6 +34,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     - **Save everything** — Saves the screenshot, the HTML, and the current selection (if any).
     - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
+    - **Upload image to Capture…** — Pick a local image; the *Capture*
+      page opens with it as the screenshot so you can annotate, add
+      a prompt, and save or Ask.
     - **Snapshots directory** — Opens the on-disk capture directory
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
