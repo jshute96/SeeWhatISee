@@ -2195,8 +2195,13 @@ async function copyImageToClipboard(): Promise<void> {
   // base64 decode), not a network request.
   const url = renderHighlightedPng();
   try {
-    const blob = await (await fetch(url)).blob();
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    // Wrap the fetch in a Promise passed directly to ClipboardItem.
+    // navigator.clipboard.write must be called synchronously within the
+    // user gesture (before any await) to prevent the browser from
+    // revoking clipboard access. The browser resolves the promise to
+    // read the blob bytes.
+    const blobPromise = fetch(url).then((r) => r.blob());
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
   } catch (err) {
     console.warn('[SeeWhatISee] copy image to clipboard failed:', err);
   }
