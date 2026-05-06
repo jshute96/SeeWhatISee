@@ -10,7 +10,9 @@
  * call site keeps its visual hierarchy.
  *
  * Intentionally NOT applied to:
- *   - `.copy-btn` (tiny per-row icon buttons; intentionally subtle)
+ *   - `.copy-btn` raised look (tiny per-row icon buttons; intentionally
+ *     subtle when at rest) — but they DO get the pressed-state rule
+ *     below so click feedback persists across the async SW round-trip.
  *   - `.edit-dialog-mode-toggle button` (segmented control with
  *     joined borders; the press translateY would unhinge the joint)
  *   - `.ask-menu` items (popup menu rows, not raised buttons)
@@ -43,6 +45,20 @@
 .btn:disabled {
   opacity: 0.5;
   box-shadow: none;
+}
+
+/* Copy buttons get the same pressed-look as `.btn` (without the raised
+ * shadow at rest — they stay subtle). Page controllers add `.pressed`
+ * for the duration of the async SW round-trip + clipboard write so the
+ * user sees the button stay depressed until the value is on the
+ * clipboard — eliminates the "click → alt-tab → paste old value" race
+ * by training the user to wait for the button to pop back up. */
+.copy-btn:active:not(:disabled),
+.copy-btn.pressed:not(:disabled) {
+  background: #cfd6dc;
+  border-color: #2b3a44;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translateY(1px);
 }
 
 /*
