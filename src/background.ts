@@ -154,8 +154,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
   // Also make sure the icon tooltip reflects the stored default
   // after an update — the old build may have written a title that's
-  // no longer accurate. Run it after the installation finishes.
-  void activeInstall.then(() => refreshActionTooltip());
+  // no longer accurate. Independent of the menu install (only touches
+  // `chrome.action.setTitle`), so kicked off in parallel.
+  void refreshActionTooltip();
 });
 
 // Browser restart: onInstalled doesn't fire, but we still want the
