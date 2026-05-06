@@ -354,6 +354,21 @@ fresh edit.
   algorithm actually contracted at least one edge. Without this
   guard, repeat Box clicks would re-expand by 1 each time —
   pulsing on clean content, growing on noisy content.
+- No-grow invariant (Box mode) — the +1 outward expansion is
+  clamped per-edge so it can never push an edge *past* `startPx`.
+  - Edges that genuinely advanced ≥ 1 px sit ≥ 1 px inside
+    `startPx`, so `tightPx ± 1` is already inside `startPx` and
+    the clamp is a no-op for those edges.
+  - Edges that didn't advance (e.g. they were already 1 px outside
+    content from a previous Shrink) had `tightPx.edge == startPx.edge`,
+    so the raw `tightPx ± 1` would land 1 px past `startPx`. The
+    clamp pulls them back to `startPx`.
+  - Without the clamp, a partial-advance click (e.g. one loose
+    edge advances while the others sit on bg) grew the
+    non-advanced edges every click — observable as Box drift,
+    1-pixel oscillation, or monotonic growth across repeated
+    clicks. With the clamp, a Shrink click is guaranteed to never
+    move any edge outward.
 - Multi-step refinement (all rect modes) — successive clicks can
   legitimately keep shrinking when an earlier click landed on a
   uniform stripe (e.g. a button border). On the next click that

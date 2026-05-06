@@ -1815,14 +1815,29 @@ shrinkBtn.addEventListener('click', () => {
   let finalPx;
   if (isBox) {
     // Compute the box-stroke rect as the tight content rect
-    // expanded by 1 pixel on every side, clamped to the image so
-    // a content rect at the image edge doesn't get pushed off the
-    // canvas. Pulling the clamped origin into locals first makes
-    // the `right - left = width` shape obvious.
-    const fx = Math.max(0, tightPx.x - 1);
-    const fy = Math.max(0, tightPx.y - 1);
-    const fr = Math.min(natW, tightPx.x + tightPx.w + 1);
-    const fb = Math.min(natH, tightPx.y + tightPx.h + 1);
+    // expanded by 1 pixel on every side, clamped *both* to the
+    // image bounds AND to startPx. The startPx clamp enforces the
+    // hard invariant that Shrink must never grow the box on any
+    // edge. `shrinkRect` works in integer pixels and either holds
+    // an edge fixed (advance = 0) or moves it inward by ≥ 1, so
+    // the only case the clamp catches is the held-fixed one:
+    // there `tightPx.edge == startPx.edge`, and the raw
+    // `tightPx ± 1` would land 1 px past startPx — i.e. grow it.
+    // Clamping to startPx pulls those held edges back. Without
+    // this, a partial advance (e.g. only the right edge had slack
+    // because top/bot/left already sat 1 px outside content from a
+    // previous Shrink) grew the non-advanced edges every click —
+    // the user saw this as the Box drifting / getting bigger /
+    // oscillating.
+    // Edges of tightPx that genuinely advanced ≥ 1 px sit ≥ 1 px
+    // inside startPx, so `tightPx - 1` is already ≤ startPx and
+    // the clamp is a no-op for those edges.
+    const sxr = startPx.x + startPx.w;
+    const syb = startPx.y + startPx.h;
+    const fx = Math.max(startPx.x, Math.max(0, tightPx.x - 1));
+    const fy = Math.max(startPx.y, Math.max(0, tightPx.y - 1));
+    const fr = Math.min(sxr, Math.min(natW, tightPx.x + tightPx.w + 1));
+    const fb = Math.min(syb, Math.min(natH, tightPx.y + tightPx.h + 1));
     finalPx = { x: fx, y: fy, w: fr - fx, h: fb - fy };
   } else {
     finalPx = tightPx;
@@ -4572,5 +4587,28 @@ void loadData();
       if (e.kind === kind) return { x: e.x, y: e.y, w: e.w, h: e.h };
     }
     return null;
+  },
+  // Test-only setter that overwrites the most recent rect-shaped
+  // edit's geometry. Used by the "Shrink never grows" regression
+  // test to construct a precise partial-advance starting state
+  // (e.g. tight on three edges, loose on one) that's hard to
+  // reach via mouse drags alone. No production caller exists.
+  setLastRectBounds: (
+    kind: 'rect' | 'redact' | 'crop',
+    bounds: { x: number; y: number; w: number; h: number },
+  ) => {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const e = edits[i]!;
+      if (e.kind === kind) {
+        e.x = bounds.x;
+        e.y = bounds.y;
+        e.w = bounds.w;
+        e.h = bounds.h;
+        editVersion++;
+        render();
+        return true;
+      }
+    }
+    return false;
   },
 };

@@ -1108,6 +1108,83 @@ test('shrink: a second Box click drills further when click 1 lands on a uniform 
   await openerPage.close();
 });
 
+test('shrink: never grows the box on any edge (partial-advance)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression for a class of bug where the Box edges drift
+  // outward / oscillate across repeated Shrink clicks.
+  //
+  // Set up a partial-advance starting state by:
+  //  1. Loose-drag a Box and Shrink — gives the canonical
+  //     "1 px outside content on every edge" state.
+  //  2. Mutate the rect to extend its right edge well past the
+  //     block. Now top / bottom / left sit 1 px outside content
+  //     (the algorithm can't advance them — snap is bg, the next
+  //     line in is content) while right is loose (advances).
+  //  3. Click Shrink. The pre-fix code unconditionally added 1 px
+  //     of outward padding on all four edges of the tight result,
+  //     so non-advanced edges (top / bottom / left) grew outward
+  //     by 1 px each click, even though the right edge correctly
+  //     tightened. The user observed this as drift / oscillation.
+  //
+  // Invariant (post-fix): a Shrink click must never move any edge
+  // outward. We assert that directly on the pct-space bounds.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+
+  await dragRect(
+    capturePage,
+    { xPct: 0.1, yPct: 0.1 },
+    { xPct: 0.9, yPct: 0.9 },
+  );
+  await capturePage.locator('#shrink').click();
+  const tight = await readLastRectBounds(capturePage, 'rect');
+  expect(tight).not.toBeNull();
+
+  // Extend the right edge by 10 pct points so it sits in bg, well
+  // past the central block. Top / bottom / left stay at their
+  // post-shrink "1 px outside content" positions.
+  await capturePage.evaluate((bounds) => {
+    (window as unknown as {
+      __seeState: {
+        setLastRectBounds: (
+          kind: 'rect' | 'redact' | 'crop',
+          b: { x: number; y: number; w: number; h: number },
+        ) => boolean;
+      };
+    }).__seeState.setLastRectBounds('rect', bounds);
+  }, { x: tight!.x, y: tight!.y, w: tight!.w + 10, h: tight!.h });
+
+  const before = await readLastRectBounds(capturePage, 'rect');
+  expect(before).not.toBeNull();
+
+  await capturePage.locator('#shrink').click();
+  const after = await readLastRectBounds(capturePage, 'rect');
+  expect(after).not.toBeNull();
+
+  // The hard invariant: no edge moved outward. Use a tiny
+  // epsilon (well below any real geometry shift) to absorb
+  // pct-space rounding from the round-trip through pixel space.
+  const eps = 1e-6;
+  expect(after!.x).toBeGreaterThanOrEqual(before!.x - eps);
+  expect(after!.y).toBeGreaterThanOrEqual(before!.y - eps);
+  expect(after!.x + after!.w).toBeLessThanOrEqual(before!.x + before!.w + eps);
+  expect(after!.y + after!.h).toBeLessThanOrEqual(before!.y + before!.h + eps);
+
+  // And it must have actually shrunk — the loose right edge had
+  // 10 pct of slack to trim, so the new right should be well
+  // inside the old right.
+  expect(after!.x + after!.w).toBeLessThan(before!.x + before!.w - 5);
+
+  await openerPage.close();
+});
+
 test('shrink: a second Crop click drills further when click 1 lands on a uniform border', async ({
   extensionContext,
   fixtureServer,
