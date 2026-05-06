@@ -366,6 +366,14 @@ the Chrome-platform mechanics of building it.
   exists throws "Cannot create item with duplicate id." We call
   `removeAll` first, then recreate — handles all three paths
   identically.
+  - **Install path is serialized.** `onInstalled` can fire more
+    than once in quick succession (rapid dev reloads, or
+    install + chrome_update arriving back-to-back). Because
+    `installContextMenu` is async, two listener invocations
+    could otherwise interleave and both reach `create` with the
+    same ids. We chain each run onto an `activeInstall` promise
+    so a second event waits for the first to finish before
+    its own `removeAll` + recreate.
 - **Separators.** `chrome.contextMenus.create` accepts
   `type: 'separator'`, but separator items must *not* include a
   `title` field at all (passing `title: undefined` still throws).

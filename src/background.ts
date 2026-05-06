@@ -126,6 +126,8 @@ chrome.commands.onCommand.addListener((command) => {
   void runWithErrorReporting(() => action.run());
 });
 
+let activeInstall: Promise<void> = Promise.resolve();
+
 chrome.runtime.onInstalled.addListener(() => {
   // removeAll first because onInstalled fires on `install`, `update`,
   // and `chrome_update`. On the update paths the previously-created
@@ -133,12 +135,27 @@ chrome.runtime.onInstalled.addListener(() => {
   // calling `create` with the same id would throw "Cannot create item
   // with duplicate id". `removeAll` is a clean wipe that handles all
   // three cases identically.
-  chrome.contextMenus.removeAll(() => {
-    void installContextMenu();
+  //
+  // We serialize the installation via `activeInstall` promise chain
+  // to prevent concurrent runs if `onInstalled` fires multiple times
+  // in quick succession (e.g. during rapid development reloads).
+  activeInstall = activeInstall.then(() => {
+    return new Promise<void>((resolve) => {
+      chrome.contextMenus.removeAll(() => {
+        installContextMenu()
+          .then(resolve)
+          .catch((err) => {
+            console.error('[SeeWhatISee] failed to install context menu:', err);
+            resolve();
+          });
+      });
+    });
   });
+
   // Also make sure the icon tooltip reflects the stored default
   // after an update — the old build may have written a title that's
-  // no longer accurate.
+  // no longer accurate. Independent of the menu install (only touches
+  // `chrome.action.setTitle`), so kicked off in parallel.
   void refreshActionTooltip();
 });
 
