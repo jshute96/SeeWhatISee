@@ -659,6 +659,21 @@ async function rebumpFilenameIfLocked(
   // session that pinned `bases` at creation, so the two go together.)
   const saved = adapter.getSaved(session);
   if (!saved) return;
+  // Same revision as the previous save's lock → the existing
+  // filename is exactly the on-disk file we want to overwrite, and
+  // it may carry a post-rewrite extension that differs from the
+  // base (e.g. an edited screenshot baked from a JPEG source landed
+  // at `.png`). `nextSaveFilename` derives from `bases.<x>`, which
+  // always has the *original* ext, so on same-revision it would
+  // flip `…-N.png` back to `…-N.jpg` and drop the cache, even
+  // though the actual on-disk file is still PNG. That stomp would
+  // then let an override-undefined Copy land original JPEG bytes
+  // under the bumped name, and a subsequent Capture cache-hits the
+  // stale `.jpg` and writes a `screenshot.filename: …jpg` log
+  // entry alongside `hasHighlights: true` — the log lies about
+  // what's on disk. Skip the rebump on same-revision; the rewrite
+  // block downstream already keeps the ext in sync with the bytes.
+  if (saved.revision === adapter.getCurrentRevision(session)) return;
   const base = adapter.getBase(session) ?? adapter.getCurrentFilename(session);
   const desired = nextSaveFilename(base, saved, adapter.getCurrentRevision(session));
   if (desired === adapter.getCurrentFilename(session)) return;

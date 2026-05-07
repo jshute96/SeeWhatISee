@@ -135,3 +135,86 @@ test('image flow: JPG → edit → copy → undo-all → copy correctly reverts 
 
   await openerPage.close();
 });
+
+test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Capture must keep .png in log', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Regression for the multi-capture rebump path: a Capture against a
+  // JPEG with highlights bakes a `.png` and pins
+  // `saved.screenshot = { bumpIndex: 0, revision }`. A subsequent
+  // same-revision Copy click would then enter `rebumpFilenameIfLocked`
+  // with `saved` set; pre-fix, the rebump derived its desired filename
+  // from `bases.screenshot` (which carries the original `.jpg` ext),
+  // saw it differ from the current `…png`, stomped the filename back
+  // to `.jpg` and dropped the cache. With override=undefined on a
+  // page-side cache-hit Copy, the rewrite kept `.jpg` and original
+  // JPEG bytes landed under that name. A follow-up shift-Capture then
+  // cache-hit the stale `.jpg` and wrote a `screenshot.filename:
+  // …jpg` log entry alongside `hasHighlights: true` — the user's
+  // exact reported symptom. Fix: rebump no-ops on same-revision so
+  // the post-rewrite filename survives.
+  const { openerPage, capturePage, imageUrl } = await openImageDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'red-image.html',
+    undefined,
+    undefined,
+    '#http-jpeg',
+  );
+  expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
+
+  const sw = await getServiceWorker();
+
+  // 1. Draw a highlight + shift-Capture so `saved.screenshot` gets
+  //    pinned at the current editVersion.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+  expect(capturePage.isClosed()).toBe(false);
+  await expect.poll(() => countDownloadsBySuffix(sw, '.png')).toBe(1);
+
+  // 2. Two Copy clicks at the same editVersion. Capture doesn't
+  //    update the page-side `lastSent`, so the FIRST copy still
+  //    bakes + sends an override (cache-hit on the SW's side, no new
+  //    download). The SECOND copy short-circuits on the page side
+  //    (`lastSent` now matches) and sends `screenshotOverride =
+  //    undefined`. This is the click that previously corrupted
+  //    `screenshotFilename` back to `.jpg` via the rebump.
+  await capturePage.locator('#copy-screenshot-name').click();
+  await capturePage.locator('#copy-screenshot-name').click();
+  // No new downloads should fire — both copies should cache-hit.
+  await capturePage.waitForTimeout(200);
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(0);
+
+  // 3. shift-Capture again at the same editVersion. The bug-shape
+  //    record was `{ filename: '…jpg', hasHighlights: true }`. Post
+  //    fix the second log line must still reference the original
+  //    `.png` file with `hasHighlights: true`.
+  await capturePage.locator('#capture').click({ modifiers: ['Shift'] });
+  await expect(capturePage.locator('#ask-status')).toHaveText('Saved.', {
+    timeout: 10_000,
+  });
+
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.filename).toMatch(/\.png$/);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+
+  // Confirm the on-disk bytes the log points at really are PNG —
+  // the bug class is "filename in log disagrees with the actual
+  // bytes", so verifying both sides closes the loop.
+  const pngPath = await findCapturedDownload(sw, '.png');
+  const buf = fs.readFileSync(pngPath);
+  expect(buf[0]).toBe(0x89);
+  expect(buf[1]).toBe(0x50);
+  expect(buf[2]).toBe(0x4e);
+  expect(buf[3]).toBe(0x47);
+
+  await capturePage.close();
+  await openerPage.close();
+});

@@ -660,6 +660,12 @@ If the user has any edits *and* is saving the screenshot:
   filename's extension to `.png` before write whenever
   `screenshotOverride` is set, and reverts to
   `screenshotOriginalExt` when the user undoes back to clean.
+  - Repeat Copy clicks at an unchanged `editVersion` skip the
+    rewrite — the page short-circuits `screenshotOverride` to
+    undefined on a cache-hit, and the SW's per-tab download cache
+    holds the authoritative path. The cached PNG stays the truth
+    for the on-disk file, so the filename keeps its `.png` ext
+    rather than falsely reverting based on an absent override.
 
 ## `isEdited` sidecar flag
 
@@ -813,11 +819,15 @@ Only meaningful when the page stays open across multiple saves
 - Each successful `recordDetailedCapture` snapshots a per-artifact
   `saved.<x> = { bumpIndex, revision }` on the session.
 - The next `ensure*Downloaded` consults `nextSaveFilename`:
-  - **Same revision** → reuse the locked filename
-    (`bumpedFilename(bases.<x>, saved.bumpIndex)`). No
-    re-download; the new log record references the existing file.
-    Optimizes multi-prompt flows where the user iterates the
-    prompt without re-editing the artifact.
+  - **Same revision** → reuse the locked filename. The rebump is
+    a no-op here: `capture.<x>Filename` is already pointing at the
+    file the previous save committed, so the cache lookup
+    short-circuits and no re-download happens. (Critically, the
+    rebump does NOT recompute the filename from
+    `bumpedFilename(bases.<x>, saved.bumpIndex)` on same-revision —
+    `bases.<x>` carries the original extension, and a screenshot
+    that landed at `.png` via the bake-in rewrite would get
+    stomped back to `.jpg`. See "Highlight bake-in on save".)
   - **Diverged revision** (user edited via Edit dialog or drew on
     the screenshot) → bump `bumpIndex + 1`. The previous file
     stays immutable on disk; the new log record points at the
