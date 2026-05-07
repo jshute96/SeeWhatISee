@@ -29,20 +29,18 @@ SeeWhatISee/
 ├── plugin/
 │   ├── .claude-plugin/
 │   │   └── plugin.json           # plugin manifest (name, version, ...)
-│   ├── scripts/                  # canonical home of the helper scripts
-│   │   ├── _common.sh            # shared helpers (dir resolution, path absolutization)
-│   │   ├── get-latest.sh         # print latest capture JSON with absolute paths
-│   │   └── watch.sh              # filesystem watcher, emits JSON with absolute paths
+│   ├── scripts/                  # only _common.sh; each skill bundles its own main script
+│   │   └── _common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
 │   └── skills/
 │       ├── see-what-i-see/
 │       │   ├── SKILL.md
-│       │   └── scripts -> ../../scripts/   # so ${CLAUDE_SKILL_DIR}/scripts/... resolves
+│       │   └── scripts/get-latest.sh        # sources ../../../scripts/_common.sh
 │       ├── see-what-i-see-watch/
 │       │   ├── SKILL.md
-│       │   └── scripts -> ../../scripts/
+│       │   └── scripts/watch.sh             # filesystem watcher; supports --stop
 │       ├── see-what-i-see-stop/
 │       │   ├── SKILL.md
-│       │   └── scripts -> ../../scripts/
+│       │   └── scripts/stop.sh              # small, dedicated stop-only script
 │       └── see-what-i-see-help/SKILL.md     # no scripts; help text only
 └── .claude/
     ├── settings.json             # local-dev: bash permissions for plugin scripts + npm tests
@@ -210,10 +208,10 @@ two are relevant here.
   cache, not the plugin root.
 - Usable in `allowed-tools` patterns and inline in the skill body.
 - This is what our SKILL.md bodies reference: e.g. the watcher skill runs
-  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Since the helper scripts live at
-  `plugin/scripts/` (one canonical copy), each consuming skill has a
-  `scripts -> ../../scripts/` symlink so `${CLAUDE_SKILL_DIR}/scripts/...`
-  resolves through the symlink to the shared script.
+  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each consuming skill bundles its
+  own main script under `plugin/skills/<name>/scripts/`, and they all
+  source the single shared `plugin/scripts/_common.sh` via a `..`-traversal
+  that stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
   the plugin layout. It also keeps each `allowed-tools` pattern scoped to
@@ -246,27 +244,23 @@ Two pieces of glue make it work:
 {
   "permissions": {
     "allow": [
-      "Bash(plugin/scripts/watch.sh:*)",
-      "Bash(plugin/scripts/get-latest.sh:*)"
+      "Bash(plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
+      "Bash(plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
+      "Bash(plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
     ]
   }
 }
 ```
 
-- The `Bash(plugin/scripts/...)` allow rules pre-approve the underlying
-  scripts when they're invoked through the canonical `plugin/scripts/`
-  path (e.g. by the e2e tests, or by anyone running them directly).
-- Note on string-vs-resolved matching: Claude Code's permission rules
-  are string matches, not realpath matches. SKILL.md bodies now invoke
-  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`, which expands to an absolute
-  path under each skill's own directory — *not* to `plugin/scripts/...`,
-  even though the symlinks resolve to the same script. So an invocation
-  via the skill substitution won't string-match these rules.
-- Outstanding question: whether the broader user-level
-  `Bash(~/.claude/plugins/cache/see-what-i-see-marketplace/**)` rule
-  (suggested in `README.md` and the help skill) covers `${CLAUDE_SKILL_DIR}`-
-  expanded invocations once the plugin is installed from the marketplace.
-  Worth verifying with a clean `/plugin install`.
+- The allow patterns use the literal in-repo path of each script.
+  Claude Code's permission rules are string matches, not realpath
+  matches, but the matcher does compare against the
+  expansion-substituted form of the SKILL.md command. Empirically
+  the literal path matches what the harness actually evaluates here
+  (the `${CLAUDE_SKILL_DIR}/...` shape we tried earlier turned out
+  to not be needed alongside).
+- These rules pre-approve the skills' bash invocations during
+  local-dev sessions so `/see-what-i-see*` doesn't prompt.
 
 ### `.claude/skills/` symlinks
 
@@ -337,12 +331,12 @@ check — run it before committing any manifest changes.
   (for relative-path sources) or `plugin.json`'s `version` (for git
   sources).
 - **`..` in skill script paths.** Plugins cached from a marketplace
-  can't traverse outside the plugin root via `../`. Keep shared scripts
-  inside the plugin dir.
-  - Our per-skill `scripts -> ../../scripts/` symlinks *do* contain `..`,
-    but the traversal stays inside the plugin (it goes up to the plugin
-    root and back down to `plugin/scripts/`), so it's fine. The thing
-    that's disallowed is escaping the plugin root entirely.
+  can't traverse outside the plugin root via `../`. Keep shared
+  scripts inside the plugin dir.
+  - Our per-skill scripts `source` the shared `_common.sh` via
+    `../../../scripts/_common.sh`, which goes up to the plugin root
+    and back down — that's allowed. What's disallowed is escaping the
+    plugin root entirely.
 - **Relative-path sources only work over git.** If we ever distribute
   the marketplace as a direct URL to `marketplace.json`, we'd need to
   switch the plugin entry to a `github`/`url` source.
@@ -365,12 +359,13 @@ check — run it before committing any manifest changes.
   ignored, so the file was removed (commit `0aaee35`). Permission
   gating now relies entirely on skill-level `allowed-tools` frontmatter
   plus the user-level workaround above.
-- **The per-skill `scripts` symlinks assume a unix filesystem.** They're
-  committed as git mode-120000 symlinks. On Linux/macOS clones with
-  `core.symlinks=true` (default) they materialise correctly. On Windows
-  clones with `core.symlinks=false` (the default unless the user is in
-  developer mode), git checks them out as plain text files containing
-  `../../scripts/`, and `${CLAUDE_SKILL_DIR}/scripts/watch.sh` won't
-  resolve. There's no `.gitattributes`-only fix; if Windows support is
-  needed, document `git config core.symlinks true` as a prerequisite or
-  recreate the symlinks via a post-checkout script.
+- **No symlinks inside the plugin tree.** An earlier iteration had per-skill
+  `scripts` symlinks pointing back at a single `plugin/scripts/`. That
+  broke on Windows clones with `core.symlinks=false`, which check the
+  symlinks out as plain text files. The current layout side-steps the
+  problem by putting each main script in a real `plugin/skills/<name>/scripts/`
+  directory and keeping only `_common.sh` at `plugin/scripts/`. The
+  per-skill scripts source `_common.sh` via `..`-traversal (no symlinks
+  involved). The repo-root `scripts/` symlinks are still symlinks, but
+  those are local-dev / test conveniences and not part of the plugin
+  payload that gets installed.

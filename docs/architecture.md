@@ -259,36 +259,41 @@ provided:
 - `/see-what-i-see-stop` — stop the watcher
 - `/see-what-i-see-help` — print a summary of the commands
 
-Three helper scripts live in `plugin/scripts/`:
+Layout:
 
-- They are symlinked from `scripts/` at the repo root so the e2e
-  tests and ad-hoc CLI use can find them at a stable path.
-- They are also symlinked from each consuming skill's directory
-  (`plugin/skills/see-what-i-see/scripts`,
-  `plugin/skills/see-what-i-see-watch/scripts`,
-  `plugin/skills/see-what-i-see-stop/scripts`) so the SKILL.md
-  bodies can reference them via the per-skill
-  `${CLAUDE_SKILL_DIR}/scripts/...` substitution. This keeps a
-  single canonical copy in `plugin/scripts/` while letting each
-  skill resolve them through its own directory.
+- Each skill that needs a script bundles it in its own
+  `plugin/skills/<name>/scripts/` directory.
+- A single `_common.sh` lives at `plugin/scripts/_common.sh` (the
+  only file left under `plugin/scripts/`) and is `source`d by every
+  per-skill script.
+- The repo-root `scripts/` directory has symlinks to the per-skill
+  scripts so e2e tests and ad-hoc CLI use can find them at a
+  stable path.
 
 The scripts:
 
-- `_common.sh` — shared helpers sourced by the other two:
-  directory resolution (config file, `--directory`, default),
-  config parsing, and `absolutize_paths` (rewrites bare filenames
-  in JSON to absolute paths via sed).
-- `get-latest.sh` — reads the last line of `log.json` and prints
-  a single JSON record with absolute paths to stdout. Used by
-  `/see-what-i-see`.
-- `watch.sh` — filesystem watcher used by `/see-what-i-see-watch`.
-  Detects changes to `log.json` by polling mtime every 0.5s.
-  Supports `--after TIMESTAMP` to catch up on missed captures;
-  TIMESTAMP is the ISO `timestamp` field from a previous record
-  (matched against `log.json`). Emits JSON records with absolute
-  paths to stdout; status messages go to stderr.
+- `plugin/scripts/_common.sh` — shared helpers sourced by the
+  per-skill scripts: directory resolution (config file,
+  `--directory`, default), config parsing, `absolutize_paths`
+  (rewrites bare filenames in JSON to absolute paths via sed),
+  and `kill_existing` (kills a watcher recorded in a pidfile).
+- `plugin/skills/see-what-i-see/scripts/get-latest.sh` — reads
+  the last line of `log.json` and prints a single JSON record
+  with absolute paths to stdout. Used by `/see-what-i-see`.
+- `plugin/skills/see-what-i-see-watch/scripts/watch.sh` —
+  filesystem watcher used by `/see-what-i-see-watch`. Detects
+  changes to `log.json` by polling mtime every 0.5s. Supports
+  `--after TIMESTAMP` to catch up on missed captures; TIMESTAMP
+  is the ISO `timestamp` field from a previous record (matched
+  against `log.json`). Emits JSON records with absolute paths to
+  stdout; status messages go to stderr. Also accepts `--stop` as
+  a convenience when running the script directly.
+- `plugin/skills/see-what-i-see-stop/scripts/stop.sh` — small
+  dedicated stop script invoked by `/see-what-i-see-stop`.
+  Resolves the watch directory the same way as the others, then
+  calls the shared `kill_existing` against `$DIR/.watch.pid`.
 
-All three resolve the download directory the same way: if
+All of these resolve the download directory the same way: if
 `--directory` is not given, look for a `.SeeWhatISee` config file
 (in `.` then `$HOME`) with a `directory=<path>` setting, falling
 back to `~/Downloads/SeeWhatISee`.

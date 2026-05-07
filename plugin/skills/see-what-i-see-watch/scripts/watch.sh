@@ -9,6 +9,8 @@
 #   watching. TIMESTAMP is the `timestamp` field (ISO 8601) from a
 #   previous capture, which uniquely identifies it.
 # --stop: kill any existing watcher on this directory and exit.
+#   (Same effect as the sibling stop.sh; kept here as a convenience
+#   when running watch.sh directly from a shell.)
 # --print_selection: if a record has a selection, also print the
 #   contents of the selection file after the JSON line (format:
 #   "Selection:", blank line, file contents, blank line).
@@ -22,7 +24,10 @@ set -euo pipefail
 
 # ---- Defaults ---------------------------------------------------------------
 
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
+# _common.sh lives at plugin/scripts/_common.sh; this script is at
+# plugin/skills/see-what-i-see-watch/scripts/watch.sh, so we walk up to
+# the plugin root and back into scripts/.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/_common.sh"
 
 DIR=""
 LOOP=false
@@ -45,6 +50,7 @@ Options:
                     them immediately. TIMESTAMP is the `timestamp` field from a
                     previous capture (e.g. 2026-04-08T23:45:18.224Z).
   --stop            Stop any existing watcher on this directory and exit.
+                    Equivalent to running the sibling stop.sh.
   --print_selection If a record has a selection, also print the selection
                     file's contents after the JSON line.
   --help            Show this help and exit.
@@ -70,26 +76,7 @@ PIDFILE="$DIR/.watch.pid"
 
 # ---- PID-file helpers -------------------------------------------------------
 
-kill_existing() {
-  # Returns 0 if a watcher was found and killed, 1 otherwise.
-  if [[ -f "$PIDFILE" ]]; then
-    local old_pid
-    old_pid=$(<"$PIDFILE")
-    if kill -0 "$old_pid" 2>/dev/null; then
-      kill "$old_pid" 2>/dev/null || true
-      # Wait briefly to confirm the old process has exited.
-      local i
-      for i in 1 2 3 4 5; do
-        kill -0 "$old_pid" 2>/dev/null || break
-        sleep 0.1
-      done
-      return 0
-    fi
-    # Stale pidfile — process already gone.
-    rm -f "$PIDFILE"
-  fi
-  return 1
-}
+# kill_existing() lives in _common.sh and is shared with stop.sh.
 
 write_pidfile() {
   echo $$ > "$PIDFILE"
@@ -108,7 +95,7 @@ trap 'exit 143' TERM INT
 # ---- --stop mode ------------------------------------------------------------
 
 if $STOP; then
-  if kill_existing; then
+  if kill_existing "$PIDFILE"; then
     echo "Stopping existing watcher on $DIR"
   else
     echo "No existing watcher to stop"
@@ -133,7 +120,10 @@ fi
 
 # ---- Kill any previous watcher, write our pidfile ---------------------------
 
-kill_existing || true  # don't care whether one was running
+# Whether or not a previous watcher was running, we claim the slot.
+# kill_existing's 0/1 return is meaningful for stop.sh (which prints
+# "Stopping..." vs "No existing watcher to stop"); here we discard it.
+kill_existing "$PIDFILE" || true
 write_pidfile
 
 # ---- Core helpers -----------------------------------------------------------

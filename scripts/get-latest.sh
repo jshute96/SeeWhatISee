@@ -1,1 +1,1 @@
-../plugin/scripts/get-latest.sh
+../plugin/skills/see-what-i-see/scripts/get-latest.sh

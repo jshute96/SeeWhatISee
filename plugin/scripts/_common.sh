@@ -52,3 +52,38 @@ absolutize_paths() {
       -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$DIR/\\1\"|" \
       -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$DIR/\\1\"|"
 }
+
+# Kill any running watcher recorded in $1 (a pidfile path) and clean
+# up the pidfile. Returns 0 if a live watcher was found and signalled,
+# 1 if there was nothing live to stop. Used by both watch.sh (to evict
+# a previous watcher before claiming the pidfile) and stop.sh.
+kill_existing() {
+  local pidfile="$1"
+  if [[ -f "$pidfile" ]]; then
+    local old_pid
+    old_pid=$(<"$pidfile")
+    if kill -0 "$old_pid" 2>/dev/null; then
+      kill "$old_pid" 2>/dev/null || true
+      # Wait briefly to confirm the old process has exited; its EXIT
+      # trap is what normally removes the pidfile.
+      local i
+      for i in 1 2 3 4 5; do
+        kill -0 "$old_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      # Belt-and-braces: remove the pidfile ourselves if the killed
+      # process didn't get to run its trap. We only remove it if it
+      # still names old_pid — otherwise a fresh watcher has already
+      # claimed the slot (e.g. watch.sh running its own kill_existing
+      # then write_pidfile while we're racing here from stop.sh) and
+      # we must leave that one alone.
+      if [[ -f "$pidfile" ]] && [[ "$(<"$pidfile" 2>/dev/null)" == "$old_pid" ]]; then
+        rm -f "$pidfile"
+      fi
+      return 0
+    fi
+    # Stale pidfile — process already gone.
+    rm -f "$pidfile"
+  fi
+  return 1
+}

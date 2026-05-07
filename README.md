@@ -332,7 +332,6 @@ GitHub UI.
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
-- `scripts/watch.sh` — symlink to `plugin/scripts/watch.sh`
 - `plugin/` — Claude Code plugin (skills, settings, manifest)
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and

@@ -61,12 +61,10 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
-| `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
-| `plugin/scripts/watch.sh` | CLI command to watch for new updates to `log.json` |
-| `plugin/skills/see-what-i-see/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
-| `plugin/skills/see-what-i-see-watch/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
-| `plugin/skills/see-what-i-see-stop/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
+| `plugin/scripts/_common.sh` | Shared helpers sourced by the per-skill scripts: directory resolution, config parsing, JSON path absolutization, `kill_existing` watcher pidfile helper |
+| `plugin/skills/see-what-i-see/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
+| `plugin/skills/see-what-i-see-watch/scripts/watch.sh` | CLI command to watch for new updates to `log.json` (also accepts `--stop` as a convenience) |
+| `plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Small script that just stops a running watcher — used by `/see-what-i-see-stop` |
 
 **NOTE: the skills below are generated from `src/skills_templates/`, do not edit directly**
 
@@ -145,9 +143,10 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |
 | `scripts/copy-last-snapshot.sh` | Symlink to `.gemini/scripts/copy-last-snapshot.sh` |
-| `scripts/get-latest.sh` | Symlink to `plugin/scripts/get-latest.sh` |
+| `scripts/get-latest.sh` | Symlink to `plugin/skills/see-what-i-see/scripts/get-latest.sh` |
+| `scripts/stop.sh` | Symlink to `plugin/skills/see-what-i-see-stop/scripts/stop.sh` |
 | `scripts/watch-and-copy.sh` | Symlink to `.gemini/scripts/watch-and-copy.sh` |
-| `scripts/watch.sh` | Symlink to `plugin/scripts/watch.sh` |
+| `scripts/watch.sh` | Symlink to `plugin/skills/see-what-i-see-watch/scripts/watch.sh` |
 
 ## Tests (`tests/`)
 

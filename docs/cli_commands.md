@@ -35,7 +35,7 @@ field on the record. See
 
 ### Claude Code
 
-- Backed by `plugin/scripts/get-latest.sh`.
+- Backed by `plugin/skills/see-what-i-see/scripts/get-latest.sh`.
 - The script `tail -1`s `log.json`, passes the line through
   `absolutize_paths` (sed rewrite of `screenshot` / `contents` /
   `selection` fields to absolute paths under `$DIR`), and prints to
@@ -70,7 +70,7 @@ field on the record. See
 
 ### Claude Code (asynchronous background)
 
-- Backed by `plugin/scripts/watch.sh`.
+- Backed by `plugin/skills/see-what-i-see-watch/scripts/watch.sh`.
 - Claude Code supports real background tasks. The skill starts
   `watch.sh` with `run_in_background: true` and no timeout; the
   script blocks on `log.json`'s mtime and exits after emitting one
@@ -78,8 +78,9 @@ field on the record. See
   stdout, describes the record, and launches the next iteration
   (with `--after <ts>`) — again as a background task.
 - `watch.sh` manages a `.watch.pid` file so a second invocation
-  auto-kills the first. `/see-what-i-see-stop` calls
-  `watch.sh --stop` to terminate.
+  auto-kills the first. `/see-what-i-see-stop` runs the dedicated
+  `stop.sh` (sibling skill) to terminate; `watch.sh --stop` is also
+  available as a convenience when running watch.sh directly.
 - `watch.sh` in one-shot mode (default) can emit **multiple**
   records at once when `--after` points at a timestamp with many
   unseen records after it. Claude processes each.
@@ -101,9 +102,13 @@ field on the record. See
 
 ## `/see-what-i-see-stop` and `/see-what-i-see-help` (Claude only)
 
-- **`/see-what-i-see-stop`.** Calls `watch.sh --stop`, which kills
-  the PID stored in `.watch.pid` and removes the file. Gemini has
-  no equivalent — its loop isn't a background process.
+- **`/see-what-i-see-stop`.** Calls
+  `plugin/skills/see-what-i-see-stop/scripts/stop.sh`, a small
+  dedicated script that resolves the watch directory the same way
+  the watcher does, kills the PID stored in `$DIR/.watch.pid`, and
+  removes the file. (`watch.sh --stop` does the same thing when
+  invoked directly from a shell.) Gemini has no equivalent — its
+  loop isn't a background process.
 - **`/see-what-i-see-help`.** Prints a static text summary of the
   commands. Could be replicated on the Gemini side but is
   low-value there (Gemini's `/help` already lists commands).
@@ -111,16 +116,17 @@ field on the record. See
 ## Scripts
 
 ```
-plugin/scripts/                      ← Claude plugin install tree
-  _common.sh                         (shared by the two plugin scripts)
-  get-latest.sh                      ← /see-what-i-see
-  watch.sh                           ← /see-what-i-see-watch
+plugin/                              ← Claude plugin install tree
+  scripts/_common.sh                 (shared helpers; sourced by each per-skill script)
+  skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see
+  skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch
+  skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop
 .gemini/scripts/                     ← Gemini install tree
   _common.sh                         (shared by the two Gemini scripts)
   copy-last-snapshot.sh              ← /see-what-i-see
   watch-and-copy.sh                  ← /see-what-i-see-watch
 scripts/                             ← convenience symlinks at repo root
-  get-latest.sh, watch.sh            → plugin/scripts/...
+  get-latest.sh, watch.sh, stop.sh   → plugin/skills/<name>/scripts/...
   copy-last-snapshot.sh, watch-and-copy.sh
                                      → .gemini/scripts/...
 ```
@@ -129,14 +135,15 @@ Each install tree is self-contained. The plugin tree ships as
 part of the Claude Code plugin; the Gemini tree is copied into
 `~/.gemini/` by `scripts/gemini-install.sh`.
 
-### The four outer scripts
+### The outer scripts
 
 | Script | Source | Target | Emits | Flags |
 |--------|--------|--------|-------|-------|
-| `plugin/scripts/get-latest.sh`          | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
-| `plugin/scripts/watch.sh`               | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
-| `.gemini/scripts/copy-last-snapshot.sh` | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
-| `.gemini/scripts/watch-and-copy.sh`     | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
+| `plugin/skills/see-what-i-see/scripts/get-latest.sh`         | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
+| `plugin/skills/see-what-i-see-watch/scripts/watch.sh`        | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
+| `plugin/skills/see-what-i-see-stop/scripts/stop.sh`          | `$DIR` | `$DIR` (in place) | none (just stops the watcher) | `--directory`, `--help` |
+| `.gemini/scripts/copy-last-snapshot.sh`                       | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
+| `.gemini/scripts/watch-and-copy.sh`                           | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
 
 Key differences:
 

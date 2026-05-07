@@ -2,7 +2,10 @@
 # Print the latest capture record as JSON with absolute file paths.
 set -euo pipefail
 
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
+# _common.sh lives at plugin/scripts/_common.sh; this script is at
+# plugin/skills/see-what-i-see/scripts/get-latest.sh, so we walk up to
+# the plugin root and back into scripts/.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/_common.sh"
 
 DIR=""
 
