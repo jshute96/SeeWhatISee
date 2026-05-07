@@ -244,15 +244,26 @@ test('details: copy → edit → capture re-downloads the screenshot with the hi
   // v0 file the earlier Copy click wrote.
   const pngPath = await findCapturedDownload(sw, '.png');
   const png = PNG.sync.read(fs.readFileSync(pngPath));
-  const edgeX = Math.round(png.width * 0.2);
+  // Scan a small ±3 px window across the rectangle's left edge: the
+  // bake's 3 px stroke can land sub-pixel, so a single Math.round'd
+  // sample can hit the antialiased fringe instead of the saturated
+  // center. Red dominates: roughly r ≈ 255, g/b ≈ 0.
+  const cx = Math.round(png.width * 0.2);
   const edgeY = Math.round(png.height * 0.3);
-  const edgeIdx = (edgeY * png.width + edgeX) * 4;
-  const [r, g, b] = [png.data[edgeIdx], png.data[edgeIdx + 1], png.data[edgeIdx + 2]];
-  // Red dominates: roughly r ≈ 255, g/b ≈ 0. Loose tolerance to
-  // accommodate antialiasing along the stroke.
-  expect(r).toBeGreaterThan(180);
-  expect(g).toBeLessThan(80);
-  expect(b).toBeLessThan(80);
+  let foundRed = false;
+  for (let dx = -3; dx <= 3 && !foundRed; dx++) {
+    const x = cx + dx;
+    if (x < 0 || x >= png.width) continue;
+    const i = (edgeY * png.width + x) * 4;
+    if (
+      png.data[i] > 180 &&
+      png.data[i + 1] < 80 &&
+      png.data[i + 2] < 80
+    ) {
+      foundRed = true;
+    }
+  }
+  expect(foundRed, `no red stroke pixel found near x=${cx}, y=${edgeY}`).toBe(true);
 
   await openerPage.close();
 });

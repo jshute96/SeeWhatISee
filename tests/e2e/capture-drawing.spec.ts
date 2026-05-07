@@ -31,17 +31,32 @@ import {
   waitForPageDownloads,
 } from './details-helpers';
 
-// Sample the drawn-rect's red stroke at x≈20%, y≈30% of the PNG and
-// assert it's red (high R, low G/B). Shared between the palette
-// Save / Copy tests since both round-trip the same edited PNG bytes.
+// Sample the drawn-rect's red stroke around x≈20%, y≈30% of the PNG
+// and assert at least one pixel along that horizontal band is red
+// (high R, low G/B). Scans a small ±3 px window because the stroke
+// is only 3 px wide and the rectangle's left edge at exactly x=20%
+// can land sub-pixel — a single Math.round'd sample can land on the
+// stroke's antialiased fringe instead of its fully-saturated center.
+// Shared between the palette Save / Copy tests since both round-trip
+// the same edited PNG bytes.
 function expectRedAtRectEdge(buf: Buffer): void {
   const png = PNG.sync.read(buf);
-  const x = Math.round(png.width * 0.2);
+  const cx = Math.round(png.width * 0.2);
   const y = Math.round(png.height * 0.3);
-  const i = (y * png.width + x) * 4;
-  expect(png.data[i]).toBeGreaterThan(200);
-  expect(png.data[i + 1]).toBeLessThan(60);
-  expect(png.data[i + 2]).toBeLessThan(60);
+  let found = false;
+  for (let dx = -3; dx <= 3 && !found; dx++) {
+    const x = cx + dx;
+    if (x < 0 || x >= png.width) continue;
+    const i = (y * png.width + x) * 4;
+    if (
+      png.data[i] > 200 &&
+      png.data[i + 1] < 60 &&
+      png.data[i + 2] < 60
+    ) {
+      found = true;
+    }
+  }
+  expect(found, `no red stroke pixel found near x=${cx}, y=${y}`).toBe(true);
 }
 
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
@@ -195,22 +210,28 @@ test('drawing: png with highlights bakes red into the saved PNG', async ({
 
   // Sample the saved PNG along the rectangle's left edge (x=20%):
   // should be red. Far from the box should still be the fixture's
-  // purple background.
+  // purple background. Scan a small ±3 px window because the 3 px
+  // stroke can land sub-pixel — a single Math.round'd sample can
+  // hit the antialiased fringe instead of the saturated center.
   const pngPath = await findCapturedDownload(sw, '.png');
   const png = PNG.sync.read(fs.readFileSync(pngPath));
 
-  const edgeX = Math.round(png.width * 0.2);
+  const cx = Math.round(png.width * 0.2);
   const edgeY = Math.round(png.height * 0.3);
-  const edgeIdx = (edgeY * png.width + edgeX) * 4;
-  const [r, g, b] = [
-    png.data[edgeIdx],
-    png.data[edgeIdx + 1],
-    png.data[edgeIdx + 2],
-  ];
-  // Red stroke: high R, low G/B. Tolerate antialiasing.
-  expect(r).toBeGreaterThan(200);
-  expect(g).toBeLessThan(60);
-  expect(b).toBeLessThan(60);
+  let foundRed = false;
+  for (let dx = -3; dx <= 3 && !foundRed; dx++) {
+    const x = cx + dx;
+    if (x < 0 || x >= png.width) continue;
+    const i = (edgeY * png.width + x) * 4;
+    if (
+      png.data[i] > 200 &&
+      png.data[i + 1] < 60 &&
+      png.data[i + 2] < 60
+    ) {
+      foundRed = true;
+    }
+  }
+  expect(foundRed, `no red stroke pixel found near x=${cx}, y=${edgeY}`).toBe(true);
 
   // Far corner should still be the fixture's purple background.
   const farIdx = (10 * png.width + 10) * 4;
