@@ -33,11 +33,16 @@ import { startCaptureWithDetails } from './capture-details.js';
 // which section of the action menu surfaces its undelayed variant
 // — see the `ActionGroup` comment below.
 //
-// The resulting flat `CAPTURE_ACTIONS` array drives three things:
-//   - the top-level menu entries (primary, delay 0)
-//   - the "Capture with delay" submenu children (primary, delay > 0)
-//   - the "More" submenu's capture shortcuts at the top (more, delay 0)
-// and is the lookup table `handleActionClick` uses to run the
+// The resulting flat `CAPTURE_ACTIONS` array drives:
+//   - the "Capture with delay" submenu children (every entry whose
+//     `showInDelayedSubmenu` is true and whose `delaySec > 0`)
+//   - the More submenu's action rows (every `more`-group delay-0
+//     entry, plus the `capture` action manually inserted at the top)
+//   - the top-level shortcut rows, which are recreated with
+//     `-shortcut`-suffixed menu ids from a hand-picked subset
+//     (`TOP_LEVEL_SHORTCUT_ACTION_IDS` in `context-menu.ts`) — the
+//     menu cap means promotion is opt-in, not automatic per `group`.
+// It is also the lookup table `handleActionClick` uses to run the
 // currently-selected default. The Options page reads the same list
 // over the SW message wire to render its action tables.
 //
@@ -49,11 +54,18 @@ import { startCaptureWithDetails } from './capture-details.js';
 
 /**
  * Which section of the action menu surfaces an undelayed base action:
- *   - `'primary'` — top-level menu entry + a slot in the "Capture
- *     with delay" submenu for each delayed variant.
+ *   - `'primary'` — eligible for promotion to a top-level shortcut
+ *     row (the actual set is hand-picked in
+ *     `TOP_LEVEL_SHORTCUT_ACTION_IDS` because the action menu is at
+ *     the 6-cap), and delayed variants surface in the "Capture with
+ *     delay" submenu by default.
  *   - `'more'`    — entry inside the More submenu. Delayed variants
  *     are reachable only via the Capture-with-delay submenu when the
  *     base sets `showInDelayedSubmenu`, and via the Options page.
+ *     A `'more'`-group base can still be promoted to a top-level
+ *     shortcut row by adding its id to `TOP_LEVEL_SHORTCUT_ACTION_IDS`
+ *     (e.g. `save-defaults` is a more-group action that's also one of
+ *     the three top-level shortcuts).
  */
 export type ActionGroup = 'primary' | 'more';
 
@@ -271,10 +283,12 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     // Runs the same artifact-write path the Capture page would on
     // Save click, applying the user's stored `capturePageDefaults`.
-    // Lives in the More group (the top-level menu is reserved for
-    // the three primary single-artifact actions + Capture...) but
-    // its delayed variants are promoted into the Capture-with-delay
-    // submenu — same pattern as `save-all`.
+    // Lives in the More group, but its delayed variants are
+    // promoted into the Capture-with-delay submenu via
+    // `showInDelayedSubmenu` — same pattern as `save-all`. The
+    // delay-0 row is also pulled up to the top level via
+    // `TOP_LEVEL_SHORTCUT_ACTION_IDS` because Save-without-dialog
+    // is the everyday pick for users who've configured defaults.
     baseId: 'save-defaults',
     baseTitle: 'Save default items',
     baseTooltipFragment: 'Save default items',

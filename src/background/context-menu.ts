@@ -184,26 +184,6 @@ let cachedShortcutFingerprint: string | undefined;
  * with id …" so the same helper works during first install (when
  * some rows don't exist yet) and at runtime.
  */
-async function updateShortcutMenu(
-  menuId: string,
-  actionId: string,
-  defaultId: string,
-  dblId: string,
-  shortcuts: Map<string, string>,
-  defaults: CaptureDetailsDefaults,
-) {
-  const action = findCaptureAction(actionId);
-  if (action) {
-    try {
-      await chrome.contextMenus.update(menuId, {
-        title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
-      });
-    } catch {
-      /* menu not installed yet */
-    }
-  }
-}
-
 export async function refreshMenusAndTooltip(
   preloadedCommands?: chrome.commands.Command[],
 ): Promise<void> {
@@ -250,6 +230,34 @@ export async function refreshMenusAndTooltip(
   // are. Putting it here (rather than at the two setter callsites)
   // means `refreshMenusIfHotkeysChanged` picks it up for free.
   await refreshActionTooltip();
+}
+
+/**
+ * Update one `-shortcut`-suffixed top-level row's title to match
+ * `actionId`'s current state. Looks up the action in the catalog
+ * and silently no-ops if it (or the menu row) is missing — the
+ * same defensive pattern the per-row `chrome.contextMenus.update`
+ * loop above uses, so this helper composes cleanly into the
+ * `Promise.all` sweep in `refreshMenusAndTooltip`.
+ */
+async function updateShortcutMenu(
+  menuId: string,
+  actionId: string,
+  defaultId: string,
+  dblId: string,
+  shortcuts: Map<string, string>,
+  defaults: CaptureDetailsDefaults,
+) {
+  const action = findCaptureAction(actionId);
+  if (action) {
+    try {
+      await chrome.contextMenus.update(menuId, {
+        title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+      });
+    } catch {
+      /* menu not installed yet */
+    }
+  }
 }
 
 /**
