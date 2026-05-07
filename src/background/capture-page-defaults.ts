@@ -121,6 +121,14 @@ export async function setCaptureDetailsDefaults(value: CaptureDetailsDefaults): 
   await chrome.storage.local.set({ [CAPTURE_DETAILS_DEFAULTS_KEY]: clean });
 }
 
+/**
+ * Detect the fresh-install ("stock") Capture-page defaults: save the
+ * screenshot when there's no selection, save just the selection when
+ * there is one. Used to short-circuit the `save-defaults` tooltip /
+ * menu placeholder to a single readable phrase ("Save screenshot or
+ * selection") instead of the per-branch artifact list — most users
+ * never touch these defaults, so the verbose form is noise.
+ */
 export function isScreenshotOrSelectionDefaults(defaults: CaptureDetailsDefaults): boolean {
   const wos = defaults.withoutSelection;
   const ws = defaults.withSelection;

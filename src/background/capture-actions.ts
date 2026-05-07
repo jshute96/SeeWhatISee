@@ -378,8 +378,11 @@ function delayedId(baseId: string, delaySec: number): string {
 // Build a delayed title. The "in Ns" phrase is appended verbatim,
 // so dialog-style titles that end in "..." (e.g. "Capture...") read
 // as "Capture... in 2s" — the ellipsis stays anchored to the action
-// name and the delay sits as a plain trailing phrase.
-function delayedTitle(baseTitle: string, delaySec: number): string {
+// name and the delay sits as a plain trailing phrase. Exported so
+// `context-menu.ts` can render the same form when a non-action label
+// (e.g. the stock-defaults "Save screenshot or selection" placeholder)
+// needs the matching delay suffix.
+export function delayedTitle(baseTitle: string, delaySec: number): string {
   if (delaySec === 0) return baseTitle;
   return `${baseTitle} in ${delaySec}s`;
 }

@@ -19,6 +19,7 @@ import {
   CAPTURE_ACTIONS,
   CAPTURE_DELAYS_SEC,
   captureActionsWithDelay,
+  delayedTitle,
   type CaptureAction,
 } from './capture-actions.js';
 import {
@@ -36,6 +37,13 @@ import {
 
 export const DELAYED_PARENT_ID = 'delayed-capture-parent';
 export const MORE_PARENT_ID = 'more-parent';
+// Suffix appended to the menu-item id of the top-level "shortcut"
+// entries so they don't collide with the same-baseId entry surfaced
+// inside the More / Capture-with-delay submenu (chrome.contextMenus
+// rejects a second `create()` with a duplicate id — this was the
+// bug fixed by PR #17). The onClicked dispatcher in `background.ts`
+// strips this suffix before looking up the action — no real
+// CAPTURE_ACTIONS id ends in `-shortcut`, so the strip is unambiguous.
 export const SHORTCUT_SUFFIX = '-shortcut';
 
 // Id used by the "Clear log history" entry under the More submenu.
@@ -221,15 +229,19 @@ export async function refreshMenusAndTooltip(
     }),
   );
 
-  // Update shortcut items on the main menu
-  const shortcutsToUpdate = [
-    { menuId: `capture${SHORTCUT_SUFFIX}`, actionId: 'capture' },
-    { menuId: `save-defaults${SHORTCUT_SUFFIX}`, actionId: 'save-defaults' },
-    { menuId: `capture-2s${SHORTCUT_SUFFIX}`, actionId: 'capture-2s' },
-  ];
+  // Update top-level shortcut items. They live alongside the
+  // `CAPTURE_ACTIONS` rows on the menu but use `-shortcut`-suffixed
+  // ids (see SHORTCUT_SUFFIX), so the loop above doesn't reach them.
   await Promise.all(
-    shortcutsToUpdate.map((item) =>
-      updateShortcutMenu(item.menuId, item.actionId, defaultId, dblId, shortcuts, defaults),
+    TOP_LEVEL_SHORTCUT_ACTION_IDS.map((actionId) =>
+      updateShortcutMenu(
+        `${actionId}${SHORTCUT_SUFFIX}`,
+        actionId,
+        defaultId,
+        dblId,
+        shortcuts,
+        defaults,
+      ),
     ),
   );
 
@@ -297,10 +309,13 @@ function buildMenuHint(
   return `${HINT_SEPARATOR}(${parts.join(', ')})`;
 }
 
-function delayedTitle(baseTitle: string, delaySec: number): string {
-  if (delaySec === 0) return baseTitle;
-  return `${baseTitle} in ${delaySec}s`;
-}
+// CAPTURE_ACTIONS ids surfaced as top-level "shortcut" entries on the
+// toolbar context menu. Each is recreated with a `-shortcut`-suffixed
+// menu id (see SHORTCUT_SUFFIX) because the same action also appears
+// inside More / Capture-with-delay and chrome.contextMenus rejects
+// duplicate ids. Single source of truth for both `installContextMenu`
+// (creates the rows) and `refreshMenusAndTooltip` (updates titles).
+const TOP_LEVEL_SHORTCUT_ACTION_IDS = ['capture', 'save-defaults', 'capture-2s'] as const;
 
 function actionMenuTitle(
   action: CaptureAction,
@@ -535,9 +550,9 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //
 // Right-click context menu on the toolbar action. Structure:
 //
-//   Capture...
-//   Save screenshot
-//   Save HTML contents
+//   Capture...                         (top-level shortcut row, id = capture-shortcut)
+//   Save default items                 (top-level shortcut row, id = save-defaults-shortcut)
+//   Capture... in 2s                   (top-level shortcut row, id = capture-2s-shortcut)
 //   Set this tab as Ask button target  (greyed unless current tab is a provider;
 //                                        flips to "Unset…" when the tab is
 //                                        already the pin)
@@ -553,9 +568,12 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //       • Save screenshot in 5s
 //       • Save HTML contents in 5s
 //       • Save everything in 5s
-//   More  ▸                         (submenu)
+//   More  ▸                         (submenu — full action catalog + utilities)
+//       • Capture...                     (same as the top-level shortcut)
 //       • Save default items             (runs Capture-page Save with stored defaults, no dialog)
 //       ─────────
+//       • Save screenshot
+//       • Save HTML contents
 //       • Save URL
 //       • Save everything
 //       ─────────
@@ -575,28 +593,32 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
 // items in the action context menu. Overflow fails silently via
 // `chrome.runtime.lastError`, so a careless addition silently drops
-// a previously-working entry. The menu above has 6 top-level
-// entries (3 undelayed + 2 submenu parents + Pin Ask target) — at
-// the cap. Adding a 7th top-level entry will silently drop one.
+// a previously-working entry. The menu above sits **at the cap**
+// (three top-level shortcut rows, the Pin Ask target row, plus the
+// Capture-with-delay and More submenu parents) — there is no free
+// slot. Any new top-level entry must displace an existing one or
+// move into a submenu.
 //
 // In-submenu separators are free (they don't count against the
 // top-level cap) so we use them to group "Capture with delay" by
 // delay and the "More" submenu into capture-shortcut + utility
 // clusters.
 //
-// Every top-level entry and every "Capture with delay" child is
-// built from the same CAPTURE_ACTIONS array, so ids / titles / run
-// functions can't drift. `handleActionClick` looks up the current
-// default out of the same array.
+// Top-level shortcut rows duplicate actions that also appear inside
+// More — to avoid Chrome's duplicate-id rejection their menu ids
+// carry the SHORTCUT_SUFFIX, which the onClicked dispatcher strips
+// before looking up the action. See SHORTCUT_SUFFIX's doc comment.
+//
+// Every "Capture with delay" child and every More-submenu action
+// row is built from the same CAPTURE_ACTIONS array, so ids /
+// titles / run functions can't drift. The top-level shortcut rows
+// are driven from TOP_LEVEL_SHORTCUT_ACTION_IDS — pull from
+// CAPTURE_ACTIONS via findCaptureAction so titles, hints, and
+// run() bodies stay in lockstep with the catalog.
 //
 // The registration runs on `chrome.runtime.onInstalled`; Chrome
 // persists the entries across service-worker restarts so we don't
 // have to recreate them on every wakeup.
-//
-// Note: "Save screenshot" is functionally identical to a plain
-// left-click when `save-screenshot` is the default — listed in the
-// menu for discoverability so users don't have to know the toolbar
-// click also captures.
 //
 // Image right-click entries are also installed below — see the
 // IMAGE_CAPTURE_MENU_ID / IMAGE_SAVE_SCREENSHOT_MENU_ID doc-comment
@@ -657,29 +679,26 @@ export async function installContextMenu(): Promise<void> {
   // re-renders if a shortcut has actually changed since now.
   cachedShortcutFingerprint = shortcutFingerprint(commands);
 
-  // ── Top-level entries (shortcuts on main menu) ─────────────
-  // Manually create the three top-level action entries with -shortcut suffix.
-  // They represent primary/common actions but mapped to unique IDs to avoid duplicates.
-  const mainCaptureAction = findCaptureAction('capture')!;
-  chrome.contextMenus.create({
-    id: `capture${SHORTCUT_SUFFIX}`,
-    title: actionMenuTitle(mainCaptureAction, defaultId, dblId, shortcuts, defaults),
-    contexts: ['action'],
-  });
-
-  const mainSaveDefaultsAction = findCaptureAction('save-defaults')!;
-  chrome.contextMenus.create({
-    id: `save-defaults${SHORTCUT_SUFFIX}`,
-    title: actionMenuTitle(mainSaveDefaultsAction, defaultId, dblId, shortcuts, defaults),
-    contexts: ['action'],
-  });
-
-  const mainCapture2sAction = findCaptureAction('capture-2s')!;
-  chrome.contextMenus.create({
-    id: `capture-2s${SHORTCUT_SUFFIX}`,
-    title: actionMenuTitle(mainCapture2sAction, defaultId, dblId, shortcuts, defaults),
-    contexts: ['action'],
-  });
+  // ── Top-level shortcut entries ─────────────────────────────
+  // Surface the most common capture actions at the top level, with
+  // `-shortcut`-suffixed ids so they don't collide with the same
+  // baseId rows inside More / Capture-with-delay. See
+  // TOP_LEVEL_SHORTCUT_ACTION_IDS for the source of truth.
+  for (const actionId of TOP_LEVEL_SHORTCUT_ACTION_IDS) {
+    const action = findCaptureAction(actionId);
+    if (!action) {
+      // Surface a clear error rather than the silent
+      // chrome.runtime.lastError that a missing-id `create()` would
+      // produce — a regression in CAPTURE_ACTIONS shouldn't quietly
+      // drop a top-level entry.
+      throw new Error(`installContextMenu: missing CAPTURE_ACTIONS entry "${actionId}"`);
+    }
+    chrome.contextMenus.create({
+      id: `${actionId}${SHORTCUT_SUFFIX}`,
+      title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+      contexts: ['action'],
+    });
+  }
 
   // ── "Set this tab as Ask button target" entry ─────────────
   // Title and enabled state are kept in sync by
@@ -742,9 +761,16 @@ export async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
 
-  // Manually insert Capture... at the top of More menu using the clean ID 'capture'.
-  // The main menu uses 'capture-shortcut', so 'capture' is free to be used here.
-  const moreCaptureAction = findCaptureAction('capture')!;
+  // Insert Capture... at the top of the More menu using the bare
+  // CAPTURE_ACTIONS id ('capture'). The top-level shortcut row uses
+  // 'capture-shortcut', so 'capture' is free here. Listing it in
+  // both places is intentional: it keeps the More submenu a complete
+  // catalog of every action while still promoting it to the top
+  // level for discoverability.
+  const moreCaptureAction = findCaptureAction('capture');
+  if (!moreCaptureAction) {
+    throw new Error('installContextMenu: missing CAPTURE_ACTIONS entry "capture"');
+  }
   chrome.contextMenus.create({
     id: moreCaptureAction.id,
     parentId: MORE_PARENT_ID,

@@ -166,6 +166,18 @@ with-selection choice `W`:
   expanded to a comma-separated list of the actual artifacts the
   no-sel branch of `capturePageDefaults` saves
   (`screenshot`, `HTML`, `selection <fmt>`).
+  - **Stock-defaults short-circuit.** When
+    `capturePageDefaults` matches the fresh-install pattern
+    (no-sel = screenshot only; with-sel = selection only —
+    detected by `isScreenshotOrSelectionDefaults` in
+    `capture-page-defaults.ts`), the placeholder collapses to
+    the single phrase `Save screenshot or selection` regardless
+    of branch. `effectiveItems` returns `null` for that combo,
+    which forces Case 1 collapse on a paired
+    `save-defaults` / `save-defaults` row. The same short-circuit
+    is applied to the menu titles in
+    `context-menu.ts`'s `actionMenuTitle`, so menu and tooltip
+    stay in lockstep.
 - The **with-selection slot** picks one of four cases:
   1. **Same effective behaviour** (action ids match AND, for
      `save-defaults`, the expanded artifact set matches), or `W` is

@@ -20,7 +20,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 - Right-click the icon for more options:
   - **Capture…** Opens the *Capture* page (see below).
   - **Save default items** — Saves the default items the *Capture* page saves, according to current options (without opening the dialog).
-  - **Capture… in 2s** — Fast 2-second delayed capture shortcut.
+  - **Capture…  in 2s** — Open the *Capture* page after a two second delay.
   - **Set this tab as Ask button target** — when you're on Claude / Gemini / ChatGPT (including Claude Code on `claude.ai/code`), pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unset this tab as Ask button target** while the current tab is the pin.
   - **Capture with delay ▸** — Capture the page after a delay (2s or 5s), so
     you can activate hover states, menus, etc.
