@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SeeWhatISee",
   "version": "1.0.0",
-  "description": "Share a screenshot with your coding agent in a single click! (For Claude, Gemini, etc.)",
+  "description": "The ultimate screenshot tool for vibe-coding: Share screenshots, HTML, or selected text with your coding agent — CLI or web.",
   "homepage_url": "https://github.com/jshute96/SeeWhatISee/blob/main/README.md",
   "permissions": ["activeTab", "clipboardWrite", "contextMenus", "downloads", "offscreen", "scripting", "storage"],
   "host_permissions": ["<all_urls>"],
@@ -44,8 +44,8 @@
     "01-secondary-action": {
       "description": "Secondary action (same as double-click)",
       "suggested_key": {
-        "default": "Alt+Shift+X",
-        "mac": "Alt+Shift+X"
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
       }
     },
     "05-capture": {

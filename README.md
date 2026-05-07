@@ -17,7 +17,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 - Click the extension icon ![icon](src/icons/icon-16.png) to open the *Capture* page (see below).
   - Double-click it to bypass the *Capture* page and save a screenshot immediately.
   - If there's text selected on the page, double-click instead saves the selected text immediately.
-  - Keyboard equivalents: *Ctrl+Shift+X* (*⌘+Shift+X* on Mac) for click, *Alt+Shift+X* for double-click.  Configure these via the **Options** page.
+  - Keyboard equivalents: *Ctrl+Shift+X* (*⌘+Shift+X* on Mac) for click, *Ctrl+Shift+E* (*⌘+Shift+E* on Mac) for double-click.  Configure these via the **Options** page.
 - Right-click the icon for more options:
   - **Capture…** Opens the *Capture* page (see below).
   - **Save default items** — Saves the default items the *Capture* page saves, according to current options (without opening the dialog).

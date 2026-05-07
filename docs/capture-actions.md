@@ -488,7 +488,7 @@ selection-format actions use `2N-`.
 - The two meta-commands ship with default `suggested_key`
   bindings: `_execute_action` defaults to `Ctrl+Shift+X`
   (`Command+Shift+X` on Mac) and `01-secondary-action` defaults
-  to `Alt+Shift+X` on every platform. The capture / selection
+  to `Ctrl+Shift+E` (`Command+Shift+E` on Mac). The capture / selection
   hotkey entries deliberately omit `suggested_key` so the user
   picks them at `chrome://extensions/shortcuts` (or via the
   Options page's "Edit in Chrome" button) — Chrome caps

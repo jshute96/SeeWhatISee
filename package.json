@@ -2,7 +2,7 @@
   "name": "seewhatisee",
   "version": "1.0.0",
   "private": true,
-  "description": "Chrome extension for taking screenshots and handing them to coding agents.",
+  "description": "The ultimate Chrome extension screenshot tool for vibe-coding: Share screenshots, HTML, or selected text with your coding agent — CLI or web.",
   "type": "module",
   "engines": {
     "node": ">=22"
