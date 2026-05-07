@@ -37,14 +37,35 @@ every user-visible way to grab content.
 - Each base carries a `group: 'primary' | 'more'` that decides
   which section of the action menu surfaces the undelayed
   variant:
-  - `'primary'` — top-level entry + a slot in the "Capture with
-    delay" submenu for each delayed variant.
+  - `'primary'` — eligible to be promoted to a top-level
+    shortcut row, plus a slot in the "Capture with delay"
+    submenu for each delayed variant. The exact set of top-level
+    rows is the `TOP_LEVEL_SHORTCUT_ACTION_IDS` list in
+    `context-menu.ts`, not "every primary base" — the menu cap
+    means we hand-pick which shortcuts to promote.
   - `'more'` — entry inside the "More" submenu. Delayed variants
     are reachable via the Capture-with-delay submenu when the
     base sets `showInDelayedSubmenu` (e.g. `save-defaults`,
-    `save-all`), and via the Options page in any case.
+    `save-all`, `save-screenshot`, `save-page-contents`), and
+    via the Options page in any case.
 
 ### Primary bases
+
+- **`capture` — "Capture...".** Opens the Capture page
+  (`capture.html`) where the user picks which artifacts to save,
+  adds an optional prompt, and optionally annotates the
+  screenshot. Takes the same `delayMs`, forwarded through
+  `captureBothToMemory` so the delay applies to the pre-open
+  screenshot + HTML snapshot. See
+  [`capture-page.md`](capture-page.md) for the full design.
+  - Currently the only `'primary'` base. The undelayed variant
+    is the first top-level shortcut row, and the 2s variant is
+    promoted to the third top-level slot for one-click delayed
+    capture.
+
+### More bases
+
+Shortcuts that skip the Capture-page dialog round-trip.
 
 - **`save-screenshot` — "Save screenshot".** Calls
   `captureVisible(delayMs)`. Immediate PNG of the visible tab.
@@ -53,7 +74,10 @@ every user-visible way to grab content.
   activate hover states, open menus, etc. on the page. The
   `await` keeps the service worker alive for the duration. Any
   `delayMs` value is also callable from the devtools console as
-  `SeeWhatISee.captureVisible(2000)`.
+  `SeeWhatISee.captureVisible(2000)`. Sets
+  `showInDelayedSubmenu: true` so its 2s / 5s variants surface
+  in the Capture-with-delay submenu next to the other capture
+  delays.
 - **`save-page-contents` — "Save HTML contents".** Uses
   `chrome.scripting.executeScript` to grab
   `document.documentElement.outerHTML` from the active tab and
@@ -61,19 +85,8 @@ every user-visible way to grab content.
   recorded in `log.json` just like a screenshot — only the
   filename differs. Requires the `scripting` permission. Takes
   the same optional `delayMs` as `captureVisible`; also callable
-  as `SeeWhatISee.savePageContents(2000)`.
-- **`capture` — "Capture...".** Opens the Capture page
-  (`capture.html`) where the user picks which artifacts to save,
-  adds an optional prompt, and optionally annotates the
-  screenshot. Takes the same `delayMs`, forwarded through
-  `captureBothToMemory` so the delay applies to the pre-open
-  screenshot + HTML snapshot. See
-  [`capture-page.md`](capture-page.md) for the full design.
-
-### More bases
-
-Shortcuts that skip the Capture-page dialog round-trip.
-
+  as `SeeWhatISee.savePageContents(2000)`. Sets
+  `showInDelayedSubmenu: true` for the same reason.
 - **`save-defaults` — "Save default items".** Runs the same
   artifact-write path the Capture page would on Save click,
   applying the user's stored `capturePageDefaults` (split by
@@ -86,6 +99,13 @@ Shortcuts that skip the Capture-page dialog round-trip.
   Throws on `screenshotError` / `htmlError` only when the
   matching default is set; the toolbar error channel surfaces
   the reason.
+  - Title short-circuit: when the user is on the fresh-install
+    "stock" defaults (no-sel = screenshot only, with-sel =
+    selection only), the menu row and tooltip render as **"Save
+    screenshot or selection"** rather than the per-branch
+    artifact list. Detected by `isScreenshotOrSelectionDefaults`
+    in `capture-page-defaults.ts`; both `actionMenuTitle` (menu)
+    and `expandFragment` / `effectiveItems` (tooltip) consult it.
 - **`save-url` — "Save URL".** Equivalent to the Capture page
   with *neither* file checked: the record gets just `timestamp`
   + `url` (no `screenshot`, no `contents`). Goes through
@@ -223,37 +243,59 @@ selection.
 ## Toolbar context menu
 
 The toolbar icon's context menu is registered on
-`chrome.runtime.onInstalled` with `contexts: ['action']`. Top
-level: 5 entries — one slot below the 6-item
-`ACTION_MENU_TOP_LEVEL_LIMIT` cap, since the Set-default-click
-submenu was retired in favor of the Options page.
+`chrome.runtime.onInstalled` with `contexts: ['action']`. The menu
+sits **at Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT` ceiling** — adding
+any new top-level entry, including a separator, will silently drop
+an existing one. New work goes into the More submenu.
 
 ### Top-level entries
 
-- The three **undelayed** primary-group `CAPTURE_ACTIONS` items
-  (Capture..., Save screenshot, Save HTML contents), each running
-  its action immediately when clicked. "Save screenshot" is
-  functionally identical to a plain left-click when
-  `save-screenshot` is the default — listed for discoverability.
+- **Capture...** — undelayed `capture` action, opens the Capture
+  page. First and most prominent shortcut.
+- **Save default items** — undelayed `save-defaults` action,
+  writes artifacts per stored `capturePageDefaults` with no
+  dialog. Promoted to top level so the everyday "save without
+  the dialog" pick is one click away.
+- **Capture... in 2s** — the `capture-2s` variant, for one-click
+  delayed capture without opening the Capture-with-delay
+  submenu.
+- The three rows above are installed with `-shortcut`-suffixed
+  menu ids (the `SHORTCUT_SUFFIX` constant) because each action
+  also appears inside the More / Capture-with-delay submenu —
+  Chrome rejects duplicate ids, so the top-level row needs a
+  unique id. The onClicked dispatcher strips the suffix before
+  looking up the action in `CAPTURE_ACTIONS`. The set of
+  promoted actions lives in `TOP_LEVEL_SHORTCUT_ACTION_IDS`.
+- **Set this tab as Ask button target** — pin/unpin the active
+  tab as the Ask destination. Greyed unless the active tab is on
+  an enabled provider; flips between Set and Unset.
 - **Capture with delay ▸** — submenu with the 2s and 5s variants
-  of every base with `showInDelayedSubmenu` (primary-group by
-  default, plus any more-group base that opts in — e.g.
-  `save-defaults`, `save-all`). Separator-grouped by delay.
-  In-submenu separators don't count against the top-level cap, so
-  the visual grouping is free. More-group actions that don't opt
-  in (`save-url` and the three `save-selection-{html,text,markdown}`
-  — all `supportsDelayed: false` anyway) are only reachable via
-  the Options page.
-- **More ▸** — submenu home for the more-group capture actions
-  and for infrequent utilities that would otherwise crowd out
-  primary capture entries at the top level. See below.
+  of every base with `showInDelayedSubmenu` (the `capture` base
+  plus the more-group bases that opt in — `save-defaults`,
+  `save-all`, `save-screenshot`, `save-page-contents`).
+  Separator-grouped by delay. In-submenu separators don't count
+  against the top-level cap, so the visual grouping is free.
+  More-group actions that don't opt in (`save-url` and the three
+  `save-selection-{html,text,markdown}` — all `supportsDelayed: false`
+  anyway) are only reachable via the Options page.
+- **More ▸** — submenu home for every action plus the
+  infrequent utilities (Copy-last filenames, Snapshots
+  directory, Clear log history). See below.
 
 ### More submenu
 
+- **Capture...** — same as the top-level row, listed in More so
+  the submenu is a complete catalog of every action. Uses the
+  bare `capture` id (the top-level row uses `capture-shortcut`).
 - **Save default items** — runs `saveDefaults`: the Capture-page
   Save path with the user's stored `capturePageDefaults`, no
-  dialog. Listed first under More with its own divider, since
+  dialog. Listed second under More with its own divider, since
   it's the everyday Save-without-dialog pick.
+- **Save screenshot** / **Save HTML contents** — undelayed
+  versions of the two single-artifact shortcuts. Demoted from
+  top level in favor of the **Capture...** / **Save default
+  items** / **Capture... in 2s** trio; still surfaced here for
+  one-click access.
 - **Save URL** / **Save everything** — shortcuts for the
   "neither" and "everything" checkbox combinations, skipping the
   dialog round-trip.
@@ -326,12 +368,14 @@ submenu was retired in favor of the Options page.
 - Chrome enforces
   `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6`.
   Top-level separators count against it.
-- The menu currently has 5 top-level entries (3 undelayed + 2
-  submenu parents: Capture with delay, More) — one slot under
-  the cap.
-- **Prefer nesting new entries under an existing submenu** (More
-  is the natural home for infrequent utilities); reserve the
-  free slot for genuinely top-level work.
+- **The menu sits at the cap.** The three top-level shortcut
+  rows (Capture..., Save default items, Capture... in 2s) plus
+  the Pin-Ask-target row plus the two submenu parents (Capture
+  with delay, More) fill all six slots — there is **no free
+  slot left**.
+- **All new entries must go in a submenu** (More is the natural
+  home for infrequent utilities). Promoting a new action to the
+  top level requires displacing one of the existing rows.
 - Overflow fails silently via `chrome.runtime.lastError`, so a
   careless addition drops a previously-working entry without any
   build- or runtime-time error. See
@@ -417,11 +461,16 @@ selection-format actions use `2N-`.
   (except `secondary-action`, which routes to `runDblDefault()`),
   so the dispatch is a direct `findCaptureAction(stripped)`
   lookup — no separate mapping table.
-- No `suggested_key` is declared on any entry; Chrome caps
-  suggested defaults at four per extension and a fresh-install
-  default risks colliding with Chrome / other extensions. Users
-  bind keys themselves at `chrome://extensions/shortcuts` (or via
-  the Options page's "Edit in Chrome" button).
+- The two meta-commands ship with default `suggested_key`
+  bindings: `_execute_action` defaults to `Ctrl+Shift+X`
+  (`Command+Shift+X` on Mac) and `01-secondary-action` defaults
+  to `Alt+Shift+X` on every platform. The capture / selection
+  hotkey entries deliberately omit `suggested_key` so the user
+  picks them at `chrome://extensions/shortcuts` (or via the
+  Options page's "Edit in Chrome" button) — Chrome caps
+  suggested defaults at four per extension, and reserving them
+  for the meta-commands keeps the budget for the bindings users
+  are most likely to want.
 - Selection-format hotkeys are global: they fire the action
   directly, and the action itself throws
   `No selection {format} content` when nothing is selected —
@@ -452,23 +501,26 @@ selection-format actions use `2N-`.
    an Options-page row per delay. Set `supportsDelayed: false`
    when delayed variants don't make sense for the mode (only the
    0s variant is then generated). No other plumbing.
-   - **Pick the group deliberately.** `'primary'` promotes the
-     undelayed variant to a top-level slot and surfaces delayed
-     variants in the "Capture with delay" submenu — right for
-     primary capture paths. `'more'` tucks the undelayed variant
-     into the "More" submenu; delayed variants surface in
-     "Capture with delay" only when `showInDelayedSubmenu: true`
-     is also set. Either way the action is bindable as the click
-     / double-click default via the Options page.
+   - **Pick the group deliberately.** `'primary'` makes the base
+     eligible for promotion to a top-level shortcut row and
+     surfaces delayed variants in the "Capture with delay"
+     submenu — right for primary capture paths. `'more'` tucks
+     the undelayed variant into the "More" submenu; delayed
+     variants surface in "Capture with delay" only when
+     `showInDelayedSubmenu: true` is also set. Either way the
+     action is bindable as the click / double-click default via
+     the Options page. Note that `'primary'` is necessary but
+     not sufficient for top-level promotion — see the next bullet.
    - **Watch the top-level cap.** Chrome allows at most
      `ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level items per
-     action context menu, and separators count. The menu
-     currently has 5 (3 primary undelayed entries + Capture with
-     delay + More) — one slot free. A new `'primary'` base
-     consumes that slot; a second new primary would push it past
-     6 and silently drop an entry, so add the base as `'more'`
-     instead, or fold the undelayed primary slots into a submenu
-     of their own (e.g. "Capture now") first.
+     action context menu, and separators count. The menu is
+     already at the cap (see "Top-level item cap" above), so a
+     new base joins the More submenu by default. To put a new
+     row at the top level, edit
+     `TOP_LEVEL_SHORTCUT_ACTION_IDS` in
+     `src/background/context-menu.ts` to swap one of the
+     existing shortcut ids out for the new one — there is no
+     spare slot to add to.
 4. If the action should be bindable as a keyboard shortcut (i.e.
    it's a non-selection base), add a matching entry under
    `commands` in `src/manifest.json`. The command name is
@@ -477,7 +529,9 @@ selection-format actions use `2N-`.
    on `chrome://extensions/shortcuts`; the listener in
    `background.ts` strips the prefix before dispatching via
    `findCaptureAction`. Omit `suggested_key` so the extension
-   doesn't ship a default binding.
+   doesn't ship a default binding (the four-per-extension budget
+   is reserved for the `_execute_action` and `01-secondary-action`
+   meta-commands, which already declare defaults).
 5. Add a Playwright test that drives the new function via
    `serviceWorker.evaluate`. See [`testing.md`](testing.md) for
    the patterns.

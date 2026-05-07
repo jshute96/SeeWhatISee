@@ -50,6 +50,16 @@ const STOCK_DEFAULTS = {
   promptEnter: 'send',
 };
 
+const TEST_DEFAULTS_SCREENSHOT_ONLY = {
+  ...STOCK_DEFAULTS,
+  withSelection: { screenshot: false, html: false, selection: false, format: 'markdown' },
+};
+
+const TEST_DEFAULTS_SELECTION_ONLY = {
+  ...STOCK_DEFAULTS,
+  withoutSelection: { screenshot: false, html: false },
+};
+
 // As above but with-sel saves the no-sel set (screenshot) plus the
 // selection — the "same plus selection" pattern.
 const PLUS_SELECTION_DEFAULTS = {
@@ -85,7 +95,7 @@ test('expandFragment: non-save-defaults action is unchanged', () => {
 
 test('expandFragment: save-defaults expands to checked items, no-sel branch', () => {
   assert.equal(
-    expandFragment(SAVE_DEFAULTS, STOCK_DEFAULTS, 'withoutSelection'),
+    expandFragment(SAVE_DEFAULTS, TEST_DEFAULTS_SCREENSHOT_ONLY, 'withoutSelection'),
     'Save screenshot',
   );
   assert.equal(
@@ -103,7 +113,7 @@ test('expandFragment: save-defaults expands to checked items, no-sel branch', ()
 
 test('expandFragment: save-defaults expands with selection format', () => {
   assert.equal(
-    expandFragment(SAVE_DEFAULTS, STOCK_DEFAULTS, 'withSelection'),
+    expandFragment(SAVE_DEFAULTS, TEST_DEFAULTS_SELECTION_ONLY, 'withSelection'),
     'Save selection markdown',
   );
   assert.equal(
@@ -125,7 +135,7 @@ test('expandFragment: empty branch falls back to placeholder', () => {
 
 test('expandFragment: delayed save-defaults preserves the "in Ns" suffix', () => {
   assert.equal(
-    expandFragment(SAVE_DEFAULTS_5S, STOCK_DEFAULTS, 'withoutSelection'),
+    expandFragment(SAVE_DEFAULTS_5S, TEST_DEFAULTS_SCREENSHOT_ONLY, 'withoutSelection'),
     'Save screenshot in 5s',
   );
 });
@@ -228,7 +238,7 @@ test('buildRow Case 2: save-defaults configured selection-only also renders Case
       'Click',
       CAPTURE,
       SAVE_DEFAULTS,
-      STOCK_DEFAULTS, // with-sel = {selection: true, format: markdown}, no other items
+      TEST_DEFAULTS_SELECTION_ONLY, // with-sel = {selection: true, format: markdown}, no other items
       undefined,
     ),
     [
@@ -397,7 +407,7 @@ test('buildTooltip: stock defaults — Click collapses, Dbl renders Case 3', () 
 test('buildTooltip: stock defaults exactly as shipped (Case 2 on Dbl)', () => {
   // STOCK_DEFAULTS: with-sel = {selection: true, format: markdown},
   // nothing else. So save-defaults with-sel resolves to selection-only,
-  // which is Case 2 against the no-sel `Save screenshot`.
+  // which collapses to a single line "Save screenshot or selection" on Dbl.
   const out = buildTooltip({
     click: CAPTURE,
     clickWithSel: CAPTURE,
@@ -413,9 +423,7 @@ test('buildTooltip: stock defaults exactly as shipped (Case 2 on Dbl)', () => {
       'SeeWhatISee',
       '',
       'Click: Capture...',
-      'Double-click:',
-      '  Save screenshot',
-      '  (or selection markdown)',
+      'Double-click: Save screenshot or selection',
       '',
     ].join('\n'),
   );

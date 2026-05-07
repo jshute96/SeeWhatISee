@@ -249,6 +249,19 @@ test('a refreshHotkeys message from the Options page resyncs the tooltip', async
   // on focus.
   const sw = await getServiceWorker();
 
+  // Stub `getAll` to return empty shortcuts initially.
+  await sw.evaluate(() => {
+    interface Stubbed {
+      __origGetAll?: typeof chrome.commands.getAll;
+    }
+    const g = self as unknown as Stubbed;
+    if (!g.__origGetAll) g.__origGetAll = chrome.commands.getAll.bind(chrome.commands);
+    chrome.commands.getAll = (async () => {
+      const cmds = await g.__origGetAll!();
+      return cmds.map((c) => ({ ...c, shortcut: '' }));
+    }) as typeof chrome.commands.getAll;
+  });
+
   // Empty-bindings baseline: open Options, then close it. After
   // this, the SW's cached fingerprint matches the unstubbed
   // empty-shortcut state.
@@ -265,11 +278,10 @@ test('a refreshHotkeys message from the Options page resyncs the tooltip', async
       __origGetAll?: typeof chrome.commands.getAll;
     }
     const g = self as unknown as Stubbed;
-    if (!g.__origGetAll) g.__origGetAll = chrome.commands.getAll.bind(chrome.commands);
     chrome.commands.getAll = (async () => {
       const cmds = await g.__origGetAll!();
       return cmds.map((c) =>
-        c.name === '_execute_action' ? { ...c, shortcut: 'Ctrl+Shift+Y' } : c,
+        c.name === '_execute_action' ? { ...c, shortcut: 'Ctrl+Shift+Y' } : { ...c, shortcut: '' }
       );
     }) as typeof chrome.commands.getAll;
   });

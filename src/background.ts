@@ -50,6 +50,7 @@ import {
   IMAGE_CAPTURE_MENU_ID,
   IMAGE_SAVE_SCREENSHOT_MENU_ID,
   PIN_ASK_TARGET_MENU_ID,
+  SHORTCUT_SUFFIX,
   SNAPSHOTS_DIR_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
@@ -262,7 +263,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // sweep.
   void refreshMenusIfHotkeysChanged();
 
-  const id = String(info.menuItemId);
+  let id = String(info.menuItemId);
+  if (id.endsWith(SHORTCUT_SUFFIX)) {
+    id = id.slice(0, -SHORTCUT_SUFFIX.length);
+  }
 
   // Top-level capture entry: run its action.
   const action = findCaptureAction(id);

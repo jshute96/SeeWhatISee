@@ -35,10 +35,18 @@
   ],
   "commands": {
     "_execute_action": {
-      "description": "Activate SeeWhatISee (same as clicking the toolbar icon)"
+      "description": "Activate SeeWhatISee (same as clicking the toolbar icon)",
+      "suggested_key": {
+        "default": "Ctrl+Shift+X",
+        "mac": "Command+Shift+X"
+      }
     },
     "01-secondary-action": {
-      "description": "Secondary action (same as double-click)"
+      "description": "Secondary action (same as double-click)",
+      "suggested_key": {
+        "default": "Alt+Shift+X",
+        "mac": "Alt+Shift+X"
+      }
     },
     "05-capture": {
       "description": "Capture…"

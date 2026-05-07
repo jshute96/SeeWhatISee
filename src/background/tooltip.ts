@@ -36,7 +36,10 @@
 // (inside `[]`, before the colon) on multi-line rows since there's no
 // trailing fragment on the label line to attach it to.
 
-import type { CaptureDetailsDefaults } from './capture-page-defaults.js';
+import {
+  isScreenshotOrSelectionDefaults,
+  type CaptureDetailsDefaults,
+} from './capture-page-defaults.js';
 
 /**
  * Minimal projection of `CaptureAction` that the tooltip builder cares
@@ -85,6 +88,9 @@ function effectiveItems(
   defaults: CaptureDetailsDefaults,
   branch: Branch,
 ): Set<string> | null {
+  if (action.baseId === 'save-defaults' && isScreenshotOrSelectionDefaults(defaults)) {
+    return null;
+  }
   switch (action.baseId) {
     case 'capture':
       return null;
@@ -177,6 +183,10 @@ export function expandFragment(
   branch: Branch,
 ): string {
   if (action.baseId !== 'save-defaults') return action.tooltipFragment;
+  if (isScreenshotOrSelectionDefaults(defaults)) {
+    const base = 'Save screenshot or selection';
+    return action.delaySec === 0 ? base : `${base} in ${action.delaySec}s`;
+  }
   const items: string[] = [];
   if (branch === 'withoutSelection') {
     if (defaults.withoutSelection.screenshot) items.push('screenshot');
