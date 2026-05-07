@@ -2654,12 +2654,43 @@ async function withPressed(btn: HTMLButtonElement, fn: () => Promise<void>): Pro
   }
 }
 
+// `navigator.clipboard.writeText` / `…write` reject with a
+// `NotAllowedError` ("Document is not focused") when the page loses
+// focus mid-flight — reproducible by clicking a Copy button that
+// has to wait on a SW download and then alt-tabbing before it
+// lands. Both copy entry points (text via `writeClipboardText` and
+// image via `copyImageToClipboard`) feed their rejection through
+// `formatClipboardError`, so the user-facing wording — including
+// the "click back in and try again" recovery hint — stays in sync
+// across all the Copy buttons. `subject` is the noun the message
+// is talking about ("copy" for text/filename/URL, "copy image" for
+// the drawing-palette image button).
+function formatClipboardError(err: unknown, subject: 'copy' | 'copy image'): string {
+  if (err instanceof DOMException && err.name === 'NotAllowedError') {
+    return `Couldn't ${subject} — capture page lost focus before the ${subject} finished. Click back into it and try again.`;
+  }
+  const detail = (err as Error)?.message ?? String(err);
+  return `Failed to ${subject === 'copy' ? 'copy to clipboard' : 'copy image to clipboard'}: ${detail}`;
+}
+
+// Surface clipboard-write failures in the shared `#ask-status` slot
+// rather than letting them bubble as uncaught promise rejections in
+// devtools. See `formatClipboardError` for the wording rules.
+async function writeClipboardText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.warn('[SeeWhatISee] clipboard writeText failed:', err);
+    setStatusMessage(formatClipboardError(err, 'copy'), 'error');
+  }
+}
+
 // Page-card Copy URL button — copies the captured URL string itself
 // (not a filename or a download path), separate from the per-artifact
 // Copy buttons which materialize a file and copy its absolute path.
 copyUrlBtn.addEventListener('click', () => {
   if (!capturedUrl) return;
-  void withPressed(copyUrlBtn, () => navigator.clipboard.writeText(capturedUrl));
+  void withPressed(copyUrlBtn, () => writeClipboardText(capturedUrl));
 });
 
 copyScreenshotBtn.addEventListener('click', () => {
@@ -2721,7 +2752,13 @@ async function copyImageToClipboard(): Promise<void> {
     const blobPromise = fetch(url).then((r) => r.blob());
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
   } catch (err) {
+    // Same `NotAllowedError` ("Document is not focused") path as
+    // `writeClipboardText` — `navigator.clipboard.write` rejects the
+    // same way when the page loses focus mid-flight. Reuse the
+    // shared `formatClipboardError` builder so the user-facing
+    // wording stays consistent across all three copy buttons.
     console.warn('[SeeWhatISee] copy image to clipboard failed:', err);
+    setStatusMessage(formatClipboardError(err, 'copy image'), 'error');
   }
 }
 downloadHtmlBtn.addEventListener('click', () => {
@@ -3395,14 +3432,13 @@ async function copyArtifactPath(
     screenshotOverride,
   })) as { path?: string; error?: string } | undefined;
   if (!response || response.error || !response.path) {
-    console.warn(
-      '[SeeWhatISee] copy filename failed:',
-      response?.error ?? 'no response from background',
-    );
+    const detail = response?.error ?? 'no response from background';
+    console.warn('[SeeWhatISee] copy filename failed:', detail);
+    setStatusMessage(`Couldn't copy filename: ${detail}`, 'error');
     return;
   }
   if (kind === 'screenshot') lastSentScreenshotEditVersion = editVersion;
-  await navigator.clipboard.writeText(response.path);
+  await writeClipboardText(response.path);
 }
 
 // Render the preview image with all current edits baked into the

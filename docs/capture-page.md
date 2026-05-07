@@ -709,6 +709,31 @@ If the user has any edits *and* is saving the screenshot:
     `finally` so the class is removed even if the inner work throws.
   - `.copy-btn.pressed` styling lives in `shared-styles.css`
     alongside the corresponding rule for `.btn.pressed`.
+- **Clipboard-write failures surface in `#ask-status`.** When the
+  Capture page loses focus during the async window (SW round-trip
+  + download + writeText), the browser rejects
+  `navigator.clipboard.writeText` with
+  `NotAllowedError: Document is not focused` — reproducible by
+  clicking Copy on a not-yet-downloaded artifact and alt-tabbing
+  before it lands.
+  - Every Copy button — per-row Copy filename, page-card Copy URL,
+    drawing-palette Copy image — surfaces clipboard rejections via
+    `setStatusMessage(..., 'error')` into the shared `#ask-status`
+    slot, so the failure is visible instead of being swallowed as
+    an uncaught promise rejection.
+  - The user-facing wording is built by a single shared helper
+    `formatClipboardError(err, subject)` so the text/filename/URL
+    paths and the image path can't drift. `NotAllowedError` gets a
+    recoverable "click back into the page and try again" message;
+    other rejections fall through to a generic
+    `Failed to copy to clipboard: …` (or `…copy image to
+    clipboard…`) message with the underlying detail.
+  - The `writeText` paths (Copy URL + Copy filename) route through
+    a thin `writeClipboardText` wrapper around the helper; the
+    image path's `navigator.clipboard.write` call inlines the same
+    `formatClipboardError` invocation directly because its `try`
+    block also wraps the synchronous `ClipboardItem` construction
+    that needs to stay inside the user-gesture window.
 - Each click materializes the file on disk via the SW's
   `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
   `ensureSelectionDownloaded` helpers, then puts the file's
