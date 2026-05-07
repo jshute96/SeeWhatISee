@@ -661,11 +661,13 @@ If the user has any edits *and* is saving the screenshot:
   `screenshotOverride` is set, and reverts to
   `screenshotOriginalExt` when the user undoes back to clean.
   - Repeat Copy clicks at an unchanged `editVersion` skip the
-    rewrite — the page short-circuits `screenshotOverride` to
-    undefined on a cache-hit, and the SW's per-tab download cache
-    holds the authoritative path. The cached PNG stays the truth
-    for the on-disk file, so the filename keeps its `.png` ext
-    rather than falsely reverting based on an absent override.
+    rewrite. The page short-circuits `screenshotOverride` to
+    undefined on a same-version Copy (the SW would cache-hit
+    anyway, so the bake is wasted).
+  - The SW treats the absent override as "the per-tab download
+    cache is authoritative", not "no edits, revert ext." The
+    cached PNG stays the truth for the on-disk file, so the
+    filename keeps its `.png` ext.
 
 ## `isEdited` sidecar flag
 
@@ -819,15 +821,16 @@ Only meaningful when the page stays open across multiple saves
 - Each successful `recordDetailedCapture` snapshots a per-artifact
   `saved.<x> = { bumpIndex, revision }` on the session.
 - The next `ensure*Downloaded` consults `nextSaveFilename`:
-  - **Same revision** → reuse the locked filename. The rebump is
-    a no-op here: `capture.<x>Filename` is already pointing at the
+  - **Same revision** → reuse the locked filename. The rebump
+    early-returns; `capture.<x>Filename` already points at the
     file the previous save committed, so the cache lookup
-    short-circuits and no re-download happens. (Critically, the
-    rebump does NOT recompute the filename from
-    `bumpedFilename(bases.<x>, saved.bumpIndex)` on same-revision —
-    `bases.<x>` carries the original extension, and a screenshot
-    that landed at `.png` via the bake-in rewrite would get
-    stomped back to `.jpg`. See "Highlight bake-in on save".)
+    short-circuits and no re-download happens.
+    - The early-return matters for screenshots specifically.
+      `bumpedFilename(bases.<x>, saved.bumpIndex)` derives from
+      `bases.<x>`, which carries the *original* extension. A
+      screenshot that landed at `.png` via the bake-in rewrite
+      would get stomped back to `.jpg` if recomputed. See
+      "Highlight bake-in on save".
   - **Diverged revision** (user edited via Edit dialog or drew on
     the screenshot) → bump `bumpIndex + 1`. The previous file
     stays immutable on disk; the new log record points at the

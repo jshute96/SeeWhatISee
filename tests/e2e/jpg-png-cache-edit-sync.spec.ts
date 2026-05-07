@@ -182,6 +182,13 @@ test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Captur
   expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
 
   const sw = await getServiceWorker();
+  // Same enqueue/commit-race guard as test 1 — the page-side
+  // `lastSent` only updates after `chrome.runtime.sendMessage`
+  // resolves, and the SW cache only commits after
+  // `waitForDownloadComplete`. Gate each Copy on the clipboard
+  // write so consecutive clicks can't race their override flag or
+  // step on the cache-commit window.
+  await installClipboardSpy(capturePage);
 
   // 1. Draw a highlight + shift-Capture so `saved.screenshot` gets
   //    pinned at the current editVersion.
@@ -199,11 +206,13 @@ test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Captur
   //    download). The SECOND copy short-circuits on the page side
   //    (`lastSent` now matches) and sends `screenshotOverride =
   //    undefined`. This is the click that previously corrupted
-  //    `screenshotFilename` back to `.jpg` via the rebump.
+  //    `screenshotFilename` back to `.jpg` via the rebump. Wait
+  //    on each clipboard write so the second click is guaranteed
+  //    to see `lastSent` updated by the first.
   await capturePage.locator('#copy-screenshot-name').click();
+  await waitForClipboardWrites(capturePage, 1);
   await capturePage.locator('#copy-screenshot-name').click();
-  // No new downloads should fire — both copies should cache-hit.
-  await capturePage.waitForTimeout(200);
+  await waitForClipboardWrites(capturePage, 2);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
   expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(0);
 
