@@ -344,6 +344,31 @@ an existing one. New work goes into the More submenu.
     immediate `sendMessage` would arrive with no listener
     registered. `clipboardWrite` and `offscreen` permissions are
     declared in the manifest.
+- **Upload image to Capture...** — opens `capture.html?upload=true`
+  in a new adjacent tab so the user can pick a local image and
+  drive it through the Capture-page UI.
+  - The page renders an upload-landing card while
+    `getDetailsData` resolves with no session; selecting an image
+    sends `initializeUploadSession` to the SW.
+  - The SW synthesizes an `InMemoryCapture` with
+    `screenshotDataUrl` from the file's `FileReader` data URL,
+    `url: 'file:///<encoded-filename>'`, `title: 'Uploaded image'`,
+    `htmlUnavailable: true` (no page HTML exists), and
+    `useImageFlowDefaults: true` so `getDetailsData` picks the
+    image-flow defaults branch (Save Screenshot ✓ regardless of
+    the user's `withoutSelection.screenshot` pref).
+  - The synthetic `DetailsSession` pins `bases.screenshot` /
+    `bases.contents` to the un-bumped filenames, mirroring
+    `openCapturePageWithSession` — without this pin the multi-
+    capture bump strategy (`rebumpFilenameIfLocked`) falls back
+    to the already-bumped current filename and stacks suffixes.
+  - `imageUrl` is **not** set — the file *is* the source, already
+    named in `url`; setting `imageUrl` to the same value would
+    duplicate that into `log.json` for no extra information.
+  - On success the page strips `?upload=true` from its URL via
+    `replaceState` and falls into the normal `loadData` happy-path.
+  - See [capture-page.md → Upload mode](capture-page.md#upload-mode)
+    for the page-side wiring.
 - **Snapshots directory** — opens the on-disk capture directory
   in a new tab.
   - URL is `file://<downloads>/SeeWhatISee/`.
@@ -414,6 +439,12 @@ submenu inside the page context menu (no parent created in code).
     `defaultButton` / `promptEnter` so the rest of the page
     behaves the same. The user's stored `capturePageDefaults` is
     not mutated.
+  - Gated on the `useImageFlowDefaults` flag on `InMemoryCapture`,
+    not on `imageUrl`. The right-click flow sets both, but the
+    upload-image flow sets only `useImageFlowDefaults` (it has no
+    source URL to record). Keeping the flag separate means future
+    flows can mix and match — e.g. record an `imageUrl` without
+    wanting image-flow defaults.
   - Highlights / redactions / crop flags still surface on the
     saved record's `screenshot` artifact the same way they do on
     the toolbar path.

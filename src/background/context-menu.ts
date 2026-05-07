@@ -50,6 +50,12 @@ export const SHORTCUT_SUFFIX = '-shortcut';
 export const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the "Snapshots directory" entry under the More submenu.
 export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
+// Id used by the "Upload image to Capture..." entry under the More
+// submenu. Unlike the other More entries (which act on existing
+// captures), this one *creates* a Capture-page session from a local
+// image — opens `capture.html?upload=true` so the page shows an
+// upload-landing card before falling into the normal flow.
+export const UPLOAD_IMAGE_MENU_ID = 'upload-image-to-capture';
 // Ids for the "Copy last …" entries at the top of the More submenu.
 // Their enabled state mirrors whether the most recent capture record
 // carries the matching field (`screenshot` / `contents` / `selection`);
@@ -540,6 +546,31 @@ export async function copyLastSelectionFilename(): Promise<void> {
 }
 
 /**
+ * Open `capture.html?upload=true` in a tab adjacent to `opener`. The
+ * landing card lets the user pick a local image; selecting one
+ * dispatches `initializeUploadSession` to the SW, which seeds the
+ * per-tab session, and the page falls into the normal Capture-page
+ * flow.
+ *
+ * Tab-placement mirrors `openCapturePageWithSession` (right of the
+ * opener, `openerTabId` linked) so the new tab visually groups with
+ * the page the user was on. Pulled out of the inline menu-click
+ * handler in `background.ts` so e2e tests can drive the same logic
+ * without going through `chrome.contextMenus.onClicked` (which
+ * Chrome's API doesn't expose a programmatic dispatch for).
+ */
+export async function openUploadCapturePage(
+  opener: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  const createProps: chrome.tabs.CreateProperties = {
+    url: chrome.runtime.getURL('capture.html?upload=true'),
+  };
+  if (opener?.index !== undefined) createProps.index = opener.index + 1;
+  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
+  await chrome.tabs.create(createProps);
+}
+
+/**
  * Open the on-disk capture directory in a new tab as a `file://` URL
  * so the user can browse the saved screenshots / HTML / `log.json`.
  */
@@ -847,6 +878,12 @@ export async function installContextMenu(): Promise<void> {
     contexts: ['action'],
   });
   createSeparator(`${MORE_PARENT_ID}-sep-copy`, MORE_PARENT_ID);
+  chrome.contextMenus.create({
+    id: UPLOAD_IMAGE_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Upload image to Capture...',
+    contexts: ['action'],
+  });
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,

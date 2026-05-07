@@ -1,9 +1,11 @@
 import {
   captureBothToMemory,
   captureImageToMemory,
+  compactTimestamp,
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  imageExtensionFor,
   noSelectionContentMessage,
   recordDetailedCapture,
   waitForDownloadComplete,
@@ -459,12 +461,29 @@ interface CloseCapturePageMessage {
    */
   action: 'closeCapturePage';
 }
+interface InitializeUploadSessionMessage {
+  /**
+   * Sent by the Capture page when it loads with `?upload=true` and
+   * the user has picked a local image file. The page reads the file
+   * via `FileReader.readAsDataURL` and forwards the data URL +
+   * filename + MIME type here. The handler synthesizes an
+   * `InMemoryCapture` (no html, no selection, `htmlUnavailable: true`,
+   * `useImageFlowDefaults: true`) and stashes the matching
+   * `DetailsSession` under this tab's key, so the page can fall back
+   * into the normal `loadData` happy-path on the next round-trip.
+   */
+  action: 'initializeUploadSession';
+  dataUrl: string;
+  filename: string;
+  mimeType: string;
+}
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
   | UpdateArtifactMessage
   | SaveDetailsMessage
-  | CloseCapturePageMessage;
+  | CloseCapturePageMessage
+  | InitializeUploadSessionMessage;
 
 /**
  * Read the per-tab DetailsSession out of session storage. Returns
@@ -1126,15 +1145,14 @@ export function installDetailsMessageHandlers(): void {
         // `capturePageDefaults` is preserved for the toolbar /
         // hotkey path.
         //
-        // Gated on `imageUrl` (the user-facing field that names the
-        // flow) rather than `htmlUnavailable` (an implementation
-        // detail of how it's currently realized). A future flow that
-        // sets `imageUrl` without skipping HTML — or vice versa —
-        // would otherwise drift coherence between the wire defaults
-        // and the page's row-level handling.
-        const isImageFlow = session.capture.imageUrl !== undefined;
+        // Gated on the explicit `useImageFlowDefaults` flag rather
+        // than on `imageUrl` (which the right-click flow sets but the
+        // upload flow does not — upload has no source URL to record)
+        // or `htmlUnavailable` (an implementation detail of how the
+        // flow is currently realized). The flag stays decoupled so
+        // future flows can mix and match.
         const userDefaults = await getCaptureDetailsDefaults();
-        const capturePageDefaults = isImageFlow
+        const capturePageDefaults = session.capture.useImageFlowDefaults
           ? imageFlowDefaults(userDefaults)
           : userDefaults;
         sendResponse({
@@ -1330,6 +1348,83 @@ export function installDetailsMessageHandlers(): void {
           // the error without it disappearing. Don't drop the
           // session either — the user might fix the offending
           // artifact and try again.
+        }
+      })();
+      return true;
+    }
+
+    if (msg.action === 'initializeUploadSession') {
+      void (async () => {
+        try {
+          const { dataUrl, filename, mimeType } = msg;
+          const now = new Date();
+          const ts = compactTimestamp(now);
+          // `file:///<encoded>` is a real `file://` URL with the
+          // filename as its single (encoded) path segment. The path
+          // is fabricated — we don't know the user's on-disk
+          // location — but encoding makes it a well-formed URL so
+          // downstream `new URL(...)` consumers don't blow up on
+          // spaces / `#` / `?` in the filename. Reusing the same
+          // encoded form for `imageExtensionFor` lets its URL-suffix
+          // fallback catch types not in its MIME table (e.g.
+          // `image/heic`). The separate `imageUrl` field is unset:
+          // the file *is* the source, already named in `url`.
+          const url = `file:///${encodeURIComponent(filename)}`;
+          const ext = imageExtensionFor(mimeType, url);
+          const capture: InMemoryCapture = {
+            screenshotDataUrl: dataUrl,
+            html: '',
+            url,
+            // Generic title — the filename is already visible in the
+            // URL row, so use a descriptive label instead of
+            // repeating it.
+            title: 'Uploaded image',
+            timestamp: now.toISOString(),
+            screenshotFilename: `screenshot-${ts}.${ext}`,
+            screenshotOriginalExt: ext,
+            contentsFilename: `contents-${ts}.html`,
+            htmlUnavailable: true,
+            // Pick the imageFlow defaults branch — without this the
+            // user's `withoutSelection.screenshot=false` pref would
+            // silently leave the upload's screenshot unchecked and
+            // Capture would write nothing.
+            useImageFlowDefaults: true,
+          };
+          // Pin the un-bumped artifact filenames the same way
+          // `openCapturePageWithSession` does for toolbar / image-
+          // right-click flows. Without this, the multi-capture bump
+          // strategy in `rebumpFilenameIfLocked` falls back to
+          // `getCurrentFilename` for the base — so each edited re-save
+          // splices `-N` into the *already-bumped* name, producing
+          // stacked suffixes (`…-1-1-2-3.png`) instead of a counter.
+          // `openerTabId` is intentionally not set here, even though
+          // `openCapturePageWithSession` does. The upload session is
+          // created from the page side after the user picks a file,
+          // long after `openUploadCapturePage` opened the tab — the
+          // SW no longer has a handle to the original opener (Chrome
+          // wired `openerTabId` natively at `tabs.create` time, but
+          // that field is stripped on SW restart and the page never
+          // sees it). Practical impact: focus-return on Capture-page
+          // close falls back to the active tab. Acceptable tradeoff;
+          // adding it would require keying opener-by-tab-id state
+          // somewhere `initializeUploadSession` could look it up.
+          const session: DetailsSession = {
+            capture,
+            bases: {
+              screenshot: capture.screenshotFilename,
+              contents: capture.contentsFilename,
+            },
+          };
+          await saveDetailsSession(tabId, session);
+          sendResponse({ ok: true });
+        } catch (err) {
+          // Surface a tight one-line message. Chrome's session-storage
+          // quota error reads "Session storage quota bytes exceeded.
+          // Values were not stored." — the second sentence is noise
+          // for the user (already implied by "failed"), so strip it.
+          let msgText = err instanceof Error ? err.message : String(err);
+          msgText = msgText.replace(/\.?\s*Values were not stored\.?\s*$/, '');
+          sendResponse({ error: msgText });
         }
       })();
       return true;

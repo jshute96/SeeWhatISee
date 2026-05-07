@@ -2372,6 +2372,127 @@ updateZoomButtonLabel();
 
 // ─── Initial data load ────────────────────────────────────────────
 
+/**
+ * Reveal the upload-landing card and wire the file picker. Called
+ * from `loadData()` on the no-session path when `?upload=true` is
+ * in the URL. Once the user picks an image we:
+ *
+ *   1. FileReader → data URL.
+ *   2. Decode-validate the data URL via `<img>` so a corrupt /
+ *      0-byte / mislabeled file fails here rather than rendering
+ *      a broken-image preview after the navigation.
+ *   3. `initializeUploadSession` to the SW (it synthesizes a
+ *      `DetailsSession` and stashes it under our tab's key).
+ *   4. Strip `?upload=true` from the URL via `replaceState` so a
+ *      reload doesn't re-trigger this branch (we now have a real
+ *      session and want the normal path).
+ *   5. Re-enter `loadData()` — `getDetailsData` returns the
+ *      synthetic session and the rest of the page renders.
+ *
+ * Errors (non-image file, decode failure, FileReader failure, SW
+ * init rejection) surface in `#upload-error` below the Choose-image
+ * button. The button stays functional so the user can pick a
+ * different file without reloading the tab.
+ */
+async function handleUploadFlow(): Promise<void> {
+  const landing = document.getElementById('upload-landing') as HTMLDivElement;
+  const chooseBtn = document.getElementById('upload-choose-btn') as HTMLButtonElement;
+  const fileInput = document.getElementById('upload-file-input') as HTMLInputElement;
+  const errorEl = document.getElementById('upload-error') as HTMLDivElement;
+
+  landing.hidden = false;
+
+  function showError(msg: string): void {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+  function clearError(): void {
+    errorEl.textContent = '';
+    errorEl.style.display = 'none';
+  }
+
+  chooseBtn.addEventListener('click', () => {
+    clearError();
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    // Always reset so the user can re-pick the same file after an
+    // error path (the change event won't fire on identical
+    // selections otherwise).
+    const resetInput = (): void => { fileInput.value = ''; };
+
+    if (!file.type.startsWith('image/')) {
+      showError('Not a supported image format.');
+      resetInput();
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => {
+      showError('Could not read file. Try again.');
+      resetInput();
+    };
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      // Decode-validate before we ship the bytes off to the SW.
+      // The `accept="image/*"` attribute and the MIME-prefix check
+      // above only filter on declared type — a 0-byte file or a
+      // `.png` carrying garbage bytes still passes both. Loading
+      // through `<img>` and waiting for `onload` / `onerror` runs
+      // the same decode the Capture page would do, so anything that
+      // would render as a broken-image placeholder fails here with
+      // a clear message instead.
+      const decodable = await new Promise<boolean>((resolve) => {
+        const probe = new Image();
+        probe.onload = () => resolve(probe.naturalWidth > 0 && probe.naturalHeight > 0);
+        probe.onerror = () => resolve(false);
+        probe.src = dataUrl;
+      });
+      if (!decodable) {
+        showError('Not a valid image (could not decode).');
+        resetInput();
+        return;
+      }
+      let initRes: { ok?: boolean; error?: string } | undefined;
+      try {
+        initRes = await chrome.runtime.sendMessage({
+          action: 'initializeUploadSession',
+          dataUrl,
+          filename: file.name,
+          mimeType: file.type,
+        });
+      } catch (err) {
+        showError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+        resetInput();
+        return;
+      }
+      if (!initRes?.ok) {
+        showError(`Upload failed: ${initRes?.error ?? 'no response from background'}`);
+        resetInput();
+        return;
+      }
+      // Synthetic session is now in place. Hide the landing, scrub
+      // `?upload=true` from the URL (so reloads don't loop us back
+      // here), unhide the main-content blocks the no-session
+      // branch hid, clear `staleMode`, and let the normal
+      // `loadData` happy-path render.
+      landing.hidden = true;
+      window.history.replaceState({}, document.title, window.location.pathname);
+      document
+        .querySelectorAll<HTMLElement>('[data-capture-main]')
+        .forEach((el) => {
+          el.hidden = false;
+        });
+      staleMode = false;
+      await loadData();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function loadData(): Promise<void> {
   try {
     // Catch sendMessage rejections (SW not yet alive, "Could not
@@ -2385,23 +2506,33 @@ async function loadData(): Promise<void> {
       response = undefined;
     }
     if (!response) {
-      // No SW-side session for this tab — the user likely opened the
-      // capture.html URL directly (e.g. an old bookmark, or a tab
-      // restored after a browser restart without the session entry
-      // that originally seeded it). Hide every main-content block
-      // and reveal the explanatory pane so they don't see a half-
-      // broken page with non-functional Capture / Ask buttons.
-      // `staleMode` also gates the page-wide Alt-shortcut listener
-      // so Alt+C / Alt+A / etc. don't silently mutate hidden
-      // controls. The `finally` below still flips body visibility
-      // and calls `promptInput.focus()`; the focus call is a silent
-      // no-op because the prompt is inside a now-hidden block.
+      // No SW-side session for this tab. Two cases:
+      //  - `?upload=true` in the URL: the user came from the More
+      //    submenu's "Upload image to Capture..." entry. Show the
+      //    upload-landing card so they can pick a file. Once they
+      //    do, we send `initializeUploadSession`, the SW seeds the
+      //    matching `DetailsSession`, the URL is cleaned, and we
+      //    re-enter `loadData()` for the happy path.
+      //  - Anything else: the page was opened directly (bookmark,
+      //    history, browser restart) without the SW-seeded snapshot
+      //    it's built from. Show the explanatory missing-session
+      //    pane.
+      // Either way we hide every main-content block, set
+      // `staleMode` so Alt-shortcuts don't silently mutate hidden
+      // controls, and the `finally` below still flips body
+      // visibility (the prompt focus call below is a silent no-op
+      // when the prompt is inside a hidden block).
       staleMode = true;
       document
         .querySelectorAll<HTMLElement>('[data-capture-main]')
         .forEach((el) => {
           el.hidden = true;
         });
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('upload') === 'true') {
+        await handleUploadFlow();
+        return;
+      }
       const errorPane = document.getElementById('missing-session-error');
       if (errorPane) errorPane.hidden = false;
       return;

@@ -30,6 +30,64 @@ referenced from this doc live in
   the user closes the page without clicking Capture, so session
   storage doesn't grow until browser restart.
 
+## Upload mode
+
+- The More-submenu's "Upload image to Capture..." entry opens
+  `capture.html?upload=true` adjacent to the active tab. There's no
+  pre-seeded `DetailsSession` for this tab — the page itself has to
+  build one from a local file the user picks.
+- `loadData()` reads `?upload=true` and, on the no-session branch,
+  calls `handleUploadFlow()` instead of showing the missing-session
+  pane. The upload landing card (`#upload-landing` in
+  `capture.html`) reveals; main `[data-capture-main]` blocks stay
+  hidden until the session is ready.
+- File-input change handler:
+  - Rejects non-`image/*` types with an inline error
+    (`#upload-error`) and resets the input so the user can re-pick
+    the same file after error paths.
+  - Reads the bytes via `FileReader.readAsDataURL` (`onerror` is
+    wired so a failed read surfaces an error rather than hanging
+    the page).
+  - Decode-validates the data URL via an `<img>` probe before
+    dispatching to the SW. The `accept="image/*"` filter and the
+    MIME-prefix check above only test declared type — a 0-byte
+    file or a `.png` carrying garbage bytes still passes both.
+    Loading through `<img>` runs the same decode the Capture page
+    would do, so anything that would render as a broken-image
+    placeholder fails here with `Not a valid image (could not
+    decode).` instead.
+  - Sends `initializeUploadSession { dataUrl, filename, mimeType }`
+    to the SW. The SW synthesizes a `DetailsSession`:
+    - `screenshotDataUrl: dataUrl`, `screenshotFilename:
+      screenshot-<ts>.<ext>` derived from the MIME / filename
+      suffix.
+    - `url: 'file:///<encoded-filename>'`, `title: 'Uploaded
+      image'`. The path segment is fabricated (we don't know the
+      user's on-disk path) but `encodeURIComponent` makes the URL
+      well-formed so downstream `new URL(...)` consumers don't
+      blow up on spaces / `#` / `?` in the filename.
+    - `htmlUnavailable: true`, `useImageFlowDefaults: true`,
+      `imageUrl` left unset.
+    - `bases.{screenshot,contents}` pinned to the un-bumped
+      synthetic filenames, mirroring `openCapturePageWithSession`.
+      Without this pin, the multi-capture bump strategy in
+      `rebumpFilenameIfLocked` falls back to the *current*
+      filename and produces stacked suffixes (`…-1-1-2-3.png`)
+      across edited shift-click re-saves.
+  - On Chrome session-storage quota errors the SW strips the
+    redundant `Values were not stored.` tail and the page wraps
+    the message as `Upload failed: <msg>` in the block-display
+    `#upload-error` so it wraps cleanly under the Choose-image
+    button.
+- On success the page hides the landing, strips `?upload=true` via
+  `replaceState`, un-hides the main blocks, clears `staleMode`,
+  and re-enters `loadData()`. The synthetic session resolves on
+  the next `getDetailsData` and the rest of the page renders the
+  same way as for any other Capture flow.
+- See
+  [capture-actions.md → More submenu](capture-actions.md#more-submenu)
+  for the menu wiring.
+
 ## Graceful handling of failed screenshot / HTML / selection scrape
 
 - `captureBothToMemory` catches failures from
