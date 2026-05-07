@@ -676,9 +676,11 @@ If the user has any edits *and* is saving the screenshot:
   to just that crop region (so the saved PNG ships a smaller
   image) and every edit's coordinates are translated into the
   cropped frame.
-- Red rectangles and lines stroke at 3px scaled by the
-  display→natural ratio so they look the same in the saved PNG
-  as during editing.
+- Red rectangles and lines stroke at a fixed 3px in natural
+  pixels in the saved PNG, regardless of the display→natural ratio
+  at the moment of save. The overlay still scales its visible
+  stroke with the displayed image, but those visual differences
+  are intentionally not baked in.
 - Redactions paint as solid black fills that cover whatever was
   underneath — they are the only edit kind that obliterates the
   original pixels in the bake, which is the whole point.
@@ -1071,10 +1073,11 @@ re-activation is required:
   Fit (typical), 3 px at 1×, proportionally thicker at 2× / 4× /
   8×. Crop dashed border and corner grips stay at 1 px (UI
   affordances, not picture content).
-- The bake (`renderHighlightedPng`) is independent — it always
-  renders strokes at `3 × (natural / displayAtBakeTime)` natural
-  pixels so the saved PNG matches what was on screen at the moment
-  of save. Zoom never changes the saved bytes.
+- The bake (`renderHighlightedPng`) ignores the display ratio: it
+  always renders strokes at a fixed 3 natural px (with the default
+  arrow-head cap), so the saved PNG looks the same regardless of
+  what zoom mode the user happened to be in at save time. Zoom
+  never changes the saved bytes.
 
 ## Chrome-platform gotchas
 

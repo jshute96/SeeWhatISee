@@ -1207,9 +1207,8 @@ const ARROW_HEAD_ANGLE = (28 * Math.PI) / 180;
 // Compute the two barb endpoints for an arrowhead at (x2,y2) on the
 // segment from (x1,y1)→(x2,y2). Returned in the same coordinate
 // system as the inputs. `maxHeadPx` caps the barb length in those
-// same units — overlay calls leave it at the default (CSS-pixel
-// cap); the bake-in path passes a scaled cap so the natural-pixel
-// arrowhead matches the displayed proportion.
+// same units — both the overlay and the bake-in path leave it at
+// the default cap.
 function arrowBarbs(
   x1: number, y1: number, x2: number, y2: number,
   maxHeadPx: number = ARROW_HEAD_MAX_PX,
@@ -2058,10 +2057,11 @@ function setZoom(m: ZoomMode): void {
 }
 
 // Display→natural ratio used to scale overlay stroke widths so
-// red lines and boxes track the visual scale of the image. The
-// bake (`renderHighlightedPng`) is unaffected — it always renders
-// at natural resolution and computes its own stroke from the
-// display→natural inverse.
+// red lines and boxes track the visual scale of the image while
+// editing. The bake (`renderHighlightedPng`) does NOT use this —
+// it always renders strokes at a fixed default width so the saved
+// PNG looks the same regardless of the user's zoom level at save
+// time.
 function currentDisplayScale(): number {
   const natW = previewImg.naturalWidth;
   if (!natW) return 1;
@@ -3583,11 +3583,14 @@ async function copyArtifactPath(
 // to show the markup (and the cropped region, if any), not just the
 // underlying screenshot.
 //
-// Stroke widths in the SVG overlay are CSS pixels at display size;
-// we scale them up by the display→natural ratio so they look the
-// same in the saved PNG as they did during editing (otherwise a 3px
-// stroke on a 4×-downscaled preview would render as a hairline in
-// the saved file).
+// Strokes in the saved PNG are always rendered at the same default
+// width (3 natural px), independent of the display→natural ratio
+// at the moment of save. The overlay still scales its stroke with
+// the visible image (so editing at 4× shows fatter lines than
+// editing in Fit), but those visual differences are intentionally
+// not baked in — earlier we scaled the bake's stroke up by
+// natural/display, which produced unpleasantly fat lines on
+// high-resolution captures viewed at Fit.
 //
 // When an active crop exists, the canvas is sized to the crop
 // region (not the full image) and every edit's coordinates are
@@ -3620,15 +3623,10 @@ function renderHighlightedPng(): string {
   if (!ctx) throw new Error('Failed to get 2D context for highlight rendering');
   ctx.drawImage(previewImg, sx, sy, sw, sh, 0, 0, sw, sh);
 
-  const displayW = previewImg.clientWidth || natW;
-  const displayH = previewImg.clientHeight || natH;
-  // The image always preserves its aspect ratio (max-width and the
-  // JS-managed max-height both scale uniformly), so w/displayW and
-  // h/displayH should be equal in theory. Averaging is just cheap
-  // insurance against sub-pixel rounding drift between the two —
-  // not handling for non-uniform scale.
-  const scale = (natW / displayW + natH / displayH) / 2;
-  const strokePx = 3 * scale;
+  // Default stroke width in natural pixels — same value the overlay
+  // uses at 1× zoom. Held constant on the bake so the saved PNG
+  // doesn't get fat lines just because the preview was zoomed out.
+  const strokePx = 3;
 
   // Clip every highlight to the canvas bounds so edits that extend
   // past the crop don't paint onto the un-cropped neighbors (the
@@ -3656,7 +3654,9 @@ function renderHighlightedPng(): string {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       if (e.kind === 'arrow') {
-        const b = arrowBarbs(x1, y1, x2, y2, ARROW_HEAD_MAX_PX * scale);
+        // Default head cap (no display-scale multiplier) so the
+        // baked arrowhead matches the default 3 px stroke above.
+        const b = arrowBarbs(x1, y1, x2, y2, ARROW_HEAD_MAX_PX);
         if (b) {
           ctx.moveTo(b.ax, b.ay);
           ctx.lineTo(x2, y2);

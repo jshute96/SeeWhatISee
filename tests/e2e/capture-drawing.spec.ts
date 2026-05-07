@@ -171,9 +171,9 @@ test('drawing: png with highlights bakes red into the saved PNG', async ({
     getServiceWorker,
   );
   // Drag a red rectangle from (20%, 20%) to (40%, 40%). The bake-in
-  // scales the 3px CSS-pixel stroke up to natural pixels via the
-  // display→natural ratio, so the rectangle's left edge at x=20%
-  // shows up as red in the saved PNG.
+  // paints a fixed 3 natural-px red stroke centered on each edge,
+  // so the rectangle's left edge at x=20% shows up as red in the
+  // saved PNG.
   await dragRect(
     capturePage,
     { xPct: 0.2, yPct: 0.2 },
