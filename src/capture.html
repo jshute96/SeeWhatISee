@@ -732,6 +732,23 @@
     width: 14px;
     height: 14px;
     flex-shrink: 0;
+    /* `#ask-btn-icon` is a <span> holding a single text codepoint:
+     * `↗` (text-presentation arrow, new-window state) or `📌`
+     * (emoji-presentation pushpin, pin state). `color: #060` tints
+     * the `↗` green to match the green pin / arrow indicators in
+     * the Ask dropdown menu's leading slot — keeps the visual
+     * language consistent across both surfaces. The colored 📌
+     * emoji ignores `color`, so this rule only affects the `↗`.
+     * `font-size` sizes the glyphs to match the row's label
+     * height; `line-height: 1` and the inline-flex layout keep
+     * them vertically centred without shifting the row's
+     * baseline. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #060;
+    font-size: 14px;
+    line-height: 1;
   }
   /* Caret button: chevron-only sliver attached to the right edge
    * of #ask-btn. Narrower than the square button height — the
@@ -829,7 +846,7 @@
     /* Two-column row: [indicator slot 16px][label flexes].
      * The indicator slot is always reserved (even on items that
      * aren't the current default) so labels stay vertically aligned
-     * across the menu and the pin / pin-off / new-window glyph
+     * across the menu and the 📌 / ❗ / ↗ glyph
      * appearing/disappearing doesn't shift neighbouring rows. */
     display: flex;
     align-items: center;
@@ -846,26 +863,26 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* `color: #060` paints the only color-inheriting glyph in this
+     * slot — the new-window `↗`, which uses text presentation. The
+     * other indicators (📌 active pin, ❗ stale pin) are emoji-
+     * presentation codepoints whose color is fixed by the system
+     * emoji font, so this rule has no effect on them. `font-size` /
+     * `line-height` size the text glyphs.
+     * (The toolbar context-menu uses ☐ / ☑ instead of 📌 — native
+     * menus on Linux fall back to a monochrome glyph for 📌, while
+     * the web font stack here renders it in color.) */
     color: #060;
+    font-size: 14px;
+    line-height: 1;
   }
-  .ask-menu .ask-menu-item .ask-menu-check svg {
-    width: 14px;
-    height: 14px;
-  }
-  /* Hide the pin glyph when the row is neither the resolved default
-   * (green pin) nor a stale pin (grey crossed-out pin). The slot
-   * itself stays width-allocated so labels remain aligned. */
+  /* Hide the indicator slot's contents when the row is neither the
+   * resolved default (📌 / ↗) nor a stale pin (❗). `visibility:
+   * hidden` on the slot itself keeps the 16px box width-allocated
+   * so labels stay aligned across rows. */
   .ask-menu .ask-menu-item:not(.is-default):not(.is-stale)
-      .ask-menu-check svg {
+      .ask-menu-check {
     visibility: hidden;
-  }
-  /* Stale pin: a crossed-out pin in the muted #888 we use elsewhere
-   * for disabled labels (matches the `aria-disabled` row colour the
-   * excluded items already pick up). Communicates "pin used to
-   * point here" without competing visually with the green pin on
-   * the live default. */
-  .ask-menu .ask-menu-item.is-stale .ask-menu-check {
-    color: #888;
   }
   .ask-menu .ask-menu-item .ask-menu-label {
     /* Don't claim the row's whole flex space — let the suffix sit
@@ -1237,39 +1254,13 @@
               fill="none" stroke="currentColor" stroke-width="3"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- Indicator glyphs for the Ask menu's leading slot AND for
-           the trailing slot inside the #ask-btn split-button label
-           (so the user sees at a glance whether plain-Ask will hit
-           a pinned tab vs open a new window). From Google Material
-           Symbols (outlined variant), Apache 2.0 license. Source:
-             symbols/web/push_pin/materialsymbolsoutlined
-             symbols/web/keep_off/materialsymbolsoutlined
-             symbols/web/new_window/materialsymbolsoutlined
-           Different viewBoxes (24×24 vs 960×960 -y origin) reflect
-           Material's two design grids; SVG `<symbol>` scales each
-           independently, so they still render at the same visual
-           size in the 14×14 menu slot.
-           - `pin-icon` marks the existing-tab row plain-Ask is
-             pinned to (`is-default` on an existing tab); also shown
-             on #ask-btn when the resolved default is an existing tab.
-           - `pin-off-icon` marks a stale-pin row (`is-stale`).
-           - `new-window-icon` marks the "New window in <provider>"
-             row plain-Ask will hit (`is-default` on a new-tab row);
-             also shown on #ask-btn when the resolved default is a
-             new-tab destination. "Pin" doesn't fit on those rows —
-             they're action rows, not pinned targets. -->
-      <symbol id="pin-icon" viewBox="0 0 24 24">
-        <path fill="currentColor"
-              d="m16 12 2 2v2h-5v6l-1 1-1-1v-6H6v-2l2-2V5H7V3h10v2h-1Zm-7.15 2h6.3L14 12.85V5h-4v7.85ZM12 14Z"/>
-      </symbol>
-      <symbol id="pin-off-icon" viewBox="0 -960 960 960">
-        <path fill="currentColor"
-              d="M680-840v80h-40v327l-80-80v-247H400v87l-87-87-33-33v-47h400ZM480-40l-40-40v-240H240v-80l80-80v-46L56-792l56-56 736 736-58 56-264-264h-6v240l-40 40ZM354-400h92l-44-44-2-2-46 46Zm126-193Zm-78 149Z"/>
-      </symbol>
-      <symbol id="new-window-icon" viewBox="0 -960 960 960">
-        <path fill="currentColor"
-              d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h240v80H200v560h560v-240h80v240q0 33-23.5 56.5T760-120H200Zm440-400v-120H520v-80h120v-120h80v120h120v80H720v120h-80Z"/>
-      </symbol>
+      <!-- The Ask-menu indicator slot is rendered entirely from
+           text codepoints by `renderAskMenuItem` in `capture-page.ts`:
+             - 📌 (active pin)
+             - ❗ (stale pin — the row used to be the pin but the
+                tab has navigated onto a wrong page)
+             - ↗ (new-window default)
+           No SVG symbols needed for this slot. -->
       <!-- Download glyph — arrow into a tray. Shown on the per-row
            "Save as…" buttons that open a native save dialog with the
            current edited body. -->
@@ -1579,9 +1570,8 @@
                 preferred / Options-default provider. Carries
                 the Alt+A hotkey. Trailing #ask-target-label +
                 the button's tooltip track the resolved default;
-                the trailing icon flips between the pin glyph
-                (existing pinned tab) and the new-window glyph
-                (new-tab fallback).
+                the trailing icon flips between 📌 (existing
+                pinned tab) and a green ↗ (new-tab fallback).
               · #ask-menu-btn opens the destination-picker menu.
                 Picking a row shifts the default for the next
                 plain-Ask click but does not send.
@@ -1606,7 +1596,15 @@
           <button id="ask-btn" type="button" class="btn ask-row"
                   title="Send to Claude on web">
             <span class="ask-row-label"><u>A</u>sk <span id="ask-target-label">Claude</span></span>
-            <svg id="ask-btn-icon" class="ask-row-icon" aria-hidden="true"><use href="#new-window-icon"></use></svg>
+            <!-- `#ask-btn-icon` is a <span> holding a single text
+                 codepoint that swaps between `↗` (U+2197 text
+                 presentation, new-window default) and the `📌`
+                 emoji (existing-tab pin) — see `setAskBtnIcon` in
+                 `capture-page.ts`. The `↗` is tinted green via
+                 `.ask-row-icon`'s `color: #060` (matching the green
+                 indicators in the Ask dropdown menu); `📌` is
+                 emoji-default and renders red regardless. -->
+            <span id="ask-btn-icon" class="ask-row-icon" aria-hidden="true">↗</span>
           </button>
           <button id="ask-menu-btn" type="button" class="btn ask-caret-btn"
                   title="Choose Ask target tab"

@@ -3898,9 +3898,7 @@ const askMenuBtn = document.getElementById('ask-menu-btn') as HTMLButtonElement;
 const askMenu = document.getElementById('ask-menu') as HTMLDivElement;
 const askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
 const askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
-const askBtnIconUse = document.querySelector(
-  '#ask-btn-icon use',
-) as SVGUseElement;
+const askBtnIcon = document.getElementById('ask-btn-icon') as HTMLSpanElement;
 // Per-provider Ask buttons are appended directly into `.button-row`
 // (not a wrapper div) so they're real flex children of the row —
 // `display: contents` wrappers can perturb the row's `gap` math
@@ -3912,9 +3910,20 @@ const askButtonRow = document.querySelector('.button-row') as HTMLDivElement;
 // which path plain-Ask is about to take. Falls back to the
 // new-window glyph when no destination has resolved yet — that's
 // what plain-Ask will do once a provider is enabled.
+//
+// The pin state renders the 📌 emoji directly (text node). The
+// page's web font stack picks up the system color-emoji font so
+// it renders red/colorful here; the toolbar context-menu uses
+// ☐ / ☑ ballot-box glyphs instead because native menu rendering
+// on Linux falls back to a monochrome thin glyph for 📌. The
+// new-window state uses the bare `↗` codepoint (U+2197, no
+// variation selector) — that's the *text* presentation, so it
+// inherits `.ask-row-icon`'s `color: #060` and renders as a green
+// arrow matching the green indicators in the Ask dropdown menu.
+// The emoji-presentation form (`↗️`) would render as a fixed
+// blue glyph the page can't restyle.
 function setAskBtnIcon(kind: 'pin' | 'new-window'): void {
-  const symbolId = kind === 'pin' ? '#pin-icon' : '#new-window-icon';
-  askBtnIconUse.setAttribute('href', symbolId);
+  askBtnIcon.textContent = kind === 'pin' ? '📌' : '↗';
 }
 
 /**
@@ -4218,15 +4227,15 @@ function renderAskMenuItem(opts: {
    *  disabled item is disabled (e.g. "(Wrong page)"). */
   suffix?: string;
   title?: string;
-  /** Indicator-slot glyph for the active states (`isDefault` /
-   *  `isStale`). `'pin'` (default) for an existing pinned-tab row;
-   *  `'new-window'` for the "New window in <provider>" row. The
-   *  stale variant is always pin-off, regardless of this hint. */
+  /** Indicator-slot glyph for the active-default states. `'pin'`
+   *  (default) for an existing pinned-tab row → 📌; `'new-window'`
+   *  for the "New window in <provider>" row → ↗. Ignored when
+   *  `isStale` is true (stale rows always render ❗). */
   glyph?: 'pin' | 'new-window';
   isDefault: boolean;
   /** Marks a row whose tab used to be the pin but has since
-   *  navigated to a wrong page. Renders the `pin-off` glyph in
-   *  grey, so the user sees where the pin *was* alongside where
+   *  navigated to a wrong page. Renders ❗ (red) in the indicator
+   *  slot, so the user sees where the pin *was* alongside where
    *  Ask is going *now*. Mutually exclusive with `isDefault` in
    *  practice (a stale pin can't also be the resolved default). */
   isStale?: boolean;
@@ -4243,16 +4252,22 @@ function renderAskMenuItem(opts: {
   check.className = 'ask-menu-check';
   check.setAttribute('aria-hidden', 'true');
   // Glyph picked by row kind: existing-tab "default" rows show a
-  // pin (the tab is pinned); "stale" rows show a crossed-out pin;
-  // new-window default rows show a new-window glyph instead, since
-  // those rows are an action ("open a new window") rather than a
-  // pinned target. `glyph` defaults to `'pin'` so call sites that
-  // don't care (the check is hidden via CSS unless is-default or
-  // is-stale anyway) can omit it.
-  const symbolId = opts.isStale
-    ? 'pin-off-icon'
-    : `${opts.glyph ?? 'pin'}-icon`;
-  check.innerHTML = `<svg><use href="#${symbolId}"></use></svg>`;
+  // 📌 emoji (the tab is pinned); "stale" rows show a red ❗
+  // (the row used to be the pin but has wandered onto a wrong
+  // page — emoji-default red signals "something's off here" more
+  // legibly than a faded crossed-out pin); new-window default
+  // rows show a bare `↗` (U+2197) — the text-presentation arrow
+  // inherits the slot's green `currentColor` so it visually pairs
+  // with the green pin without clashing. `glyph` defaults to
+  // `'pin'` so call sites that don't care (the check is hidden via
+  // CSS unless is-default or is-stale anyway) can omit it.
+  if (opts.isStale) {
+    check.textContent = '❗';
+  } else if ((opts.glyph ?? 'pin') === 'pin') {
+    check.textContent = '📌';
+  } else {
+    check.textContent = '↗';
+  }
   const labelEl = document.createElement('span');
   labelEl.className = 'ask-menu-label';
   labelEl.textContent = opts.label;

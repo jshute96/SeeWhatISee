@@ -271,7 +271,7 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
 - **More ▸** — submenu home for every action plus the
   infrequent utilities (Copy-last filenames, Snapshots
   directory, Clear log history). See below.
-- **Set this tab as Ask button target** — pin/unpin the active
+- **☐  Set this tab as Ask button target** — pin/unpin the active
   tab as the Ask destination. Greyed unless the active tab is on
   an enabled provider; flips between Set and Unset. Sits last in
   the top-level list, after the More submenu, since it's

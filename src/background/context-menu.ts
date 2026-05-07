@@ -66,13 +66,27 @@ export const COPY_LAST_HTML_MENU_ID = 'copy-last-html';
 export const COPY_LAST_SELECTION_MENU_ID = 'copy-last-selection';
 
 // Toolbar entry that pins (or unpins) the current tab as the Ask
-// target. Title flips between "Set this tab as Ask button target"
-// and "Unset this tab as Ask button target" depending on whether
-// the active tab is already the pin; greyed out when the tab isn't on an enabled
-// AI provider. Sync is driven by `refreshPinAskTargetMenu` from
-// background.ts's tab/window listeners so the entry reflects the
-// current page by the time the user opens the menu.
+// target. Title flips between the Set / Unset variants below
+// depending on whether the active tab is already the pin; greyed
+// out when the tab isn't on an enabled AI provider. Sync is driven
+// by `refreshPinAskTargetMenu` from background.ts's tab/window
+// listeners so the entry reflects the current page by the time the
+// user opens the menu.
 export const PIN_ASK_TARGET_MENU_ID = 'pin-ask-target';
+// Title strings for the Set / Unset states. Pulled into constants
+// so the static install title and `refreshPinAskTargetMenu`'s
+// dynamic flips don't drift from each other (and so an editor
+// rewording the visible text only has to touch one place per
+// state). The leading glyph is a *text-default* ballot box (not
+// the colored 📌 emoji) — native menu rendering on Linux GTK
+// falls back to a thin grey symbol-font glyph for emoji-default
+// codepoints, while ☐ / ☑ render as designed for monochrome text
+// across every platform. Two spaces after the glyph for breathing
+// room next to the label.
+export const PIN_ASK_TARGET_SET_TITLE =
+  '☐  Set this tab as Ask button target';
+export const PIN_ASK_TARGET_UNSET_TITLE =
+  '☑  Unset this tab as Ask button target';
 
 // Image right-click context entries. Live in `contexts: ['image']` so
 // they only surface when the user right-clicks an `<img>` (or any
@@ -878,9 +892,14 @@ export async function installContextMenu(): Promise<void> {
   // disabled): users on a non-provider tab will see the disabled
   // state during the momentary gap between install and the first
   // refresh.
+  // Initial title is the disabled "Set" wording — the safe
+  // pre-refresh state for users on a non-provider tab. See
+  // `PIN_ASK_TARGET_SET_TITLE` for why we use a ballot-box prefix
+  // instead of the 📌 emoji here. `refreshPinAskTargetMenu` flips
+  // the title between Set / Unset on every tab/window event.
   chrome.contextMenus.create({
     id: PIN_ASK_TARGET_MENU_ID,
-    title: 'Set this tab as Ask button target',
+    title: PIN_ASK_TARGET_SET_TITLE,
     enabled: false,
     contexts: ['action'],
   });
@@ -930,7 +949,9 @@ export async function installContextMenu(): Promise<void> {
  * harmless.
  */
 export async function refreshPinAskTargetMenu(): Promise<void> {
-  let title = 'Set this tab as Ask button target';
+  // Default to the Set wording (state 3); the Unset branch below
+  // flips it for state 1.
+  let title = PIN_ASK_TARGET_SET_TITLE;
   let enabled = false;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -938,7 +959,7 @@ export async function refreshPinAskTargetMenu(): Promise<void> {
       const pin = await getAskPin();
       if (pin && pin.tabId === tab.id) {
         // State 1: this tab is the pin. Always offer Unpin.
-        title = 'Unset this tab as Ask button target';
+        title = PIN_ASK_TARGET_UNSET_TITLE;
         enabled = true;
       } else if (await findProviderForTab(tab.id, tab.url ?? '')) {
         // State 2: not the pin but a valid target — offer Pin.

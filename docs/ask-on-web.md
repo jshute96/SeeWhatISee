@@ -50,11 +50,19 @@ additional providers additive.
     second button on the row, with no preamble. The trailing
     `#ask-target-label` and the button's tooltip are updated by
     `refreshAskTargetLabel()` to match whichever provider the
-    resolved default points at. Trailing icon (`#ask-btn-icon`)
-    flips between the pin glyph (`#pin-icon`, existing pinned
-    tab) and the new-window glyph (`#new-window-icon`, new-tab
-    destination) so the user sees at a glance what plain-Ask is
-    about to do.
+    resolved default points at. Trailing icon (`#ask-btn-icon`,
+    a `<span>` holding a single text codepoint) signals what
+    plain-Ask is about to do:
+    - `📌` (emoji-presentation pushpin, red via the system color-
+      emoji font) → existing pinned tab.
+    - `↗` (U+2197 text-presentation arrow, no VS-16) → new-tab
+      destination. Tinted green via `color: #060` to match the
+      green indicators in the Ask dropdown menu's leading slot.
+      The colored emoji form (`↗️`) is avoided because it would
+      be a fixed blue glyph that ignores `color`.
+    - The toolbar context-menu uses ☐ / ☑ instead of 📌 because
+      native menu rendering on Linux falls back to a thin
+      monochrome glyph for 📌.
   - `#ask-menu-btn` opens the menu. Picking a row shifts the
     default (writes the pin or the preferred-new-tab provider)
     and refreshes the labels — does *not* send.
@@ -160,15 +168,16 @@ Existing window in ChatGPT      ← only when ChatGPT has open tabs
   "shift the default" and "fire the send" as two distinct gestures.
 - Each item has a leading 16px indicator slot (always reserved).
   The item that matches the **resolved default** carries
-  `is-default` and shows a green pushpin glyph (`#pin-icon`) —
-  that's the one plain `#ask-btn` will hit. Reserving the slot on
-  every item keeps labels vertically aligned across the menu.
+  `is-default` and shows a 📌 emoji — that's the one plain
+  `#ask-btn` will hit. Reserving the slot on every item keeps
+  labels vertically aligned across the menu.
 - A still-alive pinned tab whose URL is now on a wrong page
-  (excluded) gets `is-stale` and a grey crossed-out pin
-  (`#pin-off-icon`) on the same slot. Both the stale row and the
-  new fallback's `is-default` row are visible at once, so the user
-  can see "pin used to point here" alongside "this is what plain
-  Ask will hit instead." Mutually exclusive with `is-default`.
+  (excluded) gets `is-stale` and a red ❗ on the same slot — flags
+  "this row is what *was* the pin, but it's wandered onto a wrong
+  page." Both the stale row and the new fallback's `is-default`
+  row are visible at once, so the user can see "pin used to point
+  here" alongside "this is what plain Ask will hit instead."
+  Mutually exclusive with `is-default`.
 - Tabs on the provider's host but on an excluded URL (settings,
   library, recents, etc.) appear in the listing too, rendered
   disabled with an italic `(Wrong page)` suffix. See
@@ -193,7 +202,7 @@ whichever destination the SW currently considers the default:
   - Pin is **kept** rather than cleared, so a navigation back
     restores it.
   - `resolveAsk` reports it as `staleTabPin` so the menu can render
-    the grey crossed-pin row described above.
+    the red ❗ stale-pin row described above.
   - Plain-Ask in this state hits the fallback, and the new tab's
     id overwrites the stale pin via `sendToAi`'s `writePin` —
     a stale pin can't linger forever, just past the user's next
@@ -233,7 +242,7 @@ plain-Ask path.
 ### Toolbar pin entry
 
 The action context menu (right-click on the toolbar icon) carries
-a `Set this tab as Ask button target` entry that lets the user pin/unpin the
+a `☐  Set this tab as Ask button target` entry that lets the user pin/unpin the
 **current tab** directly, without opening the Capture page. Driven
 by `refreshPinAskTargetMenu` and `togglePinAskTarget` in
 `src/background.ts` / `src/background/context-menu.ts`:
@@ -247,10 +256,16 @@ by `refreshPinAskTargetMenu` and `togglePinAskTarget` in
     `excludeUrlPatterns` list, so it's a valid pin target.
 
   Otherwise the entry greys out.
-- **Title** — flips between `Set this tab as Ask button target`
-  and `Unset this tab as Ask button target` based on whether the
+- **Title** — flips between `☐  Set this tab as Ask button target`
+  and `☑  Unset this tab as Ask button target` based on whether the
   active tab is the current `askPin`. The "Unset" wording stays
-  even when the pinned tab has navigated to a wrong page.
+  even when the pinned tab has navigated to a wrong page. The
+  ballot-box prefix doubles as a state indicator (unchecked when
+  the tab isn't pinned, checked when it is) — `chrome.contextMenus`
+  has no `iconUrl` API, so a leading glyph is the only option, and
+  the text-default ballot boxes render consistently across native
+  menu renderers (the colored 📌 emoji falls back to a thin grey
+  glyph on Linux GTK).
 - **Refresh timing** — Chrome doesn't expose an `onShown` hook for
   the action context menu, so we keep the entry's state ahead of
   the user with listeners on `tabs.onActivated`, `tabs.onUpdated`

@@ -8,7 +8,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `README.md` | Primary project documentation: setup, usage, commands |
 | `privacy_policy.md` | User-facing privacy policy linked from the Chrome Web Store listing |
-| `THIRD_PARTY_NOTICES.md` | Attribution + license terms for bundled third-party assets — Material Symbols icons + provider brand logos (Claude / Gemini / ChatGPT / Google) |
+| `THIRD_PARTY_NOTICES.md` | Attribution + license terms for bundled third-party assets — provider brand logos (Claude / Gemini / ChatGPT / Google) |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |

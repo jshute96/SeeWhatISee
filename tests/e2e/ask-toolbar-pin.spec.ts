@@ -116,7 +116,7 @@ test('toolbar pin: refresh on a non-provider tab leaves the entry disabled', asy
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Set this tab as Ask button target',
+    title: '☐  Set this tab as Ask button target',
     enabled: false,
   });
 
@@ -150,7 +150,7 @@ test('toolbar pin: refresh on a provider tab enables the entry with "Set…" wor
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Set this tab as Ask button target',
+    title: '☐  Set this tab as Ask button target',
     enabled: true,
   });
 
@@ -195,7 +195,7 @@ test('toolbar pin: refresh on the already-pinned tab flips the title to "Unset�
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Unset this tab as Ask button target',
+    title: '☑  Unset this tab as Ask button target',
     enabled: true,
   });
 
@@ -272,7 +272,7 @@ test('toolbar pin: not-pinned tab on an excluded URL stays disabled', async ({
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Set this tab as Ask button target',
+    title: '☐  Set this tab as Ask button target',
     enabled: false,
   });
 
@@ -326,7 +326,7 @@ test('toolbar pin: already-pinned tab on a wrong page still offers Unset', async
   const update = await lastPinUpdate(sw);
   expect(update).toEqual({
     id: 'pin-ask-target',
-    title: 'Unset this tab as Ask button target',
+    title: '☑  Unset this tab as Ask button target',
     enabled: true,
   });
 

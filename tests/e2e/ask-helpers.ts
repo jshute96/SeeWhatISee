@@ -249,13 +249,16 @@ export async function clickExistingFakeClaudeItem(capturePage: Page): Promise<vo
  * `clickExistingFakeClaudeItem` — see that helper's comment.
  */
 export async function clickNewClaudeItem(capturePage: Page): Promise<void> {
-  // The new-tab item's text is exactly "Claude" (no parenthetical
+  // The new-tab item's label is exactly "Claude" (no parenthetical
   // suffix, since the only enabled provider has label "Claude").
-  // hasText is a substring match, so exclude the existing-tab
-  // entry which contains "Fake Claude".
+  // Match on the `.ask-menu-label` child specifically — the row's
+  // visible text also includes the indicator slot's `↗` glyph,
+  // which would defeat a row-level anchored regex. Filtering by
+  // descendant also excludes the existing-tab entry whose label is
+  // "Fake Claude".
   await capturePage
     .locator('#ask-menu .ask-menu-item')
-    .filter({ hasText: /^Claude$/ })
+    .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) })
     .click();
   await capturePage.locator('#ask-btn').click();
 }

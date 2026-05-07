@@ -2,8 +2,10 @@
 //
 // Ask remembers the destination of the last successful send and
 // reuses it on the next plain `#ask-btn` click. The menu marks the
-// pinned target with a leading pin glyph; `#ask-menu-btn` always opens
-// the menu so the user can pick a different target.
+// active default with a leading indicator (📌 for an existing
+// pinned tab, ↗ for a new-window fallback, ❗ for a stale pin);
+// `#ask-menu-btn` always opens the menu so the user can pick a
+// different target.
 //
 // Split out from `ask.spec.ts` so the pin lifecycle (sending, then
 // reading the pin back, sometimes after invalidating the pinned
@@ -24,7 +26,7 @@ import {
 
 installAskTestHooks();
 
-test('pin: with no pin, the "New window in" item shows the default pin', async ({
+test('pin: with no pin, the "New window in" item carries the default indicator', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -40,9 +42,13 @@ test('pin: with no pin, the "New window in" item shows the default pin', async (
   await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
+  // Filter by the label child (not the whole row's text), so the
+  // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
+  // the match — the assertion is about the row whose *label* is
+  // exactly "Claude" (i.e. the "New window in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
-    .filter({ hasText: /^Claude$/ });
+    .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });
   await expect(newClaude).toHaveClass(/\bis-default\b/);
 
   await openerPage.close();
@@ -121,9 +127,13 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' });
   await expect(existing).toHaveClass(/\bis-default\b/);
 
+  // Filter by the label child (not the whole row's text), so the
+  // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
+  // the match — the assertion is about the row whose *label* is
+  // exactly "Claude" (i.e. the "New window in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
-    .filter({ hasText: /^Claude$/ });
+    .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });
   await expect(newClaude).not.toHaveClass(/\bis-default\b/);
 
   await claudePage.close();
@@ -355,7 +365,7 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
   await openerPage.close();
 });
 
-test('pin: stale pin shows greyed-out crossed pin on the wrong-page row', async ({
+test('pin: stale pin shows the red ❗ indicator on the wrong-page row', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -397,24 +407,27 @@ test('pin: stale pin shows greyed-out crossed pin on the wrong-page row', async 
   const stale = capturePage
     .locator('#ask-menu .ask-menu-item', { hasText: 'Fake Claude' });
   await expect(stale).toHaveClass(/\bis-stale\b/);
-  // Stale rows show a grey crossed-out pin, not the green pin —
-  // verify both states do *not* coincide on the same row.
+  // Stale rows show a red ❗ in the indicator slot, not the green
+  // 📌 / ↗ — verify both states do *not* coincide on the same row.
   await expect(stale).not.toHaveClass(/\bis-default\b/);
 
-  // The class alone proves nothing if the CSS rule that paints it
-  // grey ever drifts. Pin the actual computed colour so a future
-  // refactor of the indicator-glyph styling can't silently regress
-  // to a green glyph on a stale row. Browsers serialise color as
-  // `rgb(r, g, b)`; `#888` → `rgb(136, 136, 136)`.
-  const checkColor = await stale
+  // The class alone proves nothing if the indicator-glyph
+  // selection in `renderAskMenuItem` ever drifts. Pin the actual
+  // glyph so a future refactor can't silently regress to the
+  // active-pin or new-window indicator on a stale row.
+  const checkText = await stale
     .locator('.ask-menu-check')
-    .evaluate((el) => getComputedStyle(el).color);
-  expect(checkColor).toBe('rgb(136, 136, 136)');
+    .evaluate((el) => el.textContent);
+  expect(checkText).toBe('❗');
 
   // The "New window in Claude" row carries the live default pin.
+  // Filter by the label child (not the whole row's text), so the
+  // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
+  // the match — the assertion is about the row whose *label* is
+  // exactly "Claude" (i.e. the "New window in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
-    .filter({ hasText: /^Claude$/ });
+    .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });
   await expect(newClaude).toHaveClass(/\bis-default\b/);
   await expect(newClaude).not.toHaveClass(/\bis-stale\b/);
 
