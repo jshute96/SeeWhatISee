@@ -2667,20 +2667,23 @@ async function withPressed(btn: HTMLButtonElement, fn: () => Promise<void>): Pro
 // the drawing-palette image button).
 function formatClipboardError(err: unknown, subject: 'copy' | 'copy image'): string {
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
-    return `Couldn't ${subject} — capture page lost focus before the ${subject} finished. Click back into it and try again.`;
+    return `Couldn't ${subject} — capture page lost focus before the ${subject} finished.`;
   }
   const detail = (err as Error)?.message ?? String(err);
   return `Failed to ${subject === 'copy' ? 'copy to clipboard' : 'copy image to clipboard'}: ${detail}`;
 }
 
 // Surface clipboard-write failures in the shared `#ask-status` slot
-// rather than letting them bubble as uncaught promise rejections in
-// devtools. See `formatClipboardError` for the wording rules.
+// rather than letting them bubble as uncaught promise rejections.
+// See `formatClipboardError` for the wording rules.
+//
+// No `console.warn` here on purpose: the in-page status message is
+// the user's source of truth, and warnings would also bubble to the
+// `chrome://extensions` errors page.
 async function writeClipboardText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
   } catch (err) {
-    console.warn('[SeeWhatISee] clipboard writeText failed:', err);
     setStatusMessage(formatClipboardError(err, 'copy'), 'error');
   }
 }
@@ -2756,8 +2759,10 @@ async function copyImageToClipboard(): Promise<void> {
     // `writeClipboardText` — `navigator.clipboard.write` rejects the
     // same way when the page loses focus mid-flight. Reuse the
     // shared `formatClipboardError` builder so the user-facing
-    // wording stays consistent across all three copy buttons.
-    console.warn('[SeeWhatISee] copy image to clipboard failed:', err);
+    // wording stays consistent across all three copy buttons. Same
+    // reasoning as `writeClipboardText`: no `console.warn` so the
+    // expected alt-tab `NotAllowedError` doesn't redirect into the
+    // `chrome://extensions` errors page.
     setStatusMessage(formatClipboardError(err, 'copy image'), 'error');
   }
 }

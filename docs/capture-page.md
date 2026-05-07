@@ -734,6 +734,13 @@ If the user has any edits *and* is saving the screenshot:
     `formatClipboardError` invocation directly because its `try`
     block also wraps the synchronous `ClipboardItem` construction
     that needs to stay inside the user-gesture window.
+  - Both clipboard catches deliberately skip `console.warn`. The
+    in-page status message is enough for the user, and `console.warn`
+    in an extension page also surfaces in `chrome://extensions` —
+    which would turn the (entirely expected) "user alt-tabbed
+    mid-copy" `NotAllowedError` into a red badge on the extension
+    card. SW-side errors that *are* worth the badge still warn from
+    the response-error branch in `copyArtifactPath`.
 - Each click materializes the file on disk via the SW's
   `ensureScreenshotDownloaded` / `ensureHtmlDownloaded` /
   `ensureSelectionDownloaded` helpers, then puts the file's
