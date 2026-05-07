@@ -31,20 +31,18 @@ import { test, expect } from '../fixtures/extension';
 //
 //   SeeWhatISee
 //   <blank>
-//   Click:                                                (Case 2 row, header)
-//     Save screenshot                                     (Case 2 row, primary)
-//     (or selection HTML)                                 (Case 2 row, addendum)
-//   Double-click: Capture...                              (Case 1, single line)
+//   Click: Save screenshot or selection
+//   Double-click: Capture...
 //   <blank trailing line>
 //
-// The Click row's with-sel slot is `save-selection-html` (set in
-// beforeEach), so the algorithm renders a 3-line block. Both
-// Double-click slots are `capture`, so that row collapses to a
-// single line.
+// The Click row's no-sel slot is `save-screenshot` ("Save screenshot")
+// and its with-sel slot is `save-selection-html` ("Save selection",
+// format dropped) — both fit the `Save <single-word>` pattern, so
+// `combineFragments` collapses to "Save screenshot or selection".
+// Both Double-click slots are `capture`, so that row's fragments
+// match and the row reads "Capture...".
 const ACTION_LINES = [
-  'Click:',
-  '  Save screenshot',
-  '  (or selection HTML)',
+  'Click: Save screenshot or selection',
   'Double-click: Capture...',
 ];
 const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');

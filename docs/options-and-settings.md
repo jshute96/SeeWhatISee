@@ -149,8 +149,8 @@ SeeWhatISee
 [blank]
 [ERROR: <msg>]              (only when an error is pending)
 [blank]
-<Click row>                 (1 or 2 lines)
-<Double-click row>          (1 or 2 lines)
+<Click row>                 (always single-line)
+<Double-click row>          (always single-line)
 [blank]
 ```
 
@@ -160,51 +160,44 @@ SeeWhatISee
 
 ### Per-row algorithm
 
-Each row is computed once from a no-selection action `N` and a
-with-selection choice `W`:
+Each row is one line:
 
-- The **primary fragment** is `N`'s `tooltipFragment`. If `N.baseId
-  === 'save-defaults'`, the placeholder `Save default items` is
-  expanded to a comma-separated list of the actual artifacts the
-  no-sel branch of `capturePageDefaults` saves
-  (`screenshot`, `HTML`, `selection <fmt>`).
-  - **Stock-defaults short-circuit.** When
-    `capturePageDefaults` matches the fresh-install pattern
-    (no-sel = screenshot only; with-sel = selection only —
-    detected by `isScreenshotOrSelectionDefaults` in
-    `capture-page-defaults.ts`), the placeholder collapses to
-    the single phrase `Save screenshot or selection` regardless
-    of branch. `effectiveItems` returns `null` for that combo,
-    which forces Case 1 collapse on a paired
-    `save-defaults` / `save-defaults` row. The same short-circuit
-    is applied to the menu titles in
-    `context-menu.ts`'s `actionMenuTitle`, so menu and tooltip
-    stay in lockstep.
-- The **with-selection slot** picks one of four cases:
-  1. **Same effective behaviour** (action ids match AND, for
-     `save-defaults`, the expanded artifact set matches), or `W` is
-     `ignore-selection`. → single-line row, no continuation.
-  2. **`W` saves only a selection** (literal `save-selection-<fmt>`,
-     OR `save-defaults` configured selection-only). →
-     `(or selection <fmt>)`.
-  3. **Both slots are `save-defaults` and `W`'s expansion equals
-     `N`'s expansion plus exactly one `selection <fmt>`**. →
-     `(plus selection <fmt>)`.
-  4. **Anything else.** → `With selection: <frag(W)>`.
-- **Row shapes**:
-  - Case 1: `<Label>: <frag>  [<key>]` — single line.
-  - Cases 2–4 render as a 3-line block so the two action lines
-    line up under a clean header:
-    ```
-    <Label> [<key>]:
-      <no-sel frag>
-      <continuation>
-    ```
-- The **hotkey** is folded into the label `[<key>]:` on multi-line
-  rows (so the colon sits at the end of the header) and trails the
-  fragment as `  [<key>]` on single-line rows. The same hotkey fires
-  both branches of a row, so it never appears on a continuation
-  line.
+```
+<Label>: <fragment>[  [<hotkey>]]
+```
+
+The fragment is computed by feeding the no-sel action `N` and
+with-sel action `W` through three steps:
+
+- **Per-branch expansion.** `expandFragment(N, defaults, 'no')` and
+  `expandFragment(W ?? N, defaults, 'with')`.
+  - For non-`save-defaults` actions, the fragment is just
+    `action.tooltipFragment`.
+  - For `save-defaults`, the branch is checked against
+    `capturePageDefaults`. A branch saving exactly one artifact
+    becomes `Save <item>` (`screenshot`, `HTML`, or `selection` —
+    selection format is intentionally dropped). A branch saving
+    zero or multiple artifacts falls back to
+    `Save default items`. The rule is deliberately strict — the
+    row-collapse step needs a one-word noun on each side, and a
+    multi-item branch can't honour that.
+  - `W === undefined` (the `ignore-selection` sentinel or any
+    unrecognized id) means the runtime dispatch falls through to
+    `N`. The with-sel branch is computed against `N` itself, so a
+    `save-defaults` no-sel default still expands the with-sel
+    branch correctly.
+- **Row collapse.** `combineFragments(noSelFrag, withSelFrag)`:
+  - Equal fragments → that fragment.
+  - Both of form `Save <single-word>` (with the same delay suffix
+    if any, and different words) → `Save <noWord> or <withWord>`.
+    The stock-defaults pair `Save screenshot` /
+    `Save selection` reads as `Save screenshot or selection`.
+  - Anything else → `...`. The right-click menu carries the
+    per-action breakdown for users who need it.
+- **Hotkey suffix.** When bound, the row's hotkey trails the
+  fragment as `  [<key>]` (two-space gap). The same hotkey fires
+  both branches, so there's no scope qualifier on it; the runtime
+  dispatches based on the page's selection state at press time.
 
 ### Hotkey wiring
 

@@ -247,26 +247,32 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
     return { a, b, c, d };
   });
 
-  // Tooltip layout (bracketed by blank lines above and below the
-  // action block — see `src/background/tooltip.ts`). With these
-  // pinned defaults:
-  //   - Click row: with-sel = save-selection-html → Case 2 renders
-  //     the row as a 3-line block (label header + primary + addendum).
-  //   - Double-click row: both slots = capture → Case 1 single line.
+  // Tooltip layout — every row is single-line under the new
+  // collapse rules in `src/background/tooltip.ts`. With these
+  // pinned defaults the with-sel slot's `save-selection-html`
+  // fragment is `Save selection` (format dropped), so:
+  //   - (a) `Save screenshot` + `Save selection` → both fit `Save W`
+  //     → "Save screenshot or selection".
+  //   - (b) `Save screenshot in 3s` + `Save selection` → mismatched
+  //     delay suffixes → "..." bail-out.
+  //   - (c) `Save HTML contents` + `Save selection` → multi-word
+  //     no-sel noun → "..." bail-out.
+  //   - (d) `Capture...` + `Save selection` → no-sel doesn't start
+  //     with `Save <word>` → "..." bail-out.
+  // Double-click row: both slots = capture → fragments equal,
+  // collapses to "Capture...".
   const expected = (click: string): string =>
     [
       'SeeWhatISee',
       '',
-      'Click:',
-      `  ${click}`,
-      '  (or selection HTML)',
+      `Click: ${click}`,
       'Double-click: Capture...',
       '',
     ].join('\n');
-  expect(titles.a).toBe(expected('Save screenshot'));
-  expect(titles.b).toBe(expected('Save screenshot in 3s'));
-  expect(titles.c).toBe(expected('Save HTML contents'));
-  expect(titles.d).toBe(expected('Capture...'));
+  expect(titles.a).toBe(expected('Save screenshot or selection'));
+  expect(titles.b).toBe(expected('...'));
+  expect(titles.c).toBe(expected('...'));
+  expect(titles.d).toBe(expected('...'));
 });
 
 // ─── Selection-aware click dispatch ──────────────────────────────

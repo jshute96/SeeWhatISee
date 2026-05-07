@@ -334,14 +334,15 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'save-selection-html',
     baseTitle: 'Save selection as HTML',
-    // The three `save-selection-*` fragments deliberately elide
-    // the word "selection" — these actions only ever surface in the
-    // toolbar tooltip's `With selection: …` line (they're filtered
-    // out of the without-selection default pool by `isSelectionBaseId`,
-    // and not bindable as a click target elsewhere), and the prefix
-    // already carries that context. Keeping the word would produce
-    // `With selection: save selection as html`, repeating itself.
-    baseTooltipFragment: 'Save as HTML',
+    // All three `save-selection-*` actions share the same tooltip
+    // fragment `Save selection` — the format (HTML / text / markdown)
+    // is omitted so the row-collapse rule in `tooltip.ts` can pair
+    // a `save-selection-*` slot with a single-word `Save <noun>`
+    // sibling and yield `Save <noun> or selection` cleanly. The
+    // user-visible menu title still carries the format so users
+    // pick the right action from the menu; only the tooltip
+    // fragment elides it.
+    baseTooltipFragment: 'Save selection',
     group: 'more',
     // The selection already exists when the user triggers the
     // action; waiting doesn't help. Still bindable as the default
@@ -352,7 +353,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'save-selection-text',
     baseTitle: 'Save selection as text',
-    baseTooltipFragment: 'Save as text',
+    baseTooltipFragment: 'Save selection',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('text', delayMs),
@@ -360,7 +361,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     baseId: 'save-selection-markdown',
     baseTitle: 'Save selection as markdown',
-    baseTooltipFragment: 'Save as markdown',
+    baseTooltipFragment: 'Save selection',
     group: 'more',
     supportsDelayed: false,
     run: (delayMs) => captureSelection('markdown', delayMs),

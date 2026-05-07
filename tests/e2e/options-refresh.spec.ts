@@ -136,8 +136,9 @@ test('opening the Options page refreshes the tooltip with current hotkeys', asyn
     .toContain('[Ctrl+Shift+Y]');
 
   const after = await sw.evaluate(() => chrome.action.getTitle({}));
-  // Both rows are Case 1 (capture/capture) → single-line, hotkey at
-  // end of line.
+  // Both rows have matching no-sel and with-sel actions
+  // (capture/capture), so `combineFragments` returns the equal
+  // fragment and the row reads `<Label>: Capture...  [<key>]`.
   expect(after).toContain('Click: Capture...  [Ctrl+Shift+Y]');
   expect(after).toContain('Double-click: Capture...  [Ctrl+Shift+S]');
 
@@ -186,8 +187,8 @@ test('Save on the Options page refreshes the tooltip when only capturePageDefaul
 
   // Baseline: send setOptions with capturePageDefaults that has only
   // screenshot checked in both branches. Tooltip should resolve to
-  // `Double-click: Save screenshot` with no with-sel addendum
-  // (Case 1 — both branches expand identically).
+  // `Double-click: Save screenshot` since both branches expand to
+  // the same single-item fragment.
   const sendSetOptions = (capturePageDefaults: object) =>
     page.evaluate(
       (cpd) =>
@@ -229,7 +230,13 @@ test('Save on the Options page refreshes the tooltip when only capturePageDefaul
   });
 
   const after = await sw.evaluate(() => chrome.action.getTitle({}));
-  expect(after).toContain('Double-click: Save screenshot, HTML');
+  // Both branches now save screenshot+HTML (multi-item). The new
+  // tooltip rules don't comma-join — anything richer than a
+  // single-item branch falls back to the catalog `Save default
+  // items` placeholder. The change still has to drive a tooltip
+  // refresh (the assertion checks the title moved off the baseline).
+  expect(after).toContain('Double-click: Save default items');
+  expect(after).not.toContain('Double-click: Save screenshot');
 
   await page.close();
 });
@@ -269,8 +276,14 @@ test('a refreshHotkeys message from the Options page resyncs the tooltip', async
   await page.goto(`chrome-extension://${extensionId}/options.html`);
   await page.waitForLoadState('domcontentloaded');
 
-  const before = await sw.evaluate(() => chrome.action.getTitle({}));
-  expect(before).not.toContain('[Ctrl+Shift+');
+  // Opening the Options page sends `getOptionsData`, which calls
+  // `refreshMenusIfHotkeysChanged` against the stubbed (empty)
+  // shortcut state. That refresh is async — poll until the install-
+  // time tooltip's hotkey suffix has been wiped, rather than a
+  // brittle synchronous read after `domcontentloaded`.
+  await expect
+    .poll(() => sw.evaluate(() => chrome.action.getTitle({})), { timeout: 5000 })
+    .not.toContain('[Ctrl+Shift+');
 
   // Stub `getAll` to claim _execute_action is now bound.
   await sw.evaluate(() => {

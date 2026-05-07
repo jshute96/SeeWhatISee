@@ -250,13 +250,13 @@ export async function setDefaultDblWithSelectionId(id: string): Promise<void> {
  * The actual layout/algorithm lives in `tooltip.ts` (`buildTooltip`)
  * as pure logic so it's unit-testable; this function just snapshots
  * the live storage + shortcut state and hands it over. See that
- * module's header for the per-row Case 1–4 rules and the full
- * layout diagram.
+ * module's header for the single-line row layout and the
+ * `combineFragments` collapse rules.
  *
  * Hotkeys folded in: `_execute_action` on the Click row,
  * `secondary-action` on the Double-click row (`01-` prefix stripped
- * by `commandsToShortcutMap`). Both sit at the end of the row's
- * first line as `  [<key>]` and are omitted entirely when unbound.
+ * by `commandsToShortcutMap`). Both trail the row's fragment as
+ * `  [<key>]` and are omitted entirely when unbound.
  */
 export async function getDefaultActionTooltip(errorMessage?: string): Promise<string> {
   const click = await getDefaultWithoutSelectionAction();

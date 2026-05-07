@@ -308,15 +308,15 @@ still showed the global title. We don't use per-tab titles.
   `onInstalled`, and `onStartup`.
 - **Layout.** Header (`SeeWhatISee`) + optional `ERROR: …` block
   + a Click row + a Double-click row + trailing blank. Each row
-  is one or two lines depending on whether the with-selection
-  slot collapses. Full algorithm + Case 1–4 rules in
+  is one line: the no-sel and with-sel fragments collapse via
+  `combineFragments` (equal → that fragment; both
+  `Save <single-word>` → `Save X or Y`; otherwise `...`). Full
+  algorithm in
   [`docs/options-and-settings.md`](options-and-settings.md#toolbar-tooltip).
 - **Hotkeys folded in.** `_execute_action` and
-  `secondary-action` shortcuts (when bound) attach to the row's
-  first line — at the end on Case-1 (single-line) rows, inside
-  the label header (`Click [<key>]:`) on Case-2/3/4 rows. Never
-  on a continuation line: the same hotkey fires both branches of
-  the row.
+  `secondary-action` shortcuts (when bound) trail the row's
+  fragment as `  [<key>]`. The same hotkey fires both branches
+  of the row, so it never carries a +sel/-sel scope qualifier.
 - **Error tooltip.** `reportCaptureError()` passes the error
   message into `getDefaultActionTooltip(message)`, which slots
   `ERROR: <message>` between the app title and the action block
@@ -415,9 +415,8 @@ the Chrome-platform mechanics of building it.
     on normal items rather than radio items — its sections were
     separated.)
 - **Click / double-click hints on run entries.** Top-level
-  entries and More-submenu run entries append a
-  `  -  (Click)` or `  -  (Double-click)` hint to whichever item
-  matches the current toolbar-click routing.
+  entries and More-submenu run entries append a `  -  (...)`
+  hint that summarises what triggers the action.
   - No real italics — menu titles are plain text. Italics are
     faked with Unicode mathematical sans-serif italic letters,
     so the hint reads `(𝘊𝘭𝘪𝘤𝘬)`.
@@ -427,11 +426,34 @@ the Chrome-platform mechanics of building it.
     the platform UI font, so widths drift across OSes). An
     inline dash separator reads as intentional on every
     platform.
-  - Hints track the without-selection default only — the
-    with-selection default only kicks in when a selection
-    exists on the active tab, which we can't reliably predict
-    at menu-render time. Setting either default refreshes every
-    menu row's hint via `refreshMenusAndTooltip`.
+  - Two scope-aware groups + one full-scope group:
+    - **Click group.** Rendered when the action is the click
+      no-sel default, the click with-sel default, or both. The
+      activate (`_execute_action`) hotkey, when bound, is
+      grouped *with* the italic word via ` or ` — both fire
+      the same dispatch — and a single +/-sel scope suffix
+      applies to the whole group:
+      - `𝘊𝘭𝘪𝘤𝘬` — both branches route to this action.
+      - `𝘊𝘭𝘪𝘤𝘬 w/o sel` — only the no-sel branch.
+      - `𝘊𝘭𝘪𝘤𝘬 w/ sel` — only the with-sel branch.
+      With `_execute_action` bound the group reads
+      `𝘊𝘭𝘪𝘤𝘬 or Ctrl+Shift+X` (and any scope suffix at the
+      end). `IGNORE_SELECTION_ID` on the with-sel slot is
+      treated as fall-through to the no-sel default, so an
+      action that's the click no-sel default with
+      `ignore-selection` on the with-sel slot reports `both`.
+    - **Double-click group.** Same shape, with `𝘋𝘰𝘶𝘣𝘭𝘦-𝘤𝘭𝘪𝘤𝘬`
+      and `secondary-action` instead.
+    - **Action-specific hotkey.** The action's own bound
+      shortcut (e.g. `12-save-screenshot` mapped to a key) is
+      always full-scope — it triggers this action regardless of
+      page selection state. Appears as a bare group at the end:
+      `(𝘊𝘭𝘪𝘤𝘬 or Ctrl+Shift+X, Alt+S)`.
+  - Setting any of the four click / dbl defaults refreshes every
+    menu row's hint via `refreshMenusAndTooltip`. Shortcut binding
+    edits made at `chrome://extensions/shortcuts` propagate via
+    `refreshMenusIfHotkeysChanged` on the next user interaction
+    or Options-page open.
 - **Submenus via `parentId`.** Any item created with a
   `parentId` becomes a child of the named parent, which Chrome
   then renders with a ▸ indicator automatically. No explicit

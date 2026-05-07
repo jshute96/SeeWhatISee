@@ -101,13 +101,26 @@ Shortcuts that skip the Capture-page dialog round-trip.
   Throws on `screenshotError` / `htmlError` only when the
   matching default is set; the toolbar error channel surfaces
   the reason.
-  - Title short-circuit: when the user is on the fresh-install
-    "stock" defaults (no-sel = screenshot only, with-sel =
-    selection only), the menu row and tooltip render as **"Save
-    screenshot or selection"** rather than the per-branch
-    artifact list. Detected by `isScreenshotOrSelectionDefaults`
-    in `capture-page-defaults.ts`; both `actionMenuTitle` (menu)
-    and `expandFragment` / `effectiveItems` (tooltip) consult it.
+  - **Title rewrite for `save-defaults`** is purely a property of
+    `capturePageDefaults` — routing-independent. `saveDefaultsMenuTitle`
+    in `tooltip.ts` looks at the no-sel and with-sel branches:
+    - Both branches save exactly one artifact, *same* item →
+      `Save <item>` (e.g. both branches = screenshot →
+      `Save screenshot`).
+    - Both branches save exactly one artifact, *different* items →
+      `Save <noSelItem> or <withSelItem>` (the fresh-install case
+      reads as `Save screenshot or selection`; selection format is
+      always dropped — see below).
+    - Either branch is empty or saves multiple artifacts → catalog
+      `Save default items`. The `or`-form requires single-word nouns
+      on each side, so anything richer falls back rather than
+      introducing comma-and joins.
+  - Selection format dropped at expansion time. A with-sel branch of
+    `{ selection: true, format: 'markdown' }` reads as
+    `Save selection`, not `Save selection markdown` — the format
+    suffix would break the single-word noun the row-collapse rule
+    needs. Users still see the format on the Capture page checkbox
+    and on the dedicated `Save selection as <fmt>` menu entries.
 - **`save-url` — "Save URL".** Equivalent to the Capture page
   with *neither* file checked: the record gets just `timestamp`
   + `url` (no `screenshot`, no `contents`). Goes through

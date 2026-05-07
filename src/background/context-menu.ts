@@ -18,21 +18,23 @@ import {
 import {
   CAPTURE_ACTIONS,
   captureActionsWithDelay,
-  delayedTitle,
   type CaptureAction,
 } from './capture-actions.js';
 import {
   getCaptureDetailsDefaults,
-  isScreenshotOrSelectionDefaults,
   type CaptureDetailsDefaults,
 } from './capture-page-defaults.js';
 import {
   findCaptureAction,
   getDefaultActionTooltip,
+  getDefaultDblWithSelectionId,
   getDefaultDblWithoutSelectionId,
+  getDefaultWithSelectionId,
   getDefaultWithoutSelectionId,
   isSelectionBaseId,
 } from './default-action.js';
+import { buildMenuHint } from './menu-hint.js';
+import { saveDefaultsMenuTitle } from './tooltip.js';
 
 export const MORE_PARENT_ID = 'more-parent';
 // Suffix appended to the menu-item id of the top-level "shortcut"
@@ -115,19 +117,10 @@ export const IMAGE_SAVE_SCREENSHOT_MENU_ID = 'image-save-screenshot';
 // keeps using bare action ids.
 export const COMMAND_PREFIX_PATTERN = /^\d{2}-/;
 
-// Hints marking which top-level / More-submenu entries will run on
-// toolbar click vs. double-click.
-//   - Faked italics via Unicode mathematical sans-serif italic
-//     letters — `chrome.contextMenus` titles are plain text, no
-//     markup support.
-//   - No column alignment — the API has no accelerator / secondary-
-//     label slot, and menu rendering uses the platform UI font
-//     (Segoe UI / GTK / NSMenu), so space-padding only approximates
-//     a column on one machine. An inline dash reads as intentional
-//     on every platform.
-const HINT_SEPARATOR = '  -  ';
-const CLICK_ITALIC = '𝘊𝘭𝘪𝘤𝘬';
-const DOUBLE_CLICK_ITALIC = '𝘋𝘰𝘶𝘣𝘭𝘦-𝘤𝘭𝘪𝘤𝘬';
+// Hint composition (italic markers, scope suffixes, group joining)
+// lives in `menu-hint.ts` — extracted there so it can be unit-tested
+// without dragging in the chrome.* surface that the rest of this
+// module pulls.
 
 /**
  * Fetch the current keyboard shortcut for each command declared in
@@ -208,6 +201,12 @@ export async function refreshMenusAndTooltip(
 ): Promise<void> {
   const defaultId = await getDefaultWithoutSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
+  // The `actionMenuTitle` save-defaults override depends on the
+  // *with-selection* routing too, so fetch both with-sel ids up front.
+  // Fresh-install / non-save-defaults values fall through cleanly —
+  // the override only fires when the no-sel slot is save-defaults.
+  const clickWithSelId = await getDefaultWithSelectionId();
+  const dblWithSelId = await getDefaultDblWithSelectionId();
   const defaults = await getCaptureDetailsDefaults();
   const commands = preloadedCommands ?? (await chrome.commands.getAll());
   const shortcuts = commandsToShortcutMap(commands);
@@ -220,7 +219,7 @@ export async function refreshMenusAndTooltip(
     CAPTURE_ACTIONS.map(async (a) => {
       try {
         await chrome.contextMenus.update(a.id, {
-          title: actionMenuTitle(a, defaultId, dblId, shortcuts, defaults),
+          title: actionMenuTitle(a, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
         });
       } catch {
         /* menu not installed yet */
@@ -238,6 +237,8 @@ export async function refreshMenusAndTooltip(
         actionId,
         defaultId,
         dblId,
+        clickWithSelId,
+        dblWithSelId,
         shortcuts,
         defaults,
       ),
@@ -264,6 +265,8 @@ async function updateShortcutMenu(
   actionId: string,
   defaultId: string,
   dblId: string,
+  clickWithSelId: string,
+  dblWithSelId: string,
   shortcuts: Map<string, string>,
   defaults: CaptureDetailsDefaults,
 ) {
@@ -271,7 +274,7 @@ async function updateShortcutMenu(
   if (action) {
     try {
       await chrome.contextMenus.update(menuId, {
-        title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+        title: actionMenuTitle(action, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
       });
     } catch {
       /* menu not installed yet */
@@ -308,33 +311,8 @@ export async function refreshMenusIfHotkeysChanged(
 }
 
 
-/**
- * Build the right-side hint for a menu entry. Assembles up to two
- * segments inside a single `(…)` group:
- *   - `Click` / `Double-click` (italic) when this action matches
- *     the matching default.
- *   - The bound keyboard shortcut (literal, upright) when the
- *     command is bound — only meaningful for delay-0 entries,
- *     since delayed variants have no command.
- *
- * Combinations render as `(Click, Ctrl+Shift+Y)` etc. Returns an
- * empty string when neither applies, so the caller can concat
- * unconditionally.
- */
-function buildMenuHint(
-  action: CaptureAction,
-  clickId: string,
-  doubleClickId: string,
-  shortcuts: Map<string, string>,
-): string {
-  const parts: string[] = [];
-  if (action.id === clickId) parts.push(CLICK_ITALIC);
-  else if (action.id === doubleClickId) parts.push(DOUBLE_CLICK_ITALIC);
-  const hk = shortcuts.get(action.id);
-  if (hk) parts.push(hk);
-  if (parts.length === 0) return '';
-  return `${HINT_SEPARATOR}(${parts.join(', ')})`;
-}
+// Hint composition (`rowScope`, `buildRowGroup`, `buildMenuHint`)
+// lives in `./menu-hint.js` — see that module's header for why.
 
 // CAPTURE_ACTIONS ids surfaced as top-level "shortcut" entries on the
 // toolbar context menu. Each is recreated with a `-shortcut`-suffixed
@@ -354,18 +332,40 @@ const MORE_DELAYED_ACTION_IDS = [
   'save-screenshot-3s',
 ] as const;
 
+/**
+ * Render the title for one menu row. For non-`save-defaults`
+ * actions the catalog title (`action.title`) is used as-is. For
+ * `save-defaults` the title is rewritten only when *both* branches
+ * of `capturePageDefaults` simplify to a single artifact each:
+ *
+ *   - Both branches save the same single item → `Save <X>`.
+ *   - Both branches save a different single item →
+ *     `Save <X> or <Y>` (selection format dropped — the row needs
+ *     a one-word noun on each side).
+ *   - Either branch is empty or saves multiple items → catalog
+ *     `Save default items`. The `or`-form requires single-word nouns
+ *     on each side, so anything richer falls back rather than
+ *     introducing comma-and joins.
+ *
+ * The rewrite is purely action-property-based — it doesn't look at
+ * which click / double-click rows route through `save-defaults`. The
+ * `(Click)` / `(Double-click)` hint scope (built by
+ * `buildMenuHint`) carries the routing story; the title carries
+ * "what does this menu entry save when clicked directly".
+ */
 function actionMenuTitle(
   action: CaptureAction,
-  clickId: string,
-  doubleClickId: string,
+  clickNoSelId: string,
+  clickWithSelId: string,
+  dblNoSelId: string,
+  dblWithSelId: string,
   shortcuts: Map<string, string>,
   defaults: CaptureDetailsDefaults,
 ): string {
-  let title = action.title;
-  if (action.baseId === 'save-defaults' && isScreenshotOrSelectionDefaults(defaults)) {
-    title = delayedTitle('Save screenshot or selection', action.delaySec);
-  }
-  return title + buildMenuHint(action, clickId, doubleClickId, shortcuts);
+  const title = action.baseId === 'save-defaults'
+    ? saveDefaultsMenuTitle(defaults, action.delaySec, action.title)
+    : action.title;
+  return title + buildMenuHint(action, clickNoSelId, clickWithSelId, dblNoSelId, dblWithSelId, shortcuts);
 }
 
 /**
@@ -723,6 +723,11 @@ export async function installContextMenu(): Promise<void> {
   // Click / Double-click defaults only.
   const defaultId = await getDefaultWithoutSelectionId();
   const dblId = await getDefaultDblWithoutSelectionId();
+  // See `refreshMenusAndTooltip` for why `actionMenuTitle` needs the
+  // with-sel routing ids even though the install-time menu hint
+  // itself only references no-sel ids.
+  const clickWithSelId = await getDefaultWithSelectionId();
+  const dblWithSelId = await getDefaultDblWithSelectionId();
   const defaults = await getCaptureDetailsDefaults();
   const commands = await chrome.commands.getAll();
   const shortcuts = commandsToShortcutMap(commands);
@@ -748,7 +753,7 @@ export async function installContextMenu(): Promise<void> {
     }
     chrome.contextMenus.create({
       id: `${actionId}${SHORTCUT_SUFFIX}`,
-      title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+      title: actionMenuTitle(action, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
       contexts: ['action'],
     });
   }
@@ -780,7 +785,7 @@ export async function installContextMenu(): Promise<void> {
   chrome.contextMenus.create({
     id: moreCaptureAction.id,
     parentId: MORE_PARENT_ID,
-    title: actionMenuTitle(moreCaptureAction, defaultId, dblId, shortcuts, defaults),
+    title: actionMenuTitle(moreCaptureAction, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
     contexts: ['action'],
   });
 
@@ -822,7 +827,7 @@ export async function installContextMenu(): Promise<void> {
         chrome.contextMenus.create({
           id: delayedAction.id,
           parentId: MORE_PARENT_ID,
-          title: actionMenuTitle(delayedAction, defaultId, dblId, shortcuts, defaults),
+          title: actionMenuTitle(delayedAction, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
           contexts: ['action'],
         });
       }
@@ -832,7 +837,7 @@ export async function installContextMenu(): Promise<void> {
     chrome.contextMenus.create({
       id: action.id,
       parentId: MORE_PARENT_ID,
-      title: actionMenuTitle(action, defaultId, dblId, shortcuts, defaults),
+      title: actionMenuTitle(action, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
       contexts: ['action'],
     });
   }
