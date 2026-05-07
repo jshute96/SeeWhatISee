@@ -1,0 +1,107 @@
+# Summary (up to 132 characters, from manifest description):
+
+The ultimate screenshot tool for vibe-coding: Share screenshots, HTML, or selected text with your coding agent — CLI or web.
+
+
+
+# Description (up to 16000 characters):
+
+━━━━━  CAPTURE FROM ANY PAGE  ━━━━━
+
+  ✅  Take a screenshot
+  ✅  Save the page's HTML
+  ✅  Save selected text — converted to agent-friendly markdown
+  ✅  Or just record the URL
+
+
+━━━━━  MARK IT UP  ━━━━━
+
+  ✅  Highlight, redact, or crop the screenshot
+  ✅  Add a prompt to tell your agent what you want
+
+
+━━━━━  SEND IT — WEB AGENTS  ━━━━━
+
+  ✅  Claude
+  ✅  ChatGPT
+  ✅  Gemini
+  ✅  Google Search
+
+
+━━━━━  SEND IT — CLI AGENTS  ━━━━━
+
+  ✅  Claude Code
+  ✅  Gemini CLI
+
+Captures land in ~/Downloads/SeeWhatISee/. The bundled skills pick them up:
+
+  ✅  /see-what-i-see [prompt]
+        ▸ Read the latest capture
+  ✅  /see-what-i-see-watch
+        ▸ Run in the background, reading each new capture as it appears
+
+
+━━━━━  MORE FEATURES  ━━━━━
+
+  ✅  Click the toolbar icon to open the Capture page (the full toolkit)
+  ✅  Double-click to save a screenshot or selected text instantly
+  ✅  Right-click for extras:
+        ▸  Capture with a delay (for hover states, open menus, tooltips)
+        ▸  Upload a local image to mark up and send
+  ✅  Right-click an image to capture it directly
+  ✅  Edit image:
+        ▸  Boxes, lines, arrows, redact or crop
+        ▸  Zoom in / out
+        ▸  Shrink-to-content for boxes, redactions, and crops
+  ✅  Edit captured HTML or selection text before saving
+  ✅  Send to web chat:
+        ▸  Open a fresh tab in any provider
+        ▸  Select and pin an existing chat tab as the target
+        ▸  Copy/paste with the fallback widget when file upload isn't supported
+
+
+━━━━━  HIGHLY CONFIGURABLE  ━━━━━
+
+  ✅  Hotkeys for most actions
+  ✅  Default actions for click and double-click
+  ✅  Default save items (screenshot / HTML / selection)
+  ✅  Which web agents appear, and which is the default
+
+
+━━━━━  PRIVACY  ━━━━━
+
+SeeWhatISee runs entirely in your browser. It does not collect or
+transmit any data.
+
+
+━━━━━  LINKS  ━━━━━
+
+CLI plugins, documentation, and open source code:
+https://github.com/jshute96/SeeWhatISee
+
+
+# Privacy tab
+
+Take screenshots and HTML snapshots, to send to coding agents.  Send directly to web agents (Claude, Gemini, ChatGPT, Google) from the extension.  Send to CLI coding agents like Claude CLI and Gemini CLI by saving to files, and collecting them with a skill.
+
+
+# Test instructions:
+
+All functionality is reachable from the context menu on the toolbar icon. Most items open capture.html, where you can mark up a screenshot save it (in ~/Downloads/SeeWhatISee), or send it to a web chatbot.  That injects an extra widget on the target page that tries to add the screenshot and prompt into the chat box on that page.
+
+There are no page modifications or scripts other than those triggered directly by user interactions with extension UI.
+
+
+# Key from web store:
+
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAh9cXuMSI3kX7Nvd8ZPot
+TWFAv5dKJdoQBquIluIRfzxHxt3jnjwDwcBynLo63OG1izb4jCIrU2eUONcCikQ5
+9piU/ZC2Zf4MaWmYrt9meMhHmrH56xCRfj5ahHkcfqYrZgXgV7VqGSuzL1gQhbCH
+OySMWm2moq2uIoCZp5N3gth+5YtE6UEgFE+rzws/QUPn19v9H+bgFyTjq8Bcuhbf
+2KCigLIfELbAdTuh8fvQCmdsUxyec9W5SZ8mRNp+kPj4TV8CI1vKnwNv54NiHrdr
+aFKZPCsEBRraxrhXPtnvYtQ3r8MHTpT13qalSImXqyREAVolN5lo6CPCEfhgkUOQ
+nQIDAQAB
+-----END PUBLIC KEY-----
+
+(do not put in manifest when uploading)
