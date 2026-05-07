@@ -259,8 +259,20 @@ provided:
 - `/see-what-i-see-stop` — stop the watcher
 - `/see-what-i-see-help` — print a summary of the commands
 
-Three helper scripts live in `plugin/scripts/` (symlinked from
-`scripts/`):
+Three helper scripts live in `plugin/scripts/`:
+
+- They are symlinked from `scripts/` at the repo root so the e2e
+  tests and ad-hoc CLI use can find them at a stable path.
+- They are also symlinked from each consuming skill's directory
+  (`plugin/skills/see-what-i-see/scripts`,
+  `plugin/skills/see-what-i-see-watch/scripts`,
+  `plugin/skills/see-what-i-see-stop/scripts`) so the SKILL.md
+  bodies can reference them via the per-skill
+  `${CLAUDE_SKILL_DIR}/scripts/...` substitution. This keeps a
+  single canonical copy in `plugin/scripts/` while letting each
+  skill resolve them through its own directory.
+
+The scripts:
 
 - `_common.sh` — shared helpers sourced by the other two:
   directory resolution (config file, `--directory`, default),

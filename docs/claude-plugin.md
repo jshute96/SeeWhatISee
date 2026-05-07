@@ -29,17 +29,23 @@ SeeWhatISee/
 ├── plugin/
 │   ├── .claude-plugin/
 │   │   └── plugin.json           # plugin manifest (name, version, ...)
-│   ├── scripts/
+│   ├── scripts/                  # canonical home of the helper scripts
 │   │   ├── _common.sh            # shared helpers (dir resolution, path absolutization)
 │   │   ├── get-latest.sh         # print latest capture JSON with absolute paths
 │   │   └── watch.sh              # filesystem watcher, emits JSON with absolute paths
 │   └── skills/
-│       ├── see-what-i-see/SKILL.md
-│       ├── see-what-i-see-watch/SKILL.md
-│       ├── see-what-i-see-stop/SKILL.md
-│       └── see-what-i-see-help/SKILL.md
+│       ├── see-what-i-see/
+│       │   ├── SKILL.md
+│       │   └── scripts -> ../../scripts/   # so ${CLAUDE_SKILL_DIR}/scripts/... resolves
+│       ├── see-what-i-see-watch/
+│       │   ├── SKILL.md
+│       │   └── scripts -> ../../scripts/
+│       ├── see-what-i-see-stop/
+│       │   ├── SKILL.md
+│       │   └── scripts -> ../../scripts/
+│       └── see-what-i-see-help/SKILL.md     # no scripts; help text only
 └── .claude/
-    ├── settings.json             # local-dev: sets CLAUDE_PLUGIN_ROOT and permissions
+    ├── settings.json             # local-dev: bash permissions for plugin scripts + npm tests
     └── skills/                   # local-dev: symlinks into plugin/skills/
         ├── see-what-i-see       -> ../../plugin/skills/see-what-i-see
         ├── see-what-i-see-watch -> ../../plugin/skills/see-what-i-see-watch
@@ -117,7 +123,7 @@ Each skill is a directory under `plugin/skills/<name>/` containing a
 ---
 name: see-what-i-see-watch
 description: Start a background loop that watches for new captures ... Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
-allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*),Read"
+allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read"
 ---
 ```
 
@@ -136,9 +142,12 @@ Things we learned:
 - **Multiple tools are comma-separated inside a single quoted string**
   in the frontmatter: `"Bash(...),Read"`. An earlier version used
   space-separated values and that silently dropped the second entry.
-- **`${CLAUDE_PLUGIN_ROOT}` works inside `allowed-tools`.** It's
-  substituted at skill-load time to the cached plugin install path, so
-  the permission pattern matches the actual script location on disk.
+- **`${CLAUDE_SKILL_DIR}` works inside `allowed-tools` and inline in
+  the skill body.** It's substituted at skill-load time to the absolute
+  path of the directory holding this skill's `SKILL.md`, so a permission
+  pattern or shell command can reference scripts bundled with the skill
+  in a way that survives both the cached-install and local-dev layouts.
+  See [the substitutions section below](#substitutions).
 - **The skill `name` field is what gets the `/name` slash-command
   treatment.** Our skill directories and `name:` fields match
   (`see-what-i-see`, `see-what-i-see-watch`, etc.) to keep things
@@ -186,23 +195,39 @@ Updates go through `/plugin marketplace update` followed by `/plugin` → update
 - `source: "./plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole repo.
 - The workaround would be splitting the plugin into its own repo (cleaner, but more overhead); for now we live with the full clone since this repo is small.
 
-## `${CLAUDE_PLUGIN_ROOT}`
+## Substitutions
 
-The absolute path to the plugin's installation directory at runtime.
-Usable in:
+Claude Code expands a few `${...}` substitutions inside SKILL.md before
+the body reaches the model. The full list is in the [skills docs][skills-subs];
+two are relevant here.
 
-- Hook and MCP server configs (JSON).
-- SKILL.md frontmatter `allowed-tools` patterns.
-- Skill body text (it gets substituted inline).
-- Any subprocess spawned by the plugin (it's exported as an env var).
+[skills-subs]: https://code.claude.com/docs/en/skills#available-string-substitutions
 
-We use it so that `plugin/skills/see-what-i-see-watch/SKILL.md` can refer to
-`${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` and have that resolve to wherever the
-plugin is installed — the cache directory in the installed case, or the repo
-checkout in local development.
+### `${CLAUDE_SKILL_DIR}` — the per-skill substitution we use
 
-- This lets both skills share a single copy of `watch.sh` without the stop
-  skill needing a `../see-what-i-see-watch/watch.sh`-style relative path.
+- Resolves to the absolute path of the directory containing *this skill's*
+  `SKILL.md`. For plugin skills that's the per-skill subdirectory under the
+  cache, not the plugin root.
+- Usable in `allowed-tools` patterns and inline in the skill body.
+- This is what our SKILL.md bodies reference: e.g. the watcher skill runs
+  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Since the helper scripts live at
+  `plugin/scripts/` (one canonical copy), each consuming skill has a
+  `scripts -> ../../scripts/` symlink so `${CLAUDE_SKILL_DIR}/scripts/...`
+  resolves through the symlink to the shared script.
+- Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
+  substitution, so a skill is self-contained and doesn't depend on knowing
+  the plugin layout. It also keeps each `allowed-tools` pattern scoped to
+  that skill's own directory rather than the whole plugin.
+
+### `${CLAUDE_PLUGIN_ROOT}` — the broader plugin substitution
+
+- Resolves to the absolute path of the plugin's install directory.
+- Usable in: hook and MCP server configs (JSON), SKILL.md frontmatter
+  `allowed-tools` patterns, skill body text, and any subprocess spawned
+  by the plugin (it's also exported as an env var).
+- We don't reference it from any SKILL.md, but it's still the right
+  substitution to use from plugin-wide configs (hooks, MCP) when those
+  ever appear.
 
 There's a companion `${CLAUDE_PLUGIN_DATA}` for persistent state that should
 survive plugin updates; we don't use it.
@@ -219,9 +244,6 @@ Two pieces of glue make it work:
 
 ```json
 {
-  "env": {
-    "CLAUDE_PLUGIN_ROOT": "plugin"
-  },
   "permissions": {
     "allow": [
       "Bash(plugin/scripts/watch.sh:*)",
@@ -231,15 +253,20 @@ Two pieces of glue make it work:
 }
 ```
 
-- `CLAUDE_PLUGIN_ROOT=plugin` manually sets the env var that would otherwise
-  point into the plugin cache. `plugin` is a working-directory-relative path
-  to the in-repo plugin root.
-- The `Bash(plugin/scripts/watch.sh:*)` and `Bash(plugin/scripts/get-latest.sh:*)`
-  permissions are string matches, not resolved-path matches.
-  - The skill frontmatter patterns like `Bash(${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh:*)`
-    expand to literally `Bash(plugin/scripts/watch.sh:*)`, which matches.
-  - It's a little fragile — the two strings have to line up exactly — but it
-    avoids every invocation triggering a permission prompt.
+- The `Bash(plugin/scripts/...)` allow rules pre-approve the underlying
+  scripts when they're invoked through the canonical `plugin/scripts/`
+  path (e.g. by the e2e tests, or by anyone running them directly).
+- Note on string-vs-resolved matching: Claude Code's permission rules
+  are string matches, not realpath matches. SKILL.md bodies now invoke
+  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`, which expands to an absolute
+  path under each skill's own directory — *not* to `plugin/scripts/...`,
+  even though the symlinks resolve to the same script. So an invocation
+  via the skill substitution won't string-match these rules.
+- Outstanding question: whether the broader user-level
+  `Bash(~/.claude/plugins/cache/see-what-i-see-marketplace/**)` rule
+  (suggested in `README.md` and the help skill) covers `${CLAUDE_SKILL_DIR}`-
+  expanded invocations once the plugin is installed from the marketplace.
+  Worth verifying with a clean `/plugin install`.
 
 ### `.claude/skills/` symlinks
 
@@ -295,13 +322,15 @@ check — run it before committing any manifest changes.
   like they work but silently register only the first tool. Use
   commas.
 - **The "contains expansion" permission prompt on `${VAR}/script` commands with arguments.**
-  - Running `${CLAUDE_PLUGIN_ROOT}/scripts/watch.sh` on its own is allowed silently.
+  - Running `${CLAUDE_SKILL_DIR}/scripts/watch.sh` on its own is allowed silently.
   - Running the same script with arguments like `--stop` or `--after FILE` triggers a
     one-time "Contains expansion — do you want to proceed?" prompt.
   - Claude Code is being cautious about variable expansion combined with additional tokens.
   - It's per-pattern and remembered for the session — an annoyance rather than a blocker —
     but it's why `watch.sh --after ...` still prompts even though the plain `watch.sh`
     invocation doesn't.
+  - The same pattern applied with `${CLAUDE_PLUGIN_ROOT}` previously, and would still
+    apply if we ever switched back.
 - **Version bumping only works if the plugin's version changes.**
   Bumping *just* `metadata.version` in `marketplace.json` doesn't
   update installed plugins. You have to bump the plugin entry version
@@ -309,7 +338,11 @@ check — run it before committing any manifest changes.
   sources).
 - **`..` in skill script paths.** Plugins cached from a marketplace
   can't traverse outside the plugin root via `../`. Keep shared scripts
-  inside the plugin dir and reference them via `${CLAUDE_PLUGIN_ROOT}`.
+  inside the plugin dir.
+  - Our per-skill `scripts -> ../../scripts/` symlinks *do* contain `..`,
+    but the traversal stays inside the plugin (it goes up to the plugin
+    root and back down to `plugin/scripts/`), so it's fine. The thing
+    that's disallowed is escaping the plugin root entirely.
 - **Relative-path sources only work over git.** If we ever distribute
   the marketplace as a direct URL to `marketplace.json`, we'd need to
   switch the plugin entry to a `github`/`url` source.
@@ -332,3 +365,12 @@ check — run it before committing any manifest changes.
   ignored, so the file was removed (commit `0aaee35`). Permission
   gating now relies entirely on skill-level `allowed-tools` frontmatter
   plus the user-level workaround above.
+- **The per-skill `scripts` symlinks assume a unix filesystem.** They're
+  committed as git mode-120000 symlinks. On Linux/macOS clones with
+  `core.symlinks=true` (default) they materialise correctly. On Windows
+  clones with `core.symlinks=false` (the default unless the user is in
+  developer mode), git checks them out as plain text files containing
+  `../../scripts/`, and `${CLAUDE_SKILL_DIR}/scripts/watch.sh` won't
+  resolve. There's no `.gitattributes`-only fix; if Windows support is
+  needed, document `git config core.symlinks true` as a prerequisite or
+  recreate the symlinks via a post-checkout script.

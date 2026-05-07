@@ -21,7 +21,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `.claude/settings.json` | Local dev settings — sets `CLAUDE_PLUGIN_ROOT=plugin` |
+| `.claude/settings.json` | Local dev settings — Bash permissions for the plugin scripts and `npm test` commands |
 | `.claude/skills/see-what-i-see` | Symlink to `plugin/skills/see-what-i-see` |
 | `.claude/skills/see-what-i-see-watch` | Symlink to `plugin/skills/see-what-i-see-watch` |
 | `.claude/skills/see-what-i-see-stop` | Symlink to `plugin/skills/see-what-i-see-stop` |
@@ -64,6 +64,9 @@ One-line descriptions of every source file, grouped by directory.
 | `plugin/scripts/_common.sh` | Shared helpers: directory resolution, config parsing, JSON path absolutization |
 | `plugin/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
 | `plugin/scripts/watch.sh` | CLI command to watch for new updates to `log.json` |
+| `plugin/skills/see-what-i-see/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
+| `plugin/skills/see-what-i-see-watch/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
+| `plugin/skills/see-what-i-see-stop/scripts` | Symlink to `plugin/scripts/` so `${CLAUDE_SKILL_DIR}/scripts/...` resolves inside this skill |
 
 **NOTE: the skills below are generated from `src/skills_templates/`, do not edit directly**
 
@@ -226,7 +229,7 @@ One-line descriptions of every source file, grouped by directory.
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |
 | `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
-| `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `CLAUDE_PLUGIN_ROOT`, local-dev shim) |
+| `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |
