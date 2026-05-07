@@ -158,7 +158,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/red-image.html` | Fixture page with three `<img>`s (http PNG, inline JPEG data URL, http JPEG) for the image-context capture e2e tests |
 | `tests/fixtures/pages/red-pixel.png` | 200x200 solid-red PNG used as the `<img>` source in `red-image.html` |
 | `tests/fixtures/pages/red-pixel.jpg` | 200x200 solid-red JPEG counterpart for tests that exercise non-PNG bake-in / extension handling |
-| `tests/fixtures/pages/corrupt.png` | 24-byte text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload spec's decode-validation test |
+| `tests/fixtures/pages/corrupt.png` | Text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload-spec decode-validation test |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
@@ -175,7 +175,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/capture-image-context.spec.ts` | E2E for the image right-click flow — Save-screenshot bytes/path, Capture-page defaults, `imageUrl` persistence (incl. screenshot-unchecked), quiet-disabled HTML |
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/jpg-png-cache-edit-sync.spec.ts` | E2E regression — JPG source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
-| `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, non-image inline error, PNG/JPG happy paths, JPG → highlight bakes to PNG |
+| `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-bakes-to-PNG, multi-capture bump regression |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |
 | `tests/e2e/watch.spec.ts` | Standalone tests for `scripts/watch.sh` (once/loop, `--after`, `--stop`, config file, absolute paths) |

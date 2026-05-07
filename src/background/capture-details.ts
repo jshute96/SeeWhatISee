@@ -1397,6 +1397,17 @@ export function installDetailsMessageHandlers(): void {
           // `getCurrentFilename` for the base — so each edited re-save
           // splices `-N` into the *already-bumped* name, producing
           // stacked suffixes (`…-1-1-2-3.png`) instead of a counter.
+          // `openerTabId` is intentionally not set here, even though
+          // `openCapturePageWithSession` does. The upload session is
+          // created from the page side after the user picks a file,
+          // long after `openUploadCapturePage` opened the tab — the
+          // SW no longer has a handle to the original opener (Chrome
+          // wired `openerTabId` natively at `tabs.create` time, but
+          // that field is stripped on SW restart and the page never
+          // sees it). Practical impact: focus-return on Capture-page
+          // close falls back to the active tab. Acceptable tradeoff;
+          // adding it would require keying opener-by-tab-id state
+          // somewhere `initializeUploadSession` could look it up.
           const session: DetailsSession = {
             capture,
             bases: {

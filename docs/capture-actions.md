@@ -352,11 +352,16 @@ an existing one. New work goes into the More submenu.
     sends `initializeUploadSession` to the SW.
   - The SW synthesizes an `InMemoryCapture` with
     `screenshotDataUrl` from the file's `FileReader` data URL,
-    `url: 'file:<filename>'`, `title: 'Uploaded image'`,
+    `url: 'file:///<encoded-filename>'`, `title: 'Uploaded image'`,
     `htmlUnavailable: true` (no page HTML exists), and
     `useImageFlowDefaults: true` so `getDetailsData` picks the
     image-flow defaults branch (Save Screenshot ✓ regardless of
     the user's `withoutSelection.screenshot` pref).
+  - The synthetic `DetailsSession` pins `bases.screenshot` /
+    `bases.contents` to the un-bumped filenames, mirroring
+    `openCapturePageWithSession` — without this pin the multi-
+    capture bump strategy (`rebumpFilenameIfLocked`) falls back
+    to the already-bumped current filename and stacks suffixes.
   - `imageUrl` is **not** set — the file *is* the source, already
     named in `url`; setting `imageUrl` to the same value would
     duplicate that into `log.json` for no extra information.

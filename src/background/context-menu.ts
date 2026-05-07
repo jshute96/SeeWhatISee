@@ -546,10 +546,6 @@ export async function copyLastSelectionFilename(): Promise<void> {
 }
 
 /**
- * Open the on-disk capture directory in a new tab as a `file://` URL
- * so the user can browse the saved screenshots / HTML / `log.json`.
- */
-/**
  * Open `capture.html?upload=true` in a tab adjacent to `opener`. The
  * landing card lets the user pick a local image; selecting one
  * dispatches `initializeUploadSession` to the SW, which seeds the
@@ -574,6 +570,10 @@ export async function openUploadCapturePage(
   await chrome.tabs.create(createProps);
 }
 
+/**
+ * Open the on-disk capture directory in a new tab as a `file://` URL
+ * so the user can browse the saved screenshots / HTML / `log.json`.
+ */
 export async function openSnapshotsDirectory(): Promise<void> {
   const dir = await getCaptureDirectory();
   // Build a properly-encoded file:// URL. Normalize Windows backslashes
