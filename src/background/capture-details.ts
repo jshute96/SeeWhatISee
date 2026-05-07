@@ -659,6 +659,16 @@ async function rebumpFilenameIfLocked(
   // session that pinned `bases` at creation, so the two go together.)
   const saved = adapter.getSaved(session);
   if (!saved) return;
+  // Same revision as the previous save → the current filename
+  // already names the on-disk file we'd be re-locking. Skip the
+  // recompute: `nextSaveFilename` derives from `bases.<x>`, which
+  // carries the *original* extension, so for a screenshot that
+  // landed at `.png` via the bake-in rewrite this would stomp the
+  // ext back to `.jpg` and drop the cache. The downstream rewrite
+  // block keeps ext in sync with bytes; rebumping on same revision
+  // can only break that invariant. (See `docs/capture-page.md`
+  // "Multi-capture filename strategy" for the full failure chain.)
+  if (saved.revision === adapter.getCurrentRevision(session)) return;
   const base = adapter.getBase(session) ?? adapter.getCurrentFilename(session);
   const desired = nextSaveFilename(base, saved, adapter.getCurrentRevision(session));
   if (desired === adapter.getCurrentFilename(session)) return;
@@ -733,19 +743,34 @@ export async function ensureScreenshotDownloaded(
   // persisting the session — keeps `recordDetailedCapture` (which
   // reads `capture.screenshotFilename`) in sync with the actual bytes
   // even when the user toggles edits between Copy and Capture clicks.
+  //
+  // Skip the rewrite on a cache hit at the requested `editVersion`:
+  // the page short-circuits `screenshotOverride` to undefined when
+  // re-copying at an unchanged version (since the SW will cache-hit
+  // anyway), but the absence of an override does NOT mean "no edits."
+  // Reading `screenshotOverride === undefined` as "revert to original
+  // ext" would flip a previously-baked `.png` filename back to `.jpg`
+  // on the second copy click — the on-disk bytes are still PNG (cache
+  // hit, no re-download), so `capture.screenshotFilename` and
+  // `recordDetailedCapture`'s eventual log entry would lie about the
+  // file's contents.
   const pre = await requireDetailsSession(tabId);
-  const targetExt = screenshotOverride ? 'png' : pre.capture.screenshotOriginalExt;
-  // Skip the rewrite if `screenshotOriginalExt` is empty — currently
-  // unreachable (every constructor sets it) but the regex would
-  // otherwise produce a trailing-dot filename.
-  if (targetExt) {
-    const targetFilename = pre.capture.screenshotFilename.replace(
-      /\.[^.]+$/,
-      `.${targetExt}`,
-    );
-    if (targetFilename !== pre.capture.screenshotFilename) {
-      pre.capture.screenshotFilename = targetFilename;
-      await saveDetailsSession(tabId, pre);
+  const cached = pre.downloads?.screenshot;
+  const cacheHit = cached !== undefined && cached.editVersion === editVersion;
+  if (!cacheHit) {
+    const targetExt = screenshotOverride ? 'png' : pre.capture.screenshotOriginalExt;
+    // Skip the rewrite if `screenshotOriginalExt` is empty — currently
+    // unreachable (every constructor sets it) but the regex would
+    // otherwise produce a trailing-dot filename.
+    if (targetExt) {
+      const targetFilename = pre.capture.screenshotFilename.replace(
+        /\.[^.]+$/,
+        `.${targetExt}`,
+      );
+      if (targetFilename !== pre.capture.screenshotFilename) {
+        pre.capture.screenshotFilename = targetFilename;
+        await saveDetailsSession(tabId, pre);
+      }
     }
   }
   return ensureArtifactDownloaded(tabId, {
