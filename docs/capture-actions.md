@@ -434,6 +434,12 @@ submenu inside the page context menu (no parent created in code).
     `defaultButton` / `promptEnter` so the rest of the page
     behaves the same. The user's stored `capturePageDefaults` is
     not mutated.
+  - Gated on the `useImageFlowDefaults` flag on `InMemoryCapture`,
+    not on `imageUrl`. The right-click flow sets both, but the
+    upload-image flow sets only `useImageFlowDefaults` (it has no
+    source URL to record). Keeping the flag separate means future
+    flows can mix and match — e.g. record an `imageUrl` without
+    wanting image-flow defaults.
   - Highlights / redactions / crop flags still surface on the
     saved record's `screenshot` artifact the same way they do on
     the toolbar path.

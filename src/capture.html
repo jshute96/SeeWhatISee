@@ -1147,6 +1147,23 @@
     font-size: 16px;
     line-height: 1.5;
   }
+  /* Upload-landing card chrome (lives inside `.missing-session-error`).
+     The error message is a block child rather than an inline sibling
+     of the button so a long Chrome-quota / decode-failure message
+     wraps cleanly under the button instead of pushing it sideways. */
+  #upload-choose-btn {
+    margin-top: 8px;
+    padding: 6px 14px;
+    font-size: 14px;
+  }
+  #upload-error {
+    display: none;
+    margin-top: 8px;
+    color: #c00;
+  }
+  #upload-file-input {
+    display: none;
+  }
   /* Force-hide the main-content blocks when capture-page.ts sets
      `hidden` on them. Required because each block has its own
      `display: flex` / `display: block` rule with class-level
@@ -1298,18 +1315,15 @@
     `initializeUploadSession` to the SW, which seeds a synthetic
     `DetailsSession`; the page then strips `?upload=true` from the
     URL and falls into the normal `loadData` happy-path. Reuses the
-    `.missing-session-error` chrome (same yellow stale-page banner) so
-    the visual hierarchy matches the rest of the early-state pages.
+    `.missing-session-error` chrome so the visual hierarchy matches
+    the rest of the early-state panes.
   -->
   <div id="upload-landing" class="missing-session-error" hidden>
     <b>Upload an image to Capture.</b><br>
-    <button type="button" id="upload-choose-btn"
-            style="margin-top: 8px; padding: 6px 14px; font-size: 14px;">
-      Choose image…
-    </button>
-    <span id="upload-error" style="display: none; margin-left: 12px; color: #c00;"></span>
+    <button type="button" id="upload-choose-btn">Choose image…</button>
+    <div id="upload-error"></div>
   </div>
-  <input type="file" id="upload-file-input" accept="image/*" style="display: none;">
+  <input type="file" id="upload-file-input" accept="image/*">
 
   <!--
     Captured-page card. Visual: bordered strip with the page title on

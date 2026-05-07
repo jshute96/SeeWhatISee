@@ -158,6 +158,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/red-image.html` | Fixture page with three `<img>`s (http PNG, inline JPEG data URL, http JPEG) for the image-context capture e2e tests |
 | `tests/fixtures/pages/red-pixel.png` | 200x200 solid-red PNG used as the `<img>` source in `red-image.html` |
 | `tests/fixtures/pages/red-pixel.jpg` | 200x200 solid-red JPEG counterpart for tests that exercise non-PNG bake-in / extension handling |
+| `tests/fixtures/pages/corrupt.png` | 24-byte text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload spec's decode-validation test |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |

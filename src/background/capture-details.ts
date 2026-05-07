@@ -1359,24 +1359,22 @@ export function installDetailsMessageHandlers(): void {
           const { dataUrl, filename, mimeType } = msg;
           const now = new Date();
           const ts = compactTimestamp(now);
-          // `imageExtensionFor` falls back to URL-suffix extraction
-          // when the MIME isn't in its known table. Synthesize a
-          // parseable URL out of the filename so the suffix lookup
-          // succeeds for `image/x-icon` etc. that aren't in the table.
-          const ext = imageExtensionFor(
-            mimeType,
-            `file:///${encodeURIComponent(filename)}`,
-          );
-          // `file:<filename>` is opaque-by-design: not a valid
-          // `file://` URL (we can't fabricate the user's on-disk
-          // path) but parseable downstream as "the source was a
-          // local file named X." `imageUrl` is left unset because
-          // there's no separate source URL to record — the file
-          // itself is the source, already named in `url`.
+          // `file:///<encoded>` is a real `file://` URL with the
+          // filename as its single (encoded) path segment. The path
+          // is fabricated — we don't know the user's on-disk
+          // location — but encoding makes it a well-formed URL so
+          // downstream `new URL(...)` consumers don't blow up on
+          // spaces / `#` / `?` in the filename. Reusing the same
+          // encoded form for `imageExtensionFor` lets its URL-suffix
+          // fallback catch types not in its MIME table (e.g.
+          // `image/heic`). The separate `imageUrl` field is unset:
+          // the file *is* the source, already named in `url`.
+          const url = `file:///${encodeURIComponent(filename)}`;
+          const ext = imageExtensionFor(mimeType, url);
           const capture: InMemoryCapture = {
             screenshotDataUrl: dataUrl,
             html: '',
-            url: `file:${filename}`,
+            url,
             // Generic title — the filename is already visible in the
             // URL row, so use a descriptive label instead of
             // repeating it.
@@ -1392,11 +1390,30 @@ export function installDetailsMessageHandlers(): void {
             // Capture would write nothing.
             useImageFlowDefaults: true,
           };
-          const session: DetailsSession = { capture };
+          // Pin the un-bumped artifact filenames the same way
+          // `openCapturePageWithSession` does for toolbar / image-
+          // right-click flows. Without this, the multi-capture bump
+          // strategy in `rebumpFilenameIfLocked` falls back to
+          // `getCurrentFilename` for the base — so each edited re-save
+          // splices `-N` into the *already-bumped* name, producing
+          // stacked suffixes (`…-1-1-2-3.png`) instead of a counter.
+          const session: DetailsSession = {
+            capture,
+            bases: {
+              screenshot: capture.screenshotFilename,
+              contents: capture.contentsFilename,
+            },
+          };
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });
         } catch (err) {
-          sendResponse({ error: err instanceof Error ? err.message : String(err) });
+          // Surface a tight one-line message. Chrome's session-storage
+          // quota error reads "Session storage quota bytes exceeded.
+          // Values were not stored." — the second sentence is noise
+          // for the user (already implied by "failed"), so strip it.
+          let msgText = err instanceof Error ? err.message : String(err);
+          msgText = msgText.replace(/\.?\s*Values were not stored\.?\s*$/, '');
+          sendResponse({ error: msgText });
         }
       })();
       return true;

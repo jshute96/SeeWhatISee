@@ -2378,34 +2378,37 @@ updateZoomButtonLabel();
  * in the URL. Once the user picks an image we:
  *
  *   1. FileReader → data URL.
- *   2. `initializeUploadSession` to the SW (it synthesizes a
+ *   2. Decode-validate the data URL via `<img>` so a corrupt /
+ *      0-byte / mislabeled file fails here rather than rendering
+ *      a broken-image preview after the navigation.
+ *   3. `initializeUploadSession` to the SW (it synthesizes a
  *      `DetailsSession` and stashes it under our tab's key).
- *   3. Strip `?upload=true` from the URL via `replaceState` so a
+ *   4. Strip `?upload=true` from the URL via `replaceState` so a
  *      reload doesn't re-trigger this branch (we now have a real
  *      session and want the normal path).
- *   4. Re-enter `loadData()` — `getDetailsData` returns the
+ *   5. Re-enter `loadData()` — `getDetailsData` returns the
  *      synthetic session and the rest of the page renders.
  *
- * Errors (non-image file, FileReader failure, SW init rejection)
- * surface inline next to the Choose-image button. The button stays
- * functional so the user can pick a different file without
- * reloading the tab.
+ * Errors (non-image file, decode failure, FileReader failure, SW
+ * init rejection) surface in `#upload-error` below the Choose-image
+ * button. The button stays functional so the user can pick a
+ * different file without reloading the tab.
  */
 async function handleUploadFlow(): Promise<void> {
   const landing = document.getElementById('upload-landing') as HTMLDivElement;
   const chooseBtn = document.getElementById('upload-choose-btn') as HTMLButtonElement;
   const fileInput = document.getElementById('upload-file-input') as HTMLInputElement;
-  const errorSpan = document.getElementById('upload-error') as HTMLSpanElement;
+  const errorEl = document.getElementById('upload-error') as HTMLDivElement;
 
   landing.hidden = false;
 
   function showError(msg: string): void {
-    errorSpan.textContent = msg;
-    errorSpan.style.display = 'inline';
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
   }
   function clearError(): void {
-    errorSpan.textContent = '';
-    errorSpan.style.display = 'none';
+    errorEl.textContent = '';
+    errorEl.style.display = 'none';
   }
 
   chooseBtn.addEventListener('click', () => {
@@ -2434,6 +2437,25 @@ async function handleUploadFlow(): Promise<void> {
     };
     reader.onload = async () => {
       const dataUrl = reader.result as string;
+      // Decode-validate before we ship the bytes off to the SW.
+      // The `accept="image/*"` attribute and the MIME-prefix check
+      // above only filter on declared type — a 0-byte file or a
+      // `.png` carrying garbage bytes still passes both. Loading
+      // through `<img>` and waiting for `onload` / `onerror` runs
+      // the same decode the Capture page would do, so anything that
+      // would render as a broken-image placeholder fails here with
+      // a clear message instead.
+      const decodable = await new Promise<boolean>((resolve) => {
+        const probe = new Image();
+        probe.onload = () => resolve(probe.naturalWidth > 0 && probe.naturalHeight > 0);
+        probe.onerror = () => resolve(false);
+        probe.src = dataUrl;
+      });
+      if (!decodable) {
+        showError('Not a valid image (could not decode).');
+        resetInput();
+        return;
+      }
       let initRes: { ok?: boolean; error?: string } | undefined;
       try {
         initRes = await chrome.runtime.sendMessage({
@@ -2443,12 +2465,12 @@ async function handleUploadFlow(): Promise<void> {
           mimeType: file.type,
         });
       } catch (err) {
-        showError(`Initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+        showError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
         resetInput();
         return;
       }
       if (!initRes?.ok) {
-        showError(`Initialization failed: ${initRes?.error ?? 'no response from background'}`);
+        showError(`Upload failed: ${initRes?.error ?? 'no response from background'}`);
         resetInput();
         return;
       }

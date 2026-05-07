@@ -58,6 +58,7 @@ import {
   copyLastSelectionFilename,
   installContextMenu,
   openSnapshotsDirectory,
+  openUploadCapturePage,
   refreshActionTooltip,
   refreshCopyMenuState,
   refreshMenusIfHotkeysChanged,
@@ -293,14 +294,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // the user lands the new tab next to the page they triggered
   // from.
   if (id === UPLOAD_IMAGE_MENU_ID) {
-    await runWithErrorReporting(async () => {
-      const createProps: chrome.tabs.CreateProperties = {
-        url: chrome.runtime.getURL('capture.html?upload=true'),
-      };
-      if (tab?.index !== undefined) createProps.index = tab.index + 1;
-      if (tab?.id !== undefined) createProps.openerTabId = tab.id;
-      await chrome.tabs.create(createProps);
-    });
+    await runWithErrorReporting(() => openUploadCapturePage(tab));
     return;
   }
 
@@ -408,6 +402,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   captureImageAsScreenshot,
   clearCaptureLog,
   openSnapshotsDirectory,
+  openUploadCapturePage,
   copyLastScreenshotFilename,
   copyLastHtmlFilename,
   copyLastSelectionFilename,
