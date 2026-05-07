@@ -24,8 +24,10 @@ import {
   countDownloadsBySuffix,
   dragRect,
   findCapturedDownload,
+  installClipboardSpy,
   openImageDetailsFlow,
   readLatestRecord,
+  waitForClipboardWrites,
 } from './details-helpers';
 
 test.beforeEach(async () => {
@@ -51,9 +53,23 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
 
   const sw = await getServiceWorker();
 
+  // Synchronize on the page-side clipboard write rather than the
+  // download spy: `countDownloadsBySuffix` increments at download
+  // *enqueue* (when `chrome.downloads.download` returns an id), but
+  // the SW's per-tab cache entry only lands AFTER
+  // `waitForDownloadComplete`. If the next Copy click reaches the
+  // SW between the spy bump and the cache commit, the SW sees no
+  // cache and fires a fresh download — observed as a flaky
+  // `count('.png') === 2` here. The clipboard write happens right
+  // after `await chrome.runtime.sendMessage` resolves on the page,
+  // which is gated by the SW's full ensure-flow finishing (cache
+  // included). Waiting for it serializes the clicks.
+  await installClipboardSpy(capturePage);
+
   // 1. Copy with no edits → SW issues a .jpg download.
   await capturePage.locator('#copy-screenshot-name').click();
-  await expect.poll(() => countDownloadsBySuffix(sw, '.jpg')).toBe(1);
+  await waitForClipboardWrites(capturePage, 1);
+  expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(1);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(0);
 
   // 2. Draw a highlight → editVersion bumps → next copy bakes a PNG.
@@ -61,7 +77,8 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
 
   // 3. Copy with edits → SW issues a .png download.
   await capturePage.locator('#copy-screenshot-name').click();
-  await expect.poll(() => countDownloadsBySuffix(sw, '.png')).toBe(1);
+  await waitForClipboardWrites(capturePage, 2);
+  expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
 
   // 4. Copy AGAIN without edits — page short-circuits override to
   //    undefined (cache-hit shortcut). Without the fix, the SW
@@ -69,9 +86,7 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
   //    though the cache (and on-disk file) is still .png. The cache
   //    short-circuit means no new download issues either way.
   await capturePage.locator('#copy-screenshot-name').click();
-  // Give any spurious extra download a chance to surface, then
-  // assert no new file was issued.
-  await capturePage.waitForTimeout(200);
+  await waitForClipboardWrites(capturePage, 3);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
   expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(1);
 
