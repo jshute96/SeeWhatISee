@@ -236,7 +236,7 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
     await api.setDefaultDblWithoutSelectionId('capture');
     await api.setDefaultWithoutSelectionId('save-screenshot');
     const a = await chrome.action.getTitle({});
-    await api.setDefaultWithoutSelectionId('save-screenshot-2s');
+    await api.setDefaultWithoutSelectionId('save-screenshot-3s');
     const b = await chrome.action.getTitle({});
     await api.setDefaultWithoutSelectionId('save-page-contents');
     const c = await chrome.action.getTitle({});
@@ -264,7 +264,7 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
       '',
     ].join('\n');
   expect(titles.a).toBe(expected('Save screenshot'));
-  expect(titles.b).toBe(expected('Save screenshot in 2s'));
+  expect(titles.b).toBe(expected('Save screenshot in 3s'));
   expect(titles.c).toBe(expected('Save HTML contents'));
   expect(titles.d).toBe(expected('Capture...'));
 });
@@ -945,20 +945,20 @@ test('getDefaultWithoutSelectionId: migrates legacy action ids to the current na
   // fall back to the fresh-install default. Delay suffixes must
   // survive the rewrite too.
   const sw = await getServiceWorker();
+  // Delay-suffixed legacy ids preserve their suffix through the
+  // rename, but the only delays in `CAPTURE_ACTIONS` today are 0s and
+  // 3s — a stored `capture-with-details-2s` / `capture-now-5s` would
+  // migrate to a `<base>-2s` / `-5s` id that no longer exists, and the
+  // getter then falls back to the install default rather than
+  // rewriting storage. We don't exercise that path here.
   const cases = [
     { legacy: 'capture-with-details', current: 'capture' },
-    { legacy: 'capture-with-details-2s', current: 'capture-2s' },
     { legacy: 'capture-screenshot', current: 'save-screenshot' },
-    { legacy: 'capture-screenshot-5s', current: 'save-screenshot-5s' },
     { legacy: 'capture-page-contents', current: 'save-page-contents' },
-    { legacy: 'capture-page-contents-2s', current: 'save-page-contents-2s' },
     { legacy: 'capture-url', current: 'save-url' },
     { legacy: 'capture-both', current: 'save-all' },
-    { legacy: 'capture-both-2s', current: 'save-all-2s' },
     { legacy: 'save-both', current: 'save-all' },
-    { legacy: 'save-both-2s', current: 'save-all-2s' },
     { legacy: 'capture-now', current: 'save-screenshot' },
-    { legacy: 'capture-now-2s', current: 'save-screenshot-2s' },
   ];
   for (const { legacy, current } of cases) {
     const result = await sw.evaluate(async (stored: string) => {

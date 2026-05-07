@@ -17,9 +17,9 @@ import { startCaptureWithDetails } from './capture-details.js';
 // Each action is a (base, delay) pair: the base says *what* to
 // capture (plain screenshot, HTML contents, the Capture page flow, or
 // one of the fixed-checkbox Capture page flow shortcuts) and the delay
-// says *when* to capture (immediate, 2s, or 5s). We define the
-// bases once and expand them across the delays at module load so
-// every menu surface stays in sync from a single source.
+// says *when* to capture (immediate or 3s). We define the bases once
+// and expand them across the delays at module load so every menu
+// surface stays in sync from a single source.
 //
 // A base can opt out of delayed variants via
 // `supportsDelayed: false`; it then produces only the 0s variant.
@@ -27,17 +27,18 @@ import { startCaptureWithDetails } from './capture-details.js';
 // the `save-selection-*` shortcuts (the user already made the
 // selection before clicking) or `save-url` (the click's intent
 // is "record *this* URL"; a delayed version would just record a
-// *different* URL if the user navigated).
+// *different* URL if the user navigated). Today only `capture` and
+// `save-screenshot` keep their delayed variants — those are the two
+// that the More submenu's delayed-shortcut block surfaces.
 //
 // Each base also carries a `group: 'primary' | 'more'` that decides
 // which section of the action menu surfaces its undelayed variant
 // — see the `ActionGroup` comment below.
 //
 // The resulting flat `CAPTURE_ACTIONS` array drives:
-//   - the "Capture with delay" submenu children (every entry whose
-//     `showInDelayedSubmenu` is true and whose `delaySec > 0`)
 //   - the More submenu's action rows (every `more`-group delay-0
-//     entry, plus the `capture` action manually inserted at the top)
+//     entry, plus the `capture` action manually inserted at the top,
+//     plus the delay > 0 entries inserted as a delayed-shortcut block)
 //   - the top-level shortcut rows, which are recreated with
 //     `-shortcut`-suffixed menu ids from a hand-picked subset
 //     (`TOP_LEVEL_SHORTCUT_ACTION_IDS` in `context-menu.ts`) — the
@@ -57,15 +58,16 @@ import { startCaptureWithDetails } from './capture-details.js';
  *   - `'primary'` — eligible for promotion to a top-level shortcut
  *     row (the actual set is hand-picked in
  *     `TOP_LEVEL_SHORTCUT_ACTION_IDS` because the action menu is at
- *     the 6-cap), and delayed variants surface in the "Capture with
- *     delay" submenu by default.
- *   - `'more'`    — entry inside the More submenu. Delayed variants
- *     are reachable only via the Capture-with-delay submenu when the
- *     base sets `showInDelayedSubmenu`, and via the Options page.
+ *     the 6-cap).
+ *   - `'more'`    — entry inside the More submenu.
  *     A `'more'`-group base can still be promoted to a top-level
  *     shortcut row by adding its id to `TOP_LEVEL_SHORTCUT_ACTION_IDS`
  *     (e.g. `save-defaults` is a more-group action that's also one of
  *     the three top-level shortcuts).
+ *
+ * Delayed variants (`delaySec > 0`) surface as a single block inside
+ * the More submenu, regardless of the base's `group`. Today only
+ * `capture` and `save-screenshot` produce delayed variants.
  */
 export type ActionGroup = 'primary' | 'more';
 
@@ -86,16 +88,9 @@ interface BaseCaptureAction {
   baseTooltipFragment: string;
   /** Menu placement for the undelayed variant (see `ActionGroup`). */
   group: ActionGroup;
-  /** When `false`, only the 0s variant is generated — no 2s / 5s
-   * entries show up anywhere. Defaults to `true`. */
+  /** When `false`, only the 0s variant is generated — no 3s entry
+   * shows up anywhere. Defaults to `true`. */
   supportsDelayed?: boolean;
-  /** Whether delayed variants appear in the "Capture with delay"
-   * submenu. Defaults to `group === 'primary'` — i.e. primary bases
-   * surface their delayed variants there, more-group bases don't.
-   * Setting `true` on a more-group base promotes its delayed
-   * variants up into Capture-with-delay while leaving the undelayed
-   * variant in the More submenu. */
-  showInDelayedSubmenu?: boolean;
   /** Runs the action with the given delay (ms). `delayMs === 0` is
    * the immediate / no-delay path. */
   run: (delayMs: number) => Promise<unknown>;
@@ -118,16 +113,11 @@ export interface CaptureAction {
   /** Inherited from the base action — controls which menu section
    * this entry goes in. */
   group: ActionGroup;
-  /** Inherited from the base action's `showInDelayedSubmenu`.
-   * Non-zero-delay entries with this `true` appear in the
-   * "Capture with delay" submenu regardless of their `group`. */
-  showInDelayedSubmenu: boolean;
   /** 0 for immediate; >0 for a delayed variant. Used to slot the
    * entry into the right menu section. */
   delaySec: number;
-  /** Runs when the user picks this action (either from the top-level
-   * menu entry, the Capture with delay submenu, or a toolbar click
-   * when it's the current default). */
+  /** Runs when the user picks this action (either from a menu entry
+   * or a toolbar click when it's the current default). */
   run: () => Promise<unknown>;
 }
 
@@ -283,17 +273,17 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
   {
     // Runs the same artifact-write path the Capture page would on
     // Save click, applying the user's stored `capturePageDefaults`.
-    // Lives in the More group, but its delayed variants are
-    // promoted into the Capture-with-delay submenu via
-    // `showInDelayedSubmenu` — same pattern as `save-all`. The
-    // delay-0 row is also pulled up to the top level via
-    // `TOP_LEVEL_SHORTCUT_ACTION_IDS` because Save-without-dialog
-    // is the everyday pick for users who've configured defaults.
+    // Lives in the More group; the delay-0 row is also pulled up to
+    // the top level via `TOP_LEVEL_SHORTCUT_ACTION_IDS` because
+    // Save-without-dialog is the everyday pick for users who've
+    // configured defaults. No delayed variants — the delayed-shortcut
+    // block in the More submenu is reserved for `capture` and
+    // `save-screenshot`.
     baseId: 'save-defaults',
     baseTitle: 'Save default items',
     baseTooltipFragment: 'Save default items',
     group: 'more',
-    showInDelayedSubmenu: true,
+    supportsDelayed: false,
     run: (delayMs) => saveDefaults(delayMs),
   },
   {
@@ -301,7 +291,6 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTitle: 'Save screenshot',
     baseTooltipFragment: 'Save screenshot',
     group: 'more',
-    showInDelayedSubmenu: true,
     run: (delayMs) => captureVisible(delayMs),
   },
   {
@@ -309,7 +298,8 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTitle: 'Save HTML contents',
     baseTooltipFragment: 'Save HTML contents',
     group: 'more',
-    showInDelayedSubmenu: true,
+    // No delayed variants — see `save-defaults`.
+    supportsDelayed: false,
     run: (delayMs) => savePageContents(delayMs),
   },
   {
@@ -330,12 +320,8 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTitle: 'Save everything',
     baseTooltipFragment: 'Save everything',
     group: 'more',
-    // Promote delayed variants up into the Capture-with-delay
-    // submenu (next to plain screenshot / HTML / Capture...). The
-    // undelayed variant stays in More — this is still a slightly
-    // niche combo at 0s — but a delayed save-everything is
-    // useful enough to surface alongside the primary delayed entries.
-    showInDelayedSubmenu: true,
+    // No delayed variants — see `save-defaults`.
+    supportsDelayed: false,
     run: (delayMs) => captureAll(delayMs),
   },
   // Three selection-format shortcuts. A single capture can only
@@ -382,8 +368,9 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
 ];
 
 // All delays (in seconds) we surface in the menu. 0 is the plain
-// top-level entry set; 2 and 5 go into the "Capture with delay" submenu.
-export const CAPTURE_DELAYS_SEC = [0, 2, 5] as const;
+// top-level / More-submenu entry set; 3 goes into the
+// delayed-shortcut block inside the More submenu.
+export const CAPTURE_DELAYS_SEC = [0, 3] as const;
 
 function delayedId(baseId: string, delaySec: number): string {
   return delaySec === 0 ? baseId : `${baseId}-${delaySec}s`;
@@ -391,7 +378,7 @@ function delayedId(baseId: string, delaySec: number): string {
 
 // Build a delayed title. The "in Ns" phrase is appended verbatim,
 // so dialog-style titles that end in "..." (e.g. "Capture...") read
-// as "Capture... in 2s" — the ellipsis stays anchored to the action
+// as "Capture... in 3s" — the ellipsis stays anchored to the action
 // name and the delay sits as a plain trailing phrase. Exported so
 // `context-menu.ts` can render the same form when a non-action label
 // (e.g. the stock-defaults "Save screenshot or selection" placeholder)
@@ -410,14 +397,12 @@ function delayedTooltipFragment(baseFragment: string, delaySec: number): string 
 
 export const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((base) => {
   const delays = base.supportsDelayed === false ? [0] : CAPTURE_DELAYS_SEC;
-  const showInDelayedSubmenu = base.showInDelayedSubmenu ?? base.group === 'primary';
   return delays.map((delaySec) => ({
     id: delayedId(base.baseId, delaySec),
     title: delayedTitle(base.baseTitle, delaySec),
     tooltipFragment: delayedTooltipFragment(base.baseTooltipFragment, delaySec),
     baseId: base.baseId,
     group: base.group,
-    showInDelayedSubmenu,
     delaySec,
     run: () => base.run(delaySec * 1000),
   }));

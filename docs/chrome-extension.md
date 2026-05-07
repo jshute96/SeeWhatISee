@@ -20,10 +20,10 @@ The background script is an MV3 service worker. That means:
 - **`await` keeps it alive.** Inside a listener, awaiting a
   promise (including an `await new Promise(r => setTimeout(r, ms))`)
   holds the worker awake for the duration.
-  - This is what makes "Save screenshot in 2s" work: the handler
+  - This is what makes "Save screenshot in 3s" work: the handler
     sleeps on an awaited timer and Chrome doesn't reclaim the
     worker until the handler returns.
-  - Don't `setTimeout(() => captureVisible(), 2000)` without
+  - Don't `setTimeout(() => captureVisible(), 3000)` without
     awaiting — the timer fires in a dead worker.
 - **`chrome.downloads.download` resolves on download *start*, not
   completion.**
@@ -107,7 +107,7 @@ Not worth it. See the error-reporting section below.
 A real toolbar click grants `activeTab` for *the tab that was
 active when the click happened*.
 
-- The "Save screenshot in 2s" path `await`s a timer, then
+- The "Save screenshot in 3s" path `await`s a timer, then
   re-queries the active tab. If the user switches to a different
   tab during the delay, the captured tab won't be covered by
   `activeTab` anymore — it has to fall back to the host
@@ -256,10 +256,10 @@ edges render cleanly.
 
 ## Countdown badge for delayed captures
 
-When a delayed capture starts (2s or 5s), a `countdownSleep`
+When a delayed capture starts (3s today), a `countdownSleep`
 helper in `capture.ts` shows a countdown on the toolbar badge via
-`chrome.action.setBadgeText`: "5", "4", "3", "2", "1". The badge
-clears when the timer finishes and the capture fires.
+`chrome.action.setBadgeText`: "3", "2", "1". The badge clears
+when the timer finishes and the capture fires.
 
 ### Implementation details
 
@@ -378,11 +378,11 @@ the Chrome-platform mechanics of building it.
   `type: 'separator'`, but separator items must *not* include a
   `title` field at all (passing `title: undefined` still throws).
   At the top level of the action menu, separators count against
-  the 6-item cap, so we don't use any there. Inside submenus
-  they're free and we use them to group "Capture with delay" by
-  delay; inside "More" they split the capture shortcuts into a
-  three-way cluster (`save-defaults` | `save-url` + `save-all` |
-  the three `save-selection-*` shortcuts) and then fence off the
+  the 6-item cap, so we don't use any there. Inside the "More"
+  submenu they're free, and we use them to split the capture
+  shortcuts into clusters (`save-defaults` | the non-selection
+  capture shortcuts | the delayed-shortcut block | the three
+  `save-selection-*` shortcuts) and then fence off the
   copy-last, snapshots-dir, and clear-log utility rows.
   - **ChromeOS workaround.** ChromeOS sometimes fails to render
     native `type: 'separator'` items in the extension action
@@ -415,7 +415,7 @@ the Chrome-platform mechanics of building it.
     on normal items rather than radio items — its sections were
     separated.)
 - **Click / double-click hints on run entries.** Top-level
-  entries and the "Capture with delay" submenu entries append a
+  entries and More-submenu run entries append a
   `  -  (Click)` or `  -  (Double-click)` hint to whichever item
   matches the current toolbar-click routing.
   - No real italics — menu titles are plain text. Italics are

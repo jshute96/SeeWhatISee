@@ -23,8 +23,8 @@ export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
 /**
  * Sleep for `delayMs` milliseconds, showing a countdown on the toolbar
- * badge (e.g. "5", "4", "3", "2", "1") that ticks every second.
- * The badge is cleared when the countdown finishes.
+ * badge (e.g. "3", "2", "1" for the standard 3s delay) that ticks
+ * every second. The badge is cleared when the countdown finishes.
  */
 async function countdownSleep(delayMs: number): Promise<void> {
   const end = Date.now() + delayMs;

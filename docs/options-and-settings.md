@@ -36,11 +36,13 @@ All keys live in `chrome.storage.local`.
   - `capture-now` → `save-screenshot` (older legacy id, predates
     `capture-screenshot`)
 
-  Delay suffixes survive the rewrite (`capture-screenshot-2s` →
-  `save-screenshot-2s`). The without-selection getter additionally
-  rejects stale `save-selection-*` values left in storage from
-  older builds (they would just error on every click without a
-  selection).
+  Delay suffixes survive the rewrite (`capture-screenshot-3s` →
+  `save-screenshot-3s`); pre-simplification suffixes like `-2s` /
+  `-5s` are rewritten too but no longer resolve to a current
+  `CAPTURE_ACTIONS` entry, so the getter falls back to the install
+  default. The without-selection getter additionally rejects stale
+  `save-selection-*` values left in storage from older builds
+  (they would just error on every click without a selection).
 
 ### Capture-page settings
 
@@ -319,11 +321,12 @@ Sections are rendered top-to-bottom in this order:
     the viewport has room and stack on narrow viewports. Columns:
     Click radio, Double-click radio, Action, Hotkey. Per-row hotkey
     cells composed by `composeRowHotkey` (see "Hotkey-cell display"
-    below). The without-selection table is bucketed by delay value
-    under section-row labels (`Capture immediately`, `Capture after
-    N second delay`); the delay groups are collapsible (see
-    "Collapsible delay groups" below). The with-selection table
-    covers `WITH_SELECTION_CHOICES`
+    below). The without-selection table has two plain section-row
+    buckets: `Capture immediately` (delay 0) and `Capture after delay`
+    (every delaySec > 0 entry — today the 3s `capture` and
+    `save-screenshot` rows). Neither is collapsible: the table is
+    short enough that hiding rows would just hide hotkeys.
+    The with-selection table covers `WITH_SELECTION_CHOICES`
     (`capture`, `save-defaults`, `save-selection-{html,text,markdown}`)
     plus the `ignore-selection` sentinel.
 
@@ -345,23 +348,6 @@ applicable shortcuts with `\n`) and `recomputeHotkeyCells`
 (re-paints every row in both action tables); the hotkey-cell CSS
 uses `white-space: pre-line` and `line-height: 1.5` so the joined
 string renders as readable separate lines.
-
-### Collapsible delay groups
-
-Each `Capture after N second delay` section row in the no-selection
-table is collapsible, with a triangle caret toggle next to the label
-(rotated 90° via CSS when `aria-expanded="true"`).
-
-- Initial state per group is **auto-expanded** if any row in the
-  group is the saved Click / Double-click default OR has a bound
-  keyboard shortcut. Otherwise it auto-collapses so rarely-used
-  delayed actions don't dominate the page.
-- The user's manual toggle (clicking the caret) is recorded in a
-  module-level `userDelayGroupState` map so a subsequent re-render
-  (Save / Undo / Defaults / radio-driven `refreshHotkeys`) preserves
-  the user's choice instead of snapping the section back to its
-  auto-computed state. Cleared on full page reload.
-- "Capture immediately" is a plain section row, not collapsible.
 
 ### Footer buttons
 

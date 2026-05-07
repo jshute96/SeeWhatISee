@@ -224,8 +224,8 @@ export function buildRow(
     const withSelItems = effectiveItems(withSel, defaults, 'withSelection');
 
     // Case 1 check: same effective behaviour. Strict id equality is
-    // required so a delayed no-sel `save-defaults-2s` paired with a
-    // 0s with-sel `save-defaults` (different actions, same artifact
+    // required so a delayed no-sel `save-screenshot-3s` paired with a
+    // 0s with-sel `save-screenshot` (different actions, same artifact
     // set) doesn't collapse and silently hide the delay mismatch.
     // `null` items mean "unknown artifact set" (today only `capture`);
     // those still match when both ids are equal.

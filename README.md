@@ -21,10 +21,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
 - Right-click the icon for more options:
   - **Capture…** Opens the *Capture* page (see below).
   - **Save default items** — Saves the default items the *Capture* page saves, according to current options (without opening the dialog).
-  - **Capture… in 2s** — Open the *Capture* page after a two second delay.
-  - **Set this tab as Ask button target** — when you're on Claude / Gemini / ChatGPT (including Claude Code on `claude.ai/code`), pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unset this tab as Ask button target** while the current tab is the pin.
-  - **Capture with delay ▸** — Capture the page after a delay (2s or 5s), so
-    you can activate hover states, menus, etc.
+  - **Capture… in 3s** — Open the *Capture* page after a three second delay.
   - **More ▸**
     - **Capture…** — Same as the top-level Capture... entry.
     - **Save default items** — Same as the top-level Save default items entry.
@@ -32,6 +29,9 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
     - **Save HTML contents** of the page.
     - **Save URL** — Record just the current tab's URL, without a screenshot.
     - **Save everything** — Saves the screenshot, the HTML, and the current selection (if any).
+    - **Capture… in 3s** and **Save screenshot in 3s** — same as the
+      undelayed entries above, but after a delay so you can activate hover
+      states, open menus, etc.
     - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
     - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
     - **Upload image to Capture…** — Pick a local image; the *Capture*
@@ -41,6 +41,7 @@ The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skill
       (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
     - **Clear log history** — Erases the `log.json` history of previous snapshots.
       Screenshot files are still saved in your Downloads folder.
+  - **Set this tab as Ask button target** — when you're on Claude / Gemini / ChatGPT (including Claude Code on `claude.ai/code`), pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unset this tab as Ask button target** while the current tab is the pin.
 - **Right-click an image**:
   - **SeeWhatISee → Capture… (this image)** — Opens the *Capture*
     page using that image as the screenshot. The page selection

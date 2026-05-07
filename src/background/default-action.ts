@@ -155,7 +155,12 @@ function migrateLegacyActionId(id: string): string {
   for (const [oldBase, newBase] of Object.entries(LEGACY_BASE_ID_MAP)) {
     if (id === oldBase) return newBase;
     if (id.startsWith(`${oldBase}-`)) {
-      // Preserve the delay suffix: `capture-screenshot-2s` → `save-screenshot-2s`.
+      // Preserve the delay suffix: `capture-screenshot-3s` →
+      // `save-screenshot-3s`. Suffixes from older builds (e.g.
+      // `-2s` / `-5s`, before the single-3s simplification) get
+      // rewritten too — they just won't resolve to a current
+      // `CAPTURE_ACTIONS` entry, and the getter then falls back
+      // to the install default.
       return `${newBase}${id.slice(oldBase.length)}`;
     }
   }

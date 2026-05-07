@@ -31,9 +31,13 @@ function action(baseId, fragment, delaySec = 0) {
 
 const CAPTURE = action('capture', 'Capture...');
 const SAVE_DEFAULTS = action('save-defaults', 'Save default items');
-const SAVE_DEFAULTS_5S = action('save-defaults', 'Save default items in 5s', 5);
+// Synthetic only — `save-defaults` is `supportsDelayed: false` in the
+// live catalog, so this id pair (`save-defaults-3s`) is never produced
+// by `CAPTURE_ACTIONS`. We construct it here purely to exercise
+// buildRow's "differing delaySec doesn't collapse" branch.
+const SAVE_DEFAULTS_3S = action('save-defaults', 'Save default items in 3s', 3);
 const SAVE_SCREENSHOT = action('save-screenshot', 'Save screenshot');
-const SAVE_SCREENSHOT_2S = action('save-screenshot', 'Save screenshot in 2s', 2);
+const SAVE_SCREENSHOT_3S = action('save-screenshot', 'Save screenshot in 3s', 3);
 const SAVE_HTML = action('save-page-contents', 'Save HTML contents');
 const SAVE_URL = action('save-url', 'Save URL');
 const SAVE_ALL = action('save-all', 'Save everything');
@@ -135,8 +139,8 @@ test('expandFragment: empty branch falls back to placeholder', () => {
 
 test('expandFragment: delayed save-defaults preserves the "in Ns" suffix', () => {
   assert.equal(
-    expandFragment(SAVE_DEFAULTS_5S, TEST_DEFAULTS_SCREENSHOT_ONLY, 'withoutSelection'),
-    'Save screenshot in 5s',
+    expandFragment(SAVE_DEFAULTS_3S, TEST_DEFAULTS_SCREENSHOT_ONLY, 'withoutSelection'),
+    'Save screenshot in 3s',
   );
 });
 
@@ -172,9 +176,9 @@ test('buildRow Case 1: matching save-defaults expansions collapse', () => {
 });
 
 test('buildRow Case 1: differing delaySec on save-defaults does NOT collapse', () => {
-  // Regression: a delayed no-sel `save-defaults-2s` paired with a 0s
+  // Regression: a delayed no-sel `save-defaults-3s` paired with a 0s
   // with-sel `save-defaults` (same checkbox state) used to Case-1
-  // collapse to a single-line row that reported only the `in 2s`
+  // collapse to a single-line row that reported only the `in 3s`
   // suffix — silently hiding that the with-sel branch fires at 0s.
   // The Case 1 check now requires strict id equality.
   const flat = {
@@ -186,8 +190,8 @@ test('buildRow Case 1: differing delaySec on save-defaults does NOT collapse', (
   assert.deepEqual(
     buildRow(
       'Double-click',
-      // No-sel: 5s variant.
-      action('save-defaults', 'Save default items in 5s', 5),
+      // No-sel: 3s variant (synthetic — see SAVE_DEFAULTS_3S).
+      SAVE_DEFAULTS_3S,
       // With-sel: 0s variant.
       SAVE_DEFAULTS,
       flat,
@@ -195,7 +199,7 @@ test('buildRow Case 1: differing delaySec on save-defaults does NOT collapse', (
     ),
     [
       'Double-click:',
-      '  Save screenshot in 5s',
+      '  Save screenshot in 3s',
       '  With selection: Save screenshot',
     ],
   );
@@ -369,10 +373,10 @@ test('buildRow: no hotkey when unbound', () => {
 
 test('buildRow: delayed no-sel action keeps "in Ns" in the primary fragment', () => {
   assert.deepEqual(
-    buildRow('Click', SAVE_SCREENSHOT_2S, CAPTURE, STOCK_DEFAULTS, undefined),
+    buildRow('Click', SAVE_SCREENSHOT_3S, CAPTURE, STOCK_DEFAULTS, undefined),
     [
       'Click:',
-      '  Save screenshot in 2s',
+      '  Save screenshot in 3s',
       '  With selection: Capture...',
     ],
   );

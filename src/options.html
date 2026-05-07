@@ -125,35 +125,6 @@
     border-left: 1px solid #ddd;
     border-right: 1px solid #ddd;
   }
-  /* Collapsible delay-group section row + its expand/collapse caret.
-     The caret glyph follows the button's `aria-expanded` so the JS
-     handler only flips that attribute and CSS does the rest. */
-  tbody tr.section-expandable td {
-    cursor: default;
-  }
-  .expand-toggle {
-    font: inherit;
-    font-style: normal;
-    background: transparent;
-    border: none;
-    padding: 0 4px;
-    cursor: pointer;
-    color: #333;
-    line-height: 1;
-  }
-  .expand-toggle::before {
-    content: '▶';
-    display: inline-block;
-    font-size: 10px;
-    transition: transform 120ms ease;
-  }
-  .expand-toggle[aria-expanded="true"]::before {
-    transform: rotate(90deg);
-  }
-  /* Data rows hidden when their delay group is collapsed. */
-  tbody tr.is-collapsed {
-    display: none;
-  }
   .info-list {
     margin: 8px 0 0 0;
     padding-left: 20px;
