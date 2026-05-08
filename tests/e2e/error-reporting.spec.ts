@@ -1,257 +1,156 @@
-// Tests for the error-reporting surface in src/background.ts:
-// reportCaptureError, clearCaptureError, and runWithErrorReporting.
+// Tests for the error-reporting surface in
+// `src/background/error-reporting.ts`: `reportCaptureError`,
+// `runWithErrorReporting`, and `friendlyErrorMessage`.
 //
-// The production click handlers wrap captureVisible/savePageContents
-// in runWithErrorReporting so failures surface as:
-//   - a swapped toolbar icon (small red `!` painted on the base
-//     camera, via chrome.action.setIcon)
-//   - an "ERROR: ..." line slotted under the app title, with a blank
-//     line separating it from the per-action lines that follow
+// The production click handlers wrap captureVisible / savePageContents
+// / etc. in `runWithErrorReporting`, so failures surface as a fresh
+// Capture-page tab on `?error=<friendly message>` — the page renders
+// its `#capture-failed-error` pane with the message. We exercise the
+// helpers directly from the SW rather than trying to get a real
+// captureVisible to fail on demand: the helpers are where the logic
+// lives and the click-handler wiring is a one-line pass-through.
 //
-// and successes restore the base icon + default tooltip. We exercise
-// the helpers directly from the service worker rather than trying to
-// get a real captureVisible to fail on demand — the helpers are where
-// the logic lives, and the click-handler wiring is a one-line
-// pass-through on top.
-//
-// Note: chrome.action has no `getIcon` API, so we cannot directly
-// assert which icon is currently displayed. Instead we verify that
-// (a) the helpers don't throw, (b) the tooltip updates match the
-// expected state transitions, and (c) a sentinel script-side
-// observation (tracking setIcon calls via a monkey-patch in the SW)
-// confirms the intended icon swap happened. The monkey-patch is
-// scoped to a single test run and is torn down in beforeEach.
+// We assert by listening for the new tab via `chrome.tabs.onCreated`
+// (installed in the SW from the test side), reading its URL, and
+// pulling the `error` query parameter back out.
 
 import { test, expect } from '../fixtures/extension';
 
-// Default tooltip on the `save-screenshot` click action. The background
-// script derives the toolbar title from the four stored defaults;
-// the tests here pin them in beforeEach so the expected baseline is
-// stable. Layout (per the algorithm in src/background/tooltip.ts):
-//
-//   SeeWhatISee
-//   <blank>
-//   Click: Save screenshot or selection
-//   Double-click: Capture...
-//   <blank trailing line>
-//
-// The Click row's no-sel slot is `save-screenshot` ("Save screenshot")
-// and its with-sel slot is `save-selection-html` ("Save selection",
-// format dropped) — both fit the `Save <single-word>` pattern, so
-// `combineFragments` collapses to "Save screenshot or selection".
-// Both Double-click slots are `capture`, so that row's fragments
-// match and the row reads "Capture...".
-const ACTION_LINES = [
-  'Click: Save screenshot or selection',
-  'Double-click: Capture...',
-];
-const DEFAULT_TITLE = ['SeeWhatISee', '', ...ACTION_LINES, ''].join('\n');
-
-// Tooltip shown while an error is pending: the `ERROR: <msg>` line
-// is bracketed by blanks of its own, between the app title and the
-// action block.
-function titleWithError(message: string): string {
-  return ['SeeWhatISee', '', `ERROR: ${message}`, '', ...ACTION_LINES, ''].join('\n');
-}
-
 interface ErrorApi {
   reportCaptureError: (err: unknown) => Promise<void>;
-  clearCaptureError: () => Promise<void>;
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
-  setDefaultWithSelectionId: (id: string) => Promise<void>;
-  setDefaultWithoutSelectionId: (id: string) => Promise<void>;
-  setDefaultDblWithSelectionId: (id: string) => Promise<void>;
-  setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
 }
 
-// Per-test harness that hooks chrome.action.setIcon in the service
-// worker, records every call's `path` argument, and returns a
-// function to read the recorded log from the test side. The hook is
-// installed at the start of each test and reset between them.
-async function installSetIconSpy(sw: import('@playwright/test').Worker): Promise<void> {
-  await sw.evaluate(() => {
-    interface Spied {
-      __origSetIcon?: typeof chrome.action.setIcon;
-      __setIconCalls?: unknown[];
-    }
-    const g = self as unknown as Spied;
-    // If a previous test left the spy installed, restore it first so
-    // the original function is always the one we wrap.
-    if (g.__origSetIcon) {
-      chrome.action.setIcon = g.__origSetIcon;
-    }
-    g.__origSetIcon = chrome.action.setIcon.bind(chrome.action);
-    g.__setIconCalls = [];
-    chrome.action.setIcon = ((details: chrome.action.TabIconDetails) => {
-      g.__setIconCalls!.push(details);
-      return g.__origSetIcon!(details);
-    }) as typeof chrome.action.setIcon;
-  });
+interface CapturedTab {
+  id?: number;
+  url: string;
 }
 
-async function getSetIconCalls(
+/**
+ * Listen for the *next* `tabs.onCreated` whose URL is the extension's
+ * `capture.html?error=...`, return the captured `error` param, and
+ * close the tab so it doesn't leak between tests. Installed before
+ * the SW action runs so we don't miss the create event.
+ */
+async function captureNextErrorTab(
   sw: import('@playwright/test').Worker,
-): Promise<Array<{ path?: Record<string, string> }>> {
-  return sw.evaluate(() => {
-    const g = self as unknown as { __setIconCalls?: unknown[] };
-    return (g.__setIconCalls ?? []) as Array<{ path?: Record<string, string> }>;
-  });
+): Promise<{ install: () => Promise<void>; read: () => Promise<string> }> {
+  const install = async (): Promise<void> => {
+    await sw.evaluate(() => {
+      interface Spied {
+        __errTabPromise?: Promise<CapturedTab>;
+      }
+      const g = self as unknown as Spied;
+      g.__errTabPromise = new Promise<CapturedTab>((resolve) => {
+        const onCreated = (tab: chrome.tabs.Tab): void => {
+          const url = tab.url ?? tab.pendingUrl ?? '';
+          if (!url.includes('capture.html?error=')) return;
+          chrome.tabs.onCreated.removeListener(onCreated);
+          resolve({ id: tab.id, url });
+        };
+        chrome.tabs.onCreated.addListener(onCreated);
+      });
+    });
+  };
+  const read = async (): Promise<string> => {
+    const errorParam = await sw.evaluate(async () => {
+      const g = self as unknown as { __errTabPromise?: Promise<CapturedTab> };
+      const captured = await g.__errTabPromise!;
+      // Best-effort cleanup so the test's tab strip stays small.
+      if (captured.id !== undefined) {
+        try {
+          await chrome.tabs.remove(captured.id);
+        } catch {
+          // Ignored — tab may already be gone.
+        }
+      }
+      const params = new URLSearchParams(captured.url.split('?')[1] ?? '');
+      return params.get('error') ?? '';
+    });
+    return errorParam;
+  };
+  return { install, read };
 }
 
-test.beforeEach(async ({ getServiceWorker }) => {
-  // Pin the stored default click action to `save-screenshot` so
-  // `clearCaptureError()`'s dynamic tooltip resolves to the
-  // expected baseline, then reset the icon-swap spy. Lives in the
-  // service worker so we don't have to bridge chrome.* APIs across
-  // the test boundary.
-  const sw = await getServiceWorker();
-  await sw.evaluate(async () => {
-    const api = (self as unknown as {
-      SeeWhatISee: {
-        setDefaultWithSelectionId: (id: string) => Promise<void>;
-        setDefaultWithoutSelectionId: (id: string) => Promise<void>;
-        setDefaultDblWithSelectionId: (id: string) => Promise<void>;
-        setDefaultDblWithoutSelectionId: (id: string) => Promise<void>;
-      };
-    }).SeeWhatISee;
-    await api.setDefaultWithoutSelectionId('save-screenshot');
-    // Pin all three remaining defaults too so every tooltip line
-    // stays stable regardless of the starting storage state.
-    await api.setDefaultWithSelectionId('save-selection-html');
-    await api.setDefaultDblWithoutSelectionId('capture');
-    await api.setDefaultDblWithSelectionId('capture');
-  });
-
-  // Stub chrome.commands.getAll to return empty array so faked hotkeys
-  // don't leak into tooltips and break expected-line assertions.
-  await sw.evaluate(() => {
-    interface Stubbed {
-      __origGetAll?: typeof chrome.commands.getAll;
-    }
-    const g = self as unknown as Stubbed;
-    if (!g.__origGetAll) g.__origGetAll = chrome.commands.getAll.bind(chrome.commands);
-    chrome.commands.getAll = (async () => []) as typeof chrome.commands.getAll;
-  });
-
-  await installSetIconSpy(sw);
-});
-
-test.afterEach(async ({ getServiceWorker }) => {
-  const sw = await getServiceWorker();
-  await sw.evaluate(async () => {
-    interface Stubbed {
-      __origGetAll?: typeof chrome.commands.getAll;
-    }
-    const g = self as unknown as Stubbed;
-    if (g.__origGetAll) {
-      chrome.commands.getAll = g.__origGetAll;
-      g.__origGetAll = undefined;
-    }
-    // Force a fingerprint change to trigger a rebuild and clear cached state.
-    const ctx = self as unknown as {
-      SeeWhatISee: { refreshMenusIfHotkeysChanged: () => Promise<void> };
-    };
-    await ctx.SeeWhatISee.refreshMenusIfHotkeysChanged();
-  });
-});
-
-test('reportCaptureError swaps to the error icon and sets the tooltip', async ({
+test('reportCaptureError opens a Capture-page tab with the friendly message', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  const title = await sw.evaluate(async () => {
+  const { install, read } = await captureNextErrorTab(sw);
+  await install();
+  await sw.evaluate(async () => {
     const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
     await api.reportCaptureError(new Error('No active tab found to capture'));
-    return chrome.action.getTitle({});
   });
-
-  expect(title).toBe(titleWithError('No active tab found to capture'));
-
-  const calls = await getSetIconCalls(sw);
-  expect(calls).toHaveLength(1);
-  expect(calls[0].path).toEqual({
-    16: 'icons/icon-error-16.png',
-    48: 'icons/icon-error-48.png',
-    128: 'icons/icon-error-128.png',
-  });
+  const message = await read();
+  // Friendly rewrite — the raw "No active tab found to capture"
+  // becomes a sentence that explains why and names the common case
+  // (browser-internal / chrome:// pages).
+  expect(message).toContain("Couldn't find a tab to capture");
+  expect(message).toContain('Browser-internal and chrome:// pages cannot be captured');
 });
 
-test('clearCaptureError restores the normal icon and tooltip', async ({ getServiceWorker }) => {
-  const sw = await getServiceWorker();
-  const title = await sw.evaluate(async () => {
-    const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.reportCaptureError(new Error('Failed to retrieve page contents'));
-    await api.clearCaptureError();
-    return chrome.action.getTitle({});
-  });
-
-  expect(title).toBe(DEFAULT_TITLE);
-
-  const calls = await getSetIconCalls(sw);
-  // One swap to error, one swap back to normal.
-  expect(calls).toHaveLength(2);
-  expect(calls[0].path).toEqual({
-    16: 'icons/icon-error-16.png',
-    48: 'icons/icon-error-48.png',
-    128: 'icons/icon-error-128.png',
-  });
-  expect(calls[1].path).toEqual({
-    16: 'icons/icon-16.png',
-    48: 'icons/icon-48.png',
-    128: 'icons/icon-128.png',
-  });
-});
-
-test('runWithErrorReporting surfaces a rejection as an error state', async ({
+test('runWithErrorReporting opens an error tab on rejection', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  const title = await sw.evaluate(async () => {
+  const { install, read } = await captureNextErrorTab(sw);
+  await install();
+  await sw.evaluate(async () => {
     const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.runWithErrorReporting(() => Promise.reject(new Error('simulated failure')));
-    return chrome.action.getTitle({});
+    await api.runWithErrorReporting(() =>
+      Promise.reject(new Error('simulated failure')),
+    );
   });
-
-  expect(title).toBe(titleWithError('simulated failure'));
-  const calls = await getSetIconCalls(sw);
-  expect(calls).toHaveLength(1);
-  expect(calls[0].path?.[128]).toBe('icons/icon-error-128.png');
+  const message = await read();
+  // No rewrite for unrecognised messages — passes through verbatim.
+  expect(message).toBe('simulated failure');
 });
 
-test('runWithErrorReporting clears a stale error state on success', async ({
+test('runWithErrorReporting on success opens no tab', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  const title = await sw.evaluate(async () => {
+  // Watch for *any* new tab in the next 500ms after the success
+  // call. We don't expect one — if we see one, the "no error"
+  // branch incorrectly opened something.
+  const tabsCreated = await sw.evaluate(async () => {
+    let count = 0;
+    const onCreated = (): void => {
+      count += 1;
+    };
+    chrome.tabs.onCreated.addListener(onCreated);
     const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    // Plant an error first, then run a successful action through the
-    // same wrapper. This is the exact sequence of "capture fails,
-    // user re-clicks and it works" — we want the error icon gone and
-    // the tooltip back to the manifest default.
-    await api.reportCaptureError(new Error('first failure'));
     await api.runWithErrorReporting(() => Promise.resolve('ok'));
-    return chrome.action.getTitle({});
+    // Small drain in case the listener fires async.
+    await new Promise((r) => setTimeout(r, 100));
+    chrome.tabs.onCreated.removeListener(onCreated);
+    return count;
   });
-
-  expect(title).toBe(DEFAULT_TITLE);
-  const calls = await getSetIconCalls(sw);
-  // reportCaptureError (error) → runWithErrorReporting success path
-  // calls clearCaptureError (normal).
-  expect(calls).toHaveLength(2);
-  expect(calls[0].path?.[128]).toBe('icons/icon-error-128.png');
-  expect(calls[1].path?.[128]).toBe('icons/icon-128.png');
+  expect(tabsCreated).toBe(0);
 });
 
-test('repeat failures always reflect the most recent error', async ({ getServiceWorker }) => {
+test('friendly rewrites cover the common throw-site strings', async ({
+  getServiceWorker,
+}) => {
   const sw = await getServiceWorker();
-  const title = await sw.evaluate(async () => {
-    const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.reportCaptureError(new Error('first'));
-    await api.reportCaptureError(new Error('second'));
-    await api.reportCaptureError(new Error('third'));
-    return chrome.action.getTitle({});
-  });
-
-  // Tooltip always reflects the *most recent* error — the last call wins.
-  expect(title).toBe(titleWithError('third'));
+  // Drive each rewrite through `reportCaptureError` and read the
+  // `error=` param back out — the same path the production code
+  // exercises.
+  const cases: Array<[string, string]> = [
+    ['Failed to retrieve page contents', "Couldn't read this page's contents"],
+    ['No text selected', 'No text is selected'],
+    ['No selection markdown content', "didn't include anything in this format"],
+    ['No captures in the log to copy from', 'No captures yet'],
+  ];
+  for (const [raw, expected] of cases) {
+    const { install, read } = await captureNextErrorTab(sw);
+    await install();
+    await sw.evaluate(async (m: string) => {
+      const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
+      await api.reportCaptureError(new Error(m));
+    }, raw);
+    const message = await read();
+    expect(message).toContain(expected);
+  }
 });

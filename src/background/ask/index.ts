@@ -33,6 +33,10 @@ import {
   writeWidgetRecord,
   type AskWidgetRecord,
 } from './widget-store.js';
+import {
+  checkSessionStorageRoom,
+  formatQuotaError,
+} from '../session-quota.js';
 
 /**
  * Effective accepted attachment kinds for a destination (provider +
@@ -682,6 +686,43 @@ export async function sendToAi(
     selectors: provider.selectors,
   };
 
+  // Pre-flight session-storage quota check. The widget record is a
+  // second copy of the (often multi-MB) screenshot that already lives
+  // in the Capture-page session; together they can blow the 10 MiB
+  // session-storage cap. Before this check, a quota failure on the
+  // newTab path would silently swallow the placeholder write and
+  // surface as a misleading "Cancelled" once we noticed the missing
+  // record post-load — the AI tab would open empty with no
+  // explanation. Catching it here skips the tab open entirely and
+  // returns a message that names the actual problem.
+  //
+  // We probe with the placeholder-shaped record (status:'placeholder')
+  // because it's what the newTab path writes first; the
+  // promote-to-injecting record is only a few bytes larger so this
+  // probe also covers the existingTab path's first write.
+  //
+  // Probe key:
+  //   - existingTab: the live destination tab id, so the probe
+  //     correctly subtracts any prior record at that key from
+  //     `inUse` (re-Ask into the same chat is the common case).
+  //   - newTab: a `:probe` placeholder. We don't have the real tab
+  //     id yet, and the few-byte variation in tabId stringification
+  //     is negligible against a multi-MB record.
+  const probeKey =
+    destination.kind === 'existingTab'
+      ? `askWidget:${destination.tabId}`
+      : `askWidget:probe`;
+  const probeRecord: AskWidgetRecord = {
+    ...recordTemplate,
+    status: 'placeholder',
+    runId: 0,
+    updatedAt: 0,
+  };
+  const room = await checkSessionStorageRoom(probeKey, probeRecord);
+  if (!room.ok) {
+    return { ok: false, error: formatQuotaError('ask', room) };
+  }
+
   let tabId: number;
   if (destination.kind === 'existingTab') {
     tabId = destination.tabId;
@@ -1023,15 +1064,26 @@ async function openNewProviderTabWithPlaceholder(
   // the widget reads `status: 'placeholder'` on its first paint
   // (status section reads "Waiting for <provider> to load…", no
   // orchestration walk).
-  void writeWidgetRecord(tabId, {
-    ...recordTemplate,
-    status: 'placeholder',
-    runId: Date.now(),
-    updatedAt: Date.now(),
-  }).catch(() => {
-    // Best-effort placeholder. The promote-to-injecting write below
-    // re-creates the record if this fails.
-  });
+  //
+  // Awaited (rather than fire-and-forget) so a chrome.storage.session
+  // quota rejection that races past `sendToAi`'s pre-flight check
+  // surfaces here instead of silently leaving no record — without
+  // this, the `readWidgetRecord` cancel-detection in `sendToAi`
+  // would treat the missing record as a user dismissal and report
+  // "Cancelled" while the just-opened tab sat there empty.
+  try {
+    await writeWidgetRecord(tabId, {
+      ...recordTemplate,
+      status: 'placeholder',
+      runId: Date.now(),
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    // Tab was created above; close it so we don't leak an orphaned
+    // provider tab when the caller surfaces the error.
+    chrome.tabs.remove(tabId).catch(() => {});
+    throw err;
+  }
   void mountAskWidgetOnFirstLoading(tabId);
   // Race the page-load wait against a placeholder-dismiss watcher so
   // that an × on the placeholder widget surfaces 'Cancelled' to the

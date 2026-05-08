@@ -401,7 +401,7 @@ test('image flow: data: URL with JPEG MIME saves under `.jpg`', async ({
   await openerPage.close();
 });
 
-// ─── Fetch failure surfaces via the toolbar error channel ─────────
+// ─── Fetch failure surfaces as a Capture-failed error page ────────
 
 // Pins that the page-side error envelope (executeScript discards
 // page-side rejections, so we return `{error}` instead) and the

@@ -18,7 +18,6 @@ import {
   savePageContents,
 } from './capture.js';
 import {
-  clearCaptureError,
   installUnhandledRejectionHandler,
   reportCaptureError,
   runWithErrorReporting,
@@ -407,7 +406,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   copyLastHtmlFilename,
   copyLastSelectionFilename,
   reportCaptureError,
-  clearCaptureError,
   runWithErrorReporting,
   handleActionClick,
   runDblDefault,

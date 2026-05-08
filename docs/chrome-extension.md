@@ -178,81 +178,52 @@ it.
 
 ### Options we considered
 
-- **`chrome.notifications`** — native OS toast. Loud, but:
-  - Chrome injects a mandatory "Notification settings" button on
-    every toast from an extension (anti-spam policy, not
-    controllable).
-  - Linux notification daemons add a default-action button
-    labeled something like "Activate" for each toast.
-  - Requires the `notifications` permission, which shows up on
-    the CWS listing even though it's silent at install time.
-  - Mostly duplicates what a tooltip can convey.
-- **`chrome.action.setBadgeText`** — a colored pill on the
-  toolbar icon. Cheap and visible, but:
-  - Chrome renders the badge at a fixed pixel size (~half the
-    icon height) and there is **no API to shrink it**.
-  - The full surface is
-    `setBadge{Text,BackgroundColor,TextColor}`: no font size, no
-    pill shape, no inset.
-  - At 16px icon sizes the badge consumes a ridiculous fraction
-    of the space.
-  - Rejected for errors, but the badge *is* used for the
-    countdown timer during delayed captures (see `countdownSleep`
-    in `capture.ts`), where the large size helps visibility.
-- **`chrome.action.setIcon`** — swap the whole toolbar icon to a
-  pre-rendered variant.
-  - Full pixel control, no extra permission, matches the visual
-    language of the base icon.
-  - Cost: a tiny generator + three PNG variants.
-- **`chrome.action.setTitle`** — rewrite the toolbar tooltip.
-  - Chrome honors embedded `\n`, so we can add a second line
-    with the error message while keeping the default text on
-    line one.
+- **`chrome.notifications`** — native OS toast. Requires extra
+  permission, mandatory "Notification settings" button, mostly
+  duplicates what a tooltip / page can convey.
+- **`chrome.action.setBadgeText`** — colored pill on the icon.
+  Fixed-size pill, no API to shrink, ridiculous fraction of a 16px
+  icon. (Used today only for the countdown timer in
+  `countdownSleep`, where its size is a feature.)
+- **Toolbar icon swap + tooltip text** (the previous design):
+  flipped the action icon to a red-`!` variant and slotted
+  `ERROR: <msg>` under the app title in the tooltip. Worked, but
+  the icon-flip was easy to miss, and the tooltip text wasn't
+  selectable so reporting an error to the dev required the same
+  console-digging we were trying to avoid.
 
 ### What we picked
 
-Two-channel error surface routed through one helper.
+One channel: **a dedicated Capture-page error tab.**
 
-- **`chrome.action.setIcon`** swaps to a pre-rendered "error"
-  variant (`icons/icon-error-{16,48,128}.png`): same base camera
-  icon with a solid red rounded-rect badge and a white `!`
-  centered inside it, painted in the bottom-right corner. The
-  base icons are restored explicitly on next success.
-- **`chrome.action.setTitle`** slots an `ERROR: <message>` line
-  directly under the app title on the tooltip (above the blank
-  that already brackets the action block, so it lands where the
-  eye goes first) so a user can hover the icon and read what
-  happened without digging into devtools.
+- **`runWithErrorReporting(fn)`** wraps every user-initiated
+  click (action click, hotkey, all context-menu entries). On a
+  rejection it opens `capture.html?error=<friendly message>` next
+  to the active source tab. The page renders its
+  `#capture-failed-error` pane (in `capture.html`, controlled by
+  `capture-page.ts`) with the message inline.
+- **`friendlyErrorMessage(err)`** rewrites the common throw-site
+  strings (`No active tab found to capture`, `Failed to retrieve
+  page contents`, the `noSelectionContentMessage` family,
+  `Cannot access contents of the page`, …) into action-oriented
+  text. Anything unrecognised falls through verbatim.
+- **`reportCaptureError(err, opener?)`** is the public entry —
+  `runWithErrorReporting` calls it on rejection, and the
+  session-storage-quota path inside `openCapturePageWithSession`
+  also lands users on the same page (just routed through the
+  capture-details flow rather than the wrapper).
+- A successful run is a no-op — there's no persistent icon flip
+  or tooltip text to clean up anymore.
 
-Both calls are wrapped in `runWithErrorReporting(fn)`:
+Why one full-page surface beats the icon+tooltip duo:
 
-- Every user-initiated click (action click, all context-menu
-  entries) routes through it.
-- A successful run calls `clearCaptureError()`; a failing run
-  calls `reportCaptureError()`.
-- Result: errors are visible *and* explained, without any extra
-  permission or OS chrome.
-
-### Icon generation is code, not art
-
-`scripts/generate-error-icons.mjs` uses `pngjs` (already a devDep
-for the tests' pixel helpers) to read each base icon, paint a
-rounded-rect badge + white `!` at a defined pixel offset, and
-write the variant PNGs.
-
-Why code instead of hand-drawn art:
-
-- Sizing constants (badge side = `size/2`, corner radius ~20% of
-  the badge, stem/dot proportions) all live in code.
-- Tweaking the look is a one-line edit — no need to open
-  Photoshop and hand-edit three files.
-- A `--variants` mode writes size-sweep previews to
-  `tmp/icon-size-variants/` so the final badge size can be
-  picked by eye without touching the committed icons.
-
-There's no anti-aliasing — pngjs is raw RGBA — but at these
-sizes jagged edges aren't visible and the solid color + straight
-edges render cleanly.
+- Visible: the user lands on a real tab and reads a real
+  paragraph; they don't have to notice a small red `!`.
+- Copy-pasteable: the message is selectable HTML text; reporting
+  a bug doesn't require devtools.
+- Anchored: tab placement (`opener.index + 1`) keeps the error
+  visually next to whatever the user just acted on, the same way
+  a successful Capture page lands.
 
 ## Countdown badge for delayed captures
 
@@ -317,13 +288,10 @@ still showed the global title. We don't use per-tab titles.
   `secondary-action` shortcuts (when bound) trail the row's
   fragment as `  [<key>]`. The same hotkey fires both branches
   of the row, so it never carries a +sel/-sel scope qualifier.
-- **Error tooltip.** `reportCaptureError()` passes the error
-  message into `getDefaultActionTooltip(message)`, which slots
-  `ERROR: <message>` between the app title and the action block
-  (bracketed by its own blank lines). See the error-reporting
-  section above. Only fires for capture paths with no on-screen
-  surface (toolbar click, context menu) — Capture-page failures
-  land in `#ask-status` instead.
+- **No tooltip-side error surface.** `reportCaptureError()` does
+  not modify the toolbar tooltip — failures open a Capture-page
+  error tab instead. See the error-reporting section above for
+  the rationale.
 
 ### Abandoned: capture-page tooltip override
 
@@ -510,7 +478,7 @@ This section covers the Chrome-platform plumbing.
   `blob:`; the page-side fetch path described below resolves
   all three from the source page's context. Cross-origin images
   without permissive CORS may still fail — the failure surfaces
-  on the toolbar icon via `runWithErrorReporting`.
+  as a `capture.html?error=…` tab via `runWithErrorReporting`.
 
 ### Image bytes via page-side fetch
 
@@ -609,8 +577,8 @@ URL) visually grouped at the end.
 ### Error reporting
 
 Both routes are wrapped in `runWithErrorReporting` so a fetch
-failure (CORS-blocked image, 404, restricted-URL scrape) surfaces
-on the toolbar icon / tooltip the same way other capture failures
+failure (CORS-blocked image, 404, restricted-URL scrape) opens a
+`capture.html?error=…` tab the same way other capture failures
 do.
 
 ## Options page (`options.html`)

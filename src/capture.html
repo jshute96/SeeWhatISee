@@ -1130,17 +1130,19 @@
     cursor: crosshair;
     user-select: none;
   }
-  /* Stale-page error pane shown when capture.html was opened without
-     a SW-seeded session. */
-  .missing-session-error {
-    max-width: 640px;
+  /* Shared chrome for the early-state panes shown before (or instead
+     of) the normal Capture-page content: missing-session, upload
+     landing, and the capture-failed error pane. No `max-width` —
+     long error messages need the full body width to avoid awkward
+     wrapping at arbitrary points. */
+  .early-state-pane {
     margin: 16px 0;
     padding: 12px 16px;
     color: #000;
     font-size: 16px;
     line-height: 1.5;
   }
-  /* Upload-landing card chrome (lives inside `.missing-session-error`).
+  /* Upload-landing card chrome (lives inside an `.early-state-pane`).
      The error message is a block child rather than an inline sibling
      of the button so a long Chrome-quota / decode-failure message
      wraps cleanly under the button instead of pushing it sideways. */
@@ -1151,6 +1153,12 @@
   }
   #upload-error {
     display: none;
+    margin-top: 8px;
+    color: #c00;
+  }
+  /* Error text inside the Capture-failed pane. Always visible (the
+     parent pane is the toggle); red to match `#upload-error`. */
+  #capture-failed-message {
     margin-top: 8px;
     color: #c00;
   }
@@ -1272,10 +1280,25 @@
     the SW-seeded snapshot the page is built from. Header stays
     visible so Options and Help remain reachable.
   -->
-  <div id="missing-session-error" class="missing-session-error" hidden>
+  <div id="missing-session-error" class="early-state-pane" hidden>
     <b>Invalid capture page.</b><br>
     No capture connected.<br>
     Open SeeWhatISee from the toolbar icon on the page you want to capture.
+  </div>
+
+  <!--
+    Capture-failed pane. Hidden by default; capture-page.ts reveals it
+    when the URL carries `?error=<message>` and the SW had no session
+    to attach. Used by every toolbar / hotkey / context-menu capture
+    failure (via `runWithErrorReporting`) and by the session-storage
+    quota refusal path — instead of dropping the user on the generic
+    "Invalid capture page" pane, we land them here with the actual
+    reason. Reuses the `.early-state-pane` chrome so the visual
+    hierarchy matches the other early-state panes.
+  -->
+  <div id="capture-failed-error" class="early-state-pane" hidden>
+    <b>Capture failed.</b><br>
+    <div id="capture-failed-message"></div>
   </div>
 
   <!--
@@ -1286,10 +1309,10 @@
     `initializeUploadSession` to the SW, which seeds a synthetic
     `DetailsSession`; the page then strips `?upload=true` from the
     URL and falls into the normal `loadData` happy-path. Reuses the
-    `.missing-session-error` chrome so the visual hierarchy matches
+    `.early-state-pane` chrome so the visual hierarchy matches
     the rest of the early-state panes.
   -->
-  <div id="upload-landing" class="missing-session-error" hidden>
+  <div id="upload-landing" class="early-state-pane" hidden>
     <b>Upload an image to Capture.</b><br>
     <button type="button" id="upload-choose-btn">Choose image…</button>
     <div id="upload-error"></div>

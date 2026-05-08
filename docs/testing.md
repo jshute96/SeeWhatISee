@@ -50,15 +50,20 @@ multi-step drilling behavior.
   storage (typically a UUID under a temp dir, not the path we
   asked for, but the one we need to read the bytes back).
 
-### No `chrome.action.getIcon`
+### Capturing the SW-opened error tab
 
-- There's no read-side API for the current toolbar icon.
-- The error-reporting tests install a monkey-patch on
-  `chrome.action.setIcon` inside the service worker that records
-  every call's `path` argument.
-- The test side reads the log back via `serviceWorker.evaluate`.
-- The spy is reset in `beforeEach` and lives on the SW global
-  (`__setIconCalls`) so it survives the test-harness boundary.
+- `runWithErrorReporting` opens an error-page tab on failure, so
+  the error-reporting e2e spec listens for that via
+  `chrome.tabs.onCreated` from inside the SW.
+- The listener stores the captured `{id, url}` on the SW global
+  (`__errTabPromise`) so the test side can `await` it via
+  `serviceWorker.evaluate`, then close the tab to keep the strip
+  clean between tests.
+- Install the listener **before** triggering the action under
+  test — the helper does this synchronously inside the same
+  `serviceWorker.evaluate` call, so by the time the next
+  `evaluate` runs (and fires the action) the listener is in
+  place.
 
 ### `chrome.tabs.captureVisibleTab` rate limit
 
@@ -83,6 +88,6 @@ multi-step drilling behavior.
 - The SW devtools console is also the fastest way to exercise:
   - `savePageContents()` — grab the current tab's HTML.
   - `clearCaptureLog()` — wipe the storage log.
-  - `reportCaptureError(new Error("…"))` / `clearCaptureError()`
-    — test the error surface without having to trigger a real
-    failure.
+  - `reportCaptureError(new Error("…"))` — test the error
+    surface without having to trigger a real failure (opens a
+    `capture.html?error=…` tab next to the active tab).

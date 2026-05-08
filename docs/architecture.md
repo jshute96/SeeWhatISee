@@ -46,8 +46,10 @@ Topic-specific design notes live in companion docs:
 `src/background.ts` is a thin entrypoint that wires Chrome event
 listeners. The substantive logic lives in `src/background/`:
 
-- `error-reporting.ts` — icon/tooltip error surface
-  (`runWithErrorReporting`).
+- `error-reporting.ts` — Capture-failed-page error surface
+  (`runWithErrorReporting`, `friendlyErrorMessage`).
+- `session-quota.ts` — pre-flight `chrome.storage.session` quota
+  check shared by Capture, Upload, and Ask write paths.
 - `capture-actions.ts` — the `CAPTURE_ACTIONS` table +
   `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts. See
   [`capture-actions.md`](capture-actions.md).
@@ -218,24 +220,22 @@ Every record has `timestamp` and `url`, plus optional fields:
 
 ## Error reporting
 
-Two channels, picked by whether the user has an on-screen surface
+Two surfaces, picked by whether the user has an on-screen surface
 to read the error from:
 
-- **Toolbar click / context menu** — no Capture page open, so the
-  failure is reported via the toolbar. `runWithErrorReporting` in
-  `background.ts` swaps in a pre-rendered error icon variant and
-  slots an `ERROR: …` line under the app title in the tooltip; a
-  later successful run restores both.
+- **Toolbar click / hotkey / context menu** — no Capture page yet,
+  so `runWithErrorReporting` opens a fresh `capture.html?error=…`
+  tab next to the source tab. The page reveals its
+  `#capture-failed-error` pane with the friendly-rewrite message
+  from `friendlyErrorMessage`.
 - **Capture page** — `saveDetails` responds `{ ok: false, error }`
   over the message channel and the page renders the error in
-  `#ask-status` (the same status slot the Ask flow uses). The
-  toolbar is left alone. A successful Capture-page save also
-  calls `clearCaptureError()` so a previous toolbar-channel error
-  doesn't linger.
+  `#ask-status` (the same status slot the Ask flow uses). No
+  separate error tab opens for these.
 
 See [`chrome-extension.md`](chrome-extension.md) for the design
-rationale (why not badge text, why not `chrome.notifications`)
-and how error icon variants are generated.
+rationale (why one full-page surface beat the older toolbar
+icon/tooltip duo).
 
 ## Test hook
 

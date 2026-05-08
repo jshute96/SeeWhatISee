@@ -1,97 +1,155 @@
 import { noSelectionContentMessage } from '../capture.js';
-import { getDefaultActionTooltip } from './default-action.js';
 
 // User-visible error reporting for failed captures.
 //
-// The service worker has no modal-dialog API. We surface failures on
-// two `chrome.action` channels so the user can see both *that*
-// something failed and *what* failed, without requesting a noisy
-// permission like `notifications`:
-//   - The icon itself is the glanceable signal: we swap in a
-//     pre-rendered "error" variant of each icon size (small red `!`
-//     painted in the bottom-right corner) until the *next*
-//     successful capture restores the originals. We deliberately
-//     avoid `chrome.action.setBadgeText` for error state because
-//     Chrome's badge pill is uncomfortably large relative to the
-//     icon and there's no API to shrink it; `setIcon` gives us
-//     pixel-level control. (The badge *is* used for the countdown
-//     timer during delayed captures — see `countdownSleep` in
-//     capture.ts — where the large size is actually a plus.)
-//   - The tooltip (action title) is the reference channel: hovering
-//     the icon shows the default tooltip plus a second line with
-//     the last error message, so the user can go back and read
-//     *what* failed without digging through the devtools console.
+// Every toolbar / hotkey / context-menu capture path runs through
+// `runWithErrorReporting`. On failure we open a Capture-page tab on
+// `?error=<message>` so the page renders its "Capture failed" pane
+// — the user lands on a clear, selectable, copy-pasteable surface
+// instead of having to notice and hover the toolbar icon.
 //
-// Both calls are fire-and-forget: a follow-on error here shouldn't
-// mask the original capture error. Logged to console but not
-// re-thrown.
+// An earlier design flipped the toolbar icon to a red `!` and
+// slotted "ERROR: …" into the toolbar tooltip. Both signals turned
+// out to be hard to notice in practice, and the tooltip text wasn't
+// selectable so reporting an error required digging through the
+// devtools console. The dedicated error page replaces both.
 //
-// Icon paths (relative to the extension root) for the normal and
-// error states. Same three sizes as in the manifest's
-// `action.default_icon`; the error variants are committed alongside
-// the base icons in `src/icons/` and produced by
-// `scripts/generate-error-icons.mjs` (re-run only when the base
-// icons change).
-const NORMAL_ICON_PATHS = {
-  16: 'icons/icon-16.png',
-  48: 'icons/icon-48.png',
-  128: 'icons/icon-128.png',
-};
-const ERROR_ICON_PATHS = {
-  16: 'icons/icon-error-16.png',
-  48: 'icons/icon-error-48.png',
-  128: 'icons/icon-error-128.png',
-};
+// One Capture-page tab per failure — no reuse of an existing
+// Capture page even if one is open. A fresh tab adjacent to the
+// active source tab keeps the error visually anchored to whatever
+// the user just tried to act on, and avoids a stale error stomping
+// on a Capture page the user may already be working in.
 
-export async function reportCaptureError(err: unknown): Promise<void> {
-  const message = err instanceof Error ? err.message : String(err);
-  console.warn('[SeeWhatISee] capture failed:', err);
-  try {
-    await chrome.action.setIcon({ path: ERROR_ICON_PATHS });
-  } catch (iconErr) {
-    console.warn('[SeeWhatISee] failed to set error icon:', iconErr);
+const ERROR_PAGE_PATH = 'capture.html';
+
+/**
+ * Map a raw thrown error to a user-facing string. The throw sites
+ * are written for developers — "No active tab found to capture",
+ * "Failed to retrieve page contents" — so we translate the
+ * common ones into something a non-developer can act on.
+ *
+ * Anything we don't recognize falls through verbatim. New rewrites
+ * should match exactly (or with a tight regex) so a future throw
+ * site renaming doesn't silently strip a translation.
+ */
+export function friendlyErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+
+  // No active tab — typical when the user fires the hotkey while a
+  // chrome:// page is focused (activeTab permission can't grant
+  // scrape access there) or while devtools is the focused window.
+  if (raw === 'No active tab found to capture') {
+    return "Couldn't find a tab to capture. Browser-internal and chrome:// pages cannot be captured.";
   }
-  try {
-    // `getDefaultActionTooltip` does the layout (slots ERROR under
-    // the app title, brackets the action block with blanks). Chrome's
-    // toolbar tooltip honors embedded newlines on macOS / Windows /
-    // most Linux DEs.
-    await chrome.action.setTitle({ title: await getDefaultActionTooltip(message) });
-  } catch (titleErr) {
-    console.warn('[SeeWhatISee] failed to set error tooltip:', titleErr);
+
+  // Page-contents scrape returned nothing — restricted URL, crashed
+  // tab, sandboxed PDF viewer, etc. We don't enumerate the cases in
+  // the user-facing string: the chrome:// rule covers the common
+  // hit, and the rest are rare enough that listing them adds noise
+  // without adding clarity.
+  if (raw === 'Failed to retrieve page contents') {
+    return "Couldn't read this page's contents. Browser-internal and chrome:// pages cannot be captured.";
   }
+
+  // User asked for a selection-only action with no text highlighted.
+  if (raw === 'No text selected') {
+    return 'No text is selected. Highlight some text on the page first, then try again.';
+  }
+
+  // No-selection-content variants — match the three-format fan-out
+  // produced by `noSelectionContentMessage`. Generated rather than
+  // hand-listed so the suppression-list in this file and the throw
+  // sites can't drift apart.
+  const noContentSet = new Set(
+    (['html', 'text', 'markdown'] as const).map(noSelectionContentMessage),
+  );
+  if (noContentSet.has(raw)) {
+    return `${raw} — the selection didn't include anything in this format.`;
+  }
+
+  // Copy-last-… entries fired with an empty log.
+  if (raw === 'No captures in the log to copy from') {
+    return "No captures yet. Save a screenshot or HTML first, then try Copy last.";
+  }
+  // The sibling `Latest capture has no <kind> to copy` strings (no
+  // screenshot / no HTML snapshot / no selection) read fine on
+  // their own, so we leave them to the verbatim-passthrough at the
+  // bottom rather than dressing them up.
+
+  // chrome.scripting.executeScript on a restricted URL.
+  if (/Cannot access contents of the page/.test(raw)) {
+    return "Couldn't access this page. Browser-internal and chrome:// pages cannot be captured.";
+  }
+
+  // Tab strip is mid-drag — captureVisibleTab refuses while the
+  // user is rearranging tabs. Rare but recoverable; tell the user
+  // what to do.
+  if (/Tabs cannot be edited right now/.test(raw)) {
+    return 'Browser is busy (tab drag in progress). Try again in a moment.';
+  }
+
+  return raw;
 }
 
-export async function clearCaptureError(): Promise<void> {
+/**
+ * Open the Capture page on `?error=<encoded message>` so the user
+ * sees the failure on a real page they can read and copy from.
+ *
+ * `opener` is the source tab (the one the user was on when they
+ * triggered the action). When provided, the error tab is placed
+ * immediately to its right so the visual relationship matches the
+ * normal Capture-page flow. When absent (e.g. no active-tab lookup
+ * available), Chrome picks the position.
+ */
+export async function reportCaptureError(
+  err: unknown,
+  opener?: chrome.tabs.Tab,
+): Promise<void> {
+  const message = friendlyErrorMessage(err);
+  // Always log the original error to the SW console — the friendly
+  // string is for the user, but the developer message is what
+  // someone debugging will look for.
+  console.warn('[SeeWhatISee] capture failed:', err);
+  const url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
+  const createProps: chrome.tabs.CreateProperties = { url };
+  if (opener?.index !== undefined) createProps.index = opener.index + 1;
+  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
   try {
-    await chrome.action.setIcon({ path: NORMAL_ICON_PATHS });
-  } catch (err) {
-    console.warn('[SeeWhatISee] failed to restore normal icon:', err);
-  }
-  try {
-    // Dynamic: reflects the user's currently selected default
-    // click action, not a hardcoded manifest string.
-    await chrome.action.setTitle({ title: await getDefaultActionTooltip() });
-  } catch (err) {
-    console.warn('[SeeWhatISee] failed to reset tooltip:', err);
+    await chrome.tabs.create(createProps);
+  } catch (e) {
+    // If even the tab open fails (very rare — manifest restriction,
+    // SW shutdown mid-call), we have no surface left. Log and move
+    // on; rejecting from here would just be a different kind of
+    // unhandled rejection.
+    console.warn('[SeeWhatISee] could not open error tab:', e);
   }
 }
 
 /**
  * Run a capture-like action with unified error reporting. A
- * successful run clears any lingering error state (restores the
- * normal icon + default tooltip); a failure swaps in the error
- * icon variant and slots an `ERROR: …` line under the app title in
- * the tooltip.
+ * successful run is a no-op (nothing to clean up — there's no
+ * persistent error icon or tooltip anymore); a failure opens an
+ * error Capture page anchored next to the active source tab.
+ *
  * Used by every user-initiated capture path (toolbar click,
- * context-menu entries).
+ * hotkey, context-menu entries). Paths that have their own
+ * inline-error surface (saveDetails on the Capture page, Ask flow)
+ * deliberately don't go through here — see the comments at those
+ * call sites.
  */
 export async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> {
   try {
     await fn();
-    await clearCaptureError();
   } catch (err) {
-    await reportCaptureError(err);
+    // Best-effort active-tab lookup for tab placement. A failure
+    // here just means the error tab opens in the default position.
+    let opener: chrome.tabs.Tab | undefined;
+    try {
+      [opener] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    } catch {
+      // Ignored — `opener` stays undefined.
+    }
+    await reportCaptureError(err, opener);
   }
 }
 
