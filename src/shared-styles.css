@@ -4,10 +4,13 @@
  * `<link rel="stylesheet" href="shared-styles.css">`. Build copies
  * this file verbatim into dist/.
  *
- * Per-page sizing/padding/border still lives next to each button's
- * own selectors — the rules below add only the *feedback* layer
- * (raised look + hover/active/.pressed flash + disabled) so each
- * call site keeps its visual hierarchy.
+ * For most buttons, per-page sizing/padding/border still lives next
+ * to each button's own selectors — the `.btn` rules below add only
+ * the *feedback* layer (raised look + hover/active/.pressed flash +
+ * disabled) so each call site keeps its visual hierarchy. The one
+ * exception is the trailing app-header chrome (`.header-btn`), which
+ * is fully shared because Capture and Options render the same
+ * Options/Help row.
  *
  * Intentionally NOT applied to:
  *   - `.copy-btn` raised look (tiny per-row icon buttons; intentionally
@@ -76,4 +79,43 @@
  * pale lavender bar while the rest of the title text stays neutral. */
 .app-header .app-brand {
   color: #512da8;
+}
+/* Shared header layout — flex row, brand img/title on the left, any
+ * trailing chrome (Options, Help) on the right. Per-page padding /
+ * margin still live next to each page's own `header` rule so the
+ * Capture page can pull its bar out to the viewport edge with
+ * negative margins, and the Options page can declare `flex: none`
+ * for its sticky-shell column. */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 600;
+}
+.app-header img {
+  width: 28px;
+  height: 28px;
+}
+/* Trailing header chrome (`Options`, `Help`). Flat-button look that
+ * matches the rest of each page; the `<a>` resets neutralize default
+ * link styling so an `<a class="btn header-btn">` reads identically
+ * to a `<button class="btn header-btn">` in the same row. */
+.app-header .header-btn {
+  padding: 4px 12px;
+  font-size: 14px;
+  font-weight: 400;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  display: inline-block;
+}
+/* Mark the first member of the trailing button group; `margin-left:
+ * auto` then pushes that element — and every sibling after it — to
+ * the right edge of the flex header. */
+.app-header .header-btn-leading {
+  margin-left: auto;
 }

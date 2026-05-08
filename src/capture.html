@@ -33,49 +33,14 @@
      */
     visibility: hidden;
   }
-  /* Light-purple bar at the top of the page (matches the Options
-     page). Negative side/top margins pull the bar out to the
-     viewport edge through the body's 24px margin so the chrome reads
+  /* Page-specific header chrome — pulls the `.app-header` bar out to
+     the viewport edge through the body's 24px margin so the bar reads
      as a full-width app header rather than a centred inset block.
-     Background + border-bottom come from `.app-header` in
-     shared-styles.css. */
+     Layout (flex/gap/font), image sizing, and the trailing-button
+     `.header-btn` chrome live in `shared-styles.css`. */
   header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 20px;
-    font-weight: 600;
     margin: -24px -24px 16px -24px;
     padding: 12px 24px;
-  }
-  header img {
-    width: 28px;
-    height: 28px;
-  }
-  /* Push the Options + Help buttons to the far-right of the header
-   * and use the page's flat-button style (matching `button#capture`,
-   * `.highlight-buttons button`, etc.) rather than user-agent default
-   * chrome. `margin-left: auto` lives on the first member of the
-   * trailing group so Help follows naturally on its right. */
-  header #options-btn,
-  header #help-btn {
-    padding: 4px 12px;
-    font-size: 14px;
-    font-weight: 400;
-    border: 1px solid #555;
-    border-radius: 4px;
-    background: #f5f5f5;
-    cursor: pointer;
-  }
-  header #options-btn {
-    margin-left: auto;
-  }
-  /* `<a>` styled as a button: kill the link underline + inherit the
-   * surrounding text colour so it reads as chrome, not a hyperlink. */
-  header #help-btn {
-    text-decoration: none;
-    color: inherit;
-    display: inline-block;
   }
   /*
    * Captured-page card: bordered light-grey strip laid out as a
@@ -1292,8 +1257,9 @@
   <header class="app-header">
     <img src="icons/icon-48.png" alt="">
     <span><span class="app-brand">SeeWhatISee</span> — Capture screenshot or contents</span>
-    <button type="button" id="options-btn" class="btn">Options</button>
-    <a id="help-btn" class="btn"
+    <button type="button" id="options-btn"
+            class="btn header-btn header-btn-leading">Options</button>
+    <a id="help-btn" class="btn header-btn"
        href="https://github.com/jshute96/SeeWhatISee/blob/main/README.md"
        target="_blank" rel="noreferrer noopener">Help</a>
   </header>

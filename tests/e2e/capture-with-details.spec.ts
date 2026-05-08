@@ -643,8 +643,8 @@ test('details: tab opens next to opener and returns focus on close', async ({
 // to leave a half-rendered page with non-functional Capture / Ask
 // buttons. The page now detects the empty `getDetailsData` response,
 // hides every `[data-capture-main]` block, and reveals the
-// #missing-session-error pane. The header (with Options) stays
-// visible so the user has a working escape hatch.
+// #missing-session-error pane. The header (with Options + Help)
+// stays visible so the user has a working escape hatch.
 test('details: direct load with no session shows error pane', async ({
   extensionContext,
   extensionId,
