@@ -251,6 +251,10 @@ Reachable via the toolbar action's right-click → Options, the
 Manifest entry `options_ui` with `open_in_tab: true` opens it in a
 full tab.
 
+Both the Capture and Options page headers also carry a trailing
+**Help** link (`#help-btn`) — a plain `<a target="_blank">` to the
+project README on GitHub. Pure chrome; no JS handler.
+
 ### Layout
 
 Sections are rendered top-to-bottom in this order:

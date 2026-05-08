@@ -664,8 +664,9 @@ test('details: direct load with no session shows error pane', async ({
     await expect(mainBlocks.nth(i)).toBeHidden();
   }
 
-  // Header is still visible — Options remains reachable.
+  // Header is still visible — Options + Help remain reachable.
   await expect(page.locator('#options-btn')).toBeVisible();
+  await expect(page.locator('#help-btn')).toBeVisible();
 
   await page.close();
 });

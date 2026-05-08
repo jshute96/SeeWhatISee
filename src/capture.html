@@ -52,12 +52,13 @@
     width: 28px;
     height: 28px;
   }
-  /* Push the Options button to the far-right of the header and use
-   * the page's flat-button style (matching `button#capture`,
+  /* Push the Options + Help buttons to the far-right of the header
+   * and use the page's flat-button style (matching `button#capture`,
    * `.highlight-buttons button`, etc.) rather than user-agent default
-   * chrome. */
-  header #options-btn {
-    margin-left: auto;
+   * chrome. `margin-left: auto` lives on the first member of the
+   * trailing group so Help follows naturally on its right. */
+  header #options-btn,
+  header #help-btn {
     padding: 4px 12px;
     font-size: 14px;
     font-weight: 400;
@@ -65,6 +66,16 @@
     border-radius: 4px;
     background: #f5f5f5;
     cursor: pointer;
+  }
+  header #options-btn {
+    margin-left: auto;
+  }
+  /* `<a>` styled as a button: kill the link underline + inherit the
+   * surrounding text colour so it reads as chrome, not a hyperlink. */
+  header #help-btn {
+    text-decoration: none;
+    color: inherit;
+    display: inline-block;
   }
   /*
    * Captured-page card: bordered light-grey strip laid out as a
@@ -1282,6 +1293,9 @@
     <img src="icons/icon-48.png" alt="">
     <span><span class="app-brand">SeeWhatISee</span> — Capture screenshot or contents</span>
     <button type="button" id="options-btn" class="btn">Options</button>
+    <a id="help-btn" class="btn"
+       href="https://github.com/jshute96/SeeWhatISee/blob/main/README.md"
+       target="_blank" rel="noreferrer noopener">Help</a>
   </header>
 
   <!--
@@ -1290,7 +1304,7 @@
     `getDetailsData` resolves with no session — i.e. capture.html
     was opened directly (bookmark, history, browser restart) without
     the SW-seeded snapshot the page is built from. Header stays
-    visible so Options remains reachable.
+    visible so Options and Help remain reachable.
   -->
   <div id="missing-session-error" class="missing-session-error" hidden>
     <b>Invalid capture page.</b><br>

@@ -51,6 +51,24 @@
     width: 28px;
     height: 28px;
   }
+  /* Trailing Help link in the app-header, styled to match the
+   * Options button on capture.html so the chrome is consistent
+   * across pages. `margin-left: auto` pushes it to the far right;
+   * `<a>` needs the underline/color reset to read as chrome rather
+   * than a hyperlink. */
+  header #help-btn {
+    margin-left: auto;
+    padding: 4px 12px;
+    font-size: 14px;
+    font-weight: 400;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    display: inline-block;
+  }
   section {
     margin-bottom: 24px;
   }
@@ -277,6 +295,9 @@
 <header class="app-header">
   <img src="icons/icon-48.png" alt="">
   <span><span class="app-brand">SeeWhatISee</span> — Options</span>
+  <a id="help-btn" class="btn"
+     href="https://github.com/jshute96/SeeWhatISee/blob/main/README.md"
+     target="_blank" rel="noreferrer noopener">Help</a>
 </header>
 
 <main>

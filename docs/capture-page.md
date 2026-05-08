@@ -333,7 +333,7 @@ fresh edit.
 - Action buttons (Shrink / Undo / Clear / Copy / Save) are
   *actions*, not modes — they never get `.selected`. They share a
   `.btn` press-look with every other primary button on the page
-  (header Options, Capture, Ask, edit-dialog Cancel/Save/Download),
+  (header Options/Help, Capture, Ask, edit-dialog Cancel/Save/Download),
   so all click-feedback uses one shared visual vocabulary.
 - Copy / Save disable when the screenshot capture errored — same
   gate as the per-row `.copy-btn` / `#download-screenshot-btn`
@@ -1126,7 +1126,7 @@ re-activation is required:
     controls, hr, image-and-highlights).
   - Reveals the `#missing-session-error` pane with a one-liner
     pointing the user back to the toolbar icon.
-  - The header (Options button) stays visible as an escape hatch.
+  - The header (Options + Help buttons) stays visible as an escape hatch.
   - `[data-capture-main][hidden] { display: none !important }` is
     required because the per-block `display: flex` /
     `display: block` rules tie the UA `[hidden]` rule on
