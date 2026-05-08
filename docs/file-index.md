@@ -96,7 +96,8 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
-| `src/background/error-reporting.ts` | Icon/tooltip error surface: `runWithErrorReporting`, `reportCaptureError`, `clearCaptureError`, unhandled-rejection suppression |
+| `src/background/error-reporting.ts` | Capture-failed-page error surface: `runWithErrorReporting`, `reportCaptureError`, `friendlyErrorMessage`, unhandled-rejection suppression |
+| `src/background/session-quota.ts` | Pre-flight `chrome.storage.session` quota check + size-aware error formatter shared by the Capture, Upload, and Ask write paths |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts, delay/title helpers |
 | `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
 | `src/background/tooltip.ts` | Pure toolbar-tooltip layout — single-line `Save X or Y` row collapse + `saveDefaultsMenuTitle` shared with the menu side |
@@ -128,7 +129,6 @@ One-line descriptions of every source file, grouped by directory.
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
-| `src/icons/icon-error-{16,48,128}.png` | Error-state variants of the action icons |
 | `src/icons/{claude.svg,gemini.svg,chatgpt.ico,google.ico}` | Provider brand logos used by the Capture page's per-provider Ask buttons (favicon-only squares) |
 
 ## Scripts (`scripts/`)
@@ -136,7 +136,6 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies vendor scripts + theme, classic-wraps codejar, then runs `tsc` |
-| `scripts/generate-error-icons.mjs` | One-shot utility that generates `icon-error-*.png` variants from the base icons |
 | `scripts/_release-common.sh` | Sourced helpers for release scripts (gh check, clean-main check, tag-unused check, orphaned-tag trap) |
 | `scripts/release-extension.sh` | Cuts a GitHub release for the Chrome extension (tag `extension-vX.Y.Z`); builds the zip and runs `gh release create` (draft by default) |
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
@@ -213,6 +212,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
+| `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
+| `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
 
 ## Design Docs (`docs/`)
 

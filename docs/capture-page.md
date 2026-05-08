@@ -144,8 +144,8 @@ referenced from this doc live in
   `useWithSelection` collapses to false and the user's
   with-selection defaults don't apply.
 - `save-all` (screenshot + HTML + selection-if-any) re-throws
-  `screenshotError` or `htmlError` so the toolbar icon / tooltip
-  surfaces the reason via the standard error-reporting channel.
+  `screenshotError` or `htmlError` so `runWithErrorReporting`
+  opens a `capture.html?error=…` tab with the reason.
   The selection branch is silently skipped when no selection was
   present or its scrape errored — same `selectionError` policy as
   `save-defaults`.
@@ -1144,17 +1144,15 @@ re-activation is required:
   `closeCapturePageTab` runs. That ordering matters because
   `chrome.tabs.remove` tears down the message channel and a
   response sent after wouldn't reach the page.
-- **Capture-page errors land on the page, not the toolbar.**
+- **Capture-page errors land inline on the page.**
   - When the user is on the Capture page and the save fails, the
     SW does NOT call `runWithErrorReporting`. The page has a
     status slot (`#ask-status`) right next to the buttons that
     produced the error, and surfacing the message there is more
-    discoverable than swapping the toolbar icon.
-  - The toolbar error channel is reserved for paths that have no
-    on-screen surface (toolbar click, context menu).
-  - Successful saves still call `clearCaptureError()` so a
-    previously toolbar-reported failure gets cleaned up by the
-    next healthy save.
+    discoverable than spawning a separate error tab.
+  - The error-tab channel (`runWithErrorReporting` → fresh
+    `capture.html?error=…`) is reserved for paths that have no
+    on-screen surface yet (toolbar click, hotkey, context menu).
 - **Stale-page guard for direct loads.** Opening `capture.html`
   without a session-storage entry (old bookmark, history entry,
   browser-restart tab restore) causes `getDetailsData` to resolve
@@ -1169,3 +1167,19 @@ re-activation is required:
     `display: block` rules tie the UA `[hidden]` rule on
     specificity and win on source order, so plain
     `el.hidden = true` wouldn't take.
+- **Capture-failed pane (`?error=...`).** Every toolbar / hotkey /
+  context-menu capture failure routes through
+  `runWithErrorReporting`, which opens `capture.html?error=<encoded
+  message>` next to the source tab. The same pane is also reused by
+  the session-storage-quota refusal in `openCapturePageWithSession`,
+  so a too-big screenshot lands in the same place. In the no-session
+  branch, `loadData` reads the param **before** the upload-flow
+  check and reveals `#capture-failed-error` with the message instead
+  of the generic `#missing-session-error` pane.
+  - Messages are produced by `friendlyErrorMessage` (rewrites of
+    common throw-site strings like *"Couldn't find a tab to
+    capture…"*) or by `formatQuotaError` (size-aware quota text like
+    *"Image is too large to load (needs 7.2 MB; only 4.8 MB of 10
+    MB extension storage free)."*).
+  - Same pane chrome (`.early-state-pane` class) so the visual
+    hierarchy matches the upload-landing and stale-page panes.

@@ -152,9 +152,9 @@ test('captureAll writes PNG + HTML + log record referencing both', async ({
 // The two More-submenu shortcuts deliberately diverge when
 // `captureBothToMemory` returns an `htmlError`:
 //   - `captureUrlOnly` ignores it (URL-only records never need HTML).
-//   - `captureAll` re-throws so `runWithErrorReporting` can swap in
-//     the toolbar error icon + tooltip — the shortcut requires HTML
-//     by definition.
+//   - `captureAll` re-throws so `runWithErrorReporting` opens the
+//     Capture-failed error page — the shortcut requires HTML by
+//     definition.
 // We simulate the failure by stubbing `chrome.scripting.executeScript`
 // in the SW, same trick used in capture-with-details.spec.ts.
 

@@ -149,11 +149,13 @@ let editVersion = 0;
 
 /**
  * Set true by `loadData` when the SW returns no session for this
- * tab (direct load of `capture.html`, e.g. an old bookmark). When
- * set, the page is showing only the header + the
- * `#missing-session-error` pane — every `[data-capture-main]` block
- * is `display:none`. Page-wide Alt-shortcuts gate on this so they
- * don't mutate hidden checkboxes / "click" hidden buttons.
+ * tab (direct load of `capture.html`, e.g. an old bookmark, or an
+ * SW-opened error tab). When set, the page is showing only the
+ * header + one of the early-state panes (`#missing-session-error`,
+ * `#capture-failed-error`, or `#upload-landing`) — every
+ * `[data-capture-main]` block is `display:none`. Page-wide
+ * Alt-shortcuts gate on this so they don't mutate hidden
+ * checkboxes / "click" hidden buttons.
  */
 let staleMode = false;
 
@@ -2674,6 +2676,22 @@ async function loadData(): Promise<void> {
       const params = new URLSearchParams(window.location.search);
       if (params.get('upload') === 'true') {
         await handleUploadFlow();
+        return;
+      }
+      // `?error=...` means the SW tried to seed a session for us but
+      // hit a hard failure (e.g. session-storage quota rejection on
+      // the initial Capture). Show the dedicated "Capture failed"
+      // pane with the SW-supplied message instead of the generic
+      // "Invalid capture page." pane — the user wants to see *why*
+      // it failed (and the proposed-vs-free MB readout it usually
+      // carries), not the catch-all "open SeeWhatISee from the
+      // toolbar" recovery hint.
+      const errorParam = params.get('error');
+      if (errorParam) {
+        const failPane = document.getElementById('capture-failed-error');
+        const failMsg = document.getElementById('capture-failed-message');
+        if (failMsg) failMsg.textContent = errorParam;
+        if (failPane) failPane.hidden = false;
         return;
       }
       const errorPane = document.getElementById('missing-session-error');

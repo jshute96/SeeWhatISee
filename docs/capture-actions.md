@@ -437,7 +437,7 @@ submenu inside the page context menu (no parent created in code).
     its source.
   - The Capture page receives `htmlUnavailable: true` on the
     session response and quiet-disables the Save HTML row (no
-    `has-error` class, no error icon — the absence is by design,
+    `has-error` class, no error indicator — the absence is by design,
     not a failure).
   - Image-flow defaults are synthetic: Save Screenshot ✓ + Save
     Selection ✓ when a selection exists, Save HTML always false.
@@ -511,10 +511,11 @@ selection-format actions use `2N-`.
 - Selection-format hotkeys are global: they fire the action
   directly, and the action itself throws
   `No selection {format} content` when nothing is selected —
-  surfaced via the standard icon/tooltip error channel.
+  surfaced via the standard `runWithErrorReporting` channel (a
+  fresh Capture-page error tab next to the source tab).
 - Command dispatch routes through `runWithErrorReporting`, so a
-  restricted-URL scrape or an absent active tab surfaces on the
-  toolbar icon the same way a toolbar click would.
+  restricted-URL scrape or an absent active tab opens the same
+  Capture-failed error page a toolbar click would.
 
 ## Adding a new capture mode
 

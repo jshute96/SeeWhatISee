@@ -13,11 +13,14 @@ import {
   type InMemoryCapture,
   type SelectionFormat,
 } from '../capture.js';
-import { clearCaptureError } from './error-reporting.js';
 import {
   getCaptureDetailsDefaults,
   type CaptureDetailsDefaults,
 } from './capture-page-defaults.js';
+import {
+  checkSessionStorageRoom,
+  formatQuotaError,
+} from './session-quota.js';
 
 /**
  * Synthetic Capture-page defaults for the image-context flow. The
@@ -315,11 +318,9 @@ async function openCapturePageWithSession(
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
   if (opener?.id !== undefined) createProps.openerTabId = opener.id;
 
-  const tab = await chrome.tabs.create(createProps);
-  if (tab.id === undefined) {
-    throw new Error('Failed to open Capture page tab');
-  }
-  const session: DetailsSession = {
+  // Build the prospective session up-front so the pre-flight quota
+  // check (and the per-tab `set` below) operate on the same value.
+  const buildSession = (): DetailsSession => ({
     capture: data,
     openerTabId: opener?.id,
     // Snapshot the original (un-bumped) artifact filenames so the
@@ -335,8 +336,70 @@ async function openCapturePageWithSession(
         ? { ...data.selectionFilenames }
         : undefined,
     },
-  };
-  await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: session });
+  });
+
+  // Pre-flight quota check. The session-storage cap is shared with
+  // the Ask widget record, so a too-big screenshot (or a near-full
+  // session from a prior Ask) can refuse the write. Probe with the
+  // prospective session against a placeholder key — we don't have
+  // the real tab id yet, but the variation in tabId stringification
+  // (≤10 chars) is negligible against a multi-MB payload.
+  // On failure we open the Capture page directly on the
+  // `?error=...` URL with the size message — the page surfaces it
+  // in its "Capture failed" pane instead of the generic
+  // "Invalid capture page" pane.
+  //
+  // We do NOT throw here: returning normally keeps
+  // `runWithErrorReporting` from opening a *second* error tab on
+  // top of the one we just opened. Same rationale as the
+  // post-create race branch below.
+  const probe = await checkSessionStorageRoom(
+    detailsStorageKey(0),
+    buildSession(),
+  );
+  if (!probe.ok) {
+    const message = formatQuotaError('capture', probe);
+    await chrome.tabs.create({
+      ...createProps,
+      url: capturePageUrlWithError(message),
+    });
+    return;
+  }
+
+  const tab = await chrome.tabs.create(createProps);
+  if (tab.id === undefined) {
+    throw new Error('Failed to open Capture page tab');
+  }
+  try {
+    await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: buildSession() });
+  } catch (err) {
+    // Quota race past the pre-flight (or any other storage failure):
+    // redirect the just-opened tab to the error pane so the user
+    // sees a real reason instead of the generic "Invalid capture
+    // page". Strip Chrome's "Values were not stored." tail — the
+    // first sentence already implies it.
+    //
+    // Same no-throw rationale as the pre-flight branch above: the
+    // tab we just opened *is* the error surface, so re-throwing
+    // would only get `runWithErrorReporting` to open a duplicate
+    // error tab. The tab.update is awaited so a genuine update
+    // failure (tab gone) does propagate, in which case the
+    // wrapper's fallback path takes over.
+    let msgText = err instanceof Error ? err.message : String(err);
+    msgText = msgText.replace(/\.?\s*Values were not stored\.?\s*$/, '');
+    await chrome.tabs.update(tab.id, { url: capturePageUrlWithError(msgText) });
+  }
+}
+
+/**
+ * Build a `capture.html?error=<encoded>` URL the page reads in its
+ * no-session branch to drive the "Capture failed" pane. Centralized
+ * so the pre-flight and post-create error paths agree on the param
+ * name and encoding.
+ */
+function capturePageUrlWithError(message: string): string {
+  const base = chrome.runtime.getURL('capture.html');
+  return `${base}?error=${encodeURIComponent(message)}`;
 }
 
 interface GetDetailsMessage {
@@ -1218,13 +1281,10 @@ export function installDetailsMessageHandlers(): void {
 
     if (msg.action === 'saveDetails') {
       // The Capture page is alive and has a status slot — surface
-      // failures there rather than via the toolbar icon. This handler
-      // therefore does NOT go through `runWithErrorReporting`: the
-      // page is the right error sink because it can show the message
-      // in context next to the buttons that produced it. We still
-      // call `clearCaptureError()` on success so a previous toolbar
-      // error from a non-page path (toolbar click, context menu)
-      // gets cleared by the next healthy save.
+      // failures there rather than opening another error tab. This
+      // handler therefore does NOT go through `runWithErrorReporting`:
+      // the page is the right error sink because it can show the
+      // message in context next to the buttons that produced it.
       //
       // On failure we also keep the page open regardless of
       // `closeAfter` — the user needs the preview as a recovery
@@ -1324,7 +1384,6 @@ export function installDetailsMessageHandlers(): void {
           }
           await saveDetailsSession(tabId, postSave);
           sendResponse({ ok: true });
-          await clearCaptureError();
           if (msg.closeAfter !== false) {
             // Closing path: drop the session storage along the way.
             // The `tabs.onRemoved` listener would do this anyway —
@@ -1415,13 +1474,28 @@ export function installDetailsMessageHandlers(): void {
               contents: capture.contentsFilename,
             },
           };
+          // Pre-flight quota check before the actual `set`. Large
+          // user uploads (full-resolution photos) can exceed the
+          // 10 MiB session-storage cap by themselves. A pre-check
+          // lets us surface "image is too large" with the actual
+          // sizes rather than the runtime's bare quota-exceeded
+          // string, which doesn't tell the user what to do.
+          const room = await checkSessionStorageRoom(
+            detailsStorageKey(tabId),
+            session,
+          );
+          if (!room.ok) {
+            sendResponse({ error: formatQuotaError('capture', room) });
+            return;
+          }
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });
         } catch (err) {
-          // Surface a tight one-line message. Chrome's session-storage
-          // quota error reads "Session storage quota bytes exceeded.
-          // Values were not stored." — the second sentence is noise
-          // for the user (already implied by "failed"), so strip it.
+          // Catch-all for anything that slipped past the pre-flight
+          // check (e.g. a quota race with the Ask flow writing into
+          // the same area, or a non-quota storage error). Strip the
+          // trailing "Values were not stored." Chrome appends to its
+          // quota message — the first sentence already implies it.
           let msgText = err instanceof Error ? err.message : String(err);
           msgText = msgText.replace(/\.?\s*Values were not stored\.?\s*$/, '');
           sendResponse({ error: msgText });
