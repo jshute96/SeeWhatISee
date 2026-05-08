@@ -16,13 +16,8 @@ Features
   We could probably share more and be more consistent across them.
 
 Claude plugin
-* Permissions
-  - Setting `allowed_tools` inside the skills is supposed to work but it doesn't reliably.
-  - It does for `see` and `stop` skills but not for `watch` on the re-runs, maybe because of interaction with the background task. Are the permissions gone when work resumes?
-  - Current workaround described in `README.md` and the `help` skill is to add permissions in `settings.json`.
+* Permissions prompts on the re-run of watch skill - can we avoid them?
   - This is https://github.com/jshute96/SeeWhatISee/issues/2.
-* Full github tree gets downloaded in `.claude/plugins/marketplaces/see-what-i-see-marketplace/`, can I avoid this?
-  - Maybe a separate repository for just the "released" version of the plugin.
 
 Gemini plugin
 * Background watching doesn't work because asynchronous background commands aren't supported,

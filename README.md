@@ -161,11 +161,17 @@ on each snapshot. For example,
 Add the marketplace and install the plugin:
 
 ```bash
-/plugin marketplace add jshute96/SeeWhatISee
+/plugin marketplace add jshute96/SeeWhatISee-claude
 /plugin install see-what-i-see@see-what-i-see-marketplace
 ```
 
-Note: To avoid permissions prompts in `/see-what-i-see-watch`, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` with your home directory (which is printed in the permission prompt.)
+This loads the released version of the Claude plugin from the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) GitHub repository.
+
+#### Avoiding permission prompts
+
+`/see-what-i-see-watch` may trigger permission prompts when restarting to watch for the next screenshot.
+
+To avoid this, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` with your home directory (which is printed in the permission prompt):
 
 ```
   "permissions": {
@@ -176,7 +182,9 @@ Note: To avoid permissions prompts in `/see-what-i-see-watch`, add this to `$HOM
   }
 ```
 
-`/see-what-i-see-help` also includes this.
+`/see-what-i-see-help` also includes this suggestion.
+
+[Issue #2](https://github.com/jshute96/SeeWhatISee/issues/2) is about finding a better workaround to avoid permission prompts.
 
 ### Gemini CLI commands
 
@@ -288,6 +296,8 @@ The plugin won't update if the version is the same.
 To make an update possible, bump `plugins[0].version` in `.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
 
 Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
+
+Release new versions to users by copying the updated plugin to the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) GitHub repository.
 
 ## Running the Claude plugin locally
 
