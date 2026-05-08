@@ -42,14 +42,6 @@ import {
 } from './details-helpers';
 import { waitForDownloadPath } from '../fixtures/files';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test in this file issues one capture via
-// startCaptureWithDetails; without a small cushion the suite
-// occasionally trips the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-op', async ({
   extensionContext,
   fixtureServer,

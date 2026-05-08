@@ -27,14 +27,6 @@ import {
   waitForClipboardWrites,
 } from './details-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test in this file issues one capture via
-// startCaptureWithDetails; without a small cushion the suite
-// occasionally trips the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 test('details: copy buttons download files and put real paths on the clipboard', async ({
   extensionContext,
   fixtureServer,

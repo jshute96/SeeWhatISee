@@ -4,11 +4,12 @@
 //   - tests/e2e/ask-pinned-tabs.spec.ts  (target-window pinning)
 //
 // Both files run against the fake-Claude fixture page and share the
-// same provider-override seam, the same fake-page-state reader, the
-// same per-test pause for `chrome.tabs.captureVisibleTab` rate-
-// limiting, and the same snapshot/restore of `ASK_PROVIDERS`. None
-// of that is specific to either suite, so it lives here to keep the
-// spec files focused on tests rather than rigging.
+// same provider-override seam, the same fake-page-state reader, and
+// the same snapshot/restore of `ASK_PROVIDERS`. None of that is
+// specific to either suite, so it lives here to keep the spec files
+// focused on tests rather than rigging. (The `captureVisibleTab`
+// quota wait that used to live here is now in the global
+// `tests/fixtures/extension.ts` beforeEach.)
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -156,13 +157,16 @@ export async function overrideAskProviders(
 /**
  * Register the per-test rigging shared by every Ask spec:
  *
- *   - beforeEach: 600ms pause to dodge `chrome.tabs.captureVisibleTab`'s
- *     ~2/sec quota (each Ask test opens the Capture page once).
  *   - beforeAll: snapshot `ASK_PROVIDERS` so afterEach can restore it
  *     after the per-test override mutates the registry in place.
  *   - afterEach: restore the snapshot, then drop the `askPin` set by
  *     the previous test's send so the next test starts with a clean
  *     default.
+ *
+ * The captureVisibleTab quota wait that used to live here as a 600 ms
+ * sleep is now installed globally by the extension fixture (see
+ * `tests/fixtures/extension.ts`), so each test only sleeps the
+ * remaining time actually needed to stay under the rate limit.
  *
  * Call once at the top of each spec file. The closure over
  * `originalProviders` keeps the snapshot per-file (Playwright runs
@@ -170,10 +174,6 @@ export async function overrideAskProviders(
  * each take and restore their own snapshot independently.
  */
 export function installAskTestHooks(): void {
-  test.beforeEach(async () => {
-    await new Promise((r) => setTimeout(r, 600));
-  });
-
   let originalProviders: unknown[] | null = null;
 
   test.beforeAll(async ({ getServiceWorker }) => {

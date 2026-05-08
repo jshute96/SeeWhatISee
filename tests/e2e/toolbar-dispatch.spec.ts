@@ -20,11 +20,11 @@ import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { SCREENSHOT_PATTERN, seedSelection } from './details-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Several tests here fire a capture via handleActionClick; without
-// a small cushion the suite occasionally trips the quota.
+// captureVisibleTab quota wait is handled globally in
+// `tests/fixtures/extension.ts`. This hook only stubs out
+// `chrome.commands.getAll` so menu refreshes don't depend on the
+// host's actual hotkey bindings.
 test.beforeEach(async ({ getServiceWorker }) => {
-  await new Promise((r) => setTimeout(r, 600));
   const sw = await getServiceWorker();
   await sw.evaluate(() => {
     interface Stubbed {
@@ -94,9 +94,11 @@ test('captureBothToMemory(delayMs) sleeps before snapshotting', async ({
 
   // Delay must actually fire — the Capture page flow delayed path shares
   // the same timer. A missing `await` on the setTimeout would make
-  // this near-zero.
+  // this near-zero. Upper bound also has to absorb a possible
+  // capture-quota backoff retry (~1 s worst case) since the SW-side
+  // patch can interpose silently — see `tests/fixtures/capture-quota.ts`.
   expect(elapsedMs).toBeGreaterThanOrEqual(190);
-  expect(elapsedMs).toBeLessThan(500);
+  expect(elapsedMs).toBeLessThan(2000);
 
   await page.close();
 });

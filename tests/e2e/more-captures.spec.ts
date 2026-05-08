@@ -16,14 +16,6 @@ import { type CaptureRecord, waitForDownloadPath } from '../fixtures/files';
 const SCREENSHOT_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 const CONTENTS_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test here takes at least one screenshot (captureAll always;
-// captureUrlOnly also goes through captureBothToMemory). Cushion the
-// start so adjacent tests don't trip the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // Spy on `chrome.downloads.download` so we can map requested filenames
 // to download ids — same pattern as capture-with-details.spec.ts.
 // Returns the most recent download whose requested filename ends with

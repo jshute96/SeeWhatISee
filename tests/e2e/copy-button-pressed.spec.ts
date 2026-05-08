@@ -15,12 +15,6 @@
 import { test, expect } from '../fixtures/extension';
 import { openDetailsFlow, seedSelection } from './details-helpers';
 
-test.beforeEach(async () => {
-  // captureVisibleTab is rate-limited (~2/s per window). Each test
-  // here issues one capture; small cushion avoids quota trips.
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // Slow the page's `navigator.clipboard.writeText` so the .pressed
 // observation window is wide enough to be non-flaky regardless of
 // SW round-trip / download speed.

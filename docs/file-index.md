@@ -154,6 +154,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `tests/demo.html` | Demo page for screenshot-based interaction |
 | `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context with the extension loaded, fixture HTTP server, and a `getServiceWorker()` helper |
+| `tests/fixtures/capture-quota.ts` | Smart pre-test wait + auto-retry for `chrome.tabs.captureVisibleTab`'s 2/sec quota; replaces the unconditional 600ms sleep |
 | `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, and verifying capture sidecars |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |

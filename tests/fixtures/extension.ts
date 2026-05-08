@@ -10,6 +10,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installCaptureQuotaTracker, waitForCaptureQuota } from './capture-quota';
 
 export type GetServiceWorker = () => Promise<Worker>;
 
@@ -127,6 +128,21 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           `--load-extension=${EXTENSION_PATH}`,
         ],
       });
+      // Forward `[capture-quota]`-tagged SW warnings to the test
+      // output so backoff hits are visible without instrumenting
+      // every spec. Anything else stays where Playwright would put
+      // it (CDP-only, not in stdout). Each newly-spawned SW gets
+      // its own listener since MV3 service workers respawn on idle.
+      const onSw = (sw: Worker): void => {
+        sw.on('console', (msg) => {
+          const text = msg.text();
+          if (text.includes('[capture-quota]')) {
+            process.stderr.write(`SW ${msg.type()}: ${text}\n`);
+          }
+        });
+      };
+      ctx.serviceWorkers().forEach(onSw);
+      ctx.on('serviceworker', onSw);
       await use(ctx);
       await ctx.close();
     },
@@ -174,6 +190,25 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const id = new URL(sw.url()).host;
     await use(id);
   },
+});
+
+// Smart wait for the captureVisibleTab quota — see capture-quota.ts.
+//
+// Replaces the unconditional `await sleep(600)` that every spec's
+// own `beforeEach` used to carry. The new flow:
+//   - `installCaptureQuotaTracker` patches the SW so successful
+//     captures stamp a 2-entry ring of timestamps.
+//   - `waitForCaptureQuota` reads the ring and sleeps only the
+//     remainder needed for a third call to be quota-safe — typically
+//     0 ms when the previous test captured early and then spent
+//     time on assertions.
+//   - The patch also auto-retries the
+//     `MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND` error as a safety
+//     net for cases the proactive wait under-estimates.
+test.beforeEach(async ({ getServiceWorker }) => {
+  const sw = await getServiceWorker();
+  await installCaptureQuotaTracker(sw);
+  await waitForCaptureQuota(sw);
 });
 
 export const expect = test.expect;

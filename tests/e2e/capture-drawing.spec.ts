@@ -59,13 +59,6 @@ function expectRedAtRectEdge(buf: Buffer): void {
   expect(found, `no red stroke pixel found near x=${cx}, y=${y}`).toBe(true);
 }
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Every test here issues one capture via startCaptureWithDetails;
-// without a small cushion the suite occasionally trips the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // ─── Helpers ─────────────────────────────────────────────────────
 
 // Read the current effective crop bounds (or null when no crop is

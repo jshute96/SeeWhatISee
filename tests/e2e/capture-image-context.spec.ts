@@ -41,14 +41,6 @@ import { waitForDownloadPath } from '../fixtures/files';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RED_PIXEL_PATH = path.resolve(__dirname, '../fixtures/pages/red-pixel.png');
 
-// chrome.tabs.captureVisibleTab isn't called on the image flow — the
-// "screenshot" comes from a `fetch()` on the page side — but
-// neighboring specs share the same Chromium worker. The cushion keeps
-// us off any rate limit they might have just hit.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // ─── Save screenshot route ────────────────────────────────────────
 
 test('image flow: save screenshot writes image bytes + record with imageUrl', async ({

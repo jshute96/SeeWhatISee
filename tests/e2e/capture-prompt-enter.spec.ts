@@ -24,13 +24,6 @@ import {
   readButtonClickSpy,
 } from './details-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Mirrors the cushion in capture-with-details.spec.ts so the suite
-// doesn't trip the quota when run alongside other capture specs.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // Storage seed shape matching `capturePageDefaults`. Only the fields
 // these tests vary are listed; the SW's normalize() backfills the
 // rest (Save-checkbox defaults) from `DEFAULT_CAPTURE_DETAILS_DEFAULTS`.

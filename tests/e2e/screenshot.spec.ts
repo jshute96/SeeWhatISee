@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
+import { waitForCaptureQuota } from '../fixtures/capture-quota';
 import { verifyCapture, waitForDownloadPath, type CaptureResult } from '../fixtures/files';
 
 // Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
@@ -14,18 +15,6 @@ const FILENAME_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 const PURPLE: [number, number, number] = [0x80, 0x00, 0x80];
 const GREEN: [number, number, number] = [0x00, 0xc0, 0x00];
 const ORANGE: [number, number, number] = [0xff, 0x88, 0x00];
-
-// chrome.tabs.captureVisibleTab is rate-limited to ~2 calls/sec per
-// window (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). Tests in this
-// file each issue 1–2 captures and run back-to-back in the same
-// persistent context, so without a small cushion at the start of each
-// test we can blow the quota when one test's last capture lands close
-// in time to the next test's first one. Sleeping unconditionally
-// before every test costs ~600ms per test but keeps the suite
-// order-independent and non-flaky.
-test.beforeEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 600));
-});
 
 test('captures the visible tab and writes png + sidecar file', async ({
   extensionContext,
@@ -74,10 +63,12 @@ test('captures the visible tab and writes png + sidecar file', async ({
   // actually the second page (not a stale read of the first).
   await page.goto(`${fixtureServer.baseUrl}/orange.html`);
   await page.bringToFront();
-  // Stay under the captureVisibleTab quota (see beforeEach note).
-  await page.waitForTimeout(600);
-
+  // Stay under the captureVisibleTab quota — sleeps only the time
+  // actually needed (typically 0 ms here, since the goto and
+  // bringToFront have already eaten most of the 1 s window).
   const sw2 = await getServiceWorker();
+  await waitForCaptureQuota(sw2);
+
   const result2 = await sw2.evaluate(async () => {
     const api = (self as unknown as {
       SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
@@ -122,9 +113,12 @@ test('captureVisible(delayMs) sleeps before capturing', async ({
   // delay must actually fire — a missing `await` on the setTimeout would
   // make this near-zero. Upper bound is generous so the test isn't flaky
   // on slow CI; we only care that we didn't accidentally sleep for
-  // multiple seconds.
+  // multiple seconds. The cushion also has to absorb a possible
+  // capture-quota backoff retry (~1 s in the worst case) since the
+  // SW-side patch can interpose silently — see
+  // `tests/fixtures/capture-quota.ts`.
   expect(elapsedMs).toBeGreaterThanOrEqual(190);
-  expect(elapsedMs).toBeLessThan(500);
+  expect(elapsedMs).toBeLessThan(2000);
 
   // No prevLogRecords arg → skip the delta/length check (chrome.storage
   // is dirty from earlier tests in this worker, so we don't know the
@@ -212,9 +206,8 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   // one record can't tell the difference.
   await page.goto(`${fixtureServer.baseUrl}/orange.html`);
   await page.bringToFront();
-  await page.waitForTimeout(600); // stay under captureVisibleTab rate limit
-
   const sw2 = await getServiceWorker();
+  await waitForCaptureQuota(sw2); // stay under captureVisibleTab rate limit
   const result2 = await sw2.evaluate(async () => {
     const api = (self as unknown as {
       SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
@@ -250,9 +243,8 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   // a log.json containing exactly one record — the new one — not three.
   await page.goto(`${fixtureServer.baseUrl}/green.html`);
   await page.bringToFront();
-  await page.waitForTimeout(600);
-
   const sw4 = await getServiceWorker();
+  await waitForCaptureQuota(sw4);
   const result3 = await sw4.evaluate(async () => {
     const api = (self as unknown as {
       SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };

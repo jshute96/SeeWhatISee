@@ -30,11 +30,6 @@ import {
   waitForClipboardWrites,
 } from './details-helpers';
 
-test.beforeEach(async () => {
-  // captureVisibleTab is rate-limited (~2/s per window).
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext', async ({
   extensionContext,
   fixtureServer,

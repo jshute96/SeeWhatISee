@@ -63,11 +63,23 @@ multi-step drilling behavior.
 ### `chrome.tabs.captureVisibleTab` rate limit
 
 - Capped at `MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND`
-  (~2 calls/sec per window).
-- Tests that capture back-to-back need a ~600ms cushion between
-  calls or they blow the quota.
-- The shared screenshot spec uses a `test.beforeEach` sleep to
-  keep the suite order-independent.
+  (~2 calls/sec per window) — a third call within any rolling
+  1-second window throws.
+- Handled by `tests/fixtures/capture-quota.ts`:
+  - `installCaptureQuotaTracker(sw)` patches the SW-side
+    `chrome.tabs.captureVisibleTab` to record the last 2 successful
+    call timestamps in `globalThis.__seeCapTimes`, and to
+    auto-retry on the quota error using the exact remaining wait
+    computed from the ring.
+  - `waitForCaptureQuota(sw)` reads the ring and sleeps only the
+    minimum needed (often 0 ms) so a third call won't trip the
+    quota.
+- A global `test.beforeEach` in `tests/fixtures/extension.ts`
+  installs the tracker and waits — specs no longer carry their
+  own ~600 ms cushion.
+- Backoff retries are tagged `[capture-quota]` and forwarded from
+  the SW console to test stderr, so spikes in retries are visible
+  during a run without per-spec instrumentation.
 
 ## Practical devtools-console workflow
 

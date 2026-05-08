@@ -30,13 +30,6 @@ import {
 } from './details-helpers';
 import { type CaptureRecord } from '../fixtures/files';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test in this file issues one capture via startCaptureWithDetails;
-// without a small cushion the suite occasionally trips the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // ─── Save-option matrix ───────────────────────────────────────────
 
 test('details: png only, no prompt, no highlights', async ({

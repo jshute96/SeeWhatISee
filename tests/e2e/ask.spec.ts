@@ -34,6 +34,7 @@
 // override in `chrome.storage.session` instead.
 
 import { test, expect } from '../fixtures/extension';
+import { waitForCaptureQuota } from '../fixtures/capture-quota';
 import { dragRect, openDetailsFlow, seedSelection } from './details-helpers';
 import {
   clickExistingFakeClaudeItem,
@@ -494,10 +495,9 @@ test('ask: drawing a highlight bakes the modified PNG into the attachment', asyn
   }
 
   const baselineSize = await sizeOnce(false);
-  // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-  // The first sizeOnce just fired one; pause before the second so
-  // the suite doesn't trip the quota inside this single test.
-  await new Promise((r) => setTimeout(r, 600));
+  // The first sizeOnce just fired a captureVisibleTab; sleep only the
+  // remainder needed (often 0 ms) before the second one.
+  await waitForCaptureQuota(await getServiceWorker());
   const annotatedSize = await sizeOnce(true);
   // A drawn red box paints fresh pixels into the rendered PNG, so
   // the compressed bytes will differ. We don't pin a direction —

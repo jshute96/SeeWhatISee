@@ -36,13 +36,6 @@ import {
   waitForPageDownloads,
 } from './details-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Each test in this file issues one capture via the Capture page flow;
-// without a small cushion the suite occasionally trips the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 test('details: per-row Save buttons trigger saveAs dialog with correct default filenames', async ({
   extensionContext,
   fixtureServer,
