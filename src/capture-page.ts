@@ -1439,6 +1439,26 @@ function render(): void {
 
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
+  // A draw / crop drag is already in flight (e.g. the previous
+  // mouseup was lost to a window blur). Ignore *every* fresh
+  // mousedown — drawing branches below, the Ctrl-left pan branch,
+  // and the middle-click preventDefault — so we don't layer a pan
+  // on top of stuck draw state, which would leave `panState` and
+  // `dragStart`/`cropDrag` both live until the next normal
+  // left-mouseup. Sits above the Ctrl-left branch deliberately.
+  if (cropDrag !== null || dragStart !== null) return;
+  // Ctrl/Cmd + left = pan, mirroring middle-click. We start it here
+  // (the overlay sits on top of the image) and `stopPropagation` so
+  // the imageBox handler doesn't double-init the same drag. The
+  // empty surround around the overlay is handled by imageBox alone.
+  // Ctrl + middle still routes through the imageBox middle path —
+  // this branch only matches `button === 0`.
+  if (me.button === 0 && (me.ctrlKey || me.metaKey)) {
+    me.preventDefault();
+    me.stopPropagation();
+    startPan(me);
+    return;
+  }
   // Left button only — there's no right-click drawing in the new
   // tool model. The browser will surface the right-button context
   // menu untouched.
@@ -1454,10 +1474,6 @@ overlay.addEventListener('mousedown', (e) => {
     if (me.button === 1) me.preventDefault();
     return;
   }
-  // A drag is already in flight. Ignore so the state machine can't
-  // end up with both `cropDrag` and `dragStart` non-null at the
-  // same time.
-  if (cropDrag !== null || dragStart !== null) return;
   const p = localCoords(me);
   // Crop-handle drag wins over the selected tool. Hit-test runs
   // against the *effective* crop region — the active crop if one
@@ -2197,15 +2213,19 @@ zoomBtn.addEventListener('click', () => {
   }
 });
 
-// ─── Wheel zoom ───────────────────────────────────────────────────
+// ─── Wheel + keyboard zoom ────────────────────────────────────────
 //
-// Wheel over the image cycles through ZOOM_LEVELS. Skips the
-// fit ↔ 1× hop when fit-mode already renders at native pixels
-// (small image on large viewport) so two scroll ticks don't
-// produce one visible change.
+// Zoom is driven by Ctrl/Cmd+wheel and Alt+−/+ (Alt+= is a quiet
+// no-shift alias for Alt++). Plain wheel / trackpad swipes are
+// left alone so they fall through to native `.image-box` scroll —
+// important for panning a tall image at 4× / 8×, and avoids the
+// trackpad-zoom-runaway where a continuous swipe with momentum tail
+// would fly through every zoom level in a single gesture.
 //
-// `Ctrl+wheel` is left alone — that's the browser's page zoom,
-// and grabbing it would surprise users.
+// Cursor-centered: the image-relative fraction the cursor (or last-
+// known mouse position, for keyboard shortcuts) was over pre-zoom is
+// preserved post-zoom by re-scrolling the box. When the focal point
+// is outside the visible image (or unknown), the level just changes.
 
 function nextZoomIndex(curIdx: number, dir: 1 | -1): number {
   let i = curIdx + dir;
@@ -2228,78 +2248,186 @@ function nextZoomIndex(curIdx: number, dir: 1 | -1): number {
   return i;
 }
 
-imageBox.addEventListener('wheel', (e) => {
-  if (e.ctrlKey) return;
-  // Wheel only zooms when the cursor is over the *visible* image —
-  // i.e. inside both the image's rect AND the box's content area.
-  //
-  // Just-imgRect doesn't work in Nx mode where the image extends
-  // past the box bounds (the off-screen part is reachable via
-  // scroll, and a scrollbar then sits over `imgRect`'s right /
-  // bottom edge): a cursor on a scrollbar would still test inside
-  // imgRect and trigger a zoom, which is what the user reported.
-  //
-  // `clientWidth` / `clientHeight` exclude the scrollbar gutters,
-  // so intersecting `imgRect` with the box's rect-clipped-to-
-  // content gives the actually-visible image area on screen.
+// Is the viewport coord (vx, vy) over the *visible* image — inside
+// both the image's rect AND the box's content area? Just-imgRect
+// doesn't work in Nx mode where the image extends past the box
+// bounds: a cursor on a scrollbar gutter would still test inside
+// imgRect. `clientWidth / clientHeight` exclude the scrollbars, so
+// intersecting imgRect with the box rect clipped to content gives
+// the actually-visible image area.
+function isOverVisibleImage(vx: number, vy: number): boolean {
   const r = imgRect();
   const boxRect = imageBox.getBoundingClientRect();
   const visLeft = Math.max(boxRect.left, r.left);
   const visTop = Math.max(boxRect.top, r.top);
   const visRight = Math.min(boxRect.left + imageBox.clientWidth, r.right);
   const visBottom = Math.min(boxRect.top + imageBox.clientHeight, r.bottom);
-  if (
-    e.clientX < visLeft || e.clientX >= visRight ||
-    e.clientY < visTop || e.clientY >= visBottom
-  ) {
-    return;
-  }
-  const cur = ZOOM_LEVELS.indexOf(zoomMode);
-  if (cur < 0) return;
-  const dir: 1 | -1 = e.deltaY < 0 ? 1 : -1;
-  const next = nextZoomIndex(cur, dir);
-  // No-op (already at min or max for this direction): let the wheel
-  // fall through to native scroll on `.image-box` instead of
-  // swallowing it. Otherwise the user can't scroll a tall image at
-  // 8× by wheeling up while the cursor is over the image.
-  if (next === cur) return;
-  e.preventDefault();
+  return (
+    vx >= visLeft && vx < visRight &&
+    vy >= visTop && vy < visBottom
+  );
+}
 
-  // Cursor-centered zoom: capture the image-relative fraction the
-  // cursor was over BEFORE we change zoom, then after the image
-  // resizes, scroll so that fraction sits at the same viewport
-  // coordinate — i.e. the point under the cursor stays put. We
-  // use natural fractions (clamped to [0, 1]) rather than the
-  // displayed image's local coords because the displayed image
-  // shrinks/grows around the same natural pixel under the cursor.
-  // Browser clamps `scrollLeft` / `scrollTop` to the new content
-  // bounds automatically, so a target outside the scroll range
-  // simply scrolls maximally that direction.
-  const fx = (e.clientX - r.left) / Math.max(1, r.width);
-  const fy = (e.clientY - r.top) / Math.max(1, r.height);
+// Step zoom by `dir`, keeping (focalX, focalY) viewport coords stable
+// when the focal point is over the visible image. We use natural
+// fractions (the image-relative position the cursor was over) rather
+// than displayed coords because the displayed image shrinks/grows
+// around the same natural pixel under the cursor. The browser clamps
+// `scrollLeft / scrollTop` to the new content bounds, so a target
+// outside the scroll range simply scrolls maximally that way.
+//
+// Returns true if the zoom level changed.
+function cursorCenteredZoomStep(
+  dir: 1 | -1,
+  focalX: number | null,
+  focalY: number | null,
+): boolean {
+  const cur = ZOOM_LEVELS.indexOf(zoomMode);
+  if (cur < 0) return false;
+  const next = nextZoomIndex(cur, dir);
+  if (next === cur) return false;
+
+  const useFocal =
+    focalX !== null && focalY !== null &&
+    isOverVisibleImage(focalX, focalY);
+  let fx = 0, fy = 0, preBoxLeft = 0, preBoxTop = 0;
+  if (useFocal) {
+    const r = imgRect();
+    const boxRect = imageBox.getBoundingClientRect();
+    fx = (focalX! - r.left) / Math.max(1, r.width);
+    fy = (focalY! - r.top) / Math.max(1, r.height);
+    // Box viewport position doesn't change across the zoom (only the
+    // image inside it resizes), so capturing pre-zoom is fine.
+    preBoxLeft = boxRect.left;
+    preBoxTop = boxRect.top;
+  }
 
   setZoom(ZOOM_LEVELS[next]!);
 
-  const r2 = imgRect();
-  // The box's viewport position doesn't change across the zoom
-  // (only the image inside it resizes), so we reuse the boxRect
-  // captured for the visibility check above.
-  const targetScrollLeft = boxRect.left + fx * r2.width - e.clientX;
-  const targetScrollTop  = boxRect.top  + fy * r2.height - e.clientY;
-  imageBox.scrollLeft = targetScrollLeft;
-  imageBox.scrollTop  = targetScrollTop;
+  if (useFocal) {
+    const r2 = imgRect();
+    imageBox.scrollLeft = preBoxLeft + fx * r2.width - focalX!;
+    imageBox.scrollTop  = preBoxTop  + fy * r2.height - focalY!;
+  }
+  return true;
+}
+
+// Last viewport-coord mouse position, for the keyboard zoom path.
+// `null` until the first move — pre-move keyboard zoom just changes
+// level without re-centering, which matches the no-cursor case.
+let lastMousePos: { x: number; y: number } | null = null;
+window.addEventListener('mousemove', (e) => {
+  lastMousePos = { x: e.clientX, y: e.clientY };
+});
+
+// Wheel-zoom accumulator. Trackpads emit a continuous stream of
+// small-deltaY events (~10 each at 60 Hz) during a swipe and through
+// the OS-level momentum tail, so a one-event-per-step mapping flies
+// through every zoom level in a single gesture — the issue users hit
+// on Chromebook trackpads. We accumulate |deltaY| and step only when
+// the accumulator crosses one mouse-notch's worth of delta (~100),
+// giving deliberate-feeling steps on trackpads while keeping mouse-
+// wheel users at one step per detent. Direction change or an idle
+// gap reset the accumulator so a fresh gesture doesn't carry leftover
+// delta from the previous one.
+let wheelAccumDelta = 0;
+let wheelLastDir: 1 | -1 = 1;
+let wheelLastTime = 0;
+const WHEEL_STEP_THRESHOLD = 100;
+const WHEEL_IDLE_RESET_MS = 200;
+
+imageBox.addEventListener('wheel', (e) => {
+  // Image zoom requires Ctrl (Cmd on macOS). Plain wheel/trackpad
+  // falls through to native `.image-box` scroll — necessary for
+  // panning a tall image at 4× / 8× and avoids the trackpad runaway
+  // described above.
+  if (!(e.ctrlKey || e.metaKey)) return;
+
+  // Always swallow Ctrl/Cmd+wheel: the browser default would page-
+  // zoom on top of (or instead of) our app zoom, which is rarely
+  // what the user wants over the captured image.
+  e.preventDefault();
+
+  const now = e.timeStamp;
+  const dir: 1 | -1 = e.deltaY < 0 ? 1 : -1;
+  if (dir !== wheelLastDir || now - wheelLastTime > WHEEL_IDLE_RESET_MS) {
+    wheelAccumDelta = 0;
+    wheelLastDir = dir;
+  }
+  wheelLastTime = now;
+  wheelAccumDelta += Math.abs(e.deltaY);
+  if (wheelAccumDelta < WHEEL_STEP_THRESHOLD) return;
+  // Cap at one step per event regardless of accumulated delta — an
+  // over-eager coalesced trackpad event with a huge deltaY shouldn't
+  // blast through multiple levels at once.
+  wheelAccumDelta = 0;
+  cursorCenteredZoomStep(dir, e.clientX, e.clientY);
 }, { passive: false });
 
-// ─── Middle-click pan ─────────────────────────────────────────────
+// Keyboard zoom: Alt+− / Alt++ (and the no-shift Alt+= alias).
+// When the cursor is over the visible image, zoom stays cursor-
+// centered to match the wheel path; otherwise the level just changes.
 //
-// Hold middle-button and drag to scroll the image-box. The drawing
-// `mousedown` handler on the SVG overlay bails on `button !== 0`,
-// so the event bubbles up to image-box undisturbed. We listen on
-// `imageBox` for the press, then on `window` for moves / release
-// so a drag that wanders off the image keeps panning until the
-// user lets the button up.
+// Lives separately from the page-wide alt-hotkey listener above
+// because that one early-returns on `shiftKey` (Alt+S etc. are
+// shift-less), and Alt++ requires Shift on most keyboard layouts.
+document.addEventListener('keydown', (e) => {
+  if (anyEditDialogOpen()) return;
+  if (staleMode) return;
+  if (!e.altKey || e.ctrlKey || e.metaKey) return;
+  let dir: 1 | -1;
+  // `_` covers Shift+- on layouts where that's what the OS reports;
+  // `+` and `=` are the same physical key (with/without Shift).
+  if (e.key === '-' || e.key === '_') dir = -1;
+  else if (e.key === '+' || e.key === '=') dir = 1;
+  else return;
+  e.preventDefault();
+  cursorCenteredZoomStep(
+    dir,
+    lastMousePos?.x ?? null,
+    lastMousePos?.y ?? null,
+  );
+});
 
-let panState: { prevX: number; prevY: number } | null = null;
+// macOS uses Cmd where Ctrl appears, and Option where Alt appears,
+// in the tooltip text on every other platform. The wheel and key
+// handlers accept the underlying `metaKey` / `altKey` already; only
+// the user-facing label needs swapping.
+// `navigator.platform` is technically deprecated but still the
+// quickest reliable check in MV3 / Chromium and matches the rest
+// of the web's UA-detection conventions.
+const isMacPlatform =
+  /Mac|iP(hone|ad|od)/i.test(navigator.platform || '') ||
+  /Mac OS X/.test(navigator.userAgent);
+if (isMacPlatform) {
+  const title = zoomBtn.getAttribute('title');
+  if (title) {
+    zoomBtn.setAttribute(
+      'title',
+      title.replace(/\bCtrl\b/g, 'Cmd').replace(/\bAlt\b/g, 'Option'),
+    );
+  }
+}
+
+// ─── Pan (middle-click + Ctrl/Cmd-left-drag) ──────────────────────
+//
+// Hold middle-button OR Ctrl/Cmd-left and drag to scroll the image-
+// box. The middle-button path predates the Ctrl-drag path; both
+// share the same `panState` and window listeners. Listening on
+// `window` for moves / release lets a drag that wanders off the
+// image keep panning until the triggering button is released.
+//
+// Ctrl-left needs to fire from over the SVG overlay too (the
+// overlay covers the image), so the overlay's `mousedown` handler
+// has a Ctrl-left branch that calls `startPan` + `stopPropagation`.
+// Outside the overlay (the box's surround) the imageBox handler
+// catches it directly.
+//
+// `panState.button` records which button started the drag so the
+// matching `mouseup` releases it — a stray right-up shouldn't end
+// a Ctrl-left pan.
+
+let panState: { prevX: number; prevY: number; button: number } | null = null;
 // Timestamp of the last middle-mousedown on the image-box. Used by
 // the prompt's paste guard below to recognise X11 primary-selection
 // pastes that the OS dispatched in response to the click and refuse
@@ -2307,24 +2435,37 @@ let panState: { prevX: number; prevY: number } | null = null;
 // proven not to catch every Linux Chromium build's paste path.
 let lastImageMiddleDownTime = 0;
 
-imageBox.addEventListener('mousedown', (e) => {
-  if (e.button !== 1) return;
-  lastImageMiddleDownTime = e.timeStamp;
-  // Suppress browser default actions for middle-mousedown:
-  //   - Autoscroll mode (the spinning compass icon Chrome enters
-  //     after a middle-click on a scrollable region).
-  //   - On Linux, the X11 primary-selection paste that fires
-  //     against the focused editable element (the prompt
-  //     textarea) on middle-click regardless of click target.
-  // preventDefault here cancels both. We mirror it on the
-  // overlay's mousedown handler for events that target the SVG
-  // overlay sitting on top of the image.
-  e.preventDefault();
-  panState = { prevX: e.clientX, prevY: e.clientY };
+function startPan(e: MouseEvent): void {
+  panState = { prevX: e.clientX, prevY: e.clientY, button: e.button };
   // Class on body so the cursor change applies even over `#overlay`,
   // whose own `cursor: crosshair` rule would otherwise outrank a
   // style set on `imageBox`.
   document.body.classList.add('panning');
+}
+
+imageBox.addEventListener('mousedown', (e) => {
+  const isMiddle = e.button === 1;
+  const isCtrlLeft = e.button === 0 && (e.ctrlKey || e.metaKey);
+  if (!isMiddle && !isCtrlLeft) return;
+  if (isMiddle) {
+    lastImageMiddleDownTime = e.timeStamp;
+    // Suppress browser default actions for middle-mousedown:
+    //   - Autoscroll mode (the spinning compass icon Chrome enters
+    //     after a middle-click on a scrollable region).
+    //   - On Linux, the X11 primary-selection paste that fires
+    //     against the focused editable element (the prompt
+    //     textarea) on middle-click regardless of click target.
+    // preventDefault here cancels both. We mirror it on the
+    // overlay's mousedown handler for events that target the SVG
+    // overlay sitting on top of the image.
+    e.preventDefault();
+  } else {
+    // Ctrl-left: stop the browser from also kicking off a text
+    // selection or focus-shift on the box, which would race with
+    // our drag.
+    e.preventDefault();
+  }
+  startPan(e);
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -2338,12 +2479,14 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', (e) => {
-  if (e.button !== 1 || !panState) return;
-  // Mirror the mousedown preventDefault on mouseup too. Some
-  // browsers / build configs fire the paste / autoscroll-toggle on
-  // middle-mouseup independently, so `preventDefault` on mousedown
-  // alone isn't always enough.
-  e.preventDefault();
+  if (!panState || e.button !== panState.button) return;
+  if (panState.button === 1) {
+    // Mirror the mousedown preventDefault on mouseup too. Some
+    // browsers / build configs fire the paste / autoscroll-toggle on
+    // middle-mouseup independently, so `preventDefault` on mousedown
+    // alone isn't always enough.
+    e.preventDefault();
+  }
   panState = null;
   document.body.classList.remove('panning');
 });

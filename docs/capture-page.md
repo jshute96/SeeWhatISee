@@ -992,10 +992,16 @@ re-activation is required:
 - Zoom modes: Fit (default), 1×, 2×, 4×, 8×.
 - Switched via:
   - The **Zoom** button (popover menu with the current mode checked).
-  - Mouse wheel over the visible image (ctrl-less; ctrl-wheel is
-    left to the browser's page-zoom).
-  - Wheel ticks at the min/max zoom fall through to native
-    `.image-box` scroll instead of being swallowed.
+  - **Ctrl + wheel** over the image-box (Cmd + wheel on macOS — the
+    wheel handler accepts both `ctrlKey` and `metaKey`; the Zoom
+    button's `title` is rewritten on init for Mac UAs so the visible
+    hint matches the platform).
+  - **Alt+−** zoom out, **Alt++** zoom in (plus a quiet **Alt+=**
+    alias that doesn't require Shift).
+- Plain wheel / trackpad swipe falls through to native `.image-box`
+  scroll — important for panning a tall image at 4× / 8× and avoids
+  the trackpad runaway where a continuous swipe with momentum tail
+  flies through every level.
 
 ### Modes
 
@@ -1029,26 +1035,57 @@ re-activation is required:
   `scrollTop / scrollLeft` to 0, and would lose the user's pan
   position on every resize / re-fit.
 
-### Wheel + middle-click pan
+### Wheel + keyboard zoom + middle-click pan
 
-- Wheel up zooms in, wheel down zooms out, by stepping through
-  `['fit', 1, 2, 4, 8]`. Skips the fit ↔ 1× hop when fit-mode
-  already renders at native pixels (small image / large viewport)
-  so two ticks don't produce one visible change.
-- The wheel handler only fires when the cursor is *inside the
-  image* (clientX/Y vs `imgRect`); a wheel over the box's empty
-  surround or scrollbars falls through to the browser's normal
-  scroll behavior.
-- Cursor-centered zoom: the image-fraction the cursor was over
-  pre-zoom is preserved post-zoom by setting
-  `imageBox.scrollLeft / scrollTop` to `boxRect.left + fx *
-  newWidth - clientX` (and similarly for Y). The browser clamps
-  to the new content bounds, so a cursor near an edge scrolls
-  maximally in that direction without spilling.
-- `Ctrl+wheel` is left untouched — that's the browser's page zoom.
-- Middle-button drag scrolls `.image-box` (`scrollLeft / scrollTop`
-  ± mouse delta). The drawing `mousedown` on `#overlay` bails on
-  `button !== 0`, so middle clicks bubble up to the box untouched.
+- Wheel up / Alt++ zoom in; wheel down / Alt+− zoom out. Steps
+  through `['fit', 1, 2, 4, 8]`, skipping the fit ↔ 1× hop when
+  fit-mode already renders at native pixels (small image / large
+  viewport) so two ticks don't produce one visible change.
+- **Ctrl/Cmd-required for wheel.**
+  - Plain wheel / trackpad gestures pass through to native
+    `.image-box` scroll.
+  - Ctrl+wheel is swallowed unconditionally — otherwise the browser's
+    page-zoom would fire alongside the app zoom.
+- **Wheel accumulator.** Trackpads emit a continuous stream of small-
+  deltaY events during a swipe (and through the OS-level momentum
+  tail), so a one-event-per-step mapping flies through every level.
+  - Sum `|deltaY|`; step zoom when it crosses ~100 (one mouse-notch).
+  - Cap at one step per event, regardless of accumulated delta.
+  - Direction change or 200 ms idle gap resets the accumulator so a
+    fresh gesture doesn't carry leftover delta.
+  - Net effect: mouse-wheel users see one step per detent; trackpad
+    users get deliberate-feeling steps instead of flying through.
+- **Cursor-centered** zoom funnels both wheel and keyboard paths
+  through `cursorCenteredZoomStep(dir, focalX, focalY)`.
+  - The image-fraction the focal point was over pre-zoom is preserved
+    post-zoom by setting `imageBox.scrollLeft / scrollTop` to
+    `boxRect.left + fx * newWidth - focalX` (similarly for Y).
+  - Browser clamps to the new content bounds, so a focal near an edge
+    scrolls maximally that way.
+  - Focal outside the visible image (or unknown — pre-mousemove)
+    falls back to a level change without re-scrolling.
+- **Keyboard listener** is separate from the page-wide alt-hotkey
+  handler because that one early-returns on `shiftKey`, and Alt++
+  needs Shift on most layouts. We accept `+`, `=` (no-shift alias),
+  `-`, and `_` (Shift+- on some layouts).
+- **Pan: middle-button OR Ctrl/Cmd + left.** Both gestures share
+  `panState` and the `startPan` helper. `panState.button` records
+  which trigger started the drag so the matching `mouseup` releases
+  it (a stray right-up shouldn't end a Ctrl-left pan).
+  - Middle-click bubbles up from `#overlay` to `.image-box`
+    untouched (the overlay's `mousedown` bails on `button !== 0`).
+  - Ctrl-left starts the pan from the overlay's own `mousedown`
+    (Ctrl-left branch added after the in-flight `cropDrag /
+    dragStart` guard, before the drawing branches), then
+    `stopPropagation` so the imageBox handler doesn't double-init.
+    Outside the overlay (the box's empty surround) the imageBox
+    handler catches Ctrl-left directly.
+  - In-flight guard sits above all of the overlay's mousedown
+    branches: a stuck draw (e.g. mouseup lost to a window blur)
+    blocks every fresh mousedown — including Ctrl-left — so a pan
+    can't start on top of stale draw state.
+  - Drag scrolls `.image-box` (`scrollLeft / scrollTop` ± mouse
+    delta) via the window-level `mousemove` listener.
 
 ### Zoom menu
 
