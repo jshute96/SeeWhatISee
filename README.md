@@ -1,113 +1,106 @@
-<p><img src="src/icons/icon-128.png" alt="icon"></p>
+<p><img src="docs/chrome-web-store/promo-tile.png" alt="SeeWhatISee — The ultimate screenshot tool for vibe-coding" width="440"></p>
 
 # SeeWhatISee Chrome Extension
 
-This is a Chrome extension for taking screenshots and saving HTML snapshots, optimized for use during agentic development.
+Click the toolbar icon to open the *Capture* page. Pick what to send
+(screenshot, page HTML, selected text, or just the URL), mark it up
+or add a prompt, and ship it to a web chatbot or a CLI agent.
 
-You can share what you see on a web page with your coding agent (Claude code, etc) *with a single click*.
+- **Web targets** — *Claude*, *ChatGPT*, *Gemini*, *Google*.
+- **CLI targets** — *Claude Code* and *Gemini CLI*, via bundled
+  `/see-what-i-see` skills that read captures saved to
+  `~/Downloads/SeeWhatISee/`.
+- **Markup** — highlight, redact or crop the images.
+- **Configurable** — hotkeys, default click and double-click actions,
+  default items to save, which web agents to use.
 
-When you select text in the page, that text is saved, as your choice of HTML, text, or agent-friendly markdown.
+See [Usage](#usage) for the full feature tour, or jump to [Installation](#installation).
 
-The screenshots are saved in `~/Downloads/SeeWhatISee/`. Then the provided skills read them automatically from there.
+The *Capture* page:
+
+![Capture page with highlight drawn over a Wikipedia article](docs/images/readme-screenshot.png)
 
 ## Usage
 
 ### Chrome extension
 
-- Click the extension icon ![icon](src/icons/icon-16.png) to open the *Capture* page (see below).
-  - Double-click it to bypass the *Capture* page and save a screenshot immediately.
-  - If there's text selected on the page, double-click instead saves the selected text immediately.
-  - Keyboard equivalents: *Ctrl+Shift+X* (*⌘+Shift+X* on Mac) for click, *Ctrl+Shift+E* (*⌘+Shift+E* on Mac) for double-click.  Configure these via the **Options** page.
-- Right-click the icon for more options:
-  - **Capture…** Opens the *Capture* page (see below).
-  - **Save default items** — Saves the default items the *Capture* page saves, according to current options (without opening the dialog).
-  - **Capture… in 3s** — Open the *Capture* page after a three second delay.
-  - **More ▸**
-    - **Capture…** — Same as the top-level Capture... entry.
-    - **Save default items** — Same as the top-level Save default items entry.
-    - **Save screenshot**
-    - **Save HTML contents** of the page.
-    - **Save URL** — Record just the current tab's URL, without a screenshot.
-    - **Save everything** — Saves the screenshot, the HTML, and the current selection (if any).
-    - **Capture… in 3s** and **Save screenshot in 3s** — same as the
-      undelayed entries above, but after a delay so you can activate hover
-      states, open menus, etc.
-    - **Save selection as HTML, text, or markdown** — Saves the currently selected text.
-    - **Copy last screenshot, HTML, or selection filename** — Copies filename to clipboard.
-    - **Upload image to Capture…** — Pick a local image; the *Capture*
-      page opens with it as the screenshot so you can annotate, add
-      a prompt, and save or Ask.
-    - **Snapshots directory** — Opens the on-disk capture directory
-      (`~/Downloads/SeeWhatISee/`) so you can browse the saved files.
-    - **Clear log history** — Erases the `log.json` history of previous snapshots.
-      Screenshot files are still saved in your Downloads folder.
-  - **Set this tab as Ask button target** — when you're on Claude / Gemini / ChatGPT (including Claude Code on `claude.ai/code`), pins the current tab so future *Ask* clicks send to that conversation. Flips to **Unset this tab as Ask button target** while the current tab is the pin.
-- **Right-click an image**:
-  - **SeeWhatISee → Capture… (this image)** — Opens the *Capture*
-    page using that image as the screenshot. The page selection
-    (e.g. a caption) is also captured.
-  - **SeeWhatISee → Save screenshot (this image)** — Capture and
-    save the image directly.
-- **Options** — Opens options page, where you can configure default actions
-  for click and double-click, default Save choices on the *Capture* page,
-  keyboard hotkeys, and which AI providers (Claude / Gemini / ChatGPT /
-  Google) are enabled for *Ask* plus which one is the default destination.
-  Claude Code (`claude.ai/code`) is treated as a Claude tab variant —
-  pin or pick an existing one to send to it; the Capture page blocks
-  the send and asks you to uncheck Save HTML / Save selection if
-  those are set, since Claude Code only accepts image uploads.
-  Google is image-only and always opens a fresh google.com tab (no
-  pinning, no existing-tab reuse) — the search box gets your prompt
-  and submits to a Google Search results page.
+#### Activate SeeWhatISee
+
+- Click the extension icon ![icon](src/icons/icon-16.png) to open the *Capture* page.
+  - Default hotkey: `Ctrl+Shift+X` (`⌘+Shift+X` on Mac)
+- Double-click to save a screenshot (or selected text) immediately.
+  - Default hotkey: `Ctrl+Shift+E` (`⌘+Shift+E` on Mac)
+- Right-click for more options.
+- Right-clicking on an image lets you capture that image directly.
 
 #### Capturing selected text
 
-When text is selected on the page, clicking the icon saves the selection (by default).
+When text is selected on the page, clicking the icon saves the selection (by default).  You can also save selected text on the *Capture* page.
 
-The selection can be saved in three formats:
-- **as HTML**: Saves the exact HTML extracted from the page. This can be noisy and difficult to read.
-- **as text**: Saves a plain text version of the selection.
-- **as markdown**: Converts the selection HTML to markdown.
-  - This uses a lightweight conversion that includes headings, bullets, links, tables, and some simple formatting.
-  - The markdown format preserves the content and structure, in a format friendly for both humans and agents to read.
-  - When the selection is *already* markdown source, the original markdown is preserved without reformatting.
+Text can be saved **as HTML**, **as text**, or **as markdown** (the default).
 
-On the *Capture* page, you can also view or edit the selection content.
+Saving as markdown uses a lightweight conversion that includes headings, bullets, links, tables, and some simple formatting, converting to a format that's friendly and efficient for both humans and agents to read.
 
 #### *Capture* page
 
 This page allows full control of what's captured.  You can add highlights on the page and **add a prompt telling the agent what you want to do**.
 
-Click **Capture**, the toolbar icon ![icon](src/icons/icon-16.png), or press *Enter* in the prompt field to submit.
+Click **Capture**, the toolbar icon ![icon](src/icons/icon-16.png), or press `Enter` in the prompt field to submit.
 
 On this page, you can:
 
-- See the page URL and HTML size.
-- Pick whether to save the screenshot, HTML snapshot, and/or the currently selected text.
-  - Selected text can be saved **as HTML**, **as text**, or **as markdown**.
-  - With nothing checked, you can still capture the URL.
-- Copy saved filenames to the clipboard with the copy icon ![icon](docs/images/copy-icon.png).
-- View or edit the captured HTML or selection before saving with the pencil icon ![icon](docs/images/edit-icon.png).
-- **Save individual artifacts** to a custom location with the download icon ![icon](docs/images/download-icon.png).
-- Add an optional **Prompt**. (Enter submits; Shift+Enter or `\`+Enter inserts a newline.)
-- Annotate the screenshot with **drawing tools**:
-  - **Box** (default) — draws a red rectangle to highlight a region.
-  - **Line** / **Arrow** — draws a red line or arrow.
-  - **Crop** — drag a rectangular region — image will be cropped to that region. Drag borders to resize.
-  - **Redact** — draw a black box to hide part of the image.
-  - **Shrink** — tighten the most recent Box / Redact, or the crop region, around its content. (Strip whitespace or borders around the outer edges.)
-  - **Undo** / **Clear** — roll back the most recent edit, or all edits.
-  - **Copy** / **Save** — copy the edited image to the clipboard, or download it.
-- Format conversion in **Paste**
-  - If the clipboard holds HTML, *Paste* (*Ctrl-V*) converts it to markdown in the *Prompt* or *as markdown* editor.
-  - In the HTML editors, the HTML source is pasted.
-  - *Paste as plain text* (*Ctrl-Shift-V*) always pastes plain text.
-- **Ask** — sends the selected content (screenshot, HTML snapshot, and/or selection) and the prompt to an AI web UI in another tab. The button is split: clicking **Ask** sends to the tab you used last (or, on first use, opens a new tab in the default provider); the chevron on the right opens a menu where you can pick a different target — a new tab in Claude, Gemini, ChatGPT, or Google, or any tab you already have open (including Claude Code on `claude.ai/code`). Google is new-tab-only — it doesn't appear in the existing-window list and can't be pinned. The menu marks the current target with a check. Picking a menu item shifts the default but doesn't send — use **Ask** (or *Alt+A*) to fire. *Alt+A* sends to the resolved default. If you typed a prompt, it's auto-submitted.
-  - Right of the **Ask** split, one small favicon button per enabled provider — click to open a fresh tab on that provider, bypassing whichever target the **Ask** button is currently set to.
-  - Modifier keys on **Capture** and **Ask** — *Shift-click* keeps the Capture page open after the action (which allows saving multiple capture varations from the same screenshot). *Ctrl-click* closes the page.
+- Choose what to save: **screenshot**, **HTML**, or **selection**.
+  - You can preview or edit the HTML or selection text with the pencil icon ![icon](docs/images/edit-icon.png).
+  - Copy the saved filenames to the clipboard with the copy icon ![icon](docs/images/copy-icon.png).
+  - Save to other locations with the download icon ![icon](docs/images/download-icon.png).
 
-If you add a prompt, the agent will follow it when reading this snapshot,
-focusing on highlighted areas in the screenshot.
+- Add an optional **Prompt**.
+  - `Enter` submits; `Shift+Enter` or `\+Enter` inserts a newline.
+  - HTML copied from a web page is converted to markdown during **Paste**.
+    - *Paste as plain text* (`Ctrl-Shift-V`) pastes the original copied text.
+
+- Annotate the screenshot with **drawing tools**:
+  - Draw **boxes**, **lines** or **arrows**.
+  - **Crop** the image by drawing a rectangle, or dragging borders.
+  - Use **Redact** to hide parts of image with black boxes.
+  - Use **Shrink** to tighten the most recent box or redaction, or the crop region, around its content. This strips whitespace or borders around the outer edges.
+  - **Zoom** in or out using the button or mouse wheel.
+  - **Undo** or **Clear** to revert edits.
+  - **Copy** to clipboard.
+  - **Save** to a file.
+
+> [!TIP]
+> If you add a prompt, the agent will follow it when reading this snapshot, focusing on highlighted areas in the screenshot.
+
+#### **Ask** buttons — Sending to web chatbots
+
+Click **Ask** to send the selected files and the prompt to one of the chatbots on the web.
+
+Use the drop-down menu to select a target — opening a new tab (↗) or continuing in an existing tab (📌).
+
+Click a provider icon to start a new tab in 
+- **Claude**; Supports **Claude Code** too, but with image uploads only.
+- **ChatGPT**; Supports uploading at most two files per prompt.
+- **Gemini**
+- **Google**; Does a Google search with the prompt and an uploaded image. Image upload only works if logged in to Google.
+
+While viewing a chatbot page, the toolbar context menu lets you **Set this tab as the Ask button target**.
+
+> [!TIP]
+> Some chatbot providers require an account and that you are logged in. You can change the default and remove unsupported providers on the *Options* page.
+
+#### Options
+
+Open the **Options** page from the toolbar context menu or with the button on the *Capture* page.
+
+You can configure:
+
+- **Ask** button providers — Which web chat provider is the default, and which others show up.
+- *Capture* page *Prompt* settings — `Enter` behavior, and whether to *Capture* or *Ask* by default.
+- Default items to save — on the Capture page and when you double-click.
+- Toolbar icon and context menu 
+  - Default actions for *Click* and *Double-click*
+  - Hotkeys (set on the Chrome settings page chrome://extensions/shortcuts)
 
 ### Claude Code skills
 
@@ -128,12 +121,19 @@ on each snapshot. For example,
 
 - `/see-what-i-see` `[prompt]` — read the latest capture.
 - `/see-what-i-see-watch` `[prompt]` — watch for new captures and
-  describe each one. Runs in the foreground (Gemini has no async
-  background worker with a completion callback), so the conversation
-  stays paused on a blocking shell call between captures. Stop it by
-  pressing Escape.
+  describe each one.
+  - Runs in the foreground. (Gemini has no async background worker with a completion callback)
+  - The conversation stays paused on a blocking shell call between captures. 
+  - Stop it by pressing *Escape*.
 
 ## Installation
+
+### Chrome web store
+
+Install from the Chrome web store.  Link pending.
+
+> [!TIP]
+> Pin the extension on your toolbar using **Pin to toolbar** on the **Manage extension** page, or using the "Extensions" (puzzle piece) toolbar icon.
 
 ### Chrome extension (from a release zip)
 
