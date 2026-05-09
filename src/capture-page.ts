@@ -518,8 +518,11 @@ function savedImageDimensions(): { width: number; height: number } | null {
  * (or full image) at rest.
  *
  * Two drag flavors:
- *   - `cropDrag` — handle-resize on an existing crop (already in
- *     percent coordinates, mirrors the values painted by `render`).
+ *   - `boxDrag` with `kind === 'crop'` — handle-resize on an
+ *     existing crop, or the image-edge "create a new crop" gesture.
+ *     Already in percent coordinates, mirrors the values painted by
+ *     `render`. A rect/redact resize drag also lives in `boxDrag`
+ *     but doesn't change the cropped dims, so we ignore it here.
  *   - Crop-tool create drag — `dragStart` + `dragCurrent` in
  *     display pixels, projected to percent against `imgRect`.
  */
@@ -531,9 +534,9 @@ function liveCropDimensions(): { width: number; height: number } | null {
   // commit on mouseup, then route through `pctRectToPixels` so the
   // live preview uses the same integer derivation as the eventual
   // bake (and hence `savedImageDimensions`).
-  if (cropDrag) {
+  if (boxDrag && boxDrag.kind === 'crop') {
     const px = pctRectToPixels(
-      { x: cropDrag.curX, y: cropDrag.curY, w: cropDrag.curW, h: cropDrag.curH },
+      { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH },
       natW,
       natH,
     );
@@ -1112,13 +1115,22 @@ function formatBytes(n: number): string {
 // the stack). Coordinates are percentages of the image so edits
 // survive resizes and prompt growth.
 //
-// Crop-edge handles work alongside the tool palette: the four edges
-// and four corners of the *effective* crop region (the active crop
-// if one exists, else the full image) are draggable. With no active
-// crop, dragging an image edge inward creates a crop from scratch;
-// with one, dragging the crop edges resizes it. The HANDLE_PX hit
-// band wins over the selected tool, so a Box drag that starts in
-// the band starts a crop-handle drag instead of a Box draw.
+// Edge-handle resize works alongside the tool palette: the four
+// edges and four corners of any rect-shaped edit (rect / redact /
+// crop) and — when no crop exists — the four edges of the image
+// itself are draggable. Hit-testing walks the edit stack topmost-
+// first so a newer box on top of an older one wins. Resize gestures
+// mutate the targeted edit in place and record a Shrink-style `prev`
+// history op so Undo restores the pre-drag geometry one click at a
+// time. The image-edge fallback (only fires when no active crop
+// exists) commits a fresh `crop` edit instead — that's the "drag
+// image edge to start a crop" affordance.
+//
+// The HANDLE_PX hit band normally wins over the selected tool, so a
+// Box drag that starts in the band starts a resize instead of a
+// Box draw. Holding Shift on mousedown bypasses the hit test, which
+// lets the user start a fresh draw flush against an existing box's
+// edge.
 
 type Point = { x: number; y: number };
 type RectKind = 'rect' | 'redact' | 'crop';
@@ -1141,10 +1153,12 @@ type Edit = RectEdit | LineEdit;
 //
 //   - No `prev` field — the op was an "add", so undo removes the
 //     matching edit from the stack (the original behaviour).
-//   - `prev` field set — the op was a Shrink that mutated the
-//     matching edit's geometry in place; undo restores those
-//     pre-shrink coordinates so the user can step back through a
-//     chain of shrinks one click at a time.
+//   - `prev` field set — the op mutated an existing edit's geometry
+//     in place; undo restores those pre-mutation coordinates so the
+//     user can step back through a chain of in-place edits one
+//     click at a time. Pushed by both Shrink clicks and edge-handle
+//     resize drags (rect / redact / crop) — both operations share
+//     the same in-place-mutate shape.
 type HistoryOp = {
   id: number;
   prev?: { x: number; y: number; w: number; h: number };
@@ -1171,39 +1185,56 @@ let dragCurrent: Point | null = null;
 // render() and the mouseup handler.
 let selectedTool: Tool = 'rect';
 
-// ─── Crop-drag state ──────────────────────────────────────────────
+// ─── Box-resize drag state ────────────────────────────────────────
 //
-// Each of the four edges and four corners of the image (or the
-// active crop, when one exists) is a draggable handle. The user can
-// drag inward to create a crop from scratch or to resize an existing
-// one. Every completed drag commits a new 'crop' edit on the stack,
-// so it participates in Undo / Clear and resizes nest naturally
-// without mutating prior stack entries.
+// Drives edge-handle drags on rect-shaped edits (rect / redact /
+// crop) and on the image edges (the "no crop yet → drag to crop"
+// affordance). The current target is identified by `editId`:
+//   - `editId !== null` — resize an existing edit in place. Mouseup
+//     mutates the targeted edit's bounds and records a Shrink-style
+//     `prev` history op so Undo restores the pre-drag geometry.
+//     Used for all three rect-shaped kinds — the visual stack stays
+//     stable (no spurious duplicate boxes appearing on each drag).
+//   - `editId === null` — create a brand-new `crop` edit from the
+//     image bounds. Mouseup pushes a fresh edit onto the stack with
+//     a plain `add` history op.
 //
 // Handles are sampled by hit-testing a `HANDLE_PX` band around the
-// four edges of the effective crop rectangle (the active crop's
-// bounds, or the full image bounds when no crop exists). Corner
-// regions take precedence over edges (the four-way cursor beats the
-// one-axis cursor).
+// edges of the candidate rectangle. Corner regions take precedence
+// over edges (the four-way cursor beats the one-axis cursor).
 type CropHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+// Alias for readability at this section's call sites — same set as
+// `RectKind` (the kinds that carry rectangular geometry); kept as a
+// separate name so the box-resize code reads naturally.
+type BoxKind = RectKind;
 
-// Width of the edge-hit band in CSS pixels. Large enough to be
-// grabbable by mouse but small enough not to eat into the interior
-// region where rect/line drawing happens. Tuned by feel.
-const HANDLE_PX = 10;
+// Width of the edge-hit band in CSS pixels. Tuned by feel: large
+// enough to grab without precision aiming, small enough that
+// drawing a fresh box close to an existing one's edge isn't a fight.
+// Reduced from a previous wider band that felt sticky on small
+// boxes.
+const HANDLE_PX = 6;
 
-// Minimum crop width/height as a fraction of the image, so a drag
-// can't collapse the crop to 0×0 (which would make it impossible to
-// grab the handles on the next drag). 1.5% picks up ~9 px on a
+// Minimum width/height as a fraction of the image, so a resize
+// drag can't collapse a box to 0×0 (which would make it impossible
+// to grab the handles on the next drag). 1.5% picks up ~9 px on a
 // 600 px preview — enough room to click on without being a wasted
-// constraint.
-const MIN_CROP_PCT = 1.5;
+// constraint. Shared across rect / redact / crop so the floor
+// behavior is uniform.
+const MIN_BOX_PCT = 1.5;
 
-interface CropDragState {
+interface BoxDragState {
+  // Which kind of box this drag is editing. Drives commit semantics
+  // and the live render path (rect/redact draw inline; crop drives
+  // the dim-frame preview).
+  kind: BoxKind;
+  // Edit being mutated, or null when the gesture is creating a fresh
+  // `crop` edit from the image-edge fallback.
+  editId: number | null;
   handle: CropHandle;
-  // Starting geometry in percentages — the crop we're editing.
-  // Either the current activeCrop()'s bounds or the full image
-  // (0, 0, 100, 100) when creating a fresh crop.
+  // Starting geometry in percentages — the box we're editing.
+  // Either the targeted edit's bounds or, for the image-edge crop-
+  // create gesture, the full image (0, 0, 100, 100).
   startX: number; startY: number; startW: number; startH: number;
   // Where the pointer was when the drag began, in display pixels.
   // We track deltas rather than absolute positions so a drag that
@@ -1211,11 +1242,12 @@ interface CropDragState {
   // expected motion.
   originX: number; originY: number;
   // Live proposed bounds, updated every mousemove and rendered as
-  // the preview crop. Commit-on-mouseup copies these into a new
-  // 'crop' edit if the drag moved enough to count.
+  // the preview box. Commit-on-mouseup either mutates the targeted
+  // edit (in-place) or pushes a fresh `crop` edit, depending on
+  // `editId`.
   curX: number; curY: number; curW: number; curH: number;
 }
-let cropDrag: CropDragState | null = null;
+let boxDrag: BoxDragState | null = null;
 
 function imgRect(): DOMRect {
   return previewImg.getBoundingClientRect();
@@ -1251,16 +1283,6 @@ function activeCrop(): RectEdit | undefined {
   return undefined;
 }
 
-// The effective crop region, in percentages. When no crop exists,
-// the region is the full image — which is also what the crop-handle
-// hit test uses, so "drag the image edge to start cropping" falls
-// out naturally.
-function effectiveCropPct(): { x: number; y: number; w: number; h: number } {
-  const c = activeCrop();
-  if (c) return { x: c.x, y: c.y, w: c.w, h: c.h };
-  return { x: 0, y: 0, w: 100, h: 100 };
-}
-
 function cursorForHandle(h: CropHandle): string {
   switch (h) {
     case 'n': case 's': return 'ns-resize';
@@ -1270,29 +1292,33 @@ function cursorForHandle(h: CropHandle): string {
   }
 }
 
-// Hit-test the pointer against the effective crop's edges. Returns
-// which handle (if any) the pointer is inside the HANDLE_PX band of.
-// Corners take precedence over plain edges: a pointer that's near
-// both the top and the left counts as the 'nw' corner handle.
-function detectCropHandle(p: Point): CropHandle | null {
+// Hit-test the pointer against a single rectangle's edges, in
+// percent-space coordinates. Returns which handle (if any) the
+// pointer is inside the HANDLE_PX band of. Corners take precedence
+// over plain edges: a pointer that's near both the top and the left
+// counts as the 'nw' corner handle.
+//
+// Edge bands only match when the pointer is also inside the
+// perpendicular extent of the rectangle (plus a small outside band
+// so the handle is grabbable when the rect is flush with the image
+// edge). Without this clamp, a pointer halfway down the image in
+// empty space beside the rect would count as "near the left edge"
+// and flip the cursor to resize, which is confusing.
+function handleAtRect(
+  p: Point,
+  rectPct: { x: number; y: number; w: number; h: number },
+): CropHandle | null {
   const r = imgRect();
-  const c = effectiveCropPct();
-  const cx = (c.x / 100) * r.width;
-  const cy = (c.y / 100) * r.height;
-  const cw = (c.w / 100) * r.width;
-  const ch = (c.h / 100) * r.height;
+  const cx = (rectPct.x / 100) * r.width;
+  const cy = (rectPct.y / 100) * r.height;
+  const cw = (rectPct.w / 100) * r.width;
+  const ch = (rectPct.h / 100) * r.height;
 
   const nearLeft = Math.abs(p.x - cx) <= HANDLE_PX;
   const nearRight = Math.abs(p.x - (cx + cw)) <= HANDLE_PX;
   const nearTop = Math.abs(p.y - cy) <= HANDLE_PX;
   const nearBottom = Math.abs(p.y - (cy + ch)) <= HANDLE_PX;
 
-  // Edge bands only match when the pointer is also inside the
-  // perpendicular extent of the crop (plus a small outside band so
-  // the handle is grabbable when the crop is flush with the image
-  // edge). Without this clamp, a pointer halfway down the image in
-  // empty space beside the crop would count as "near the left edge"
-  // and flip the cursor to resize, which is confusing.
   const withinY = p.y >= cy - HANDLE_PX && p.y <= cy + ch + HANDLE_PX;
   const withinX = p.x >= cx - HANDLE_PX && p.x <= cx + cw + HANDLE_PX;
 
@@ -1307,21 +1333,78 @@ function detectCropHandle(p: Point): CropHandle | null {
   return null;
 }
 
-// Given an initial crop rectangle and a pointer delta (in display
-// pixels) on a specific handle, compute the proposed new crop
-// rectangle in percentages. Caller already translated the pointer
-// delta; this function only enforces:
+// What the next mousedown would grab if it landed at `p`: the
+// topmost rect-shaped edit whose edge is within HANDLE_PX, or the
+// image-edge fallback (only when no active crop exists) for the
+// "drag image edge to start a crop" gesture. Caller is responsible
+// for honouring Shift-bypass — this function doesn't know about
+// modifier state.
+type BoxHandleHit = {
+  kind: BoxKind;
+  // null when targeting the image edges (no active crop). On commit
+  // a fresh `crop` edit is pushed onto the stack instead of
+  // mutating an existing one.
+  editId: number | null;
+  bounds: { x: number; y: number; w: number; h: number };
+  handle: CropHandle;
+};
+function detectBoxHandle(p: Point): BoxHandleHit | null {
+  // Walk the stack topmost-first so a newer box layered on top of
+  // an older one wins the gesture — matches what the user sees.
+  // Older `crop` edits are functionally invisible (the active crop's
+  // dim frame masks them) so we skip them and let the active crop
+  // (if any) match through its own iteration step.
+  const ac = activeCrop();
+  for (let i = edits.length - 1; i >= 0; i--) {
+    const e = edits[i]!;
+    if (e.kind !== 'rect' && e.kind !== 'redact' && e.kind !== 'crop') continue;
+    if (e.kind === 'crop' && (!ac || ac.id !== e.id)) continue;
+    const handle = handleAtRect(p, { x: e.x, y: e.y, w: e.w, h: e.h });
+    if (handle) {
+      return {
+        kind: e.kind,
+        editId: e.id,
+        bounds: { x: e.x, y: e.y, w: e.w, h: e.h },
+        handle,
+      };
+    }
+  }
+  // Image-edge fallback: only when there's no active crop, since
+  // the active crop's edges already covered any near-image-edge
+  // hits above.
+  if (!ac) {
+    const handle = handleAtRect(p, { x: 0, y: 0, w: 100, h: 100 });
+    if (handle) {
+      return {
+        kind: 'crop',
+        editId: null,
+        bounds: { x: 0, y: 0, w: 100, h: 100 },
+        handle,
+      };
+    }
+  }
+  return null;
+}
+
+// Given an initial rectangle and a pointer delta (in display
+// pixels) on a specific handle, compute the proposed new rectangle
+// in percentages. Caller already translated the pointer delta;
+// this function only enforces:
 //   - Correct axis for each handle (n/s move only the top/bottom
 //     edge; e/w move only the left/right; corners move two edges).
-//   - The crop stays inside the image (0 ≤ x, x+w ≤ 100, likewise y).
-//   - Dragged edges clamp at `MIN_CROP_PCT` away from the opposite
+//   - The rect stays inside the image (0 ≤ x, x+w ≤ 100, likewise y).
+//   - Dragged edges clamp at `MIN_BOX_PCT` away from the opposite
 //     (undragged) edge. The opposite edge never moves — a shrink
 //     drag just stops once it bottoms out at the minimum. This
 //     keeps the behavior symmetric across all four sides; an
 //     earlier version allowed the west/north clamps to push the
 //     opposite edge outward, which made N/W drags feel different
 //     from S/E drags.
-function applyCropDrag(
+//
+// Shared between rect / redact / crop resize gestures (and the
+// image-edge crop-create gesture); the constraints are uniform
+// across all four since the same MIN_BOX_PCT minimum applies.
+function applyEdgeDrag(
   start: { startX: number; startY: number; startW: number; startH: number },
   handle: CropHandle,
   dxPct: number, dyPct: number,
@@ -1337,20 +1420,20 @@ function applyCropDrag(
   let bottom = start.startY + start.startH;
 
   // Clamp each dragged edge into `[0, 100]` and keep it at least
-  // `MIN_CROP_PCT` away from the opposite edge. The opposite edge
+  // `MIN_BOX_PCT` away from the opposite edge. The opposite edge
   // stays at its starting position because we only read its value
   // (never assign to it) inside each branch.
   if (draggingTop) {
-    top = Math.max(0, Math.min(bottom - MIN_CROP_PCT, top + dyPct));
+    top = Math.max(0, Math.min(bottom - MIN_BOX_PCT, top + dyPct));
   }
   if (draggingBottom) {
-    bottom = Math.min(100, Math.max(top + MIN_CROP_PCT, bottom + dyPct));
+    bottom = Math.min(100, Math.max(top + MIN_BOX_PCT, bottom + dyPct));
   }
   if (draggingLeft) {
-    left = Math.max(0, Math.min(right - MIN_CROP_PCT, left + dxPct));
+    left = Math.max(0, Math.min(right - MIN_BOX_PCT, left + dxPct));
   }
   if (draggingRight) {
-    right = Math.min(100, Math.max(left + MIN_CROP_PCT, right + dxPct));
+    right = Math.min(100, Math.max(left + MIN_BOX_PCT, right + dxPct));
   }
 
   return { x: left, y: top, w: right - left, h: bottom - top };
@@ -1468,6 +1551,16 @@ function render(): void {
   // stay at 1px (they're UI affordances, not picture content).
   const sw = 3 * currentDisplayScale();
 
+  // While a rect/redact resize drag is in flight, draw the targeted
+  // edit at its live (`boxDrag.cur*`) bounds rather than its stored
+  // values — gives the user a real-time preview that matches what
+  // mouseup will commit. Crop drags follow the same idea below
+  // through the cropPreview path (dim frame + dashed border).
+  const liveResize =
+    boxDrag && boxDrag.editId !== null && boxDrag.kind !== 'crop'
+      ? { id: boxDrag.editId, x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH }
+      : null;
+
   for (const e of edits) {
     if (e.kind === 'line' || e.kind === 'arrow') {
       const ax1 = (e.x1 / 100) * w;
@@ -1479,23 +1572,17 @@ function render(): void {
       } else {
         overlay.appendChild(makeLine(ax1, ay1, ax2, ay2, sw));
       }
-    } else if (e.kind === 'rect') {
-      overlay.appendChild(makeStrokedRect(
-        (e.x / 100) * w,
-        (e.y / 100) * h,
-        (e.w / 100) * w,
-        (e.h / 100) * h,
-        'red',
-        sw,
-      ));
-    } else if (e.kind === 'redact') {
-      overlay.appendChild(makeFilledRect(
-        (e.x / 100) * w,
-        (e.y / 100) * h,
-        (e.w / 100) * w,
-        (e.h / 100) * h,
-        'black',
-      ));
+    } else if (e.kind === 'rect' || e.kind === 'redact') {
+      const live = liveResize && liveResize.id === e.id ? liveResize : e;
+      const x = (live.x / 100) * w;
+      const y = (live.y / 100) * h;
+      const dw = (live.w / 100) * w;
+      const dh = (live.h / 100) * h;
+      if (e.kind === 'rect') {
+        overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
+      } else {
+        overlay.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
+      }
     }
     // 'crop' is not drawn inline — it's painted as a single
     // "outside-is-dimmed" overlay below using the active crop
@@ -1521,8 +1608,8 @@ function render(): void {
       w: (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100,
       h: (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100,
     };
-  } else if (cropDrag) {
-    cropPreview = { x: cropDrag.curX, y: cropDrag.curY, w: cropDrag.curW, h: cropDrag.curH };
+  } else if (boxDrag && boxDrag.kind === 'crop') {
+    cropPreview = { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH };
   } else {
     const crop = activeCrop();
     if (crop) cropPreview = { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
@@ -1655,14 +1742,14 @@ function render(): void {
 
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
-  // A draw / crop drag is already in flight (e.g. the previous
+  // A draw / resize drag is already in flight (e.g. the previous
   // mouseup was lost to a window blur). Ignore *every* fresh
   // mousedown — drawing branches below, the Ctrl-left pan branch,
   // and the middle-click preventDefault — so we don't layer a pan
   // on top of stuck draw state, which would leave `panState` and
-  // `dragStart`/`cropDrag` both live until the next normal
+  // `dragStart`/`boxDrag` both live until the next normal
   // left-mouseup. Sits above the Ctrl-left branch deliberately.
-  if (cropDrag !== null || dragStart !== null) return;
+  if (boxDrag !== null || dragStart !== null) return;
   // Ctrl/Cmd + left = pan, mirroring middle-click. We start it here
   // (the overlay sits on top of the image) and `stopPropagation` so
   // the imageBox handler doesn't double-init the same drag. The
@@ -1691,20 +1778,24 @@ overlay.addEventListener('mousedown', (e) => {
     return;
   }
   const p = localCoords(me);
-  // Crop-handle drag wins over the selected tool. Hit-test runs
-  // against the *effective* crop region — the active crop if one
-  // exists, else the full image — so dragging an image edge inward
-  // creates a crop from scratch. A drag elsewhere in the overlay
-  // commits an edit of the selected tool's kind (below).
-  const handle = detectCropHandle(p);
-  if (handle) {
+  // Box-handle drag wins over the selected tool: hit-tests every
+  // rect-shaped edit (rect / redact / crop) topmost-first, plus
+  // the image edges as a fallback when no crop exists. Holding
+  // Shift bypasses this so the user can start a fresh draw flush
+  // against an existing box's edge — e.g. drawing a redact box
+  // right next to a crop's edge without snapping the crop instead.
+  const hit = me.shiftKey ? null : detectBoxHandle(p);
+  if (hit) {
     me.preventDefault();
-    const c = effectiveCropPct();
-    cropDrag = {
-      handle,
-      startX: c.x, startY: c.y, startW: c.w, startH: c.h,
+    boxDrag = {
+      kind: hit.kind,
+      editId: hit.editId,
+      handle: hit.handle,
+      startX: hit.bounds.x, startY: hit.bounds.y,
+      startW: hit.bounds.w, startH: hit.bounds.h,
       originX: p.x, originY: p.y,
-      curX: c.x, curY: c.y, curW: c.w, curH: c.h,
+      curX: hit.bounds.x, curY: hit.bounds.y,
+      curW: hit.bounds.w, curH: hit.bounds.h,
     };
     render();
     return;
@@ -1721,26 +1812,28 @@ overlay.addEventListener('mousedown', (e) => {
 
 // Idle-hover cursor feedback. The hit-test matches the mousedown
 // path's, so the user gets a resize cursor before committing — on
-// the active crop's edges if one exists, or the image edges (for
-// "drag here to start cropping") if none.
+// any rect-shaped edit's edge, or the image edges (for "drag here
+// to start cropping") when no crop exists. Holding Shift suppresses
+// the resize cursor too, mirroring the mousedown bypass so the
+// user sees that a Shift-drag will fall through to drawing.
 overlay.addEventListener('mousemove', (e) => {
-  if (dragStart || cropDrag) return;
-  const handle = detectCropHandle(localCoords(e));
-  overlay.style.cursor = handle ? cursorForHandle(handle) : 'crosshair';
+  if (dragStart || boxDrag) return;
+  const hit = e.shiftKey ? null : detectBoxHandle(localCoords(e));
+  overlay.style.cursor = hit ? cursorForHandle(hit.handle) : 'crosshair';
 });
 
 window.addEventListener('mousemove', (e) => {
-  if (cropDrag) {
+  if (boxDrag) {
     const r = imgRect();
     const p = localCoords(e);
-    const dxPct = ((p.x - cropDrag.originX) / r.width) * 100;
-    const dyPct = ((p.y - cropDrag.originY) / r.height) * 100;
-    const next = applyCropDrag(cropDrag, cropDrag.handle, dxPct, dyPct);
-    cropDrag.curX = next.x;
-    cropDrag.curY = next.y;
-    cropDrag.curW = next.w;
-    cropDrag.curH = next.h;
-    overlay.style.cursor = cursorForHandle(cropDrag.handle);
+    const dxPct = ((p.x - boxDrag.originX) / r.width) * 100;
+    const dyPct = ((p.y - boxDrag.originY) / r.height) * 100;
+    const next = applyEdgeDrag(boxDrag, boxDrag.handle, dxPct, dyPct);
+    boxDrag.curX = next.x;
+    boxDrag.curY = next.y;
+    boxDrag.curW = next.w;
+    boxDrag.curH = next.h;
+    overlay.style.cursor = cursorForHandle(boxDrag.handle);
     render();
     return;
   }
@@ -1750,30 +1843,58 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', (e) => {
-  if (cropDrag) {
-    // Left-button only for crop drag — ignore any stray right-up.
+  if (boxDrag) {
+    // Left-button only for resize drag — ignore any stray right-up.
     if (e.button !== 0) return;
     const end = localCoords(e);
     const movedEnough =
-      Math.hypot(end.x - cropDrag.originX, end.y - cropDrag.originY) >=
+      Math.hypot(end.x - boxDrag.originX, end.y - boxDrag.originY) >=
       CLICK_THRESHOLD_PX;
     // Only commit if the drag actually moved — a bare click on a
-    // handle shouldn't add a zero-change crop edit to the stack
-    // (would pollute Undo history with no-ops).
+    // handle shouldn't push or mutate (would pollute Undo history
+    // with no-ops).
     if (movedEnough) {
-      const id = nextEditId++;
-      edits.push({
-        id,
-        kind: 'crop',
-        x: cropDrag.curX,
-        y: cropDrag.curY,
-        w: cropDrag.curW,
-        h: cropDrag.curH,
-      });
-      editHistory.push({ id });
-      editVersion++;
+      const next = { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH };
+      // Skip no-op commits — drags that physically moved past the
+      // CLICK_THRESHOLD_PX guard above but landed pixel-identical
+      // to the pre-drag geometry (e.g. dragged out against a
+      // boundary clamp and back). Without this, the create branch
+      // can push an identity (0,0,100,100) crop that's functionally
+      // invisible but eats an Undo press.
+      const same =
+        boxDrag.startX === next.x && boxDrag.startY === next.y &&
+        boxDrag.startW === next.w && boxDrag.startH === next.h;
+      if (same) {
+        // fall through to the cleanup below
+      } else if (boxDrag.editId === null) {
+        // Image-edge "create a new crop" gesture — push a fresh
+        // crop edit. Plain `add` history op so Undo removes it.
+        const id = nextEditId++;
+        edits.push({ id, kind: 'crop', ...next });
+        editHistory.push({ id });
+        editVersion++;
+      } else {
+        // Resize an existing edit in place. Mutate the bounds and
+        // record a Shrink-style `prev` history op so Undo restores
+        // the pre-drag geometry one click at a time. Same shape as
+        // the Shrink path — the two operations stack naturally. The
+        // outer `same` check above already filters no-op drags.
+        const idx = edits.findIndex((ed) => ed.id === boxDrag!.editId);
+        if (idx >= 0) {
+          const target = edits[idx]!;
+          if (target.kind === 'rect' || target.kind === 'redact' || target.kind === 'crop') {
+            const prev = { x: target.x, y: target.y, w: target.w, h: target.h };
+            target.x = next.x;
+            target.y = next.y;
+            target.w = next.w;
+            target.h = next.h;
+            editHistory.push({ id: target.id, prev });
+            editVersion++;
+          }
+        }
+      }
     }
-    cropDrag = null;
+    boxDrag = null;
     overlay.style.cursor = 'crosshair';
     render();
     return;
@@ -1806,12 +1927,12 @@ window.addEventListener('mouseup', (e) => {
       const y = Math.min(dragStart.y, end.y);
       const wPct = (Math.abs(dx) / r.width) * 100;
       const hPct = (Math.abs(dy) / r.height) * 100;
-      // Crop needs each side ≥ MIN_CROP_PCT so the resulting crop's
+      // Crop needs each side ≥ MIN_BOX_PCT so the resulting crop's
       // edge handles stay grabbable. The handle-resize path enforces
       // this between opposing edges; the create path has to enforce
       // it at commit time too — a diagonal CLICK_THRESHOLD_PX drag
       // would otherwise commit a sub-1% crop that can't be re-grabbed.
-      const tooSmall = selectedTool === 'crop' && (wPct < MIN_CROP_PCT || hPct < MIN_CROP_PCT);
+      const tooSmall = selectedTool === 'crop' && (wPct < MIN_BOX_PCT || hPct < MIN_BOX_PCT);
       if (!tooSmall) {
         pending = {
           id,
@@ -1841,9 +1962,10 @@ undoBtn.addEventListener('click', () => {
   const idx = edits.findIndex((e) => e.id === last.id);
   if (idx >= 0) {
     if (last.prev) {
-      // Shrink op — restore the rect's pre-shrink geometry. Only
-      // rect-shaped edits (rect / redact / crop) carry shrinkable
-      // geometry, so this branch is unreachable for line / arrow.
+      // In-place geometry op (Shrink click or edge-handle resize)
+      // — restore the rect's pre-mutation geometry. Only rect-shaped
+      // edits (rect / redact / crop) carry resizable geometry, so
+      // this branch is unreachable for line / arrow.
       const e = edits[idx]!;
       if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
         e.x = last.prev.x;

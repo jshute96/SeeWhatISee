@@ -80,21 +80,42 @@ async function readEditKinds(capturePage: Page): Promise<string[]> {
   );
 }
 
-// Drag a single crop-edge handle inward (or back out to the
-// boundary). The `edge` identifies which handle to grab; `toFrac`
-// is where along the opposite axis the handle ends up, as a
-// fraction of the overlay's bounding box.
+// Read the most-recent edit of the given kind's bounds, or null when
+// no such edit exists. Mirrors `__seeState.lastRectBounds`.
+async function readLastBounds(
+  capturePage: Page,
+  kind: 'rect' | 'redact' | 'crop',
+): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  return capturePage.evaluate(
+    (k) =>
+      (window as unknown as {
+        __seeState: { lastRectBounds: (k: string) => unknown };
+      }).__seeState.lastRectBounds(k) as
+        | { x: number; y: number; w: number; h: number }
+        | null,
+    kind,
+  );
+}
+
+// Drag a single edge handle of a rect-shaped target inward (or back
+// out to the image boundary). The `edge` identifies which handle to
+// grab; `toFrac` is where along the opposite axis the handle ends
+// up, as a fraction of the overlay's bounding box. `bounds` are the
+// percent-space bounds of the targeted box (any rect / redact /
+// crop), or `{0, 0, 100, 100}` to drag an image-edge handle when no
+// crop exists.
 //
-// Internally uses a 1px inset from the image boundary on the
+// Internally uses a small inset from the targeted edge on the
 // mouseDown coordinate so the initial event lands *inside* the
 // overlay (exactly-on-edge mouseDown can fall through to the
 // parent), while still sitting within HANDLE_PX of the edge so
-// `detectCropHandle` returns the intended handle.
+// `detectBoxHandle` returns the intended edge.
 async function dragEdge(
   capturePage: Page,
   edge: 'n' | 's' | 'e' | 'w',
-  cropBounds: { x: number; y: number; w: number; h: number },
+  bounds: { x: number; y: number; w: number; h: number },
   toFrac: number,
+  modifiers?: { shift?: boolean },
 ): Promise<void> {
   // Use the image's bounding box, not the overlay's: capture-page.ts
   // computes drag percentages via `previewImg.getBoundingClientRect()`,
@@ -114,17 +135,20 @@ async function dragEdge(
   //     (the handler's `localCoords` clamps to `r.width`/`r.height`,
   //     so the reachable dxPct is capped). A small inward inset
   //     increases the reachable drag distance enough to always
-  //     clear the applyCropDrag clamp into 0 / 100.
+  //     clear the applyEdgeDrag clamp into 0 / 100.
   //
-  // Inset stays within HANDLE_PX so `detectCropHandle` still picks
-  // the intended edge.
-  const INSET = 5;
-  const midX = box.x + box.width * 0.5;
-  const midY = box.y + box.height * 0.5;
-  const edgeX = box.x + box.width * (cropBounds.x + cropBounds.w) / 100;
-  const edgeStartX = box.x + box.width * cropBounds.x / 100;
-  const edgeY = box.y + box.height * (cropBounds.y + cropBounds.h) / 100;
-  const edgeStartY = box.y + box.height * cropBounds.y / 100;
+  // Inset stays within HANDLE_PX (now 6) so `detectBoxHandle` still
+  // picks the intended edge.
+  const INSET = 4;
+  // For non-edge anchors keep the orthogonal coordinate inside the
+  // targeted box so the perpendicular extent gate (`withinX` /
+  // `withinY` in handleAtRect) matches.
+  const midX = box.x + box.width * (bounds.x + bounds.w / 2) / 100;
+  const midY = box.y + box.height * (bounds.y + bounds.h / 2) / 100;
+  const edgeX = box.x + box.width * (bounds.x + bounds.w) / 100;
+  const edgeStartX = box.x + box.width * bounds.x / 100;
+  const edgeY = box.y + box.height * (bounds.y + bounds.h) / 100;
+  const edgeStartY = box.y + box.height * bounds.y / 100;
 
   let x1 = midX;
   let y1 = midY;
@@ -160,10 +184,12 @@ async function dragEdge(
   y2 = Math.max(box.y, Math.min(box.y + box.height, y2));
 
   await capturePage.mouse.move(x1, y1);
+  if (modifiers?.shift) await capturePage.keyboard.down('Shift');
   await capturePage.mouse.down();
   await capturePage.mouse.move((x1 + x2) / 2, (y1 + y2) / 2);
   await capturePage.mouse.move(x2, y2);
   await capturePage.mouse.up();
+  if (modifiers?.shift) await capturePage.keyboard.up('Shift');
 }
 
 // ─── Moved from capture-with-details.spec.ts ──────────────────────
@@ -719,7 +745,7 @@ test('drawing: crop drag past the opposite edge clamps without moving it', async
 
   // Start with a non-full crop (Crop tool draw), then drag the W
   // handle rightward well past the E edge. Under the current clamp
-  // rule the W edge stops at `right - MIN_CROP_PCT` and the E edge
+  // rule the W edge stops at `right - MIN_BOX_PCT` and the E edge
   // stays fixed — a previous version instead pushed the E edge
   // outward to preserve the minimum, which asymmetrically affected
   // N/W drags vs S/E drags.
@@ -739,8 +765,8 @@ test('drawing: crop drag past the opposite edge clamps without moving it', async
   const eastAfter = after!.x + after!.w;
   // E edge didn't move.
   expect(eastAfter).toBeCloseTo(eastBefore, 1);
-  // New crop is exactly MIN_CROP_PCT (1.5) wide, anchored at the E
-  // edge. Tightened from `< 5` so a future MIN_CROP_PCT bump can't
+  // New crop is exactly MIN_BOX_PCT (1.5) wide, anchored at the E
+  // edge. Tightened from `< 5` so a future MIN_BOX_PCT bump can't
   // silently change the clamp without this test failing.
   expect(after!.w).toBeCloseTo(1.5, 0);
   expect(after!.x + after!.w).toBeCloseTo(eastBefore, 1);
@@ -748,7 +774,7 @@ test('drawing: crop drag past the opposite edge clamps without moving it', async
   await openerPage.close();
 });
 
-test('drawing: Crop tool drag below MIN_CROP_PCT is discarded', async ({
+test('drawing: Crop tool drag below MIN_BOX_PCT is discarded', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -760,7 +786,7 @@ test('drawing: Crop tool drag below MIN_CROP_PCT is discarded', async ({
   );
 
   // A Crop drag just past the 4-px CLICK_THRESHOLD_PX commits a
-  // sub-MIN_CROP_PCT crop under the naive path. Without the
+  // sub-MIN_BOX_PCT crop under the naive path. Without the
   // commit-time floor the resulting crop's edge handles would be
   // un-grabbable. The drag below should produce no edit at all.
   await capturePage.locator('#tool-crop').click();
@@ -779,6 +805,173 @@ test('drawing: Crop tool drag below MIN_CROP_PCT is discarded', async ({
     { xPct: 0.7, yPct: 0.7 },
   );
   expect(await readEditKinds(capturePage)).toEqual(['crop']);
+
+  await openerPage.close();
+});
+
+// ─── Box-edge resize (rect / redact) ─────────────────────────────
+
+test('drawing: rect edge drag resizes the existing box in place + Undo restores', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Draw a Box, then drag its east edge inward. The resize must
+  // mutate the existing rect in place — no second 'rect' edit on
+  // the stack — and the Undo button must roll the bounds back to
+  // the pre-drag values (Shrink-style `prev` history op).
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  const before = await readLastBounds(capturePage, 'rect');
+  expect(before).not.toBeNull();
+
+  await dragEdge(capturePage, 'e', before!, 0.5);
+  // Stack unchanged — the resize mutated the existing edit, no new
+  // rect added.
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  const after = await readLastBounds(capturePage, 'rect');
+  expect(after).not.toBeNull();
+  // East edge moved from ~70% to ~50%; west edge stayed at ~30%.
+  // Loose ±2 since the dragged pointer ends a couple px short of
+  // the target after sub-pixel rounding through the image-rect
+  // mapping.
+  expect(after!.x).toBeCloseTo(before!.x, 1);
+  expect(after!.x + after!.w).toBeLessThan((before!.x + before!.w) - 10);
+  expect(after!.x + after!.w).toBeGreaterThan(48);
+  expect(after!.x + after!.w).toBeLessThan(53);
+
+  // Undo restores the pre-drag bounds without removing the edit.
+  await capturePage.locator('#undo').click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  const restored = await readLastBounds(capturePage, 'rect');
+  expect(restored).not.toBeNull();
+  expect(restored!.x).toBeCloseTo(before!.x, 1);
+  expect(restored!.y).toBeCloseTo(before!.y, 1);
+  expect(restored!.w).toBeCloseTo(before!.w, 1);
+  expect(restored!.h).toBeCloseTo(before!.h, 1);
+
+  // A second Undo removes the rect entirely (the original add op).
+  await capturePage.locator('#undo').click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+
+  await openerPage.close();
+});
+
+test('drawing: redact edge drag resizes the existing box in place + Undo restores', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Same shape as the rect test, but for the Redact tool — confirms
+  // the edge-handle gesture works uniformly for both rect-shaped
+  // drawing kinds (not just crop).
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+  expect(await readEditKinds(capturePage)).toEqual(['redact']);
+  const before = await readLastBounds(capturePage, 'redact');
+  expect(before).not.toBeNull();
+
+  await dragEdge(capturePage, 's', before!, 0.5);
+  expect(await readEditKinds(capturePage)).toEqual(['redact']);
+  const after = await readLastBounds(capturePage, 'redact');
+  expect(after).not.toBeNull();
+  // South edge moved from ~70% to ~50% (loose ±2 since the dragged
+  // pointer ends a couple px short of the target after sub-pixel
+  // rounding through the image-rect mapping).
+  expect(after!.y).toBeCloseTo(before!.y, 1);
+  expect(after!.y + after!.h).toBeLessThan((before!.y + before!.h) - 10);
+  expect(after!.y + after!.h).toBeGreaterThan(48);
+  expect(after!.y + after!.h).toBeLessThan(53);
+
+  await capturePage.locator('#undo').click();
+  const restored = await readLastBounds(capturePage, 'redact');
+  expect(restored!.y + restored!.h).toBeCloseTo(before!.y + before!.h, 1);
+
+  await openerPage.close();
+});
+
+test('drawing: shift+drag near an existing box edge falls through to drawing', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Draw a rect, then Shift-drag starting near its east edge with
+  // the Box tool still selected. Without Shift this would resize
+  // the existing rect; with Shift the hit-test is bypassed and the
+  // gesture commits a *second* rect adjacent to the first. The
+  // first rect's bounds stay untouched.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.4, yPct: 0.4 });
+  const before = await readLastBounds(capturePage, 'rect');
+  expect(before).not.toBeNull();
+
+  // Drag from just inside the existing rect's east edge outward
+  // with Shift held. The Shift bypass means no resize fires; the
+  // mousedown lands inside the overlay and starts a fresh Box draw.
+  await dragEdge(capturePage, 'e', before!, 0.6, { shift: true });
+
+  // Two rect edits on the stack now — the original plus the Shift
+  // draw. lastRectBounds returns the most-recent rect, so the new
+  // (shift-drawn) rect's east edge is past `before`'s east edge —
+  // which couldn't have happened via a resize (resizes shrink only).
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'rect']);
+  const newest = await readLastBounds(capturePage, 'rect');
+  expect(newest!.x + newest!.w).toBeGreaterThan(before!.x + before!.w);
+
+  await openerPage.close();
+});
+
+test('drawing: topmost rect wins the resize gesture over an underlying crop', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Crop first (10..90), then draw a rect inside it (40..60). The
+  // rect's east edge sits at 60%; the crop's east edge is at 90%.
+  // A drag near 60% should resize the rect, not the crop, because
+  // the hit-test walks the stack topmost-first.
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.1, yPct: 0.1 }, { xPct: 0.9, yPct: 0.9 });
+  await capturePage.locator('#tool-box').click();
+  await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.6, yPct: 0.6 });
+
+  const cropBefore = await readLastBounds(capturePage, 'crop');
+  const rectBefore = await readLastBounds(capturePage, 'rect');
+  expect(cropBefore).not.toBeNull();
+  expect(rectBefore).not.toBeNull();
+
+  await dragEdge(capturePage, 'e', rectBefore!, 0.5);
+
+  const cropAfter = await readLastBounds(capturePage, 'crop');
+  const rectAfter = await readLastBounds(capturePage, 'rect');
+  // Crop bounds untouched.
+  expect(cropAfter!.x).toBeCloseTo(cropBefore!.x, 1);
+  expect(cropAfter!.w).toBeCloseTo(cropBefore!.w, 1);
+  // Rect's east edge moved inward.
+  expect(rectAfter!.x + rectAfter!.w).toBeLessThan(rectBefore!.x + rectBefore!.w - 5);
 
   await openerPage.close();
 });

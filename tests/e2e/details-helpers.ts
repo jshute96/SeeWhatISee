@@ -202,13 +202,14 @@ export async function configureAndCapture(
 // Line / Crop / Redact when the test clicks the matching tool
 // button first).
 //
-// Callers must keep `fromPct` at least `HANDLE_PX` (10 CSS px)
+// Callers must keep `fromPct` at least `HANDLE_PX` (6 CSS px)
 // away from every image edge. If the mousedown lands inside the
-// HANDLE_PX band, `detectCropHandle` in capture-page.ts fires and
-// starts a *crop-handle drag* (creating or resizing the crop)
-// instead of a tool-driven draw — a silent miscategorisation that
-// would look like a drawing test failure but is actually a misuse
-// of the helper. We assert against it rather than guessing intent.
+// HANDLE_PX band, `detectBoxHandle` in capture-page.ts fires and
+// starts a *resize drag* (creating a crop or resizing an existing
+// box) instead of a tool-driven draw — a silent miscategorisation
+// that would look like a drawing test failure but is actually a
+// misuse of the helper. We assert against it rather than guessing
+// intent.
 export async function dragRect(
   capturePage: Page,
   fromPct: { xPct: number; yPct: number },
@@ -216,7 +217,7 @@ export async function dragRect(
 ): Promise<void> {
   const box = await capturePage.locator('#overlay').boundingBox();
   if (!box) throw new Error('overlay has no bounding box');
-  const HANDLE_PX = 10;
+  const HANDLE_PX = 6;
   const x1 = box.x + box.width * fromPct.xPct;
   const y1 = box.y + box.height * fromPct.yPct;
   const x2 = box.x + box.width * toPct.xPct;

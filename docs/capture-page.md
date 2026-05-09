@@ -474,49 +474,68 @@ fresh edit.
   `null` and the click is a silent no-op rather than producing a
   mis-tightened rect.
 
-### Crop-edge handles (drag-to-crop / drag-to-resize)
+### Box-edge handles (drag-to-resize, drag-to-crop)
 
-- The four edges and four corners of the *effective* crop region
-  (the active crop if one exists, else the full image) are
-  draggable. With no active crop, dragging an image edge inward
-  creates a crop from scratch; with an active crop, the handles
-  sit on the crop's own edges. The hit-test wins over the selected
-  tool, so a drag that starts in the band always becomes a
-  crop-handle drag rather than a tool draw.
-- Hit-testing is a `HANDLE_PX` band (10 CSS px) around each
-  effective edge. Corners beat plain edges. The `cursor` CSS flips
-  to the matching resize cursor on hover.
-- Small white grip squares mark the four corners of the effective
-  crop region — even when no crop exists, so the image's own
-  corners show grips and the "drag here to start cropping"
-  affordance is discoverable. Grips center on the corner and may
-  extend past the image edge; `#overlay` is `overflow: visible`
-  so a boundary corner shows the full square.
-- Each completed drag commits a **new** `'crop'` edit on the stack
-  — not an in-place mutation of the previous one. Undo peels back
-  one resize at a time; earlier crops stay in the stack hidden
-  behind the newer one and re-emerge as Undo walks backward.
-- Bounds are clamped on three axes:
+- Edge handles are uniform across all three rect-shaped kinds
+  (rect / redact / crop) and on the image edges as a fallback for
+  starting a fresh crop. The hit-test wins over the selected tool,
+  so a drag that starts in the band becomes a resize gesture
+  rather than a tool draw.
+- The four edges and four corners of every rect-shaped edit on the
+  stack are draggable. Hit-testing walks the edit stack
+  topmost-first so a newer box layered on top of an older one wins
+  the gesture. Older crop edits are skipped (functionally
+  invisible); the active crop matches as itself.
+- When no active crop exists, the four image edges fall back to
+  the "drag image edge to start cropping" affordance. With an
+  active crop the active crop's edges already cover the
+  near-image-edge hits, so no separate fallback is needed.
+- Hit-testing is a `HANDLE_PX` band (6 CSS px) around each
+  candidate edge. Corners beat plain edges. The `cursor` CSS flips
+  to the matching resize cursor on hover. The band was tightened
+  from a previous wider value that felt sticky on small boxes.
+- **Shift bypass** — holding Shift on mousedown (and on hover)
+  skips the hit-test entirely and falls through to a tool draw,
+  so the user can start a fresh box flush against an existing
+  edge. Mirrored in the hover cursor: Shift-hovering an edge
+  shows the crosshair instead of the resize cursor.
+- Small white grip squares mark the four corners of the active
+  crop region (or the image's own corners when no crop exists).
+  Rect / redact rely on their visible borders for the affordance —
+  no extra grips, to avoid clutter on every drawn box.
+- **Commit semantics**:
+  - Resize an existing edit (rect / redact / crop): mutate the
+    targeted edit's bounds in place and record a Shrink-style
+    `prev` history op, so Undo restores the pre-drag geometry one
+    click at a time. The edit stack stays stable — no stacking
+    duplicates.
+  - Image-edge → crop create gesture (no active crop, drag image
+    edge inward): pushes a fresh `crop` edit with a plain `add`
+    history op, so Undo removes it.
+- Bounds are clamped on three axes (shared across all kinds):
   - Inside the image: 0 ≤ x, x+w ≤ 100 (and the same for y).
-  - `MIN_CROP_PCT` floor (1.5%) on width and height.
+  - `MIN_BOX_PCT` floor (1.5%) on width and height.
   - Dragged-edge-only: a drag past the opposite edge clamps the
-    dragged edge at `MIN_CROP_PCT` away from the opposite one.
+    dragged edge at `MIN_BOX_PCT` away from the opposite one.
     The opposite edge never moves.
-  - Why not flip / push? A flipped crop is surprising on a resize
+  - Why not flip / push? A flipped box is surprising on a resize
     tool and never useful. Pushing the opposite edge out to
     preserve the minimum used to produce n/w vs. s/e asymmetry,
     so that's avoided too.
-- Sub-`CLICK_THRESHOLD_PX` drags are discarded so a stray click on
-  a handle doesn't add a no-op entry.
+- Sub-`CLICK_THRESHOLD_PX` drags and pixel-identical end states
+  are discarded so a stray click on a handle (or a drag that
+  lands back where it started) doesn't pollute the Undo stack.
 
 ### Edit stack & geometry
 
 - **Undo / Clear** — single edit-history stack of two op kinds:
-  - `add` ops — drag-committed edits. Undo removes the matching
-    edit from the stack.
-  - shrink ops — carry the pre-shrink geometry of an existing
-    rect / redact / crop edit. Undo restores those coordinates in
-    place instead of removing the edit.
+  - `add` ops — drag-committed edits (tool draws + the image-edge
+    crop-create gesture). Undo removes the matching edit from the
+    stack.
+  - in-place ops (carry a `prev` geometry) — pushed by both Shrink
+    clicks and edge-handle resize drags on rect / redact / crop.
+    Undo restores those coordinates in place instead of removing
+    the edit.
 
   Clear wipes everything. Both buttons disable when the stack is
   empty.
