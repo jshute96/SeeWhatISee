@@ -199,6 +199,19 @@ A Gemini extension is available, packaging the commands as skills. Install by ru
 gemini extensions install https://github.com/jshute96/SeeWhatISee-gemini
 ```
 
+Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
+
+```
+{
+  "tools": {
+    "allowed": [
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see/scripts/copy-last-snapshot.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-watch/scripts/watch-and-copy.sh)"
+    ]
+  }
+}
+```
+
 #### Manual install
 
 Run `scripts/gemini-install.sh` from inside `gemini`, so it can install into Gemini's sandbox home directory.
