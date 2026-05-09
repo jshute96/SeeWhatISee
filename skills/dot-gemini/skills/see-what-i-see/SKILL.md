@@ -1,6 +1,6 @@
 ---
 name: see-what-i-see
-description: |
+description: >
   Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension.
 
   You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
@@ -9,7 +9,7 @@ description: |
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 1. Read this JSON object:
-!{$HOME/.gemini/scripts/copy-last-snapshot.sh}
+!{./scripts/copy-last-snapshot.sh}
 
 2. The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:

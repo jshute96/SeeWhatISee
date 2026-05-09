@@ -36,8 +36,9 @@ PAIRS = [
     ("claude.watch.md", "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
     ("claude.stop.md",  "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
     ("claude.help.md",  "skills/claude-plugin/skills/see-what-i-see-help/SKILL.md"),
-    ("gemini.see.md",   "skills/dot-gemini/commands/see-what-i-see.toml"),
-    ("gemini.watch.md", "skills/dot-gemini/commands/see-what-i-see-watch.toml"),
+    # Generate commands instead of skills. Currently disabled.
+    # ("gemini.see.md",   "skills/dot-gemini/commands/see-what-i-see.toml"),
+    # ("gemini.watch.md", "skills/dot-gemini/commands/see-what-i-see-watch.toml"),
     ("gemini.see.md",   "skills/dot-gemini/skills/see-what-i-see/SKILL.md",       "toml-to-skill"),
     ("gemini.watch.md", "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md", "toml-to-skill"),
 ]
@@ -74,9 +75,10 @@ def toml_to_skill(target_rel: str, content: str) -> str:
     body = fields["prompt"].strip("\n")
 
     if "\n" in description:
-        # Literal block scalar preserves line breaks; indent each line by 2.
+        # Folded block scalar joins single line breaks into spaces; blank
+        # lines stay as paragraph separators. Indent each line by 2.
         indented = "\n".join(("  " + line) if line else "" for line in description.split("\n"))
-        desc_field = f"description: |\n{indented}"
+        desc_field = f"description: >\n{indented}"
     else:
         desc_field = f"description: {description}"
 

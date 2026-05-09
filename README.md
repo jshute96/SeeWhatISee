@@ -190,9 +190,6 @@ To avoid this, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` wi
 
 #### Gemini Extension
 
-> [!NOTE]
-> The extension is experimental. Install might not work correctly yet in all system configurations.
-
 A Gemini extension is available, packaging the commands as skills. Install by running:
 
 ```bash
@@ -214,14 +211,11 @@ Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
 
 #### Manual install
 
-If `gemini extensions install` doesn't work, clone the release repo and copy the files into your `~/.gemini/` directory:
+If `gemini extensions install` directly from GitHub doesn't work, clone the release repo and install the extension from files.
 
 ```bash
 git clone https://github.com/jshute96/SeeWhatISee-gemini.git
-cd SeeWhatISee-gemini
-mkdir -p ~/.gemini/commands ~/.gemini/scripts
-cp -af commands/* ~/.gemini/commands/
-cp -af scripts/* ~/.gemini/scripts/
+gemini extension install SeeWhatISee-gemini
 ```
 
 ## Output files
