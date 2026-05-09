@@ -224,11 +224,11 @@ gemini 'Run `scripts/gemini-install.sh`'
 
 Alternative: Copy these files into the same directories in your `.gemini` directory:
 
-* [`.gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see.toml)
-* [`.gemini/commands/see-what-i-see-watch.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/commands/see-what-i-see-watch.toml)
-* [`.gemini/scripts/_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/_common.sh)
-* [`.gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/copy-last-snapshot.sh)
-* [`.gemini/scripts/watch-and-copy.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/.gemini/scripts/watch-and-copy.sh)
+* [`skills/dot-gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see.toml) → `~/.gemini/commands/see-what-i-see.toml`
+* [`skills/dot-gemini/commands/see-what-i-see-watch.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see-watch.toml) → `~/.gemini/commands/see-what-i-see-watch.toml`
+* [`skills/dot-gemini/scripts/_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/_common.sh) → `~/.gemini/scripts/_common.sh`
+* [`skills/dot-gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/copy-last-snapshot.sh) → `~/.gemini/scripts/copy-last-snapshot.sh`
+* [`skills/dot-gemini/scripts/watch-and-copy.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/watch-and-copy.sh) → `~/.gemini/scripts/watch-and-copy.sh`
 
 ## Output files
 
@@ -319,7 +319,7 @@ on `self.SeeWhatISee` for test/console access.
 
 The plugin won't update if the version is the same.
 
-To make an update possible, bump `plugins[0].version` in `.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
+To make an update possible, bump `plugins[0].version` in `skills/dot-claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
 
 Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
 

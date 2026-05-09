@@ -35,7 +35,7 @@ field on the record. See
 
 ### Claude Code
 
-- Backed by `plugin/skills/see-what-i-see/scripts/get-latest.sh`.
+- Backed by `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`.
 - The script `tail -1`s `log.json`, passes the line through
   `absolutize_paths` (sed rewrite of `screenshot` / `contents` /
   `selection` fields to absolute paths under `$DIR`), and prints to
@@ -46,7 +46,7 @@ field on the record. See
 
 ### Gemini CLI
 
-- Backed by `.gemini/scripts/copy-last-snapshot.sh`.
+- Backed by `skills/dot-gemini/scripts/copy-last-snapshot.sh`.
 - Same `tail -1` + path rewrite, **plus** it copies referenced
   files from `$SRC_DIR` into `$TARGET_DIR` (a
   Gemini-workspace-specific tmp dir). The rewritten paths point
@@ -70,7 +70,7 @@ field on the record. See
 
 ### Claude Code (asynchronous background)
 
-- Backed by `plugin/skills/see-what-i-see-watch/scripts/watch.sh`.
+- Backed by `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`.
 - Claude Code supports real background tasks. The skill starts
   `watch.sh` with `run_in_background: true` and no timeout; the
   script blocks on `log.json`'s mtime and exits after emitting one
@@ -87,7 +87,7 @@ field on the record. See
 
 ### Gemini CLI (foreground loop)
 
-- Backed by `.gemini/scripts/watch-and-copy.sh`.
+- Backed by `skills/dot-gemini/scripts/watch-and-copy.sh`.
 - Gemini CLI has no async background worker with a completion
   callback, so the loop is built agent-side: each iteration runs
   `watch-and-copy.sh` synchronously, which blocks until there's
@@ -103,7 +103,7 @@ field on the record. See
 ## `/see-what-i-see-stop` and `/see-what-i-see-help` (Claude only)
 
 - **`/see-what-i-see-stop`.** Calls
-  `plugin/skills/see-what-i-see-stop/scripts/stop.sh`, a small
+  `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`, a small
   dedicated script that resolves the watch directory the same way
   the watcher does, kills the PID stored in `$DIR/.watch.pid`, and
   removes the file. (`watch.sh --stop` does the same thing when
@@ -116,19 +116,19 @@ field on the record. See
 ## Scripts
 
 ```
-plugin/                              ← Claude plugin install tree
+skills/claude-plugin/                ← Claude plugin install tree
   scripts/_common.sh                 (shared helpers; sourced by each per-skill script)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see
   skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop
-.gemini/scripts/                     ← Gemini install tree
+skills/dot-gemini/scripts/           ← Gemini install tree (copied into ~/.gemini/scripts/)
   _common.sh                         (shared by the two Gemini scripts)
   copy-last-snapshot.sh              ← /see-what-i-see
   watch-and-copy.sh                  ← /see-what-i-see-watch
 scripts/                             ← convenience symlinks at repo root
-  get-latest.sh, watch.sh, stop.sh   → plugin/skills/<name>/scripts/...
+  get-latest.sh, watch.sh, stop.sh   → skills/claude-plugin/skills/<name>/scripts/...
   copy-last-snapshot.sh, watch-and-copy.sh
-                                     → .gemini/scripts/...
+                                     → skills/dot-gemini/scripts/...
 ```
 
 Each install tree is self-contained. The plugin tree ships as
@@ -139,11 +139,11 @@ part of the Claude Code plugin; the Gemini tree is copied into
 
 | Script | Source | Target | Emits | Flags |
 |--------|--------|--------|-------|-------|
-| `plugin/skills/see-what-i-see/scripts/get-latest.sh`         | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
-| `plugin/skills/see-what-i-see-watch/scripts/watch.sh`        | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
-| `plugin/skills/see-what-i-see-stop/scripts/stop.sh`          | `$DIR` | `$DIR` (in place) | none (just stops the watcher) | `--directory`, `--help` |
-| `.gemini/scripts/copy-last-snapshot.sh`                       | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
-| `.gemini/scripts/watch-and-copy.sh`                           | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
+| `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`         | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
+| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`        | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
+| `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`          | `$DIR` | `$DIR` (in place) | none (just stops the watcher) | `--directory`, `--help` |
+| `skills/dot-gemini/scripts/copy-last-snapshot.sh`                          | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
+| `skills/dot-gemini/scripts/watch-and-copy.sh`                              | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
 
 Key differences:
 
@@ -175,12 +175,12 @@ possible.
 
 Several files drive the prompts:
 
-- `plugin/skills/see-what-i-see/SKILL.md`
-- `plugin/skills/see-what-i-see-watch/SKILL.md`
-- `.gemini/commands/see-what-i-see.toml`
-- `.gemini/commands/see-what-i-see-watch.toml`
-- `.gemini/skills/see-what-i-see/SKILL.md` (skill-format mirror of the command)
-- `.gemini/skills/see-what-i-see-watch/SKILL.md` (skill-format mirror of the command)
+- `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
+- `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
+- `skills/dot-gemini/commands/see-what-i-see.toml`
+- `skills/dot-gemini/commands/see-what-i-see-watch.toml`
+- `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (skill-format mirror of the command)
+- `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (skill-format mirror of the command)
 
 All skill and command prompts are **generated from templates** in
 `skills/`:

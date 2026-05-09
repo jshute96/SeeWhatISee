@@ -17,7 +17,7 @@
         "email": "jshute@gmail.com"
       },
       "homepage": "https://github.com/jshute96/SeeWhatISee",
-      "source": "./plugin",
+      "source": "./skills/claude-plugin",
       "keywords": ["screenshot"]
     }
   ]

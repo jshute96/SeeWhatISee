@@ -63,14 +63,14 @@ generated files directly.
   - `skills/generate-skills.py --update` — regenerate the target files
     from the templates.
 - Generated targets (do not edit these directly):
-  - `plugin/skills/see-what-i-see/SKILL.md`
-  - `plugin/skills/see-what-i-see-watch/SKILL.md`
-  - `plugin/skills/see-what-i-see-stop/SKILL.md`
-  - `plugin/skills/see-what-i-see-help/SKILL.md`
-  - `.gemini/commands/see-what-i-see.toml`
-  - `.gemini/commands/see-what-i-see-watch.toml`
-  - `.gemini/skills/see-what-i-see/SKILL.md` (TOML→skill translation of `gemini.see.md`)
-  - `.gemini/skills/see-what-i-see-watch/SKILL.md` (TOML→skill translation of `gemini.watch.md`)
+  - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
+  - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
+  - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
+  - `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
+  - `skills/dot-gemini/commands/see-what-i-see.toml`
+  - `skills/dot-gemini/commands/see-what-i-see-watch.toml`
+  - `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (TOML→skill translation of `gemini.see.md`)
+  - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (TOML→skill translation of `gemini.watch.md`)
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

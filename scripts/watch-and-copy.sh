@@ -1,1 +1,1 @@
-../.gemini/scripts/watch-and-copy.sh
+../skills/dot-gemini/scripts/watch-and-copy.sh

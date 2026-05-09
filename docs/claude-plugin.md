@@ -15,41 +15,44 @@ references:
 
 Three things are wired together:
 
-1. **A marketplace** at `.claude-plugin/marketplace.json` (repo root).
-2. **A plugin** at `plugin/`, which the marketplace points at via a
-   relative `source`.
+1. **A marketplace** at `skills/dot-claude-plugin/marketplace.json`.
+2. **A plugin** at `skills/claude-plugin/`, which the marketplace
+   points at via a relative `source`.
 3. **A local-dev shim** at `.claude/` so the same plugin works when
    running Claude Code directly from this checkout, without having to
    install it from the marketplace.
 
 ```
 SeeWhatISee/
-├── .claude-plugin/
-│   └── marketplace.json          # catalog: "here is one plugin, find it at ./plugin"
-├── plugin/
-│   ├── .claude-plugin/
-│   │   └── plugin.json           # plugin manifest (name, version, ...)
-│   ├── scripts/                  # only _common.sh; each skill bundles its own main script
-│   │   └── _common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
-│   └── skills/
-│       ├── see-what-i-see/
-│       │   ├── SKILL.md
-│       │   └── scripts/get-latest.sh        # sources ../../../scripts/_common.sh
-│       ├── see-what-i-see-watch/
-│       │   ├── SKILL.md
-│       │   └── scripts/watch.sh             # filesystem watcher; supports --stop
-│       ├── see-what-i-see-stop/
-│       │   ├── SKILL.md
-│       │   └── scripts/stop.sh              # small, dedicated stop-only script
-│       └── see-what-i-see-help/SKILL.md     # no scripts; help text only
-└── .claude/
-    ├── settings.json             # local-dev: bash permissions for plugin scripts + npm tests
-    └── skills/                   # local-dev: symlinks into plugin/skills/
-        ├── see-what-i-see       -> ../../plugin/skills/see-what-i-see
-        ├── see-what-i-see-watch -> ../../plugin/skills/see-what-i-see-watch
-        ├── see-what-i-see-stop  -> ../../plugin/skills/see-what-i-see-stop
-        └── see-what-i-see-help  -> ../../plugin/skills/see-what-i-see-help
+└── skills/
+    ├── dot-claude-plugin/
+    │   └── marketplace.json          # catalog: "here is one plugin, find it at ./skills/claude-plugin"
+    └── claude-plugin/
+        ├── .claude-plugin/
+        │   └── plugin.json           # plugin manifest (name, version, ...)
+        ├── scripts/                  # only _common.sh; each skill bundles its own main script
+        │   └── _common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
+        └── skills/
+            ├── see-what-i-see/
+            │   ├── SKILL.md
+            │   └── scripts/get-latest.sh        # sources ../../../scripts/_common.sh
+            ├── see-what-i-see-watch/
+            │   ├── SKILL.md
+            │   └── scripts/watch.sh             # filesystem watcher; supports --stop
+            ├── see-what-i-see-stop/
+            │   ├── SKILL.md
+            │   └── scripts/stop.sh              # small, dedicated stop-only script
+            └── see-what-i-see-help/SKILL.md     # no scripts; help text only
+
+.claude/
+├── settings.json                 # local-dev: bash permissions for plugin scripts + npm tests
+└── skills/                       # local-dev: symlinks into skills/claude-plugin/skills/
+    ├── see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
+    ├── see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
+    ├── see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
+    └── see-what-i-see-help  -> ../../skills/claude-plugin/skills/see-what-i-see-help
 ```
+
 
 ## `marketplace.json`
 
@@ -65,10 +68,12 @@ Things that were not obvious:
   expected string, received undefined` and `owner: Invalid input`).
   `name` is a string; `owner` is an object with at least `name`
   (and optional `email`).
-- **Plugin entries use `source`, not `path`.** `"source": "./plugin"`
-  is a relative path resolved against the marketplace *root* (the
-  directory containing `.claude-plugin/`), not against
-  `.claude-plugin/` itself.
+- **Plugin entries use `source`, not `path`.**
+  `"source": "./skills/claude-plugin"` is a relative path resolved
+  against the marketplace *root* (the directory containing
+  `.claude-plugin/marketplace.json` — for us that's the repo root,
+  with `marketplace.json` referenced from `skills/dot-claude-plugin/`),
+  not against `.claude-plugin/` itself.
 - **Relative-path sources only work when the marketplace is added via
   git.** If a user adds the marketplace by URL directly to the JSON
   file, relative paths don't resolve and you need a `github`/`url`
@@ -76,7 +81,7 @@ Things that were not obvious:
 - **Kebab-case names are required.** `see-what-i-see-marketplace` and
   `see-what-i-see` — no spaces, no capitals.
 
-## `plugin/.claude-plugin/plugin.json`
+## `skills/claude-plugin/.claude-plugin/plugin.json`
 
 The plugin manifest. Only `name` is strictly required. Everything else
 (`description`, `author`, `license`, `repository`, `homepage`,
@@ -90,10 +95,10 @@ them actually drives update behavior for this plugin:
 | Field                                    | What it does |
 |------------------------------------------|--------------|
 | `marketplace.json` → `plugins[0].version` | **Authoritative** for relative-path plugins. This is what Claude Code uses to decide whether the cached copy is stale. |
-| `plugin/.claude-plugin/plugin.json` → `version` | Silently wins over the marketplace entry if both are set. The official guidance is to **omit this** for relative-path plugins; set it only when the plugin ships from git/GitHub/npm/etc. |
+| `skills/claude-plugin/.claude-plugin/plugin.json` → `version` | Silently wins over the marketplace entry if both are set. The official guidance is to **omit this** for relative-path plugins; set it only when the plugin ships from git/GitHub/npm/etc. |
 | `marketplace.json` → `metadata.version`  | Effectively cosmetic — describes the marketplace itself, not any plugin. Anthropic never increments theirs. Easiest to just leave it out. |
 
-So for this repo (relative-path source `./plugin`), bumping
+So for this repo (relative-path source `./skills/claude-plugin`), bumping
 `plugins[0].version` in `marketplace.json` is the whole story for
 triggering updates. `plugin.json` has no `version` field at all, and
 `metadata.version` is absent. If the version string doesn't change,
@@ -114,7 +119,7 @@ The other two are optional and can be dropped or left to rot. We keep
 
 ## SKILL.md frontmatter
 
-Each skill is a directory under `plugin/skills/<name>/` containing a
+Each skill is a directory under `skills/claude-plugin/skills/<name>/` containing a
 `SKILL.md` with YAML frontmatter at the top:
 
 ```markdown
@@ -168,8 +173,8 @@ roughly this happens:
    avoided — see `TODO.md`).
 2. It reads `.claude-plugin/marketplace.json` and finds the
    `see-what-i-see` plugin entry.
-3. Because `source` is a relative path, it copies `./plugin` from the
-   marketplace clone into the plugin cache at
+3. Because `source` is a relative path, it copies `./skills/claude-plugin`
+   from the marketplace clone into the plugin cache at
    `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. Each
    version lives in its own directory; orphaned versions get cleaned
    up about 7 days after they stop being the current version.
@@ -187,10 +192,10 @@ Updates go through `/plugin marketplace update` followed by `/plugin` → update
 - Users have to run `/plugin marketplace update` manually (or `git pull` inside `~/.claude/plugins/marketplaces/<name>/`) before `/plugin` will see new versions.
 - There's an open feature request for an auto-update flag, but it's not implemented yet.
 
-**The full marketplace repo gets cloned, even though we only need `./plugin`.**
+**The full marketplace repo gets cloned, even though we only need `./skills/claude-plugin`.**
 
 - This is a git limitation, not a Claude Code one: git can't clone a subdirectory.
-- `source: "./plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole repo.
+- `source: "./skills/claude-plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole repo.
 - The workaround would be splitting the plugin into its own repo (cleaner, but more overhead); for now we live with the full clone since this repo is small.
 
 ## Substitutions
@@ -209,9 +214,10 @@ two are relevant here.
 - Usable in `allowed-tools` patterns and inline in the skill body.
 - This is what our SKILL.md bodies reference: e.g. the watcher skill runs
   `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each consuming skill bundles its
-  own main script under `plugin/skills/<name>/scripts/`, and they all
-  source the single shared `plugin/scripts/_common.sh` via a `..`-traversal
-  that stays inside the plugin root.
+  own main script under `skills/claude-plugin/skills/<name>/scripts/`,
+  and they all source the single shared
+  `skills/claude-plugin/scripts/_common.sh` via a `..`-traversal that
+  stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
   the plugin layout. It also keeps each `allowed-tools` pattern scoped to
@@ -244,9 +250,9 @@ Two pieces of glue make it work:
 {
   "permissions": {
     "allow": [
-      "Bash(plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
-      "Bash(plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
-      "Bash(plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
+      "Bash(skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
+      "Bash(skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
+      "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
     ]
   }
 }
@@ -265,17 +271,18 @@ Two pieces of glue make it work:
 ### `.claude/skills/` symlinks
 
 Claude Code auto-discovers user-scope skills from `.claude/skills/<name>/`.
-We add symlinks into `plugin/skills/` so that running `/see-what-i-see` in a
-local checkout picks up the same SKILL.md files the installed plugin would use:
+We add symlinks into `skills/claude-plugin/skills/` so that running
+`/see-what-i-see` in a local checkout picks up the same SKILL.md files
+the installed plugin would use:
 
 ```
-.claude/skills/see-what-i-see       -> ../../plugin/skills/see-what-i-see
-.claude/skills/see-what-i-see-watch -> ../../plugin/skills/see-what-i-see-watch
-.claude/skills/see-what-i-see-stop  -> ../../plugin/skills/see-what-i-see-stop
-.claude/skills/see-what-i-see-help  -> ../../plugin/skills/see-what-i-see-help
+.claude/skills/see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
+.claude/skills/see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
+.claude/skills/see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
+.claude/skills/see-what-i-see-help  -> ../../skills/claude-plugin/skills/see-what-i-see-help
 ```
 
-This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/plugin` for
+This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/claude-plugin` for
 this project, but automatic — you don't have to remember the flag.
 
 ### Iterating on skills
@@ -287,22 +294,22 @@ restarting. This reloads skills, hooks, MCP servers, and LSP servers.
 ## Validating the manifests
 
 The official way to check `marketplace.json` and `plugin.json` against
-their schemas is:
+their schemas is `claude plugin validate <dir>` (or `/plugin validate
+<dir>` inside a session). Given a directory, it picks up
+`.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json`
+automatically (preferring the marketplace file if both exist). It also
+validates SKILL.md frontmatter and `hooks/hooks.json`.
 
-```
-claude plugin validate .
-```
+In this repo:
 
-or, inside a session:
-
-```
-/plugin validate .
-```
-
-Given a directory, this picks up `.claude-plugin/marketplace.json` or
-`.claude-plugin/plugin.json` automatically (preferring the marketplace
-file if both exist). It also validates SKILL.md frontmatter and
-`hooks/hooks.json`.
+- For the plugin manifest, run validation against
+  `skills/claude-plugin` — that directory contains a `.claude-plugin/`
+  subdir holding `plugin.json`.
+- The marketplace catalog lives at
+  `skills/dot-claude-plugin/marketplace.json` rather than under a
+  `.claude-plugin/` directory, so `claude plugin validate` against the
+  repo root or `skills/dot-claude-plugin/` won't auto-discover it.
+  Validate by passing the file path directly.
 
 There's no publicly hosted JSON Schema file you can wire into an IDE
 for inline validation. The docs reference a schema URL at
@@ -353,19 +360,20 @@ check — run it before committing any manifest changes.
     user-level `$HOME/.claude/settings.json`, which applies across
     turns regardless of skill scope.
   - Tracking: https://github.com/jshute96/SeeWhatISee/issues/2.
-- **Plugin-level `plugin/settings.json` permissions didn't gate
-  anything.** The plugins reference says only `agent` settings are
-  officially supported there; we tried a `permissions` block and it was
-  ignored, so the file was removed (commit `0aaee35`). Permission
-  gating now relies entirely on skill-level `allowed-tools` frontmatter
-  plus the user-level workaround above.
+- **Plugin-level `settings.json` permissions didn't gate anything.**
+  The plugins reference says only `agent` settings are officially
+  supported there; we tried a `permissions` block at the plugin root
+  and it was ignored, so the file was removed (commit `0aaee35`).
+  Permission gating now relies entirely on skill-level `allowed-tools`
+  frontmatter plus the user-level workaround above.
 - **No symlinks inside the plugin tree.** An earlier iteration had per-skill
-  `scripts` symlinks pointing back at a single `plugin/scripts/`. That
-  broke on Windows clones with `core.symlinks=false`, which check the
+  `scripts` symlinks pointing back at a single `skills/claude-plugin/scripts/`.
+  That broke on Windows clones with `core.symlinks=false`, which check the
   symlinks out as plain text files. The current layout side-steps the
-  problem by putting each main script in a real `plugin/skills/<name>/scripts/`
-  directory and keeping only `_common.sh` at `plugin/scripts/`. The
-  per-skill scripts source `_common.sh` via `..`-traversal (no symlinks
-  involved). The repo-root `scripts/` symlinks are still symlinks, but
-  those are local-dev / test conveniences and not part of the plugin
-  payload that gets installed.
+  problem by putting each main script in a real
+  `skills/claude-plugin/skills/<name>/scripts/` directory and keeping only
+  `_common.sh` at `skills/claude-plugin/scripts/`. The per-skill scripts
+  source `_common.sh` via `..`-traversal (no symlinks involved). The
+  repo-root `scripts/` symlinks are still symlinks, but those are
+  local-dev / test conveniences and not part of the plugin payload that
+  gets installed.

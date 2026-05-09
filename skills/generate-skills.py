@@ -32,14 +32,14 @@ from pathlib import Path
 # (template filename in skills/, target path relative to project root,
 #  optional transform name applied to the expanded template).
 PAIRS = [
-    ("claude.see.md",   "plugin/skills/see-what-i-see/SKILL.md"),
-    ("claude.watch.md", "plugin/skills/see-what-i-see-watch/SKILL.md"),
-    ("claude.stop.md",  "plugin/skills/see-what-i-see-stop/SKILL.md"),
-    ("claude.help.md",  "plugin/skills/see-what-i-see-help/SKILL.md"),
-    ("gemini.see.md",   ".gemini/commands/see-what-i-see.toml"),
-    ("gemini.watch.md", ".gemini/commands/see-what-i-see-watch.toml"),
-    ("gemini.see.md",   ".gemini/skills/see-what-i-see/SKILL.md",       "toml-to-skill"),
-    ("gemini.watch.md", ".gemini/skills/see-what-i-see-watch/SKILL.md", "toml-to-skill"),
+    ("claude.see.md",   "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
+    ("claude.watch.md", "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
+    ("claude.stop.md",  "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
+    ("claude.help.md",  "skills/claude-plugin/skills/see-what-i-see-help/SKILL.md"),
+    ("gemini.see.md",   "skills/dot-gemini/commands/see-what-i-see.toml"),
+    ("gemini.watch.md", "skills/dot-gemini/commands/see-what-i-see-watch.toml"),
+    ("gemini.see.md",   "skills/dot-gemini/skills/see-what-i-see/SKILL.md",       "toml-to-skill"),
+    ("gemini.watch.md", "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md", "toml-to-skill"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
@@ -58,7 +58,7 @@ def toml_to_skill(target_rel: str, content: str) -> str:
     """Translate a Gemini TOML command into a Claude SKILL.md.
 
     The skill `name` is taken from the parent directory of the target path
-    (e.g. `.gemini/skills/see-what-i-see/SKILL.md` -> `see-what-i-see`),
+    (e.g. `skills/dot-gemini/skills/see-what-i-see/SKILL.md` -> `see-what-i-see`),
     matching how SKILL.md files are conventionally identified. The TOML
     `description` becomes the YAML `description` field (as a literal block
     scalar when it spans multiple lines) and the TOML `prompt` becomes the

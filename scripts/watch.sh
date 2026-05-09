@@ -1,1 +1,1 @@
-../plugin/skills/see-what-i-see-watch/scripts/watch.sh
+../skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh

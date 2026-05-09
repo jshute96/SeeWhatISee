@@ -4,10 +4,19 @@
 
 set -e
 
-FILES=".gemini/commands/see-what-i-see.toml .gemini/commands/see-what-i-see-watch.toml .gemini/scripts/_common.sh .gemini/scripts/copy-last-snapshot.sh .gemini/scripts/watch-and-copy.sh"
-for f in $FILES; do
-  if [ ! -f "$f" ]; then
-    echo "Required file $f not found. Are you in the wrong directory?"
+# Source dir under this repo and the matching path under $HOME/.gemini.
+# Each entry is "<src>:<dst-relative-to-$HOME/.gemini>".
+SRC_ROOT="skills/dot-gemini"
+FILES=(
+  "commands/see-what-i-see.toml"
+  "commands/see-what-i-see-watch.toml"
+  "scripts/_common.sh"
+  "scripts/copy-last-snapshot.sh"
+  "scripts/watch-and-copy.sh"
+)
+for f in "${FILES[@]}"; do
+  if [ ! -f "$SRC_ROOT/$f" ]; then
+    echo "Required file $SRC_ROOT/$f not found. Are you in the wrong directory?"
     exit 1
   fi
 done
@@ -29,8 +38,8 @@ fi
 mkdir -p "$HOME"/.gemini/commands
 mkdir -p "$HOME"/.gemini/scripts
 
-for f in $FILES; do
-  cp -af "$f" "$HOME"/"$f"
+for f in "${FILES[@]}"; do
+  cp -af "$SRC_ROOT/$f" "$HOME"/.gemini/"$f"
 done
 
 echo "Copied /see-what-i-see and /see-what-i-see-watch commands into $HOME/.gemini"

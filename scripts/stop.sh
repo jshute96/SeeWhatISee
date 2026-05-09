@@ -1,1 +1,1 @@
-../plugin/skills/see-what-i-see-stop/scripts/stop.sh
+../skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh

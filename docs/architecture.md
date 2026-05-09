@@ -262,9 +262,10 @@ provided:
 Layout:
 
 - Each skill that needs a script bundles it in its own
-  `plugin/skills/<name>/scripts/` directory.
-- A single `_common.sh` lives at `plugin/scripts/_common.sh` (the
-  only file left under `plugin/scripts/`) and is `source`d by every
+  `skills/claude-plugin/skills/<name>/scripts/` directory.
+- A single `_common.sh` lives at
+  `skills/claude-plugin/scripts/_common.sh` (the only file left
+  under `skills/claude-plugin/scripts/`) and is `source`d by every
   per-skill script.
 - The repo-root `scripts/` directory has symlinks to the per-skill
   scripts so e2e tests and ad-hoc CLI use can find them at a
@@ -272,23 +273,23 @@ Layout:
 
 The scripts:
 
-- `plugin/scripts/_common.sh` — shared helpers sourced by the
-  per-skill scripts: directory resolution (config file,
-  `--directory`, default), config parsing, `absolutize_paths`
+- `skills/claude-plugin/scripts/_common.sh` — shared helpers
+  sourced by the per-skill scripts: directory resolution (config
+  file, `--directory`, default), config parsing, `absolutize_paths`
   (rewrites bare filenames in JSON to absolute paths via sed),
   and `kill_existing` (kills a watcher recorded in a pidfile).
-- `plugin/skills/see-what-i-see/scripts/get-latest.sh` — reads
-  the last line of `log.json` and prints a single JSON record
-  with absolute paths to stdout. Used by `/see-what-i-see`.
-- `plugin/skills/see-what-i-see-watch/scripts/watch.sh` —
-  filesystem watcher used by `/see-what-i-see-watch`. Detects
+- `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`
+  — reads the last line of `log.json` and prints a single JSON
+  record with absolute paths to stdout. Used by `/see-what-i-see`.
+- `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`
+  — filesystem watcher used by `/see-what-i-see-watch`. Detects
   changes to `log.json` by polling mtime every 0.5s. Supports
   `--after TIMESTAMP` to catch up on missed captures; TIMESTAMP
   is the ISO `timestamp` field from a previous record (matched
   against `log.json`). Emits JSON records with absolute paths to
   stdout; status messages go to stderr. Also accepts `--stop` as
   a convenience when running the script directly.
-- `plugin/skills/see-what-i-see-stop/scripts/stop.sh` — small
+- `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` — small
   dedicated stop script invoked by `/see-what-i-see-stop`.
   Resolves the watch directory the same way as the others, then
   calls the shared `kill_existing` against `$DIR/.watch.pid`.
