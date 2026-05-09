@@ -35,20 +35,20 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — codereview then commit + push if clean |
 | `.claude/commands/test-markdown-converter.md` | `/test-markdown-converter` slash command — tests the HTML→markdown converter against URLs / HTML files via parallel background agents |
 
-## Skill Templates (`src/skills_templates/`)
+## Skill Templates (`skills/`)
 
 | File | Description |
 |------|-------------|
-| `src/skills_templates/generate-skills.py` | Generator/validator that produces the Claude skill and Gemini command files from the templates below |
-| `src/skills_templates/json-record.template.md` | Shared block describing the `log.json` record shape, embedded via `[[...]]` |
-| `src/skills_templates/process.template.md` | Shared block describing how to process a capture record, embedded via `[[...]]` |
-| `src/skills_templates/claude.see.md` | Template for `plugin/skills/see-what-i-see/SKILL.md` |
-| `src/skills_templates/claude.watch.md` | Template for `plugin/skills/see-what-i-see-watch/SKILL.md` |
-| `src/skills_templates/claude.stop.md` | Template for `plugin/skills/see-what-i-see-stop/SKILL.md` |
-| `src/skills_templates/claude.help.md` | Template for `plugin/skills/see-what-i-see-help/SKILL.md` |
-| `src/skills_templates/gemini.see.md` | Template for `.gemini/commands/see-what-i-see.toml` |
-| `src/skills_templates/gemini.watch.md` | Template for `.gemini/commands/see-what-i-see-watch.toml` |
-| `src/skills_templates/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
+| `skills/generate-skills.py` | Generator/validator that produces the Claude skill and Gemini command files from the templates below |
+| `skills/json-record.template.md` | Shared block describing the `log.json` record shape, embedded via `[[...]]` |
+| `skills/process.template.md` | Shared block describing how to process a capture record, embedded via `[[...]]` |
+| `skills/claude.see.md` | Template for `plugin/skills/see-what-i-see/SKILL.md` |
+| `skills/claude.watch.md` | Template for `plugin/skills/see-what-i-see-watch/SKILL.md` |
+| `skills/claude.stop.md` | Template for `plugin/skills/see-what-i-see-stop/SKILL.md` |
+| `skills/claude.help.md` | Template for `plugin/skills/see-what-i-see-help/SKILL.md` |
+| `skills/gemini.see.md` | Template for `.gemini/commands/see-what-i-see.toml` |
+| `skills/gemini.watch.md` | Template for `.gemini/commands/see-what-i-see-watch.toml` |
+| `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 
 ## Marketplace (`.claude-plugin/`)
 
@@ -66,7 +66,7 @@ One-line descriptions of every source file, grouped by directory.
 | `plugin/skills/see-what-i-see-watch/scripts/watch.sh` | CLI command to watch for new updates to `log.json` (also accepts `--stop` as a convenience) |
 | `plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Small script that just stops a running watcher — used by `/see-what-i-see-stop` |
 
-**NOTE: the skills below are generated from `src/skills_templates/`, do not edit directly**
+**NOTE: the skills below are generated from `skills/`, do not edit directly**
 
 | File | Description |
 |------|-------------|
@@ -83,7 +83,7 @@ One-line descriptions of every source file, grouped by directory.
 | `.gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `_common.sh`'s `emit_record` |
 | `.gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
 
-**NOTE: the commands below are generated from `src/skills_templates/`, do not edit directly**
+**NOTE: the commands below are generated from `skills/`, do not edit directly**
 
 | File | Description |
 |------|-------------|

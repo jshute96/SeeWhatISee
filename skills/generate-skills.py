@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate plugin/.gemini skill files from templates in src/skills_templates/.
+"""Generate plugin/.gemini skill files from templates in skills/.
 
 Usage:
   generate-skills.py            Validate: check that each target file exactly
@@ -14,7 +14,7 @@ Usage:
                                 overwriting them. Unchanged files are skipped.
   generate-skills.py --help     Show this help and exit.
 
-Templates live alongside this script in src/skills_templates/. Each template may reference
+Templates live alongside this script in skills/. Each template may reference
 another template via a `[[filename]]` placeholder; the placeholder is replaced
 with the content of the referenced template (recursively). The PAIRS table
 below maps each top-level template file to the target file it generates.
@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# (template filename in src/skills_templates/, target path relative to project root)
+# (template filename in skills/, target path relative to project root)
 PAIRS = [
     ("claude.see.md",   "plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md", "plugin/skills/see-what-i-see-watch/SKILL.md"),
@@ -66,8 +66,8 @@ def expand(src_dir: Path, text: str, stack: tuple = ()) -> str:
 
 def main(argv: list[str]) -> int:
     script_path = Path(argv[0]).resolve()
-    src_dir = script_path.parent           # <project>/src/skills_templates/
-    project_root = src_dir.parent.parent   # <project>/
+    src_dir = script_path.parent           # <project>/skills/
+    project_root = src_dir.parent          # <project>/
 
     update = False
     show_diff = False

@@ -181,7 +181,7 @@ Four files drive the prompts:
 - `.gemini/commands/see-what-i-see-watch.toml`
 
 All skill and command prompts are **generated from templates** in
-`src/skills_templates/`:
+`skills/`:
 
 Two shared blocks — the **JSON-record block** and the **"Process the
 capture:" block** — live as their own files (`json-record.template.md`,
@@ -196,7 +196,7 @@ Platform-specific differences stay in the top-level templates:
 - Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses
   `copy-last-snapshot.sh` via `!{...}`.
 
-The generator `src/skills_templates/generate-skills.py` runs in validate
+The generator `skills/generate-skills.py` runs in validate
 mode by default (exit 1 on drift), is wired into `npm test` via
 `npm run test:skills`, and has `--diff` / `--update` flags. See
 `CLAUDE.md` → "Keep the skill/command files in sync" for the full

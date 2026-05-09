@@ -47,20 +47,20 @@ user before elaborating further. Default to action over planning.
 
 The Claude skills and Gemini commands describe the same `log.json` outputs
 and the same steps to take for each. To keep them consistent, they are
-**generated from shared templates** in `src/skills_templates/` — never edit the
+**generated from shared templates** in `skills/` — never edit the
 generated files directly.
 
-- Templates live in `src/skills_templates/` (one file per generated target, plus
+- Templates live in `skills/` (one file per generated target, plus
   shared blocks like `json-record.template.md` and `process.template.md`
   which are embedded via `[[filename]]` placeholders).
-- The generator is `src/skills_templates/generate-skills.py`:
-  - `src/skills_templates/generate-skills.py` — validate that each target matches the
+- The generator is `skills/generate-skills.py`:
+  - `skills/generate-skills.py` — validate that each target matches the
     template output (exits non-zero if any differ). Also wired up as
     `npm run test:skills` and runs as part of `npm test`, so `npm test` will
     fail if the generated files have drifted from the templates.
-  - `src/skills_templates/generate-skills.py --diff` — same validation, but also
+  - `skills/generate-skills.py --diff` — same validation, but also
     prints a unified diff for each mismatching file.
-  - `src/skills_templates/generate-skills.py --update` — regenerate the target files
+  - `skills/generate-skills.py --update` — regenerate the target files
     from the templates.
 - Generated targets (do not edit these directly):
   - `plugin/skills/see-what-i-see/SKILL.md`
@@ -70,5 +70,5 @@ generated files directly.
   - `.gemini/commands/see-what-i-see.toml`
   - `.gemini/commands/see-what-i-see-watch.toml`
 - When updating behavior shared across skills (e.g. the JSON record shape or
-  the processing rules), edit the relevant template in `src/skills_templates/` and
+  the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.
