@@ -401,29 +401,45 @@ function refreshPillsCompactness(): void {
 }
 
 /**
- * Refresh the Image size pill ("PNG · 312 KB" / "JPG · 88 KB").
+ * Refresh the Image size pill's bake-derived parts (format + bytes).
  * Hidden when no screenshot was captured (`screenshotErrored`),
- * otherwise reflects the bytes that *would* be saved right now —
- * i.e. the freshly-baked PNG when the user has any drawn / cropped
- * / redacted edits, else the original captureVisibleTab data URL
+ * otherwise reflects what *would* be saved right now: the
+ * freshly-baked PNG when the user has any drawn / cropped /
+ * redacted edits, else the original captureVisibleTab data URL
  * verbatim. Format label comes from the data URL's MIME prefix; it
  * always resolves to "PNG" once edits have been baked because
  * `renderHighlightedPng` always re-encodes as PNG.
  *
- * Cached by `editVersion` so resize / zoom-driven `render()` calls
- * don't trigger a (potentially multi-megabyte) re-bake — only edit
- * commits, undos, clears, and shrinks bump the version.
+ * The pill's text isn't written here directly — it's composed
+ * by `composeImageBadgeText`, which adds the live dimensions
+ * portion. Splitting the two lets a crop-handle drag refresh just
+ * the dimensions on every mousemove (cheap text formatting)
+ * without paying for a re-bake (potentially multi-megabyte) on
+ * every frame.
+ *
+ * Cached by `editVersion` + the previewImg's natural dimensions so
+ * resize / zoom-driven `render()` calls don't trigger a re-bake.
+ * The natural-dimension half of the key matters at startup: the
+ * first call from `loadData` runs synchronously after
+ * `previewImg.src = …`, before the image has decoded, so
+ * `naturalWidth` is briefly 0; once the load event fires
+ * `applyZoom → render → updateImageSizeBadge`, the key flips and
+ * the pill refreshes with real dimensions. After that, only edit
+ * commits / undos / clears / shrinks bump the key.
  */
-let lastImageBadgeVersion = -1;
+let lastImageBadgeKey = '';
 let screenshotErrored = false;
+let lastImageBadgeParts: { label: string; bytes: number } | null = null;
 function updateImageSizeBadge(): void {
   if (screenshotErrored) {
     imageSizeBadge.hidden = true;
+    lastImageBadgeParts = null;
     refreshPillsCompactness();
     return;
   }
-  if (lastImageBadgeVersion === editVersion && !imageSizeBadge.hidden) return;
-  lastImageBadgeVersion = editVersion;
+  const key = `${editVersion}|${previewImg.naturalWidth}|${previewImg.naturalHeight}`;
+  if (lastImageBadgeKey === key && !imageSizeBadge.hidden) return;
+  lastImageBadgeKey = key;
   // `renderHighlightedPng` short-circuits to `previewImg.src` when
   // no edits need baking, so the no-edits path is just the original
   // capture data URL — no canvas re-encode.
@@ -431,12 +447,116 @@ function updateImageSizeBadge(): void {
   const formatted = formatImageDataUrl(dataUrl);
   if (!formatted) {
     imageSizeBadge.hidden = true;
+    lastImageBadgeParts = null;
     refreshPillsCompactness();
     return;
   }
+  lastImageBadgeParts = { label: formatted.label, bytes: formatted.bytes };
   imageSizeBadge.hidden = false;
-  imageSizeBadge.textContent = `${formatted.label} · ${formatBytes(formatted.bytes)}`;
+  // Compose the text now too, not only via the `render()`-driven
+  // path — `loadData` calls this synchronously *before* the
+  // `await previewImg.load`, and we don't want to rely on the load
+  // listener's render() to fill in the text (defensive against a
+  // hypothetical sync-load edge case where the listener doesn't
+  // fire before body visibility flips). The `render()` call is
+  // still needed for the live-drag refresh; the cost of one
+  // duplicate textContent write per edit commit is negligible.
+  composeImageBadgeText();
   refreshPillsCompactness();
+}
+
+/**
+ * Compose the Image pill's textContent from the cached bake-derived
+ * parts (format + bytes) and the live dimensions
+ * (`liveCropDimensions` while a crop drag is in flight, else
+ * `savedImageDimensions`). Cheap — no allocations beyond the
+ * template string and the DOM update — so calling this on every
+ * mousemove during a crop drag is fine. Bails when the bake-derived
+ * parts haven't been computed yet (e.g. a `screenshotErrored`
+ * capture; pill is hidden in that branch anyway).
+ */
+function composeImageBadgeText(): void {
+  if (!lastImageBadgeParts) return;
+  const dims = liveCropDimensions() ?? savedImageDimensions();
+  const dimText = dims ? ` · ${dims.width}×${dims.height}` : '';
+  imageSizeBadge.textContent =
+    `${lastImageBadgeParts.label}${dimText} · ${formatBytes(lastImageBadgeParts.bytes)}`;
+}
+
+/**
+ * Pixel dimensions of the image that `renderHighlightedPng` would
+ * produce right now: the active crop's pixel size when one exists,
+ * else `previewImg`'s natural size. Returns null while the
+ * previewImg is still decoding (`naturalWidth === 0`) — callers
+ * elide the dimension portion of the pill text in that window.
+ *
+ * Routed through `pctRectToPixels` so the integer derivation
+ * matches the canvas the bake actually allocates (round-then-
+ * subtract, vs. a `Math.round(w * factor)` that can land 1px
+ * different from the floor that `canvas.width = float` would
+ * apply). Otherwise the pill could disagree with `file <saved>.png`
+ * by a pixel for some crop fractions.
+ */
+function savedImageDimensions(): { width: number; height: number } | null {
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+  if (!natW || !natH) return null;
+  const crop = activeCrop();
+  if (crop) {
+    const px = pctRectToPixels(crop, natW, natH);
+    return { width: px.w, height: px.h };
+  }
+  return { width: natW, height: natH };
+}
+
+/**
+ * Pixel dimensions of the crop currently being dragged, if any —
+ * the rectangle the user is interactively reshaping or drawing,
+ * before they release the mouse and commit. Returns null when no
+ * such drag is in flight; callers fall back to
+ * `savedImageDimensions` so the pill shows the committed crop
+ * (or full image) at rest.
+ *
+ * Two drag flavors:
+ *   - `cropDrag` — handle-resize on an existing crop (already in
+ *     percent coordinates, mirrors the values painted by `render`).
+ *   - Crop-tool create drag — `dragStart` + `dragCurrent` in
+ *     display pixels, projected to percent against `imgRect`.
+ */
+function liveCropDimensions(): { width: number; height: number } | null {
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+  if (!natW || !natH) return null;
+  // Both branches build a percent-space rect mirroring what would
+  // commit on mouseup, then route through `pctRectToPixels` so the
+  // live preview uses the same integer derivation as the eventual
+  // bake (and hence `savedImageDimensions`).
+  if (cropDrag) {
+    const px = pctRectToPixels(
+      { x: cropDrag.curX, y: cropDrag.curY, w: cropDrag.curW, h: cropDrag.curH },
+      natW,
+      natH,
+    );
+    return { width: px.w, height: px.h };
+  }
+  if (selectedTool === 'crop' && dragStart && dragCurrent) {
+    const r = imgRect();
+    if (!r.width || !r.height) return null;
+    // Zero-area "drag" — mousedown without movement. The mousedown
+    // handler sets `dragCurrent = dragStart` before the first
+    // mousemove arrives, so without this guard the pill would flash
+    // "0×0" the moment the user pressed the mouse button.
+    if (dragStart.x === dragCurrent.x && dragStart.y === dragCurrent.y) {
+      return null;
+    }
+    const x = (Math.min(dragStart.x, dragCurrent.x) / r.width) * 100;
+    const y = (Math.min(dragStart.y, dragCurrent.y) / r.height) * 100;
+    const w = (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100;
+    const h = (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100;
+    const px = pctRectToPixels({ x, y, w, h }, natW, natH);
+    return { width: px.w, height: px.h };
+  }
+  return null;
 }
 
 /**
@@ -1520,12 +1640,17 @@ function render(): void {
   undoBtn.disabled = !hasEditHistory;
   clearBtn.disabled = !hasEditHistory;
   shrinkBtn.disabled = !shrinkTarget();
-  // Refresh the Image-size pill ("PNG · 312 KB") whenever an edit
-  // commits — `render()` is called right after every editVersion++,
-  // so this is the single chokepoint for the pill. The function
-  // itself is keyed on editVersion, so the resize / zoom / drag
-  // callers of render() are essentially free.
+  // Refresh the Image-size pill ("PNG · 1920×1080 · 312 KB").
+  // `updateImageSizeBadge` is keyed on editVersion + natural dims
+  // and short-circuits when nothing relevant changed — so the
+  // resize / zoom callers of render() don't pay for a re-bake.
+  // `composeImageBadgeText` then recomposes the pill text picking
+  // up live `liveCropDimensions` if a crop drag is in flight, so
+  // the user sees the selection size update in real time. Bytes
+  // stay at the last committed value during a drag — re-baking
+  // each frame would cost too much.
   updateImageSizeBadge();
+  composeImageBadgeText();
 }
 
 overlay.addEventListener('mousedown', (e) => {
@@ -3866,11 +3991,18 @@ function renderHighlightedPng(): string {
 
   // Source rectangle on the natural-resolution image. For an
   // un-cropped save this is the whole image; for a cropped save
-  // it's the crop region.
-  const sx = crop ? (crop.x / 100) * natW : 0;
-  const sy = crop ? (crop.y / 100) * natH : 0;
-  const sw = crop ? (crop.w / 100) * natW : natW;
-  const sh = crop ? (crop.h / 100) * natH : natH;
+  // we route through `pctRectToPixels` so the integer dimensions
+  // line up exactly with what the Image-size pill displays
+  // (`savedImageDimensions` uses the same helper). Earlier this
+  // computed `(crop.w/100)*natW` directly and let
+  // `canvas.width = <float>` truncate — which produced an
+  // occasional 1-pixel mismatch between the pill ("PNG ·
+  // 800×600") and `file <saved>.png` ("PNG image data, 799 x 600").
+  const cropPx = crop ? pctRectToPixels(crop, natW, natH) : null;
+  const sx = cropPx ? cropPx.x : 0;
+  const sy = cropPx ? cropPx.y : 0;
+  const sw = cropPx ? cropPx.w : natW;
+  const sh = cropPx ? cropPx.h : natH;
 
   const canvas = document.createElement('canvas');
   canvas.width = sw;

@@ -158,17 +158,31 @@ referenced from this doc live in
 - Title row: clickable link with the captured tab's title (falls
   back to the URL when the title is empty); a stack of size pills
   on the right (Image / HTML / Selection, top-to-bottom).
-  - `<FORMAT> · <size>` (Image) — bytes of the screenshot that
-    *would* be saved right now: the original capture data URL
+  - `<FORMAT> · <W>×<H> · <size>` (Image) — what the screenshot
+    *would* be when saved right now: the original capture data URL
     when there are no bake-able edits, else the freshly-baked PNG
-    from `renderHighlightedPng`. Format label comes from the data
-    URL's MIME prefix — `PNG` for the standard
-    `captureVisibleTab` path and image-context PNGs, `JPG` for
-    image-context JPEGs, etc. Once any edit needs baking the
-    label flips to `PNG` because the bake always re-encodes as
-    PNG. Updated from inside `render()` and keyed on `editVersion`
-    so resize / zoom / drag-mid-flight calls don't re-bake.
-    Hidden when `screenshotError` is set on the capture record.
+    from `renderHighlightedPng`. Three parts:
+    - **Format label** comes from the data URL's MIME prefix —
+      `PNG` for the standard `captureVisibleTab` path and
+      image-context PNGs, `JPG` for image-context JPEGs, etc.
+      Once any edit needs baking the label flips to `PNG`
+      because the bake always re-encodes as PNG.
+    - **Dimensions** are the bake's source rectangle — an active
+      crop's pixel size when one exists, else `previewImg`'s
+      natural size.
+    - During a crop drag (Crop-tool create or handle-resize) the
+      dimensions update live on every mousemove via
+      `composeImageBadgeText`, giving a real-time readout of what
+      the user is selecting.
+    - Bytes stay frozen during a crop drag — re-baking on every
+      frame would cost too much. They refresh once the user
+      commits (mouseup).
+    - **Bytes** of the bake (or original) data URL.
+  - The bake-derived parts (format + bytes) are cached by
+    `editVersion` + previewImg's natural dimensions so resize /
+    zoom / drag-mid-flight `render()` calls don't trigger a
+    re-bake. Hidden when `screenshotError` is set on the capture
+    record.
   - `HTML · <size>` — `formatBytes(new Blob([html]).size)`.
   - `Selection · <size>` — byte count of the format the
     Selection pill is currently showing (the checked radio when
