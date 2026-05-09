@@ -10,9 +10,14 @@
 // captureVisible to fail on demand: the helpers are where the logic
 // lives and the click-handler wiring is a one-line pass-through.
 //
-// We assert by listening for the new tab via `chrome.tabs.onCreated`
-// (installed in the SW from the test side), reading its URL, and
-// pulling the `error` query parameter back out.
+// We assert by spying on `chrome.tabs.create` rather than listening
+// for `chrome.tabs.onCreated`. The extension only has the
+// `activeTab` permission (no `tabs` permission), and without `tabs`
+// Chrome strips the URL/pendingUrl fields from tabs delivered to
+// `onCreated`/`onUpdated` listeners — so a listener that filters on
+// `capture.html?error=` would never resolve. Stubbing `tabs.create`
+// also avoids spawning real extension tabs across the suite, which
+// matches the pattern in `upload-image.spec.ts`.
 
 import { test, expect } from '../fixtures/extension';
 
@@ -21,68 +26,75 @@ interface ErrorApi {
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
 }
 
-interface CapturedTab {
-  id?: number;
-  url: string;
-}
+// Action descriptor for `runAndCaptureErrorMessage`. `kind` selects
+// the SW entry point; `raw` is the message we throw / reject with.
+type ErrorAction =
+  | { kind: 'report'; raw: string }
+  | { kind: 'runReject'; raw: string };
 
 /**
- * Listen for the *next* `tabs.onCreated` whose URL is the extension's
- * `capture.html?error=...`, return the captured `error` param, and
- * close the tab so it doesn't leak between tests. Installed before
- * the SW action runs so we don't miss the create event.
+ * Spy on `chrome.tabs.create`, run the requested SW action, and
+ * return the `error=` query param from the URL it asked Chrome to
+ * open. Spy + action + read all happen inside one `sw.evaluate` so
+ * the MV3 service worker can't recycle between the install and the
+ * action and lose the spy state.
+ *
+ * Restores `chrome.tabs.create` before returning so later tests in
+ * the same SW (success-path test, file-shared SW) see the original.
  */
-async function captureNextErrorTab(
+async function runAndCaptureErrorMessage(
   sw: import('@playwright/test').Worker,
-): Promise<{ install: () => Promise<void>; read: () => Promise<string> }> {
-  const install = async (): Promise<void> => {
-    await sw.evaluate(() => {
-      interface Spied {
-        __errTabPromise?: Promise<CapturedTab>;
+  action: ErrorAction,
+): Promise<string> {
+  return await sw.evaluate(async (act: ErrorAction) => {
+    interface CreateSpy {
+      __seeErrCreate?: chrome.tabs.CreateProperties[];
+      __seeErrCreateOrig?: typeof chrome.tabs.create;
+    }
+    const g = self as unknown as CreateSpy;
+    g.__seeErrCreateOrig = chrome.tabs.create.bind(chrome.tabs);
+    g.__seeErrCreate = [];
+    (chrome.tabs as { create: typeof chrome.tabs.create }).create = (async (
+      props: chrome.tabs.CreateProperties,
+    ) => {
+      g.__seeErrCreate!.push(props);
+      // Return a stub Tab — `reportCaptureError` only awaits the
+      // call; it doesn't read fields off the result.
+      return { id: 999, index: props.index ?? 0 } as chrome.tabs.Tab;
+    }) as typeof chrome.tabs.create;
+
+    try {
+      const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
+      if (act.kind === 'report') {
+        await api.reportCaptureError(new Error(act.raw));
+      } else {
+        await api.runWithErrorReporting(() => Promise.reject(new Error(act.raw)));
       }
-      const g = self as unknown as Spied;
-      g.__errTabPromise = new Promise<CapturedTab>((resolve) => {
-        const onCreated = (tab: chrome.tabs.Tab): void => {
-          const url = tab.url ?? tab.pendingUrl ?? '';
-          if (!url.includes('capture.html?error=')) return;
-          chrome.tabs.onCreated.removeListener(onCreated);
-          resolve({ id: tab.id, url });
-        };
-        chrome.tabs.onCreated.addListener(onCreated);
-      });
-    });
-  };
-  const read = async (): Promise<string> => {
-    const errorParam = await sw.evaluate(async () => {
-      const g = self as unknown as { __errTabPromise?: Promise<CapturedTab> };
-      const captured = await g.__errTabPromise!;
-      // Best-effort cleanup so the test's tab strip stays small.
-      if (captured.id !== undefined) {
-        try {
-          await chrome.tabs.remove(captured.id);
-        } catch {
-          // Ignored — tab may already be gone.
-        }
+      const calls = g.__seeErrCreate ?? [];
+      if (calls.length !== 1) {
+        throw new Error(`expected exactly 1 chrome.tabs.create call, got ${calls.length}`);
       }
-      const params = new URLSearchParams(captured.url.split('?')[1] ?? '');
+      const url = calls[0].url ?? '';
+      const params = new URLSearchParams(url.split('?')[1] ?? '');
       return params.get('error') ?? '';
-    });
-    return errorParam;
-  };
-  return { install, read };
+    } finally {
+      if (g.__seeErrCreateOrig) {
+        (chrome.tabs as { create: typeof chrome.tabs.create }).create = g.__seeErrCreateOrig;
+      }
+      delete g.__seeErrCreate;
+      delete g.__seeErrCreateOrig;
+    }
+  }, action);
 }
 
 test('reportCaptureError opens a Capture-page tab with the friendly message', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  const { install, read } = await captureNextErrorTab(sw);
-  await install();
-  await sw.evaluate(async () => {
-    const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.reportCaptureError(new Error('No active tab found to capture'));
+  const message = await runAndCaptureErrorMessage(sw, {
+    kind: 'report',
+    raw: 'No active tab found to capture',
   });
-  const message = await read();
   // Friendly rewrite — the raw "No active tab found to capture"
   // becomes a sentence that explains why and names the common case
   // (browser-internal / chrome:// pages).
@@ -94,15 +106,10 @@ test('runWithErrorReporting opens an error tab on rejection', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  const { install, read } = await captureNextErrorTab(sw);
-  await install();
-  await sw.evaluate(async () => {
-    const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.runWithErrorReporting(() =>
-      Promise.reject(new Error('simulated failure')),
-    );
+  const message = await runAndCaptureErrorMessage(sw, {
+    kind: 'runReject',
+    raw: 'simulated failure',
   });
-  const message = await read();
   // No rewrite for unrecognised messages — passes through verbatim.
   expect(message).toBe('simulated failure');
 });
@@ -111,23 +118,36 @@ test('runWithErrorReporting on success opens no tab', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  // Watch for *any* new tab in the next 500ms after the success
-  // call. We don't expect one — if we see one, the "no error"
-  // branch incorrectly opened something.
-  const tabsCreated = await sw.evaluate(async () => {
-    let count = 0;
-    const onCreated = (): void => {
-      count += 1;
-    };
-    chrome.tabs.onCreated.addListener(onCreated);
-    const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-    await api.runWithErrorReporting(() => Promise.resolve('ok'));
-    // Small drain in case the listener fires async.
-    await new Promise((r) => setTimeout(r, 100));
-    chrome.tabs.onCreated.removeListener(onCreated);
-    return count;
+  // Spy on `chrome.tabs.create` and assert it wasn't called by the
+  // success path. Same stub shape as the failure helper above so the
+  // two paths exercise the same surface.
+  const createCalls = await sw.evaluate(async () => {
+    interface CreateSpy {
+      __seeOkCreate?: chrome.tabs.CreateProperties[];
+      __seeOkCreateOrig?: typeof chrome.tabs.create;
+    }
+    const g = self as unknown as CreateSpy;
+    g.__seeOkCreateOrig = chrome.tabs.create.bind(chrome.tabs);
+    g.__seeOkCreate = [];
+    (chrome.tabs as { create: typeof chrome.tabs.create }).create = (async (
+      props: chrome.tabs.CreateProperties,
+    ) => {
+      g.__seeOkCreate!.push(props);
+      return { id: 999, index: props.index ?? 0 } as chrome.tabs.Tab;
+    }) as typeof chrome.tabs.create;
+    try {
+      const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
+      await api.runWithErrorReporting(() => Promise.resolve('ok'));
+      return (g.__seeOkCreate ?? []).length;
+    } finally {
+      if (g.__seeOkCreateOrig) {
+        (chrome.tabs as { create: typeof chrome.tabs.create }).create = g.__seeOkCreateOrig;
+      }
+      delete g.__seeOkCreate;
+      delete g.__seeOkCreateOrig;
+    }
   });
-  expect(tabsCreated).toBe(0);
+  expect(createCalls).toBe(0);
 });
 
 test('friendly rewrites cover the common throw-site strings', async ({
@@ -144,13 +164,7 @@ test('friendly rewrites cover the common throw-site strings', async ({
     ['No captures in the log to copy from', 'No captures yet'],
   ];
   for (const [raw, expected] of cases) {
-    const { install, read } = await captureNextErrorTab(sw);
-    await install();
-    await sw.evaluate(async (m: string) => {
-      const api = (self as unknown as { SeeWhatISee: ErrorApi }).SeeWhatISee;
-      await api.reportCaptureError(new Error(m));
-    }, raw);
-    const message = await read();
+    const message = await runAndCaptureErrorMessage(sw, { kind: 'report', raw });
     expect(message).toContain(expected);
   }
 });

@@ -52,18 +52,21 @@ multi-step drilling behavior.
 
 ### Capturing the SW-opened error tab
 
-- `runWithErrorReporting` opens an error-page tab on failure, so
-  the error-reporting e2e spec listens for that via
-  `chrome.tabs.onCreated` from inside the SW.
-- The listener stores the captured `{id, url}` on the SW global
-  (`__errTabPromise`) so the test side can `await` it via
-  `serviceWorker.evaluate`, then close the tab to keep the strip
-  clean between tests.
-- Install the listener **before** triggering the action under
-  test — the helper does this synchronously inside the same
-  `serviceWorker.evaluate` call, so by the time the next
-  `evaluate` runs (and fires the action) the listener is in
-  place.
+- `runWithErrorReporting` opens an error-page tab on failure. The
+  error-reporting e2e spec asserts on the `?error=` query param of
+  that tab's URL.
+- We **spy on `chrome.tabs.create`** rather than listening for
+  `chrome.tabs.onCreated`. The extension only has the `activeTab`
+  permission (no `tabs` permission), so Chrome strips URL fields
+  from tabs delivered to `onCreated`/`onUpdated` listeners — a
+  filter on `capture.html?error=` would never match.
+- Spy + action + read all happen inside a **single**
+  `serviceWorker.evaluate` block. The MV3 service worker can
+  recycle between separate `evaluate` calls and drop the spy
+  state, stranding the read.
+- Same `chrome.tabs.create` stub shape as `upload-image.spec.ts` —
+  capture create-properties without actually opening a tab so the
+  suite doesn't accumulate stray windows.
 
 ### `chrome.tabs.captureVisibleTab` rate limit
 
