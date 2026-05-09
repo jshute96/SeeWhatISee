@@ -78,11 +78,11 @@ Click **Ask** to send the selected files and the prompt to one of the chatbots o
 
 Use the drop-down menu to select a target — opening a new tab (↗) or continuing in an existing tab (📌).
 
-Click a provider icon to start a new tab in 
-- **Claude**; Supports **Claude Code** too, but with image uploads only.
+Click a provider icon to start a new tab in
+- **Claude**; Requires login. Supports **Claude Code** too, but with image uploads only.
 - **ChatGPT**; Supports uploading at most two files per prompt.
-- **Gemini**
-- **Google**; Does a Google search with the prompt and an uploaded image. Image upload only works if logged in to Google.
+- **Gemini**; Requires login to upload images.
+- **Google**; Does a Google search with the prompt and an uploaded image. Requires login to upload images.
 
 While viewing a chatbot page, the toolbar context menu lets you **Set this tab as the Ask button target**.
 
@@ -187,6 +187,19 @@ To avoid this, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` wi
 [Issue #2](https://github.com/jshute96/SeeWhatISee/issues/2) is about finding a better workaround to avoid permission prompts.
 
 ### Gemini CLI commands
+
+#### Gemini Extension
+
+> [!NOTE]
+> The extension is experimental. Install might not work correctly yet in all system configurations.
+
+A Gemini extension is available, packaging the commands as skills. Install by running:
+
+```bash
+gemini extensions install https://github.com/jshute96/SeeWhatISee-gemini
+```
+
+#### Manual install
 
 Run `scripts/gemini-install.sh` from inside `gemini`, so it can install into Gemini's sandbox home directory.
 
