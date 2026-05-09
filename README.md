@@ -214,21 +214,15 @@ Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
 
 #### Manual install
 
-Run `scripts/gemini-install.sh` from inside `gemini`, so it can install into Gemini's sandbox home directory.
+If `gemini extensions install` doesn't work, clone the release repo and copy the files into your `~/.gemini/` directory:
 
 ```bash
-git clone https://github.com/jshute96/SeeWhatISee.git
-cd SeeWhatISee
-gemini 'Run `scripts/gemini-install.sh`'
+git clone https://github.com/jshute96/SeeWhatISee-gemini.git
+cd SeeWhatISee-gemini
+mkdir -p ~/.gemini/commands ~/.gemini/scripts
+cp -af commands/* ~/.gemini/commands/
+cp -af scripts/* ~/.gemini/scripts/
 ```
-
-Alternative: Copy these files into the same directories in your `.gemini` directory:
-
-* [`skills/dot-gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see.toml) → `~/.gemini/commands/see-what-i-see.toml`
-* [`skills/dot-gemini/commands/see-what-i-see-watch.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see-watch.toml) → `~/.gemini/commands/see-what-i-see-watch.toml`
-* [`skills/dot-gemini/scripts/see-what-i-see_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/see-what-i-see_common.sh) → `~/.gemini/scripts/see-what-i-see_common.sh`
-* [`skills/dot-gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/copy-last-snapshot.sh) → `~/.gemini/scripts/copy-last-snapshot.sh`
-* [`skills/dot-gemini/scripts/watch-and-copy.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/watch-and-copy.sh) → `~/.gemini/scripts/watch-and-copy.sh`
 
 ## Output files
 
@@ -323,15 +317,19 @@ To make an update possible, bump `plugins[0].version` in `skills/dot-claude-plug
 
 Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
 
-Release new versions to users by copying the updated plugin to the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) GitHub repository.
+Release new versions to users by running `skills/copy-claude-plugin-release.sh`, which mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into the sibling [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo. Commit and push that repo to publish.
+
+The Gemini extension has the equivalent `skills/copy-gemini-extension-release.sh` for the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo.
 
 ## Running the Claude plugin locally
 
 For local development, a plugin directory can be set manually:
 
 ```bash
-claude --plugin-dir ~/dev/SeeWhatISee/plugin
+claude --plugin-dir $(pwd)/skills/claude-plugin
 ```
+
+(The repo also auto-discovers the plugin via `.claude/skills/` symlinks, so running `claude` from inside this checkout normally works without the flag.)
 
 ## Watching for screenshots from CLI
 
@@ -368,7 +366,10 @@ GitHub UI.
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
-- `plugin/` — Claude Code plugin (skills, settings, manifest)
+- `skills/` — Common templates for Claude and Gemini skills, and update scripts. Subtrees:
+  - `skills/claude-plugin/` → `plugin/` in the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo
+  - `skills/dot-claude-plugin/` → `.claude-plugin/` in that release repo
+  - `skills/dot-gemini/` → root of the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
   exposes its service worker

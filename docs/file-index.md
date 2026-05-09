@@ -49,14 +49,20 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/gemini.see.md` | Template for `skills/dot-gemini/commands/see-what-i-see.toml` and the matching SKILL.md mirror |
 | `skills/gemini.watch.md` | Template for `skills/dot-gemini/commands/see-what-i-see-watch.toml` and the matching SKILL.md mirror |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
+| `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
+| `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
 
 ## Marketplace (`skills/dot-claude-plugin/`)
 
+Mirrors `.claude-plugin/` in the `SeeWhatISee-claude` release repo (sibling clone). Published via `skills/copy-claude-plugin-release.sh`.
+
 | File | Description |
 |------|-------------|
-| `skills/dot-claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin |
+| `skills/dot-claude-plugin/marketplace.json` | Marketplace index so other users can install the plugin (`source: "./plugin"` reflects the release-repo layout) |
 
 ## Claude Plugin (`skills/claude-plugin/`)
+
+Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skills/copy-claude-plugin-release.sh`.
 
 | File | Description |
 |------|-------------|
@@ -77,10 +83,11 @@ One-line descriptions of every source file, grouped by directory.
 
 ## Gemini CLI Tree (`skills/dot-gemini/`)
 
-Copied into `~/.gemini/` by `scripts/gemini-install.sh`.
+Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling clone) — each subdir and top-level file here lands as a sibling at the release-repo root, not under a `.gemini/` subdir. Published via `skills/copy-gemini-extension-release.sh`. Users install from the release repo into their own `~/.gemini/`.
 
 | File | Description |
 |------|-------------|
+| `skills/dot-gemini/gemini-extension.json` | Gemini extension manifest — installed at the release-repo root |
 | `skills/dot-gemini/scripts/see-what-i-see_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
 | `skills/dot-gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `see-what-i-see_common.sh`'s `emit_record` |
 | `skills/dot-gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |

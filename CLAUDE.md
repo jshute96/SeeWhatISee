@@ -43,6 +43,31 @@ user before elaborating further. Default to action over planning.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
 
+## Dev repo vs. release repos for skills
+
+This repo holds **development source**. Users install from separate
+release repos that live as siblings of this one:
+
+- `../SeeWhatISee-claude` — the Claude Code plugin marketplace.
+  - `skills/claude-plugin/` here → `plugin/` in the release repo.
+  - `skills/dot-claude-plugin/` here → `.claude-plugin/` in the release repo.
+- `../SeeWhatISee-gemini` — the Gemini CLI commands.
+  - Each top-level entry under `skills/dot-gemini/` lands as a
+    sibling at the release-repo root — `commands/`, `scripts/`,
+    `skills/`, plus top-level files like `gemini-extension.json` —
+    *not* nested under a `.gemini/` directory.
+
+Publish with the rsync mirror scripts:
+
+- `skills/copy-claude-plugin-release.sh`
+- `skills/copy-gemini-extension-release.sh`
+
+Both bail if the release repo isn't cloned next to this one. Files are
+copied verbatim (no path rewriting) — anything in the dev tree that
+references its own location must use the *release-repo* path
+(e.g. `marketplace.json` says `"source": "./plugin"`). See
+`docs/claude-plugin.md` for the full story.
+
 ## Keep the skill/command files in sync
 
 The Claude skills and Gemini commands describe the same `log.json` outputs

@@ -11,13 +11,13 @@
     {
       "name": "see-what-i-see",
       "description": "Get screenshots from the SeeWhatISee Chrome extension",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "author": {
         "name": "Jeff Shute",
         "email": "jshute@gmail.com"
       },
       "homepage": "https://github.com/jshute96/SeeWhatISee",
-      "source": "./skills/claude-plugin",
+      "source": "./plugin",
       "keywords": ["screenshot"]
     }
   ]

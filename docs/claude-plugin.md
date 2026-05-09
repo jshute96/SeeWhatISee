@@ -11,39 +11,67 @@ references:
 - <https://code.claude.com/docs/en/skills>
 - [*The Complete Guide to Building Skills for Claude*](https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf) (Anthropic PDF)
 
-## What's in this repo
+## Dev repo vs. release repo
 
-Three things are wired together:
+This repo (`SeeWhatISee`) is **development source**. Users don't install
+the plugin from here — they install it from a separate **release repo**,
+[`SeeWhatISee-claude`](https://github.com/jshute96/SeeWhatISee-claude),
+which holds only what the marketplace needs to ship. Keeping the dev and
+release repos separate keeps the marketplace clone small and avoids
+shipping the Chrome-extension source / dev tooling to plugin consumers.
 
-1. **A marketplace** at `skills/dot-claude-plugin/marketplace.json`.
-2. **A plugin** at `skills/claude-plugin/`, which the marketplace
-   points at via a relative `source`.
-3. **A local-dev shim** at `.claude/` so the same plugin works when
-   running Claude Code directly from this checkout, without having to
-   install it from the marketplace.
+The release-repo layout — i.e. what `/plugin marketplace add` clones
+and what `${CLAUDE_PLUGIN_ROOT}` ends up resolving to — looks like:
 
 ```
-SeeWhatISee/
-└── skills/
-    ├── dot-claude-plugin/
-    │   └── marketplace.json          # catalog: "here is one plugin, find it at ./skills/claude-plugin"
-    └── claude-plugin/
-        ├── .claude-plugin/
-        │   └── plugin.json           # plugin manifest (name, version, ...)
-        ├── scripts/                  # only see-what-i-see_common.sh; each skill bundles its own main script
-        │   └── see-what-i-see_common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
-        └── skills/
-            ├── see-what-i-see/
-            │   ├── SKILL.md
-            │   └── scripts/get-latest.sh        # sources ../../../scripts/see-what-i-see_common.sh
-            ├── see-what-i-see-watch/
-            │   ├── SKILL.md
-            │   └── scripts/watch.sh             # filesystem watcher; supports --stop
-            ├── see-what-i-see-stop/
-            │   ├── SKILL.md
-            │   └── scripts/stop.sh              # small, dedicated stop-only script
-            └── see-what-i-see-help/SKILL.md     # no scripts; help text only
+SeeWhatISee-claude/                  # release repo
+├── .claude-plugin/
+│   └── marketplace.json             # catalog: "here is one plugin, find it at ./plugin"
+└── plugin/
+    ├── .claude-plugin/
+    │   └── plugin.json              # plugin manifest (name, ...)
+    ├── scripts/                     # only see-what-i-see_common.sh; each skill bundles its own main script
+    │   └── see-what-i-see_common.sh # shared helpers (dir resolution, kill_existing, absolutize_paths)
+    └── skills/
+        ├── see-what-i-see/
+        │   ├── SKILL.md
+        │   └── scripts/get-latest.sh # sources ../../../scripts/see-what-i-see_common.sh
+        ├── see-what-i-see-watch/
+        │   ├── SKILL.md
+        │   └── scripts/watch.sh      # filesystem watcher; supports --stop
+        ├── see-what-i-see-stop/
+        │   ├── SKILL.md
+        │   └── scripts/stop.sh       # small, dedicated stop-only script
+        └── see-what-i-see-help/SKILL.md  # no scripts; help text only
+```
 
+In **this** repo, those release directories are mirrored under
+`skills/` with prefixed names so they don't collide with the dev-repo's
+own `.claude/` and similar:
+
+| Dev path (this repo)            | Release path (`SeeWhatISee-claude`) |
+|---------------------------------|--------------------------------------|
+| `skills/claude-plugin/`         | `plugin/`                            |
+| `skills/dot-claude-plugin/`     | `.claude-plugin/`                    |
+
+Publishing a release is a verbatim copy:
+
+```
+skills/copy-claude-plugin-release.sh
+```
+
+It expects the release repo to already exist as a sibling of this one
+(`../SeeWhatISee-claude`), bails otherwise, and `rsync -a --delete`s the
+two subtrees into place. Because the contents are mirrored verbatim, the
+release-repo paths above are also what `marketplace.json` references —
+e.g. `"source": "./plugin"` — and what gets baked into the plugin cache.
+
+Beyond the mirrored subtrees, this dev repo also keeps a **local-dev
+shim** at `.claude/` so the plugin works when running Claude Code
+directly from this checkout, without going through the marketplace
+install path:
+
+```
 .claude/
 ├── settings.json                 # local-dev: bash permissions for plugin scripts + npm tests
 └── skills/                       # local-dev: symlinks into skills/claude-plugin/skills/
@@ -57,8 +85,13 @@ SeeWhatISee/
 ## `marketplace.json`
 
 The marketplace is the catalog a user adds with
-`/plugin marketplace add jshute96/SeeWhatISee`. It declares the
+`/plugin marketplace add jshute96/SeeWhatISee-claude`. It declares the
 marketplace identity (`name`, `owner`) and lists one or more plugins.
+The dev-repo source-of-truth lives at
+`skills/dot-claude-plugin/marketplace.json` and gets mirrored into the
+release repo's `.claude-plugin/marketplace.json` by the copy script —
+so the paths the file references (e.g. `source`) are written from the
+release-repo's perspective.
 
 Things that were not obvious:
 
@@ -68,11 +101,9 @@ Things that were not obvious:
   expected string, received undefined` and `owner: Invalid input`).
   `name` is a string; `owner` is an object with at least `name`
   (and optional `email`).
-- **Plugin entries use `source`, not `path`.**
-  `"source": "./skills/claude-plugin"` is a relative path resolved
-  against the marketplace *root* (the directory containing
-  `.claude-plugin/marketplace.json` — for us that's the repo root,
-  with `marketplace.json` referenced from `skills/dot-claude-plugin/`),
+- **Plugin entries use `source`, not `path`.** `"source": "./plugin"`
+  is a relative path resolved against the marketplace *root* (the
+  directory containing `.claude-plugin/`), i.e. the release-repo root,
   not against `.claude-plugin/` itself.
 - **Relative-path sources only work when the marketplace is added via
   git.** If a user adds the marketplace by URL directly to the JSON
@@ -81,7 +112,7 @@ Things that were not obvious:
 - **Kebab-case names are required.** `see-what-i-see-marketplace` and
   `see-what-i-see` — no spaces, no capitals.
 
-## `skills/claude-plugin/.claude-plugin/plugin.json`
+## `plugin/.claude-plugin/plugin.json`
 
 The plugin manifest. Only `name` is strictly required. Everything else
 (`description`, `author`, `license`, `repository`, `homepage`,
@@ -95,10 +126,10 @@ them actually drives update behavior for this plugin:
 | Field                                    | What it does |
 |------------------------------------------|--------------|
 | `marketplace.json` → `plugins[0].version` | **Authoritative** for relative-path plugins. This is what Claude Code uses to decide whether the cached copy is stale. |
-| `skills/claude-plugin/.claude-plugin/plugin.json` → `version` | Silently wins over the marketplace entry if both are set. The official guidance is to **omit this** for relative-path plugins; set it only when the plugin ships from git/GitHub/npm/etc. |
+| `plugin/.claude-plugin/plugin.json` → `version` | Silently wins over the marketplace entry if both are set. The official guidance is to **omit this** for relative-path plugins; set it only when the plugin ships from git/GitHub/npm/etc. |
 | `marketplace.json` → `metadata.version`  | Effectively cosmetic — describes the marketplace itself, not any plugin. Anthropic never increments theirs. Easiest to just leave it out. |
 
-So for this repo (relative-path source `./skills/claude-plugin`), bumping
+So for this plugin (relative-path source `./plugin`), bumping
 `plugins[0].version` in `marketplace.json` is the whole story for
 triggering updates. `plugin.json` has no `version` field at all, and
 `metadata.version` is absent. If the version string doesn't change,
@@ -119,7 +150,8 @@ The other two are optional and can be dropped or left to rot. We keep
 
 ## SKILL.md frontmatter
 
-Each skill is a directory under `skills/claude-plugin/skills/<name>/` containing a
+Each skill is a directory under `plugin/skills/<name>/` (in the release
+repo; `skills/claude-plugin/skills/<name>/` in this dev repo) containing a
 `SKILL.md` with YAML frontmatter at the top:
 
 ```markdown
@@ -161,19 +193,20 @@ Things we learned:
 When a user runs:
 
 ```
-/plugin marketplace add jshute96/SeeWhatISee
+/plugin marketplace add jshute96/SeeWhatISee-claude
 /plugin install see-what-i-see@see-what-i-see-marketplace
 ```
 
 roughly this happens:
 
-1. Claude Code clones the marketplace repo into
-   `~/.claude/plugins/marketplaces/<marketplace-name>/`. Yes, this
-   pulls the *whole* repo (we have a TODO about whether that can be
-   avoided — see `TODO.md`).
+1. Claude Code clones the **release** marketplace repo
+   (`SeeWhatISee-claude`) into
+   `~/.claude/plugins/marketplaces/<marketplace-name>/`. The dev repo
+   (`SeeWhatISee`) is *not* cloned by users — it just feeds the release
+   repo via `skills/copy-claude-plugin-release.sh`.
 2. It reads `.claude-plugin/marketplace.json` and finds the
    `see-what-i-see` plugin entry.
-3. Because `source` is a relative path, it copies `./skills/claude-plugin`
+3. Because `source` is a relative path (`./plugin`), it copies `./plugin`
    from the marketplace clone into the plugin cache at
    `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. Each
    version lives in its own directory; orphaned versions get cleaned
@@ -192,11 +225,11 @@ Updates go through `/plugin marketplace update` followed by `/plugin` → update
 - Users have to run `/plugin marketplace update` manually (or `git pull` inside `~/.claude/plugins/marketplaces/<name>/`) before `/plugin` will see new versions.
 - There's an open feature request for an auto-update flag, but it's not implemented yet.
 
-**The full marketplace repo gets cloned, even though we only need `./skills/claude-plugin`.**
+**The full marketplace repo gets cloned, even though we only need `./plugin`.**
 
 - This is a git limitation, not a Claude Code one: git can't clone a subdirectory.
-- `source: "./skills/claude-plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole repo.
-- The workaround would be splitting the plugin into its own repo (cleaner, but more overhead); for now we live with the full clone since this repo is small.
+- `source: "./plugin"` controls what gets copied into the plugin *cache* at install time, but the marketplace clone in `~/.claude/plugins/marketplaces/` always contains the whole release repo.
+- The release repo (`SeeWhatISee-claude`) is dedicated to this plugin precisely so that clone is small — the dev tooling and Chrome-extension source live in `SeeWhatISee` and never get cloned by plugin consumers.
 
 ## Substitutions
 
@@ -214,9 +247,10 @@ two are relevant here.
 - Usable in `allowed-tools` patterns and inline in the skill body.
 - This is what our SKILL.md bodies reference: e.g. the watcher skill runs
   `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each consuming skill bundles its
-  own main script under `skills/claude-plugin/skills/<name>/scripts/`,
+  own main script under `plugin/skills/<name>/scripts/` (release-repo
+  path; dev-repo equivalent under `skills/claude-plugin/skills/<name>/scripts/`),
   and they all source the single shared
-  `skills/claude-plugin/scripts/see-what-i-see_common.sh` via a `..`-traversal that
+  `plugin/scripts/see-what-i-see_common.sh` via a `..`-traversal that
   stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
@@ -238,11 +272,11 @@ survive plugin updates; we don't use it.
 
 ## Local development
 
-When you run Claude Code from this repo without installing the plugin
-from the marketplace, the plugin cache isn't involved at all — and
-that's where the awkwardness lives.
+When you run Claude Code from this dev repo without installing the
+plugin from the marketplace, the plugin cache isn't involved at all —
+and that's where the awkwardness lives.
 
-Two pieces of glue make it work:
+Two pieces of glue make it work, plus the publishing step:
 
 ### `.claude/settings.json`
 
@@ -291,6 +325,23 @@ After editing a SKILL.md or any plugin file, run `/reload-plugins`
 inside the active Claude Code session to pick up changes without
 restarting. This reloads skills, hooks, MCP servers, and LSP servers.
 
+### Publishing a release
+
+Once the dev-repo plugin sources are ready to ship to users, run:
+
+```
+skills/copy-claude-plugin-release.sh
+```
+
+It mirrors `skills/claude-plugin/` into `../SeeWhatISee-claude/plugin/`
+and `skills/dot-claude-plugin/` into
+`../SeeWhatISee-claude/.claude-plugin/` (both with `rsync -a --delete`),
+and bails if the release repo isn't already cloned as a sibling. The
+release repo's other contents (README, LICENSE, `.git`, etc.) are left
+alone. Commit + push the release repo to publish — bumping
+`plugins[0].version` in `marketplace.json` is what actually triggers an
+update on installed clients (see "Where `version` lives" above).
+
 ## Validating the manifests
 
 The official way to check `marketplace.json` and `plugin.json` against
@@ -300,16 +351,12 @@ their schemas is `claude plugin validate <dir>` (or `/plugin validate
 automatically (preferring the marketplace file if both exist). It also
 validates SKILL.md frontmatter and `hooks/hooks.json`.
 
-In this repo:
-
-- For the plugin manifest, run validation against
-  `skills/claude-plugin` — that directory contains a `.claude-plugin/`
-  subdir holding `plugin.json`.
-- The marketplace catalog lives at
-  `skills/dot-claude-plugin/marketplace.json` rather than under a
-  `.claude-plugin/` directory, so `claude plugin validate` against the
-  repo root or `skills/dot-claude-plugin/` won't auto-discover it.
-  Validate by passing the file path directly.
+Validate against the **release repo**, where the layout is conventional
+(`.claude-plugin/marketplace.json` and `plugin/.claude-plugin/plugin.json`
+both auto-discover). The dev repo's mirrored copies under `skills/` use
+non-standard names (`dot-claude-plugin/`, `claude-plugin/`) precisely to
+stay out of `claude plugin validate`'s discovery path here, so just run
+the copy script and validate from the release-repo side.
 
 There's no publicly hosted JSON Schema file you can wire into an IDE
 for inline validation. The docs reference a schema URL at
@@ -367,13 +414,13 @@ check — run it before committing any manifest changes.
   Permission gating now relies entirely on skill-level `allowed-tools`
   frontmatter plus the user-level workaround above.
 - **No symlinks inside the plugin tree.** An earlier iteration had per-skill
-  `scripts` symlinks pointing back at a single `skills/claude-plugin/scripts/`.
+  `scripts` symlinks pointing back at a single `plugin/scripts/`.
   That broke on Windows clones with `core.symlinks=false`, which check the
   symlinks out as plain text files. The current layout side-steps the
   problem by putting each main script in a real
-  `skills/claude-plugin/skills/<name>/scripts/` directory and keeping only
-  `see-what-i-see_common.sh` at `skills/claude-plugin/scripts/`. The per-skill scripts
-  source `see-what-i-see_common.sh` via `..`-traversal (no symlinks involved). The
-  repo-root `scripts/` symlinks are still symlinks, but those are
-  local-dev / test conveniences and not part of the plugin payload that
-  gets installed.
+  `plugin/skills/<name>/scripts/` directory and keeping only
+  `see-what-i-see_common.sh` at `plugin/scripts/`. The per-skill scripts
+  source `see-what-i-see_common.sh` via `..`-traversal (no symlinks
+  involved). The dev-repo `scripts/` symlinks at the project root are
+  still symlinks, but those are local-dev / test conveniences and not
+  part of the plugin payload that gets installed.
