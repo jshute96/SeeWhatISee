@@ -26,7 +26,7 @@ import {
 
 installAskTestHooks();
 
-test('pin: with no pin, the "New window in" item carries the default indicator', async ({
+test('pin: with no pin, the "New tab in" item carries the default indicator', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -45,7 +45,7 @@ test('pin: with no pin, the "New window in" item carries the default indicator',
   // Filter by the label child (not the whole row's text), so the
   // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
   // the match — the assertion is about the row whose *label* is
-  // exactly "Claude" (i.e. the "New window in Claude" row).
+  // exactly "Claude" (i.e. the "New tab in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
     .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });
@@ -119,7 +119,7 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
   });
 
   // Reopen the menu — the existing-tab item should now carry the
-  // default pin, and the "New window in Claude" item should not.
+  // default pin, and the "New tab in Claude" item should not.
   await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
@@ -130,7 +130,7 @@ test('pin: after sending to an existing tab, the menu marks it as default', asyn
   // Filter by the label child (not the whole row's text), so the
   // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
   // the match — the assertion is about the row whose *label* is
-  // exactly "Claude" (i.e. the "New window in Claude" row).
+  // exactly "Claude" (i.e. the "New tab in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
     .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });
@@ -197,7 +197,7 @@ test('pin: subsequent plain Ask reuses the pinned tab (no new tab opened)', asyn
   await openerPage.close();
 });
 
-test('pin: closed tab falls back to a new window', async ({
+test('pin: closed tab falls back to a new tab', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -399,7 +399,7 @@ test('pin: stale pin shows the red ❗ indicator on the wrong-page row', async (
 
   // Navigate the pinned tab onto a wrong page. Pin is no longer
   // the default but should surface in the next menu render as a
-  // stale row alongside the new "New window in" default.
+  // stale row alongside the new "New tab in" default.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
   await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
@@ -420,11 +420,11 @@ test('pin: stale pin shows the red ❗ indicator on the wrong-page row', async (
     .evaluate((el) => el.textContent);
   expect(checkText).toBe('❗');
 
-  // The "New window in Claude" row carries the live default pin.
+  // The "New tab in Claude" row carries the live default pin.
   // Filter by the label child (not the whole row's text), so the
   // indicator slot's `↗` glyph in `.ask-menu-check` doesn't affect
   // the match — the assertion is about the row whose *label* is
-  // exactly "Claude" (i.e. the "New window in Claude" row).
+  // exactly "Claude" (i.e. the "New tab in Claude" row).
   const newClaude = capturePage
     .locator('#ask-menu .ask-menu-item')
     .filter({ has: capturePage.locator('.ask-menu-label', { hasText: /^Claude$/ }) });

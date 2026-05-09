@@ -51,7 +51,7 @@ installAskTestHooks();
 
 // ─── Menu rendering ───────────────────────────────────────────────
 
-test('ask menu: lists "New window in" plus an open fake-Claude tab', async ({
+test('ask menu: lists "New tab in" plus an open fake-Claude tab', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -71,7 +71,7 @@ test('ask menu: lists "New window in" plus an open fake-Claude tab', async ({
 
   await expect(
     capturePage.locator('#ask-menu .ask-menu-heading', {
-      hasText: 'Existing window in Claude',
+      hasText: 'Existing tab in Claude',
     }),
   ).toBeVisible();
   await expect(capturePage.locator('#ask-menu .ask-menu-item')).toHaveCount(2);
@@ -80,7 +80,7 @@ test('ask menu: lists "New window in" plus an open fake-Claude tab', async ({
   await openerPage.close();
 });
 
-test('ask menu: "Existing window in" section omitted when no tab matches', async ({
+test('ask menu: per-provider "Existing tab in" sections collapse to a single empty-state row when no tab matches', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -96,11 +96,26 @@ test('ask menu: "Existing window in" section omitted when no tab matches', async
   await capturePage.locator('#ask-menu-btn').click();
   await waitForAskMenuReady(capturePage);
 
+  // No per-provider "Existing tab in <X>" section renders when no
+  // matching tabs exist…
   await expect(
     capturePage.locator('#ask-menu .ask-menu-heading', {
-      hasText: 'Existing window in',
+      hasText: 'Existing tab in',
     }),
   ).toHaveCount(0);
+  // …instead we surface a single "Existing tabs" heading with a
+  // disabled "No existing tabs" row, so the menu always reflects
+  // both axes (new vs. existing).
+  await expect(
+    capturePage.locator('#ask-menu .ask-menu-heading', {
+      hasText: 'Existing tabs',
+    }),
+  ).toBeVisible();
+  await expect(
+    capturePage.locator('#ask-menu .ask-menu-item[aria-disabled="true"]', {
+      hasText: 'No existing tabs',
+    }),
+  ).toBeVisible();
 
   await openerPage.close();
 });

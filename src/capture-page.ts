@@ -4428,13 +4428,13 @@ async function refreshAskTargetLabel(): Promise<void> {
       const verb = defaultDestination.kind === 'existingTab'
         ? 'Send to existing'
         : 'Send to new';
-      askBtn.title = `${verb} ${provider.label} window`;
+      askBtn.title = `${verb} ${provider.label} tab`;
       setAskBtnIcon(defaultDestination.kind === 'existingTab' ? 'pin' : 'new-window');
       return;
     }
   }
   // No default available — fall back to a generic label. Plain-Ask
-  // will open a new window in this state, so the new-window glyph
+  // will open a new tab in this state, so the new-window glyph
   // matches what's about to happen.
   setAskBtnIcon('new-window');
   if (enabled.length === 1) {
@@ -4617,7 +4617,7 @@ function renderAskMenuItem(opts: {
   title?: string;
   /** Indicator-slot glyph for the active-default states. `'pin'`
    *  (default) for an existing pinned-tab row → 📌; `'new-window'`
-   *  for the "New window in <provider>" row → ↗. Ignored when
+   *  for the "New tab in <provider>" row → ↗. Ignored when
    *  `isStale` is true (stale rows always render ❗). */
   glyph?: 'pin' | 'new-window';
   isDefault: boolean;
@@ -4725,11 +4725,11 @@ async function openAskMenu(): Promise<void> {
     return;
   }
 
-  // Section 1: "New window in <provider>" — one entry per registered
+  // Section 1: "New tab in <provider>" — one entry per registered
   // provider, including disabled ones (rendered as "coming soon").
   const newHeading = document.createElement('li');
   newHeading.className = 'ask-menu-heading';
-  newHeading.textContent = 'New window in';
+  newHeading.textContent = 'New tab in';
   askMenuList.appendChild(newHeading);
   for (const provider of providers) {
     const dest: AskDestination = { kind: 'newTab', provider: provider.id };
@@ -4753,10 +4753,36 @@ async function openAskMenu(): Promise<void> {
     );
   }
 
-  // Section 2..N: "Existing window in <provider>" — only rendered for
+  // Section 2..N: "Existing tab in <provider>" — only rendered for
   // providers with at least one matching tab open. Each section gets
   // a horizontal separator before its heading so the menu visually
-  // segments into "new windows" vs. each "existing windows" group.
+  // segments into "new tabs" vs. each "existing tabs" group.
+  //
+  // If no provider has any existing tabs, fall through to a single
+  // "Existing tabs" heading with a disabled "No existing tabs" row,
+  // so the menu always reflects both axes (new vs. existing) and
+  // doesn't make the user wonder whether the section is missing or
+  // simply empty.
+  const anyExistingTabs = providers.some(
+    (p) => p.enabled && p.existingTabs.length > 0,
+  );
+  if (!anyExistingTabs) {
+    const sep = document.createElement('li');
+    sep.className = 'ask-menu-separator';
+    sep.setAttribute('role', 'separator');
+    askMenuList.appendChild(sep);
+    const heading = document.createElement('li');
+    heading.className = 'ask-menu-heading';
+    heading.textContent = 'Existing tabs';
+    askMenuList.appendChild(heading);
+    askMenuList.appendChild(
+      renderAskMenuItem({
+        label: 'No existing tabs',
+        isDefault: false,
+        disabled: true,
+      }),
+    );
+  }
   for (const provider of providers) {
     if (!provider.enabled || provider.existingTabs.length === 0) continue;
     const sep = document.createElement('li');
@@ -4765,7 +4791,7 @@ async function openAskMenu(): Promise<void> {
     askMenuList.appendChild(sep);
     const heading = document.createElement('li');
     heading.className = 'ask-menu-heading';
-    heading.textContent = `Existing window in ${provider.label}`;
+    heading.textContent = `Existing tab in ${provider.label}`;
     askMenuList.appendChild(heading);
     for (const tab of provider.existingTabs) {
       const dest: AskDestination = {

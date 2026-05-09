@@ -118,7 +118,7 @@ export interface AskResult {
   skipped?: string[];
 }
 
-/** Tab listing item used to render the "Existing window in <provider>" group. */
+/** Tab listing item used to render the "Existing tab in <provider>" group. */
 export interface AskTabSummary {
   tabId: number;
   title: string;
@@ -162,7 +162,7 @@ export interface AskProviderListing {
    */
   iconFilename: string;
   /**
-   * Provider-default accepted kinds for "New window in <X>" rows.
+   * Provider-default accepted kinds for "New tab in <X>" rows.
    * `undefined` means "no restriction." Mirrors the per-tab
    * `acceptedAttachmentKinds` so the page-side check is the same
    * shape regardless of menu row type.
@@ -187,9 +187,9 @@ export interface AskPin {
 const PIN_KEY = 'askPin';
 
 /**
- * Session-scoped override for the "new window in" provider that the
+ * Session-scoped override for the "new tab in" provider that the
  * fallback resolves to when no live pin exists. Set when the user
- * picks a "New window in <X>" row from the Ask menu — the menu now
+ * picks a "New tab in <X>" row from the Ask menu — the menu now
  * acts as a default-picker rather than a sender, and this is how
  * that pick survives until the next plain-Ask click. Cleared on
  * browser restart so the user's Options-page default reasserts
@@ -394,7 +394,7 @@ export async function resolveAsk(): Promise<AskResolution> {
   const settings = await getAskProviderSettings();
   // Fallback target priority for the "no live pin" path:
   //   1. Session-scoped preferred new-tab provider (set by the Ask
-  //      menu's "New window in <X>" pick) — wins so an in-session
+  //      menu's "New tab in <X>" pick) — wins so an in-session
   //      override beats the persistent setting.
   //   2. The user's Options-page default if it's still an
   //      effective-enabled provider (adapter built AND user-enabled).
@@ -501,14 +501,14 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
   for (const provider of ASK_PROVIDERS) {
     // User-disabled providers are dropped entirely from the listing —
     // the Ask menu treats them as if they weren't registered, so no
-    // "New window in <X>" row, no existing tabs surfaced. Static
+    // "New tab in <X>" row, no existing tabs surfaced. Static
     // disabled-but-registered providers (no adapter built yet) still
     // appear here with `enabled: false` so the menu can render the
     // "(coming soon)" row — that decision is the page's, not ours.
     if (!settings.enabled[provider.id]) continue;
     // `newTabOnly` providers (Google) never reuse existing tabs —
     // skip the query entirely so the menu doesn't render an
-    // "Existing window in <X>" section for them.
+    // "Existing tab in <X>" section for them.
     const tabs = provider.enabled && !provider.newTabOnly
       ? await chrome.tabs.query({ url: provider.urlPatterns })
       : [];

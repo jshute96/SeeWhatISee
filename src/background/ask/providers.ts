@@ -1,7 +1,7 @@
 // Registry of AI web UIs we can post a capture to via the Ask flow.
 //
 // Each provider declares the URL patterns we use to find existing
-// tabs (chrome.tabs.query), the URL to open for "New window in <X>",
+// tabs (chrome.tabs.query), the URL to open for "New tab in <X>",
 // and the selectors the injected runtime will use to attach files,
 // fill the prompt, and submit.
 //
@@ -158,7 +158,7 @@ export interface AskProvider {
    * projects index, login.
    */
   excludeUrlPatterns?: string[];
-  /** URL we open for "New window in <provider>". */
+  /** URL we open for "New tab in <provider>". */
   newTabUrl: string;
   /**
    * Filename (relative to the extension's `icons/` directory) of
@@ -197,7 +197,7 @@ export interface AskProvider {
   urlVariants?: AskUrlVariant[];
   /**
    * When `true`, plain Ask only ever opens a fresh tab on this
-   * provider. The Ask menu hides "Existing window in <X>" entries
+   * provider. The Ask menu hides "Existing tab in <X>" entries
    * for it, the toolbar Set/Unset entry won't engage when the active
    * tab is on it, and a successful send doesn't write the destination
    * to `askPin`. Used for providers whose pages aren't a stable chat

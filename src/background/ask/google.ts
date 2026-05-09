@@ -8,7 +8,7 @@
 // Marked `newTabOnly: true` because Google Search isn't a chat
 // surface — submitting navigates to `/search?q=...` and reusing that
 // tab would clobber prior results. Plain Ask always opens a fresh
-// google.com tab. The Ask menu hides the "Existing window in Google"
+// google.com tab. The Ask menu hides the "Existing tab in Google"
 // section, the toolbar Set/Unset entry doesn't engage on google.com
 // tabs, and a successful Google send doesn't write `askPin`.
 //

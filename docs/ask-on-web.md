@@ -44,7 +44,7 @@ additional providers additive.
   caret. `.ask-split` is also the popup menu's `position:
   relative` anchor.
   - `#ask-btn` sends straight to the resolved default destination
-    — pinned tab if alive, else a new window in the preferred /
+    — pinned tab if alive, else a new tab in the preferred /
     Options-default provider. Carries `Alt+A`. Sits immediately
     after `#capture` so the user's most-likely Ask click is the
     second button on the row, with no preamble. The trailing
@@ -140,29 +140,43 @@ Anchored popup below the Ask button, rebuilt fresh on every open
 from `chrome.tabs.query` per registered provider:
 
 ```
-New window in
+New tab in
   Claude
   Gemini
   ChatGPT
 ─────────────────────────────────────
-Existing window in Claude
+Existing tab in Claude
   "Helping with the Ask feature design…"
   "untitled"
 ─────────────────────────────────────
-Existing window in Gemini       ← only when Gemini has open tabs
+Existing tab in Gemini          ← only when Gemini has open tabs
   …
 ─────────────────────────────────────
-Existing window in ChatGPT      ← only when ChatGPT has open tabs
+Existing tab in ChatGPT         ← only when ChatGPT has open tabs
   …
 ```
 
-- "Existing window in `<provider>`" sections render only for
+- "Existing tab in `<provider>`" sections render only for
   providers with at least one matching tab open.
+- When *no* provider has any matching tab, a single "Existing
+  tabs" heading appears instead, with one disabled "No existing
+  tabs" row underneath. Lets the menu always show both axes (new
+  vs. existing) so the user can tell the section is empty rather
+  than missing:
+  ```
+  New tab in
+    Claude
+    Gemini
+    ChatGPT
+  ─────────────────────────────────────
+  Existing tabs
+    No existing tabs                   ← disabled
+  ```
 - Each section is preceded by a horizontal separator
   (`.ask-menu-separator`).
 - Picking a menu item updates the default (writes `askPin` for an
   existing-tab pick, writes `askPreferredNewTabProvider` for a
-  "New window in <X>" pick) and refreshes the button label / icon
+  "New tab in <X>" pick) and refreshes the button label / icon
   to match. Does *not* send — the user fires the Ask with a
   follow-up click on `#ask-btn` (or `Alt+A`). This split keeps
   "shift the default" and "fire the send" as two distinct gestures.
@@ -351,7 +365,7 @@ type AskProvider = {
   label: string;
   urlPatterns: string[];        // chrome.tabs.query
   excludeUrlPatterns?: string[];// glob excludes filtered post-query
-  newTabUrl: string;            // opened for "New window in <X>"
+  newTabUrl: string;            // opened for "New tab in <X>"
   enabled: boolean;             // false = "coming soon" in the menu
   acceptedAttachmentKinds?: ('image' | 'text')[]; // provider-wide; omit = all
   urlVariants?: AskUrlVariant[];                  // per-URL overrides
@@ -363,7 +377,7 @@ type AskProvider = {
 `excludeUrlPatterns`:
 
 - Marks tabs whose URL matches any pattern as `excluded` in the
-  menu listing — they still appear under "Existing window in X"
+  menu listing — they still appear under "Existing tab in X"
   but are rendered disabled with a "(Wrong page)" italic
   suffix and aren't selectable.
 - Used for pages on the provider's domain that aren't valid chat
@@ -521,7 +535,7 @@ Pre-send guard on the Capture page:
   accepts now). Its error message has the same shape, with
   `Skipped: …` appended naming the dropped filenames.
 
-We deliberately don't offer a "New window in Claude Code" entry —
+We deliberately don't offer a "New tab in Claude Code" entry —
 Claude Code requires repo-selection setup before any prompt makes
 sense, so opening a fresh tab from Ask would dump the user on a
 screen that can't accept the payload yet. The Ask menu only surfaces
@@ -537,7 +551,7 @@ submits via a form GET that navigates the tab to `/search?q=…`,
 clobbering any prior state. For these, set `newTabOnly: true` on the
 provider and three things change:
 
-- The Ask menu hides the "Existing window in <X>" section for it
+- The Ask menu hides the "Existing tab in <X>" section for it
   (`listAskProviders` skips the `chrome.tabs.query`).
 - The toolbar Set/Unset entry stays disabled when the active tab is
   on this provider (`findProviderForTab` skips it).

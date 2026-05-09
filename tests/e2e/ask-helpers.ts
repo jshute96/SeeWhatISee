@@ -222,7 +222,7 @@ export function installAskTestHooks(): void {
 export async function waitForAskMenuReady(capturePage: Page): Promise<void> {
   await expect(
     capturePage.locator('#ask-menu .ask-menu-heading', {
-      hasText: 'New window in',
+      hasText: 'New tab in',
     }),
   ).toBeVisible();
 }
@@ -244,7 +244,7 @@ export async function clickExistingFakeClaudeItem(capturePage: Page): Promise<vo
 }
 
 /**
- * Pick the "New window in Claude" item AND fire the Ask. Same
+ * Pick the "New tab in Claude" item AND fire the Ask. Same
  * "set-default-then-send" composition as
  * `clickExistingFakeClaudeItem` — see that helper's comment.
  */

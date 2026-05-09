@@ -31,7 +31,7 @@ export const claudeProvider: AskProvider = {
   enabled: true,
   // Claude Code (`claude.ai/code`) shares the host but its composer
   // is image-only and requires repo-selection setup, so we don't
-  // offer a "New window in" entry for it. Existing /code tabs still
+  // offer a "New tab in" entry for it. Existing /code tabs still
   // surface in the Ask menu under Claude — the page title
   // ("Claude Code") already disambiguates the row from regular
   // Claude conversations, so no extra marking is needed.
