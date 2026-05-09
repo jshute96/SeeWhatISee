@@ -89,6 +89,8 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `.gemini/commands/see-what-i-see.toml` | Gemini CLI command — describes the latest capture (uses `copy-last-snapshot.sh`) |
 | `.gemini/commands/see-what-i-see-watch.toml` | Gemini CLI command — foreground watch loop that describes each new capture (uses `watch-and-copy.sh`) |
+| `.gemini/skills/see-what-i-see/SKILL.md` | Skill-format translation of `see-what-i-see.toml` — same body, YAML frontmatter |
+| `.gemini/skills/see-what-i-see-watch/SKILL.md` | Skill-format translation of `see-what-i-see-watch.toml` — same body, YAML frontmatter |
 
 ## Extension Source (`src/`)
 

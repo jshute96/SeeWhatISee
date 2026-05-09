@@ -173,12 +173,14 @@ possible.
 
 ## Skill / command prompts
 
-Four files drive the prompts:
+Several files drive the prompts:
 
 - `plugin/skills/see-what-i-see/SKILL.md`
 - `plugin/skills/see-what-i-see-watch/SKILL.md`
 - `.gemini/commands/see-what-i-see.toml`
 - `.gemini/commands/see-what-i-see-watch.toml`
+- `.gemini/skills/see-what-i-see/SKILL.md` (skill-format mirror of the command)
+- `.gemini/skills/see-what-i-see-watch/SKILL.md` (skill-format mirror of the command)
 
 All skill and command prompts are **generated from templates** in
 `skills/`:

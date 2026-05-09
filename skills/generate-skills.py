@@ -29,7 +29,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# (template filename in skills/, target path relative to project root)
+# (template filename in skills/, target path relative to project root,
+#  optional transform name applied to the expanded template).
 PAIRS = [
     ("claude.see.md",   "plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md", "plugin/skills/see-what-i-see-watch/SKILL.md"),
@@ -37,9 +38,54 @@ PAIRS = [
     ("claude.help.md",  "plugin/skills/see-what-i-see-help/SKILL.md"),
     ("gemini.see.md",   ".gemini/commands/see-what-i-see.toml"),
     ("gemini.watch.md", ".gemini/commands/see-what-i-see-watch.toml"),
+    ("gemini.see.md",   ".gemini/skills/see-what-i-see/SKILL.md",       "toml-to-skill"),
+    ("gemini.watch.md", ".gemini/skills/see-what-i-see-watch/SKILL.md", "toml-to-skill"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+# Matches a top-level TOML field of the form `name = """\n...\n"""`. The
+# (?ms) flags let `.` cross newlines and `^`/`$` anchor on each line, so the
+# closing `"""` only matches when it sits alone on its own line — i.e. we
+# don't accidentally swallow a stray `"""` inside the body.
+TOML_TRIPLE_RE = re.compile(
+    r'^(?P<key>\w+)\s*=\s*"""\n(?P<value>.*?)\n"""\s*$',
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def toml_to_skill(target_rel: str, content: str) -> str:
+    """Translate a Gemini TOML command into a Claude SKILL.md.
+
+    The skill `name` is taken from the parent directory of the target path
+    (e.g. `.gemini/skills/see-what-i-see/SKILL.md` -> `see-what-i-see`),
+    matching how SKILL.md files are conventionally identified. The TOML
+    `description` becomes the YAML `description` field (as a literal block
+    scalar when it spans multiple lines) and the TOML `prompt` becomes the
+    skill body.
+    """
+    fields = {m.group("key"): m.group("value") for m in TOML_TRIPLE_RE.finditer(content)}
+    missing = {"description", "prompt"} - fields.keys()
+    if missing:
+        raise RuntimeError(f"{target_rel}: missing TOML field(s): {sorted(missing)}")
+
+    name = Path(target_rel).parent.name
+    description = fields["description"].strip("\n")
+    body = fields["prompt"].strip("\n")
+
+    if "\n" in description:
+        # Literal block scalar preserves line breaks; indent each line by 2.
+        indented = "\n".join(("  " + line) if line else "" for line in description.split("\n"))
+        desc_field = f"description: |\n{indented}"
+    else:
+        desc_field = f"description: {description}"
+
+    return f"---\nname: {name}\n{desc_field}\n---\n\n{body}\n"
+
+
+TRANSFORMS = {
+    "toml-to-skill": toml_to_skill,
+}
 
 
 def expand(src_dir: Path, text: str, stack: tuple = ()) -> str:
@@ -93,7 +139,9 @@ def main(argv: list[str]) -> int:
 
     any_diff = False
     mismatches: list[tuple[str, Path, str]] = []  # (target_rel, target_path, generated)
-    for src_name, target_rel in PAIRS:
+    for entry in PAIRS:
+        src_name, target_rel, *rest = entry
+        transform = rest[0] if rest else None
         src_path = src_dir / src_name
         target_path = project_root / target_rel
         if not src_path.is_file():
@@ -101,6 +149,11 @@ def main(argv: list[str]) -> int:
             any_diff = True
             continue
         generated = expand(src_dir, src_path.read_text())
+        if transform is not None:
+            fn = TRANSFORMS.get(transform)
+            if fn is None:
+                raise RuntimeError(f"unknown transform: {transform!r}")
+            generated = fn(target_rel, generated)
         current = target_path.read_text() if target_path.is_file() else None
         matches = current == generated
 
