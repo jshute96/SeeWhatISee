@@ -185,8 +185,10 @@ const previewImg = document.getElementById('preview') as HTMLImageElement;
 const capturedTitleLink = document.getElementById('captured-title') as HTMLAnchorElement;
 const capturedUrlLink = document.getElementById('captured-url') as HTMLAnchorElement;
 const capturedUrlText = document.getElementById('captured-url-text') as HTMLSpanElement;
+const imageSizeBadge = document.getElementById('image-size-badge') as HTMLSpanElement;
 const htmlSizeBadge = document.getElementById('html-size-badge') as HTMLSpanElement;
 const selectionSizeBadge = document.getElementById('selection-size-badge') as HTMLSpanElement;
+const capturedPills = imageSizeBadge.parentElement as HTMLDivElement;
 const copyUrlBtn = document.getElementById('copy-url-btn') as HTMLButtonElement;
 /**
  * Captured page URL, kept in module scope so `buildPreviewHtml`'s
@@ -372,11 +374,92 @@ function updateSelectionSizeBadge(): void {
   const format = radioFormat ?? defaultSelectionFormat;
   if (format === null) {
     selectionSizeBadge.hidden = true;
+    refreshPillsCompactness();
     return;
   }
   const body = captured[SELECTION_WIRE_KIND[format]];
   selectionSizeBadge.hidden = false;
   selectionSizeBadge.textContent = `Selection · ${formatBytes(new Blob([body]).size)}`;
+  refreshPillsCompactness();
+}
+
+/**
+ * Toggle `.compact` on the pill column when all three pills (Image
+ * / HTML / Selection) end up visible at the same time. The CSS
+ * rule pulls the column above and below the card's vertical
+ * padding with negative margins, then uses `space-evenly` so the
+ * three pills distribute as four equal gaps across the card height
+ * (instead of stacking against the top edge). Called from every
+ * site that flips a badge's `hidden` state.
+ */
+function refreshPillsCompactness(): void {
+  const visible =
+    (imageSizeBadge.hidden ? 0 : 1) +
+    (htmlSizeBadge.hidden ? 0 : 1) +
+    (selectionSizeBadge.hidden ? 0 : 1);
+  capturedPills.classList.toggle('compact', visible >= 3);
+}
+
+/**
+ * Refresh the Image size pill ("PNG · 312 KB" / "JPG · 88 KB").
+ * Hidden when no screenshot was captured (`screenshotErrored`),
+ * otherwise reflects the bytes that *would* be saved right now —
+ * i.e. the freshly-baked PNG when the user has any drawn / cropped
+ * / redacted edits, else the original captureVisibleTab data URL
+ * verbatim. Format label comes from the data URL's MIME prefix; it
+ * always resolves to "PNG" once edits have been baked because
+ * `renderHighlightedPng` always re-encodes as PNG.
+ *
+ * Cached by `editVersion` so resize / zoom-driven `render()` calls
+ * don't trigger a (potentially multi-megabyte) re-bake — only edit
+ * commits, undos, clears, and shrinks bump the version.
+ */
+let lastImageBadgeVersion = -1;
+let screenshotErrored = false;
+function updateImageSizeBadge(): void {
+  if (screenshotErrored) {
+    imageSizeBadge.hidden = true;
+    refreshPillsCompactness();
+    return;
+  }
+  if (lastImageBadgeVersion === editVersion && !imageSizeBadge.hidden) return;
+  lastImageBadgeVersion = editVersion;
+  // `renderHighlightedPng` short-circuits to `previewImg.src` when
+  // no edits need baking, so the no-edits path is just the original
+  // capture data URL — no canvas re-encode.
+  const dataUrl = renderHighlightedPng();
+  const formatted = formatImageDataUrl(dataUrl);
+  if (!formatted) {
+    imageSizeBadge.hidden = true;
+    refreshPillsCompactness();
+    return;
+  }
+  imageSizeBadge.hidden = false;
+  imageSizeBadge.textContent = `${formatted.label} · ${formatBytes(formatted.bytes)}`;
+  refreshPillsCompactness();
+}
+
+/**
+ * Pull the format label and decoded byte count out of a
+ * `data:image/...;base64,...` URL. The byte count is computed from
+ * the base64 length (not from a Blob) so we avoid the allocation —
+ * `dataUrl.length` is already in memory. Returns null for empty /
+ * non-image / non-base64 URLs (e.g. the empty string Chrome
+ * resolves to the document URL when previewImg.src is left blank).
+ */
+function formatImageDataUrl(
+  dataUrl: string,
+): { label: string; bytes: number } | null {
+  const m = /^data:image\/([^;,]+);base64,/.exec(dataUrl);
+  if (!m) return null;
+  const subtype = m[1]!.toLowerCase();
+  // "JPG" reads more naturally than "JPEG" in the pill; everything
+  // else just uppercases the MIME subtype (PNG / WEBP / GIF / …).
+  const label = subtype === 'jpeg' ? 'JPG' : subtype.toUpperCase();
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  const bytes = Math.floor((b64.length * 3) / 4) - padding;
+  return { label, bytes };
 }
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
@@ -1437,6 +1520,12 @@ function render(): void {
   undoBtn.disabled = !hasEditHistory;
   clearBtn.disabled = !hasEditHistory;
   shrinkBtn.disabled = !shrinkTarget();
+  // Refresh the Image-size pill ("PNG · 312 KB") whenever an edit
+  // commits — `render()` is called right after every editVersion++,
+  // so this is the single chokepoint for the pill. The function
+  // itself is keyed on editVersion, so the resize / zoom / drag
+  // callers of render() are essentially free.
+  updateImageSizeBadge();
 }
 
 overlay.addEventListener('mousedown', (e) => {
@@ -2743,7 +2832,13 @@ async function loadData(): Promise<void> {
       downloadImageBtn.disabled = true;
       screenshotRow.classList.add('has-error');
       screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
+      // Latched flag read by `updateImageSizeBadge` so resize-driven
+      // render() calls (which can run before loadData paints the rest
+      // of the badges) don't briefly show an "PNG · 0 B" pill from a
+      // bogus empty data URL.
+      screenshotErrored = true;
     }
+    updateImageSizeBadge();
 
     // Apply per-artifact error states first so the HTML size badge
     // below reflects the right value (hidden rather than a misleading

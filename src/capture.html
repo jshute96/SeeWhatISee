@@ -45,14 +45,19 @@
   /*
    * Captured-page card: bordered light-grey strip laid out as a
    * two-column flex row.
-   *   Left  (.capture-card-body)  — title on top, URL row below
-   *                                 (URL anchor + Copy URL button
-   *                                  packed inline right after it).
-   *   Right (.capture-card-pills) — vertical stack of size pills
-   *                                 (HTML on top, Selection below),
-   *                                 right-justified. Sits in the
-   *                                 right column so the pills don't
-   *                                 add height to the title row.
+   *   Left  (.capture-card-body)  — title + URL row (with Copy
+   *                                 URL packed inline right after
+   *                                 the URL).
+   *   Right (.capture-card-pills) — Image / HTML / Selection size
+   *                                 pills, vertically stacked,
+   *                                 right-justified.
+   *
+   * The pills column sits outside `.capture-card-body` so it
+   * doesn't add height to the title row. When all three pills are
+   * visible at once, `.compact` flips the column to negative
+   * margins + `space-evenly` so the trio distributes evenly across
+   * the card height instead of stacking against the top edge.
+   *
    * `overflow: hidden` clips long content to the card's rounded
    * corner so the seam reads cleanly.
    */
@@ -113,6 +118,31 @@
     border: 1px solid #ddd;
     border-radius: 10px;
     white-space: nowrap;
+  }
+  /* Compact mode: applied by capture-page.ts when all three pills
+   * (Image / HTML / Selection) are visible at once.
+   *
+   * Two things happen together so the trio actually distributes:
+   *   1. Negative top/bottom margins (`-8px`) cancel out the
+   *      card's vertical padding for *this* column only — i.e.
+   *      smaller effective margin around the pills than around
+   *      the body's text rows on the left.
+   *   2. With those negatives the column's outer (margin-included)
+   *      box shrinks below the body's height; the body
+   *      (title + 22px Copy-URL button row, ~41px) becomes the
+   *      cross-axis height-determiner, and `align-self: stretch`
+   *      grows the column's inner height to match.
+   *   3. `justify-content: space-evenly` then distributes the slack
+   *      as four equal gaps — above pill #1, between #1/#2,
+   *      between #2/#3, below pill #3 — so the trio reads as a
+   *      visually balanced rhythm instead of pinning the outer
+   *      pills to the card edges (which is what `space-between`
+   *      did). */
+  .capture-card-pills.compact {
+    align-self: stretch;
+    justify-content: space-evenly;
+    gap: 0;
+    margin: -8px 0;
   }
   /* URL row — URL anchor on the left, Copy URL button packed inline
    * right after it. The anchor uses `flex: 0 1 auto` (shrink-only)
@@ -1354,14 +1384,19 @@
     </div>
     <!--
       Right-side column with the size pills, vertically stacked
-      (HTML on top, Selection below), right-justified. capture-page.ts
-      toggles each `hidden` and updates `textContent` on edit-saves
-      and selection-format radio changes — see
+      (Image on top, then HTML, then Selection), right-justified.
+      capture-page.ts toggles each `hidden` and updates `textContent`
+      on edit-saves, drawing-edit commits, and selection-format radio
+      changes — see `updateImageSizeBadge` /
       `updateSelectionSizeBadge` for the per-format wiring. The
       column sits outside `.capture-card-body` so the pills don't
-      push the title row's height when both are visible.
+      push the title row's height when all are visible. When three
+      pills end up shown, capture-page.ts also flips `.compact` on
+      the column — negative margins + `space-evenly` distribute
+      the trio evenly across the card height (see the CSS above).
     -->
     <div class="capture-card-pills">
+      <span id="image-size-badge" class="capture-card-badge" hidden></span>
       <span id="html-size-badge" class="capture-card-badge" hidden></span>
       <span id="selection-size-badge" class="capture-card-badge" hidden></span>
     </div>

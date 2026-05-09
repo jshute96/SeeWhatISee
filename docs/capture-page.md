@@ -156,8 +156,19 @@ referenced from this doc live in
 
 - Bordered strip showing the capture's page metadata.
 - Title row: clickable link with the captured tab's title (falls
-  back to the URL when the title is empty); two pill badges
-  right-aligned via `margin-left: auto` on the first.
+  back to the URL when the title is empty); a stack of size pills
+  on the right (Image / HTML / Selection, top-to-bottom).
+  - `<FORMAT> · <size>` (Image) — bytes of the screenshot that
+    *would* be saved right now: the original capture data URL
+    when there are no bake-able edits, else the freshly-baked PNG
+    from `renderHighlightedPng`. Format label comes from the data
+    URL's MIME prefix — `PNG` for the standard
+    `captureVisibleTab` path and image-context PNGs, `JPG` for
+    image-context JPEGs, etc. Once any edit needs baking the
+    label flips to `PNG` because the bake always re-encodes as
+    PNG. Updated from inside `render()` and keyed on `editVersion`
+    so resize / zoom / drag-mid-flight calls don't re-bake.
+    Hidden when `screenshotError` is set on the capture record.
   - `HTML · <size>` — `formatBytes(new Blob([html]).size)`.
   - `Selection · <size>` — byte count of the format the
     Selection pill is currently showing (the checked radio when
@@ -167,10 +178,19 @@ referenced from this doc live in
     checkbox leaves the pill visible (parallel to the HTML pill
     not hiding when Save-HTML is unchecked). Hidden only when no
     selection was captured at all.
-  - Both pills update on every Edit-dialog save (HTML + each
-    selection format) so the displayed bytes track the live
-    `captured` body. The Selection pill also updates whenever the
-    user picks a different format radio.
+  - All three pills update on every Edit-dialog save (HTML + each
+    selection format) and on each drawing-tool commit (Image
+    pill), so displayed bytes track the live `captured` body.
+    The Selection pill also updates whenever the user picks a
+    different format radio.
+  - When all three pills end up visible at once, capture-page.ts
+    flips a `.compact` class on the column. CSS pulls the column
+    above and below the card's vertical padding with negative
+    margins, then uses `align-self: stretch` +
+    `justify-content: space-evenly` so the three pills distribute
+    as four equal gaps (above / between #1·#2 / between #2·#3 /
+    below) across the card's height instead of stacking against
+    the top edge.
 - URL row: monospace blue link, followed inline by a 22px Copy URL
   button matching the per-row `.copy-btn` chrome elsewhere on the
   page.
