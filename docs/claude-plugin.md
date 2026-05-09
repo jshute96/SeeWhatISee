@@ -30,12 +30,12 @@ SeeWhatISee/
     └── claude-plugin/
         ├── .claude-plugin/
         │   └── plugin.json           # plugin manifest (name, version, ...)
-        ├── scripts/                  # only _common.sh; each skill bundles its own main script
-        │   └── _common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
+        ├── scripts/                  # only see-what-i-see_common.sh; each skill bundles its own main script
+        │   └── see-what-i-see_common.sh            # shared helpers (dir resolution, kill_existing, absolutize_paths)
         └── skills/
             ├── see-what-i-see/
             │   ├── SKILL.md
-            │   └── scripts/get-latest.sh        # sources ../../../scripts/_common.sh
+            │   └── scripts/get-latest.sh        # sources ../../../scripts/see-what-i-see_common.sh
             ├── see-what-i-see-watch/
             │   ├── SKILL.md
             │   └── scripts/watch.sh             # filesystem watcher; supports --stop
@@ -216,7 +216,7 @@ two are relevant here.
   `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each consuming skill bundles its
   own main script under `skills/claude-plugin/skills/<name>/scripts/`,
   and they all source the single shared
-  `skills/claude-plugin/scripts/_common.sh` via a `..`-traversal that
+  `skills/claude-plugin/scripts/see-what-i-see_common.sh` via a `..`-traversal that
   stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
@@ -340,8 +340,8 @@ check — run it before committing any manifest changes.
 - **`..` in skill script paths.** Plugins cached from a marketplace
   can't traverse outside the plugin root via `../`. Keep shared
   scripts inside the plugin dir.
-  - Our per-skill scripts `source` the shared `_common.sh` via
-    `../../../scripts/_common.sh`, which goes up to the plugin root
+  - Our per-skill scripts `source` the shared `see-what-i-see_common.sh` via
+    `../../../scripts/see-what-i-see_common.sh`, which goes up to the plugin root
     and back down — that's allowed. What's disallowed is escaping the
     plugin root entirely.
 - **Relative-path sources only work over git.** If we ever distribute
@@ -372,8 +372,8 @@ check — run it before committing any manifest changes.
   symlinks out as plain text files. The current layout side-steps the
   problem by putting each main script in a real
   `skills/claude-plugin/skills/<name>/scripts/` directory and keeping only
-  `_common.sh` at `skills/claude-plugin/scripts/`. The per-skill scripts
-  source `_common.sh` via `..`-traversal (no symlinks involved). The
+  `see-what-i-see_common.sh` at `skills/claude-plugin/scripts/`. The per-skill scripts
+  source `see-what-i-see_common.sh` via `..`-traversal (no symlinks involved). The
   repo-root `scripts/` symlinks are still symlinks, but those are
   local-dev / test conveniences and not part of the plugin payload that
   gets installed.

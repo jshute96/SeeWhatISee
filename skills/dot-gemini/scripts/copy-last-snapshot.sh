@@ -7,7 +7,7 @@
 
 set -e
 
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/see-what-i-see_common.sh"
 resolve_target_dir
 
 # Fail if log.json is not found

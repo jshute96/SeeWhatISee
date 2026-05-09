@@ -61,7 +61,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `skills/claude-plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `skills/claude-plugin/scripts/_common.sh` | Shared helpers sourced by the per-skill scripts: directory resolution, config parsing, JSON path absolutization, `kill_existing` watcher pidfile helper |
+| `skills/claude-plugin/scripts/see-what-i-see_common.sh` | Shared helpers sourced by the per-skill scripts: directory resolution, config parsing, JSON path absolutization, `kill_existing` watcher pidfile helper |
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
 | `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | CLI command to watch for new updates to `log.json` (also accepts `--stop` as a convenience) |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Small script that just stops a running watcher — used by `/see-what-i-see-stop` |
@@ -81,8 +81,8 @@ Copied into `~/.gemini/` by `scripts/gemini-install.sh`.
 
 | File | Description |
 |------|-------------|
-| `skills/dot-gemini/scripts/_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
-| `skills/dot-gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `_common.sh`'s `emit_record` |
+| `skills/dot-gemini/scripts/see-what-i-see_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
+| `skills/dot-gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `see-what-i-see_common.sh`'s `emit_record` |
 | `skills/dot-gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
 
 **NOTE: the commands below are generated from `skills/`, do not edit directly**
@@ -236,7 +236,7 @@ Copied into `~/.gemini/` by `scripts/gemini-install.sh`.
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |
 | `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
-| `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `_common.sh` helpers |
+| `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing scripts, and the per-tree `see-what-i-see_common.sh` helpers |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |
 | `images/download-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Save-as button |

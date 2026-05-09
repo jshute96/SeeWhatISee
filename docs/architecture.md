@@ -263,8 +263,8 @@ Layout:
 
 - Each skill that needs a script bundles it in its own
   `skills/claude-plugin/skills/<name>/scripts/` directory.
-- A single `_common.sh` lives at
-  `skills/claude-plugin/scripts/_common.sh` (the only file left
+- A single `see-what-i-see_common.sh` lives at
+  `skills/claude-plugin/scripts/see-what-i-see_common.sh` (the only file left
   under `skills/claude-plugin/scripts/`) and is `source`d by every
   per-skill script.
 - The repo-root `scripts/` directory has symlinks to the per-skill
@@ -273,7 +273,7 @@ Layout:
 
 The scripts:
 
-- `skills/claude-plugin/scripts/_common.sh` — shared helpers
+- `skills/claude-plugin/scripts/see-what-i-see_common.sh` — shared helpers
   sourced by the per-skill scripts: directory resolution (config
   file, `--directory`, default), config parsing, `absolutize_paths`
   (rewrites bare filenames in JSON to absolute paths via sed),

@@ -10,7 +10,7 @@ SRC_ROOT="skills/dot-gemini"
 FILES=(
   "commands/see-what-i-see.toml"
   "commands/see-what-i-see-watch.toml"
-  "scripts/_common.sh"
+  "scripts/see-what-i-see_common.sh"
   "scripts/copy-last-snapshot.sh"
   "scripts/watch-and-copy.sh"
 )

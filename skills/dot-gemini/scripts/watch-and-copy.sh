@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/see-what-i-see_common.sh"
 resolve_target_dir
 
 # The extension only creates $SRC_DIR on the first download into it,

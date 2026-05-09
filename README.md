@@ -226,7 +226,7 @@ Alternative: Copy these files into the same directories in your `.gemini` direct
 
 * [`skills/dot-gemini/commands/see-what-i-see.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see.toml) → `~/.gemini/commands/see-what-i-see.toml`
 * [`skills/dot-gemini/commands/see-what-i-see-watch.toml`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/commands/see-what-i-see-watch.toml) → `~/.gemini/commands/see-what-i-see-watch.toml`
-* [`skills/dot-gemini/scripts/_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/_common.sh) → `~/.gemini/scripts/_common.sh`
+* [`skills/dot-gemini/scripts/see-what-i-see_common.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/see-what-i-see_common.sh) → `~/.gemini/scripts/see-what-i-see_common.sh`
 * [`skills/dot-gemini/scripts/copy-last-snapshot.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/copy-last-snapshot.sh) → `~/.gemini/scripts/copy-last-snapshot.sh`
 * [`skills/dot-gemini/scripts/watch-and-copy.sh`](https://github.com/jshute96/SeeWhatISee/blob/main/skills/dot-gemini/scripts/watch-and-copy.sh) → `~/.gemini/scripts/watch-and-copy.sh`
 

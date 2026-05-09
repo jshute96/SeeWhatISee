@@ -1298,8 +1298,8 @@ export async function waitForDownloadComplete(
  * the same "set iff truthy" conditional.
  *
  * Wire-format constraint: the shell consumers of `log.json` in
- * `skills/claude-plugin/scripts/_common.sh` and
- * `skills/dot-gemini/scripts/_common.sh` anchor their sed/grep
+ * `skills/claude-plugin/scripts/see-what-i-see_common.sh` and
+ * `skills/dot-gemini/scripts/see-what-i-see_common.sh` anchor their sed/grep
  * rewrites on `"filename"` appearing *first*
  * inside the artifact object. `JSON.stringify` preserves insertion
  * order, so the object literal here must keep `filename` before
@@ -1331,8 +1331,8 @@ function selectionArtifactOf(
  * Build a `ScreenshotArtifact` object for inclusion in a
  * `CaptureRecord`. Same wire-format constraint as `artifact()`:
  * `filename` must appear first (before any edit flags) so the shell
- * consumers in `skills/claude-plugin/scripts/_common.sh` and
- * `skills/dot-gemini/scripts/_common.sh` can anchor their rewrites
+ * consumers in `skills/claude-plugin/scripts/see-what-i-see_common.sh` and
+ * `skills/dot-gemini/scripts/see-what-i-see_common.sh` can anchor their rewrites
  * on `"filename"` being the first key inside the object.
  *
  * Flags are only emitted when true, so the object shape stays

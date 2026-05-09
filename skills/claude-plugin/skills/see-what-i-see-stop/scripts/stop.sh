@@ -12,10 +12,9 @@
 
 set -euo pipefail
 
-# _common.sh lives at skills/claude-plugin/scripts/_common.sh; this
-# script is at skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh,
-# so we walk up to the plugin root and back into scripts/.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/_common.sh"
+# This script is DIR/skills/see-what-i-see/scripts/stop.sh,
+# and needs to run DIR/scripts/see-what-i-see_common.sh.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/see-what-i-see_common.sh"
 
 DIR=""
 

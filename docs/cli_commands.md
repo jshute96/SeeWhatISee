@@ -6,7 +6,7 @@ and Gemini CLI) read them via slash commands. This doc covers:
 - what each command does,
 - how the two CLIs' versions differ,
 - the shell scripts that back them, and
-- the per-CLI `_common.sh` helpers they share within each tree.
+- the per-CLI `see-what-i-see_common.sh` helpers they share within each tree.
 
 ## Commands at a glance
 
@@ -117,12 +117,12 @@ field on the record. See
 
 ```
 skills/claude-plugin/                ← Claude plugin install tree
-  scripts/_common.sh                 (shared helpers; sourced by each per-skill script)
+  scripts/see-what-i-see_common.sh                 (shared helpers; sourced by each per-skill script)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see
   skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop
 skills/dot-gemini/scripts/           ← Gemini install tree (copied into ~/.gemini/scripts/)
-  _common.sh                         (shared by the two Gemini scripts)
+  see-what-i-see_common.sh                         (shared by the two Gemini scripts)
   copy-last-snapshot.sh              ← /see-what-i-see
   watch-and-copy.sh                  ← /see-what-i-see-watch
 scripts/                             ← convenience symlinks at repo root
@@ -164,9 +164,9 @@ Key differences:
   snap-installed Gemini) and honor a pre-set `$TARGET_DIR` for
   tests.
 
-### Per-tree `_common.sh` helpers
+### Per-tree `see-what-i-see_common.sh` helpers
 
-The two `_common.sh` files have overlapping concerns but distinct
+The two `see-what-i-see_common.sh` files have overlapping concerns but distinct
 function sets — they're kept separate because each side's helper
 is tuned to its environment. More sharing between these is likely
 possible.

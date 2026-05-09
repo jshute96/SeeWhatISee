@@ -24,10 +24,9 @@ set -euo pipefail
 
 # ---- Defaults ---------------------------------------------------------------
 
-# _common.sh lives at skills/claude-plugin/scripts/_common.sh; this
-# script is at skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh,
-# so we walk up to the plugin root and back into scripts/.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/_common.sh"
+# This script is DIR/skills/see-what-i-see/scripts/watch.sh,
+# and needs to run DIR/scripts/see-what-i-see_common.sh.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/see-what-i-see_common.sh"
 
 DIR=""
 LOOP=false
@@ -76,7 +75,7 @@ PIDFILE="$DIR/.watch.pid"
 
 # ---- PID-file helpers -------------------------------------------------------
 
-# kill_existing() lives in _common.sh and is shared with stop.sh.
+# kill_existing() lives in see-what-i-see_common.sh and is shared with stop.sh.
 
 write_pidfile() {
   echo $$ > "$PIDFILE"
