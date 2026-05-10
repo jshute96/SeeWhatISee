@@ -1544,12 +1544,18 @@ function render(): void {
   const w = r.width;
   const h = r.height;
   // Stroke width for the user's artistic edits (Box / Line / Arrow):
-  // 3 pixels at the image's natural resolution, scaled to display.
-  // So the strokes track the visual size of the image — Fit-mode
-  // strokes look thinner than at 1×; 2× / 4× / 8× modes look
-  // proportionally thicker. Crop dashes and corner grips below
-  // stay at 1px (they're UI affordances, not picture content).
-  const sw = 3 * currentDisplayScale();
+  // 3 pixels at 1× zoom, scaled to display, then rounded UP. So the
+  // strokes track the visual size of the image but bias toward the
+  // chunkier integer — at fit-mode the image is usually only modestly
+  // shrunken (e.g. ratio 0.7 → 3 × 0.7 = 2.1 → ceil = 3), so strokes
+  // only narrow once the window gets a lot smaller. Crop dashes and
+  // corner grips below stay at 1px (they're UI affordances, not
+  // picture content). The −0.01 epsilon keeps an exact 1× / 2× / 4× /
+  // 8× zoom from tipping over the next integer due to float drift
+  // between `targetCssSize()` math and Chrome's pixel-snapped
+  // `getBoundingClientRect()` readout (a ratio like 1.0000003 would
+  // otherwise push `ceil(3.0000009)` to 4).
+  const sw = Math.ceil(3 * currentDisplayScale() - 0.01);
 
   // While a rect/redact resize drag is in flight, draw the targeted
   // edit at its live (`boxDrag.cur*`) bounds rather than its stored
@@ -2280,7 +2286,8 @@ for (const btn of toolButtons) {
 //   - 'fit' (default) — image shrinks to the remaining viewport
 //     (height-bounded by `window.innerHeight - imageBoxTop -
 //     reserved`, width-bounded by `.image-box`'s flex slot).
-//   - 1 / 2 / 4 / 8 — image renders at `naturalSize * N` pixels;
+//   - 1 / 2 / 4 / 8 — image renders at `targetCssSize() * N` CSS
+//     pixels (i.e. naturalSize / DPR * N — see `targetCssSize`).
 //     `.image-box` shows scrollbars when the wrap overflows. The
 //     overlay scales with the image because it's `100%` of the
 //     image-wrap, which sizes from the image element itself.
@@ -2335,6 +2342,25 @@ function availableImageHeight(): { box: number; image: number } {
   return { box, image };
 }
 
+// CSS-pixel target dimensions at "1× zoom". `chrome.tabs.captureVisibleTab`
+// returns a PNG sized in *device* pixels — so on a 2× DPR display, a
+// 1920 CSS-px-wide page comes back as a 3840-image-px-wide PNG. If we
+// rendered the image at `naturalWidth` CSS px the editor would be 2×
+// the apparent size of the source page. Dividing by the editor's
+// `devicePixelRatio` lines 1× back up with the source page when both
+// are on the same display (the side-by-side comparison case).
+//
+// (Cross-DPR multimon — editor on 1× monitor, source on 2× — would
+// need the source page's DPR plumbed through the scrape; we don't do
+// that yet.)
+function targetCssSize(): { w: number; h: number } {
+  const dpr = window.devicePixelRatio || 1;
+  return {
+    w: previewImg.naturalWidth / dpr,
+    h: previewImg.naturalHeight / dpr,
+  };
+}
+
 function applyZoom(): void {
   const avail = availableImageHeight();
   imageBox.style.maxHeight = avail.box + 'px';
@@ -2350,16 +2376,16 @@ function applyZoom(): void {
     // Instead we compute the displayed dimensions ourselves from
     // the natural aspect ratio and the available content area, then
     // assign explicit pixel `width` and `height`. No surprises, no
-    // overflow.
+    // overflow. Sizes are derived from `targetCssSize()` (1× CSS
+    // dimensions) so Fit's `Math.min(1, …)` ceiling matches 1×.
     const boxW = imageBox.clientWidth;
     const wMax = Math.max(0, boxW - 2 * WRAP_MARGIN - 2);
     const hMax = avail.image;
-    const natW = previewImg.naturalWidth;
-    const natH = previewImg.naturalHeight;
-    if (natW > 0 && natH > 0 && wMax > 0 && hMax > 0) {
-      const scale = Math.min(1, wMax / natW, hMax / natH);
-      previewImg.style.width = natW * scale + 'px';
-      previewImg.style.height = natH * scale + 'px';
+    const { w: targetW, h: targetH } = targetCssSize();
+    if (targetW > 0 && targetH > 0 && wMax > 0 && hMax > 0) {
+      const scale = Math.min(1, wMax / targetW, hMax / targetH);
+      previewImg.style.width = targetW * scale + 'px';
+      previewImg.style.height = targetH * scale + 'px';
       previewImg.style.maxWidth = '';
       previewImg.style.maxHeight = '';
     } else {
@@ -2373,8 +2399,9 @@ function applyZoom(): void {
     }
   } else {
     const n = zoomMode;
-    const w = previewImg.naturalWidth * n;
-    const h = previewImg.naturalHeight * n;
+    const { w: targetW, h: targetH } = targetCssSize();
+    const w = targetW * n;
+    const h = targetH * n;
     // Don't set explicit dimensions before the image has loaded —
     // would otherwise pin the box to 0×0 until the load handler
     // re-runs applyZoom and is harmless either way (the load event
@@ -2410,40 +2437,43 @@ function setZoom(m: ZoomMode): void {
   // applyZoom already calls render(); skip a duplicate.
 }
 
-// Display→natural ratio used to scale overlay stroke widths so
-// red lines and boxes track the visual scale of the image while
-// editing. The bake (`renderHighlightedPng`) does NOT use this —
-// it always renders strokes at a fixed default width so the saved
-// PNG looks the same regardless of the user's zoom level at save
-// time.
+// Display→1× ratio used to scale overlay stroke widths so red lines
+// and boxes track the visual scale of the image while editing. "1×"
+// here is the editor's 1× zoom (1 source-CSS-pixel ≈ 1 editor CSS
+// pixel), not the natural-pixel size of the image — so the ratio is
+// 1.0 at 1×, 2.0 at 2×, and < 1 only when the editor has shrunk
+// below the source page's size. The bake (`renderHighlightedPng`)
+// does NOT use this — it always renders strokes at a fixed default
+// width in natural pixels so the saved PNG looks the same regardless
+// of the user's zoom level at save time.
 function currentDisplayScale(): number {
-  const natW = previewImg.naturalWidth;
-  if (!natW) return 1;
-  return imgRect().width / natW;
+  const target = targetCssSize();
+  if (!target.w) return 1;
+  return imgRect().width / target.w;
 }
 
-// Has the image's *natural size* fit-mode rendering already
-// reached the display size of 1x? Used by the wheel handler to
-// skip the redundant fit ↔ 1× hop when the image already fills
-// fit-mode at native pixels (small images on large screens).
+// Has Fit-mode's rendering already reached the editor's 1× display
+// size? Used by the wheel handler to skip the redundant fit ↔ 1×
+// hop when the image already fills fit-mode at the 1× target size
+// (small images on large screens).
 function fitMatches1x(): boolean {
-  const natW = previewImg.naturalWidth;
-  const natH = previewImg.naturalHeight;
-  if (!natW || !natH) return false;
+  const { w: targetW, h: targetH } = targetCssSize();
+  if (!targetW || !targetH) return false;
   // .image-box is the constraint surface. clientWidth excludes its
   // scrollbars, which would otherwise lie about available width
   // when overflow:auto has produced one in a previous mode.
   const boxW = imageBox.clientWidth;
   const availH = availableImageHeight().image;
   // Fit-mode shrinks proportionally to whichever axis is tighter
-  // (max-width: 100% + max-height: avail). Scale = 1 → image renders
-  // at natural size in Fit. Strict equality against 1 is too tight:
-  // sub-pixel rounding (border-box vs content-box, scrollbar gutters)
-  // can leave us at 0.998 or similar; clamp to the 0.5 px tolerance
-  // that any visible difference would have to cross to actually
-  // change strokes.
-  const tol = 0.5 / Math.min(natW, natH);
-  return Math.min(boxW / natW, availH / natH) >= 1 - tol;
+  // (`applyZoom`'s Fit branch picks `min(1, wMax/targetW, hMax/targetH)`
+  // and writes the result to `style.width`/`style.height`). Scale = 1
+  // → image renders at 1× in Fit. Strict equality against 1 is too
+  // tight: sub-pixel rounding (border-box vs content-box, scrollbar
+  // gutters) can leave us at 0.998 or similar; clamp to the 0.5 px
+  // tolerance that any visible difference would have to cross to
+  // actually change strokes.
+  const tol = 0.5 / Math.min(targetW, targetH);
+  return Math.min(boxW / targetW, availH / targetH) >= 1 - tol;
 }
 
 window.addEventListener('resize', () => {
@@ -5319,6 +5349,17 @@ void loadData();
   },
   flags: () => editFlags(),
   editKinds: () => edits.map((e) => e.kind),
+  // Zoom + sizing hooks for the zoom e2e: drives the dropdown
+  // programmatically and reads back the derived ratio used for
+  // stroke-width math. `applyZoom` is also exposed so a
+  // DPR-stubbing test can re-trigger sizing after overriding
+  // `window.devicePixelRatio` without going through `setZoom`
+  // (saves the menu-check refresh + label rewrite, which would
+  // be confusing telemetry on a same-mode "re-apply").
+  setZoom: (m: ZoomMode) => setZoom(m),
+  applyZoom: () => applyZoom(),
+  displayScale: () => currentDisplayScale(),
+  targetCssSize: () => targetCssSize(),
   // Bounds of the most-recent edit matching `kind` (used by the
   // Shrink e2e to assert that a click really did mutate geometry —
   // not just that the editKinds list is unchanged).

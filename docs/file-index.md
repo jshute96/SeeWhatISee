@@ -182,6 +182,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, `triggerCapture` hand-off |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
 | `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing tool palette (Box/Line/Arrow/Crop/Redact), Undo/Clear, box-edge resize incl. Shift-bypass |
+| `tests/e2e/capture-zoom.spec.ts` | E2E for zoom-mode sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, and stroke-width ladder + DPR-stub regressions |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |

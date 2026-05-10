@@ -1070,9 +1070,18 @@ re-activation is required:
     px more than its content height in `.image-box`'s line box,
     pushing past the JS-set `max-height` and producing a phantom
     vertical scrollbar even when the math fits exactly.
-- **1× / 2× / 4× / 8×** — image renders at `naturalSize × N`
-  pixels with `max-width / max-height: none`. `.image-box` has
+- **1× / 2× / 4× / 8×** — image renders at `targetCssSize × N` CSS
+  pixels (`max-width / max-height: none`). `.image-box` has
   `overflow: auto` so it scrolls when the wrap overflows.
+  - `targetCssSize()` returns `naturalSize / window.devicePixelRatio`
+    — the source-page CSS dimensions.
+  - The DPR divisor is needed because `chrome.tabs.captureVisibleTab`
+    returns a PNG at *device* pixels, so `naturalSize = sourceCssSize
+    × sourceDPR`. Dividing back lines "1×" up with the source page
+    when both are on the same display (side-by-side comparison case).
+  - Cross-DPR multimon is approximate — the source page's DPR is not
+    currently plumbed through, so the editor uses its own DPR as a
+    proxy.
 
 ### `applyZoom()`
 
@@ -1158,11 +1167,20 @@ re-activation is required:
 
 ### Stroke scaling
 
-- Red Box / Line / Arrow strokes are rendered at `3 × (display /
-  natural)` so they track the visual size of the image: thinner in
-  Fit (typical), 3 px at 1×, proportionally thicker at 2× / 4× /
-  8×. Crop dashed border and corner grips stay at 1 px (UI
-  affordances, not picture content).
+- Red Box / Line / Arrow strokes are rendered at `ceil(3 × ratio)`
+  where `ratio = imgRect().width / targetCssSize().w`, so they
+  track the visual size of the image: 3 px at 1×, proportionally
+  thicker at 2× / 4× / 8×, only narrower than 3 px once Fit shrinks
+  the image to ≤ ⅔ of 1×.
+  - The `ceil` biases toward the chunkier integer — at ratio 0.7
+    (mild Fit shrink) `3 × 0.7 = 2.1 → ceil = 3`, so strokes only
+    drop below 3 px once the window gets a lot smaller.
+  - A −0.01 epsilon before the ceil keeps an exact 1× / 2× / 4× /
+    8× zoom from tipping over the next integer due to float drift
+    between `targetCssSize()` math and Chrome's pixel-snapped
+    `getBoundingClientRect()` readout.
+  - Crop dashed border and corner grips stay at 1 px (UI
+    affordances, not picture content).
 - The bake (`renderHighlightedPng`) ignores the display ratio: it
   always renders strokes at a fixed 3 natural px (with the default
   arrow-head cap), so the saved PNG looks the same regardless of
