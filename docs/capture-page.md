@@ -350,7 +350,7 @@ fresh edit.
   the column.
 - Buttons stack vertically, all sized to the widest label. The
   column has clusters separated by 14px gaps:
-  - Box, Line, Arrow, Crop, Redact (tool selectors).
+  - Box, Line, Arrow, Redact, Crop (tool selectors).
   - Shrink (image-content transform — its own cluster because it
     rewrites a rect's geometry from pixel data, not the edit stack).
   - Undo, Clear (edit-stack actions).
@@ -382,14 +382,14 @@ fresh edit.
   at the click-release end. Barb length is 25% of the segment
   length, capped at 18 CSS px (scaled to natural pixels in the
   bake-in path).
+- **Redact** — drag paints a filled black rectangle live, matching
+  the committed appearance — opaque fill that hides whatever was
+  underneath in the saved PNG.
 - **Crop** — drag paints the live cropped preview (dim frame
   outside the drag bounds, dashed border, corner grips) so the
   user sees the final cropped result while dragging. Commits on
   mouseup as a crop region; saved PNG is shrunk to the crop.
   Multiple crops stack; the most-recently-added active crop wins.
-- **Redact** — drag paints a filled black rectangle live, matching
-  the committed appearance — opaque fill that hides whatever was
-  underneath in the saved PNG.
 
 ### Shrink action
 

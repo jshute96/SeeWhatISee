@@ -1675,8 +1675,8 @@
         a time (default: Box). Selected = pushed-down look via
         `.selected`. Each tool's drag paints what it will commit so
         the user sees the final result live: tool-box → red rect,
-        tool-line → red line, tool-crop → dim-frame cropped preview,
-        tool-redact → filled black rect. Mouseup commits the edit.
+        tool-line → red line, tool-redact → filled black rect,
+        tool-crop → dim-frame cropped preview. Mouseup commits the edit.
         Undo / Clear are *actions*, not modes — they're separated
         from the tool group by an extra top-margin on #undo.
       -->
@@ -1699,14 +1699,14 @@
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-arrow-icon"></use></svg>
         </button>
-        <button id="tool-crop" class="tool-btn btn"
-                type="button" data-tool="crop"
-                title="Drag to crop to a region"
-                aria-pressed="false">Crop</button>
         <button id="tool-redact" class="tool-btn btn"
                 type="button" data-tool="redact"
                 title="Drag to add a black redaction box"
                 aria-pressed="false">Redact</button>
+        <button id="tool-crop" class="tool-btn btn"
+                type="button" data-tool="crop"
+                title="Drag to crop to a region"
+                aria-pressed="false">Crop</button>
         <!--
           Shrink is an action (not a tool mode): it tightens the
           current tool's last-drawn rect (Box / Redact) — or the

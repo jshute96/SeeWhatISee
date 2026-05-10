@@ -61,8 +61,8 @@ On this page, you can:
 
 - Annotate the screenshot with **drawing tools**:
   - Draw **boxes**, **lines** or **arrows**.
-  - **Crop** the image by drawing a rectangle, or dragging borders.
   - Use **Redact** to hide parts of image with black boxes.
+  - **Crop** the image by drawing a rectangle, or dragging borders.
   - Use **Shrink** to tighten the most recent box or redaction, or the crop region, around its content. This strips whitespace or borders around the outer edges.
   - **Zoom** in or out using the button or mouse wheel.
   - **Undo** or **Clear** to revert edits.

@@ -1093,21 +1093,21 @@ function formatBytes(n: number): string {
 // ─── Highlight overlay ────────────────────────────────────────────
 //
 // Drawing is *modal*: one of the tool buttons (Box / Line / Arrow /
-// Crop / Redact) is selected at a time, and a left-button drag on the
+// Redact / Crop) is selected at a time, and a left-button drag on the
 // overlay produces an edit of that kind:
 //
 //   - Box     — red stroked rectangle (highlights a region).
 //   - Line    — red diagonal line.
 //   - Arrow   — red line with a barbed arrowhead at the click-release
 //     end; barbs scale with segment length up to a fixed cap.
+//   - Redact  — drag paints a filled black rectangle live, matching
+//     the committed appearance — opaque black box that hides
+//     whatever was underneath in the saved PNG.
 //   - Crop    — drag paints the live cropped preview (dim frame
 //     outside the drag bounds, dashed border, corner grips), so the
 //     user sees what the cropped result will look like. Commits as
 //     a crop region on mouseup; the saved PNG is shrunk to the
 //     crop. Multiple crops stack; the most-recent active one wins.
-//   - Redact  — drag paints a filled black rectangle live, matching
-//     the committed appearance — opaque black box that hides
-//     whatever was underneath in the saved PNG.
 //
 // There's no right-click drawing. There's no in-place conversion
 // between kinds: every drag commits one new edit of the active
