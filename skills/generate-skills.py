@@ -39,8 +39,9 @@ PAIRS = [
     # Generate commands instead of skills. Currently disabled.
     # ("gemini.see.md",   "skills/dot-gemini/commands/see-what-i-see.toml"),
     # ("gemini.watch.md", "skills/dot-gemini/commands/see-what-i-see-watch.toml"),
-    ("gemini.see.md",   "skills/dot-gemini/skills/see-what-i-see/SKILL.md",       "toml-to-skill"),
-    ("gemini.watch.md", "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md", "toml-to-skill"),
+    ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md",        "toml-to-skill"),
+    ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md",  "toml-to-skill"),
+    ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md", "toml-to-skill"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")

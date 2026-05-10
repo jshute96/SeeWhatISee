@@ -96,6 +96,7 @@ generated files directly.
   - `skills/dot-gemini/commands/see-what-i-see-watch.toml`
   - `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (TOML→skill translation of `gemini.see.md`)
   - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (TOML→skill translation of `gemini.watch.md`)
+  - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

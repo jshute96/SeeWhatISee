@@ -125,6 +125,7 @@ on each snapshot. For example,
   - Runs in the foreground. (Gemini has no async background worker with a completion callback)
   - The conversation stays paused on a blocking shell call between captures. 
   - Stop it by pressing *Escape*.
+- `/see-what-i-see-xtract` `[prompt]` — alias for `/see-what-i-see`. Useful because Gemini shows auto-completes in reverse alphabetical order, so this name surfaces first.
 
 ## Installation
 
@@ -203,7 +204,8 @@ Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
   "tools": {
     "allowed": [
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see/scripts/copy-last-snapshot.sh)",
-      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-watch/scripts/watch-and-copy.sh)"
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-watch/scripts/watch-and-copy.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh)"
     ]
   }
 }

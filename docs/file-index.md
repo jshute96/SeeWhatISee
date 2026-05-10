@@ -48,6 +48,7 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/claude.help.md` | Template for `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md` |
 | `skills/gemini.see.md` | Template for `skills/dot-gemini/commands/see-what-i-see.toml` and the matching SKILL.md mirror |
 | `skills/gemini.watch.md` | Template for `skills/dot-gemini/commands/see-what-i-see-watch.toml` and the matching SKILL.md mirror |
+| `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
 | `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
@@ -100,6 +101,9 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `skills/dot-gemini/commands/see-what-i-see-watch.toml` | Gemini CLI command — foreground watch loop that describes each new capture (uses `watch-and-copy.sh`) |
 | `skills/dot-gemini/skills/see-what-i-see/SKILL.md` | Skill-format translation of `see-what-i-see.toml` — same body, YAML frontmatter |
 | `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | Skill-format translation of `see-what-i-see-watch.toml` — same body, YAML frontmatter |
+| `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
+| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Per-skill copy of the `see-what-i-see` `copy-last-snapshot.sh` (sourced common.sh stays alongside) |
+| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/see-what-i-see_common.sh` | Per-skill copy of the shared Gemini helpers — duplicated so the alias has self-contained scripts |
 
 ## Extension Source (`src/`)
 
