@@ -1207,14 +1207,16 @@ re-activation is required:
 
 ### Stroke scaling
 
-- Red Box / Line / Arrow strokes are rendered at `ceil(3 × ratio)`
-  where `ratio = imgRect().width / targetCssSize().w`, so they
-  track the visual size of the image: 3 px at 1×, proportionally
-  thicker at 2× / 4× / 8×, only narrower than 3 px once Fit shrinks
-  the image to ≤ ⅔ of 1×.
-  - The `ceil` biases toward the chunkier integer — at ratio 0.7
-    (mild Fit shrink) `3 × 0.7 = 2.1 → ceil = 3`, so strokes only
-    drop below 3 px once the window gets a lot smaller.
+- Red Box / Line / Arrow strokes track the visual size of the
+  image, dropping by 1 px at each halving below 1× until they
+  bottom out at 1 px — so casual Fit shrinkage doesn't narrow them.
+  With `ratio = imgRect().width / targetCssSize().w`:
+  - `ratio ≥ 1` → `ceil(3·ratio − 0.01)`: 3 / 6 / 12 / 24 px at
+    1× / 2× / 4× / 8×.
+  - `0.5 ≤ ratio < 1` → **3 px** (the flat region — strokes do
+    not narrow until the preview is below half-size).
+  - `0.25 ≤ ratio < 0.5` → 2 px.
+  - `ratio < 0.25` → 1 px.
   - A −0.01 epsilon before the ceil keeps an exact 1× / 2× / 4× /
     8× zoom from tipping over the next integer due to float drift
     between `targetCssSize()` math and Chrome's pixel-snapped

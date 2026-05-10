@@ -1544,18 +1544,29 @@ function render(): void {
   const w = r.width;
   const h = r.height;
   // Stroke width for the user's artistic edits (Box / Line / Arrow):
-  // 3 pixels at 1× zoom, scaled to display, then rounded UP. So the
-  // strokes track the visual size of the image but bias toward the
-  // chunkier integer — at fit-mode the image is usually only modestly
-  // shrunken (e.g. ratio 0.7 → 3 × 0.7 = 2.1 → ceil = 3), so strokes
-  // only narrow once the window gets a lot smaller. Crop dashes and
-  // corner grips below stay at 1px (they're UI affordances, not
-  // picture content). The −0.01 epsilon keeps an exact 1× / 2× / 4× /
-  // 8× zoom from tipping over the next integer due to float drift
-  // between `targetCssSize()` math and Chrome's pixel-snapped
+  // tracks the visual size of the image, dropping by 1 px at each
+  // halving below 1× until it bottoms out at 1 px. Crop dashes and
+  // corner grips stay at 1 px (UI affordances, not picture content).
+  //
+  //   ratio ≥ 1      → ceil(3·ratio − 0.01)  — 3 / 6 / 12 / 24 at
+  //                    1× / 2× / 4× / 8×.
+  //   0.5 ≤ ratio < 1  → 3   (Fit shrinkage above half-size doesn't
+  //                          narrow the strokes — the regression
+  //                          this rule was added to prevent.)
+  //   0.25 ≤ ratio < 0.5 → 2
+  //   ratio < 0.25     → 1
+  //
+  // The −0.01 epsilon keeps an exact 1× / 2× / 4× / 8× zoom from
+  // tipping over the next integer due to float drift between
+  // `targetCssSize()` math and Chrome's pixel-snapped
   // `getBoundingClientRect()` readout (a ratio like 1.0000003 would
   // otherwise push `ceil(3.0000009)` to 4).
-  const sw = Math.ceil(3 * currentDisplayScale() - 0.01);
+  const ratio = currentDisplayScale();
+  const sw =
+    ratio >= 1 ? Math.ceil(3 * ratio - 0.01)
+    : ratio >= 0.5 ? 3
+    : ratio >= 0.25 ? 2
+    : 1;
 
   // While a rect/redact resize drag is in flight, draw the targeted
   // edit at its live (`boxDrag.cur*`) bounds rather than its stored

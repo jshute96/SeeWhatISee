@@ -4,9 +4,14 @@
 // "1×" means 1 source-CSS-pixel = 1 editor CSS pixel — i.e.
 // `naturalSize / window.devicePixelRatio`. The `applyZoom()` Fit
 // branch caps at the same target so Fit and 1× match. Stroke widths
-// are `ceil(3 × ratio − 0.01)` where `ratio = renderedW / targetW`
-// (the −0.01 epsilon swallows pixel-snap float drift between our
-// math and Chrome's `getBoundingClientRect()` readout).
+// are piecewise in `ratio = renderedW / targetW`, dropping by 1 px
+// at each halving below 1×:
+//   ratio ≥ 1          → ceil(3·ratio − 0.01)   (3 / 6 / 12 / 24)
+//   0.5 ≤ ratio < 1    → 3
+//   0.25 ≤ ratio < 0.5 → 2
+//   ratio < 0.25       → 1
+// The −0.01 epsilon swallows pixel-snap float drift between our
+// math and Chrome's `getBoundingClientRect()` readout.
 //
 // Tests:
 //   - Sizing at the real DPR: rendered width tracks targetCssSize × N
@@ -15,6 +20,10 @@
 //   - DPR-stubbed regression: overriding `window.devicePixelRatio` to
 //     2 (clean) and 1.5 (lossy) and re-applying zoom should leave 1×
 //     at sw = 3 — the float-drift case the −0.01 epsilon defends.
+//   - Fit shrinkage between half- and full-size: stroke holds at 3 px
+//     (no premature narrowing).
+//   - Fit shrinkage well below half-size: stroke narrows per the
+//     piecewise formula and ends up < 3.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -265,7 +274,7 @@ test('zoom: stubbed DPR=1.5 keeps 1× stroke-width at 3 (epsilon regression)', a
   await openerPage.close();
 });
 
-test('zoom: Fit shrunken below 1× narrows stroke-width via the ceil bias', async ({
+test('zoom: Fit between half- and full-size holds stroke-width at 3', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -284,31 +293,76 @@ test('zoom: Fit shrunken below 1× narrows stroke-width via the ceil bias', asyn
     { xPct: 0.5, yPct: 0.5 },
   );
 
-  // Force Fit-mode shrinkage without resizing the editor viewport:
-  // stub DPR < 1 so `targetCssSize() = naturalWidth / DPR` is *larger*
-  // than the editor viewport, then `Math.min(1, wMax/targetW, …)` in
-  // applyZoom's Fit branch picks the wMax/targetW term and renders
-  // smaller than 1×. DPR = 0.5 doubles targetW, so on a typical
-  // editor viewport the ratio comes out around 0.5.
-  await stubDpr(capturePage, 0.5);
+  // Force Fit-mode shrinkage above half-size: stub DPR > 1 so
+  // `targetCssSize() = naturalWidth / DPR` is *smaller* than
+  // naturalWidth, but still larger than the editor viewport (the
+  // Playwright fixture's natural width is bigger than the test
+  // window's CSS width). DPR = 1.5 lands the Fit ratio comfortably in
+  // the half-to-full window — the flat region of the piecewise
+  // formula where strokes must NOT narrow (this is the regression
+  // the new formula is meant to prevent — the previous
+  // `ceil(3·ratio)` formula here would produce sw = 2).
+  await stubDpr(capturePage, 1.5);
   await applyZoomMode(capturePage, 'fit');
 
   const ratio = await readDisplayScale(capturePage);
   // The exact ratio depends on the editor viewport vs naturalWidth,
-  // but with DPR=0.5 it's reliably below the ⅔ threshold where the
-  // ceil bias would still snap sw back up to 3.
-  expect(ratio, `displayScale at Fit/DPR=0.5`).toBeLessThan(2 / 3);
-  // Computed stroke-width should be exactly `ceil(3 * ratio - 0.01)`
-  // — so the test asserts the same formula the production code uses
-  // rather than a hard-coded number that would drift if the viewport
-  // size changes.
-  const expected = Math.ceil(3 * ratio - 0.01);
-  expect(await readDrawnRectStrokeWidth(capturePage), `stroke-width at Fit/DPR=0.5`)
+  // but should land in [0.5, 1] under the standard Playwright
+  // viewport / fixture sizes — the flat region of the new formula.
+  // (toBeLessThanOrEqual covers the ratio = 1 cap when the Fit
+  // ratio would otherwise exceed 1.)
+  expect(ratio, `displayScale at Fit/DPR=1.5`).toBeGreaterThanOrEqual(0.5);
+  expect(ratio, `displayScale at Fit/DPR=1.5`).toBeLessThanOrEqual(1.0001);
+  // In this regime the formula's `max(3, …)` clause keeps the stroke
+  // pinned to 3 — the visible behavior the user requested.
+  expect(await readDrawnRectStrokeWidth(capturePage), `stroke-width at Fit/DPR=1.5`)
+    .toBe(3);
+
+  await openerPage.close();
+});
+
+test('zoom: Fit well below half-size narrows stroke-width to <3', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+
+  // Draw a rect to read the stroke-width off.
+  await dragRect(
+    capturePage,
+    { xPct: 0.3, yPct: 0.3 },
+    { xPct: 0.5, yPct: 0.5 },
+  );
+
+  // DPR = 0.25 quadruples targetW, so the Fit ratio drops well below
+  // 0.5 (the threshold where the piecewise formula first steps below
+  // 3 px). The exact ratio depends on the viewport, so we assert
+  // against the same piecewise rule the production code uses rather
+  // than a hard-coded number — the regression we're catching is
+  // "always 3" at deeply shrunken sizes, not the specific value.
+  await stubDpr(capturePage, 0.25);
+  await applyZoomMode(capturePage, 'fit');
+
+  const ratio = await readDisplayScale(capturePage);
+  expect(ratio, `displayScale at Fit/DPR=0.25`).toBeLessThan(0.5);
+  const expected =
+    ratio >= 1 ? Math.ceil(3 * ratio - 0.01)
+    : ratio >= 0.5 ? 3
+    : ratio >= 0.25 ? 2
+    : 1;
+  expect(await readDrawnRectStrokeWidth(capturePage), `stroke-width at Fit/DPR=0.25`)
     .toBe(expected);
   // And — independent of the formula — we *do* expect it to land
   // narrower than the at-1× default so the regression catches a
   // future change that re-introduces the "always 3" behavior.
   expect(expected).toBeLessThan(3);
+  expect(expected).toBeGreaterThanOrEqual(1);
 
   await openerPage.close();
 });
