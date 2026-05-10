@@ -976,6 +976,216 @@ test('drawing: topmost rect wins the resize gesture over an underlying crop', as
   await openerPage.close();
 });
 
+// ─── Arrow-key fine adjustment during a drag ─────────────────────
+
+// Read the previewImg's viewport-coord bounding box plus its
+// natural (intrinsic) size so the arrow-key tests can convert
+// between CSS-pixel mouse moves, percent-space stored bounds, and
+// natural-pixel saved-output deltas. Mirrors the `imgRect()` /
+// `previewImg.naturalWidth` reads the in-page handler does.
+async function readPreviewRect(
+  capturePage: Page,
+): Promise<{ x: number; y: number; w: number; h: number; natW: number; natH: number }> {
+  return capturePage.evaluate(() => {
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const b = img.getBoundingClientRect();
+    return {
+      x: b.x, y: b.y, w: b.width, h: b.height,
+      natW: img.naturalWidth, natH: img.naturalHeight,
+    };
+  });
+}
+
+test('drawing: arrow keys nudge an in-flight Box draw one output pixel each', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Start a Box draw in flight: mousedown, then a single move past
+  // CLICK_THRESHOLD_PX so the drag is committed-shaped before we
+  // start tapping arrows. Each ArrowRight / ArrowDown adds one
+  // *natural-pixel* (= saved-output) step in that direction;
+  // ArrowLeft / ArrowUp peel one back. The committed rect should
+  // reflect the net cursor delta — 10 CSS px from the explicit
+  // mouse move plus the net arrow nudge in natural-pixel terms.
+  const r = await readPreviewRect(capturePage);
+  const x1 = r.x + 100;
+  const y1 = r.y + 100;
+  await capturePage.mouse.move(x1, y1);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(x1 + 10, y1 + 10);
+  for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowRight');
+  for (let i = 0; i < 3; i++) await capturePage.keyboard.press('ArrowDown');
+  await capturePage.keyboard.press('ArrowLeft');
+  await capturePage.keyboard.press('ArrowUp');
+  await capturePage.mouse.up();
+
+  // Convert each axis of the committed rect to natural-pixel units,
+  // which is what the saved PNG bake will use. Expected width =
+  // 10 CSS px from the mouse move (≈ 10 × natW/r.w natural px) plus
+  // 4 natural px from the net 4-right arrow nudge. Same shape on
+  // height with 2 net down nudges.
+  const bounds = await readLastBounds(capturePage, 'rect');
+  expect(bounds).not.toBeNull();
+  const widthNatPx = bounds!.w * r.natW / 100;
+  const heightNatPx = bounds!.h * r.natH / 100;
+  expect(widthNatPx).toBeCloseTo(10 * r.natW / r.w + 4, 0);
+  expect(heightNatPx).toBeCloseTo(10 * r.natH / r.h + 2, 0);
+  // Top-left unchanged by arrows (only the dragged corner moved).
+  expect(bounds!.x).toBeCloseTo((100 / r.w) * 100, 1);
+  expect(bounds!.y).toBeCloseTo((100 / r.h) * 100, 1);
+
+  await openerPage.close();
+});
+
+test('drawing: arrow keys clamp at the image-pane edges', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Holding ArrowRight past the right edge of the preview must not
+  // walk the synthetic cursor outside the image — the rect commits
+  // pinned to x=100% on the east side. Mirrors `localCoords`'
+  // clamp.
+  const r = await readPreviewRect(capturePage);
+  const x1 = r.x + r.w - 20;
+  const y1 = r.y + 100;
+  await capturePage.mouse.move(x1, y1);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(x1 + 5, y1 + 5);
+  // Press ArrowRight far more times than needed to walk past the
+  // right edge — the clamp stops at the image rect.
+  for (let i = 0; i < 200; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.up();
+
+  const bounds = await readLastBounds(capturePage, 'rect');
+  expect(bounds).not.toBeNull();
+  // East edge clamps at 100% (within float tolerance).
+  expect(bounds!.x + bounds!.w).toBeCloseTo(100, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: arrow keys nudge an in-flight Line endpoint', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Line / Arrow tools draw via the same `dragStart` path that
+  // box-create tools do, so the moving endpoint is `dragCurrent` —
+  // exactly what the arrow-key handler updates. The (x1, y1)
+  // anchor (mousedown position) should stay put while the (x2, y2)
+  // endpoint shifts by the net keyboard nudge.
+  await capturePage.locator('#tool-line').click();
+
+  const r = await readPreviewRect(capturePage);
+  const x1 = r.x + 100;
+  const y1 = r.y + 100;
+  await capturePage.mouse.move(x1, y1);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(x1 + 30, y1 + 20);
+  // Nudge the live endpoint: net 4 right, net 2 down (in natural
+  // pixels of saved output).
+  for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.keyboard.press('ArrowLeft');
+  for (let i = 0; i < 3; i++) await capturePage.keyboard.press('ArrowDown');
+  await capturePage.keyboard.press('ArrowUp');
+  await capturePage.mouse.up();
+
+  const ln = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: {
+        lastLineBounds: (k: string) => {
+          x1: number; y1: number; x2: number; y2: number;
+        } | null;
+      };
+    }).__seeState.lastLineBounds('line'),
+  );
+  expect(ln).not.toBeNull();
+  // (x1, y1) anchor: the mousedown CSS-pixel position projected
+  // onto the image rect.
+  expect(ln!.x1).toBeCloseTo((100 / r.w) * 100, 1);
+  expect(ln!.y1).toBeCloseTo((100 / r.h) * 100, 1);
+  // (x2, y2) endpoint: 30 CSS px (mouse) plus 4 natural-px nudge
+  // on x; 20 CSS px (mouse) plus 2 natural-px nudge on y.
+  const x2NatPx = ln!.x2 * r.natW / 100;
+  const y2NatPx = ln!.y2 * r.natH / 100;
+  expect(x2NatPx).toBeCloseTo((100 + 30) * r.natW / r.w + 4, 0);
+  expect(y2NatPx).toBeCloseTo((100 + 20) * r.natH / r.h + 2, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: arrow-key nudge on an east handle is x-only', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Edge handles are 1-DOF — only arrows on the matching axis nudge
+  // the geometry. Up / Down on the east handle should be silently
+  // discarded by the handler; only Left / Right walk the dragged
+  // edge.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+  const before = await readLastBounds(capturePage, 'rect');
+  expect(before).not.toBeNull();
+
+  // Grab the east edge inline (don't use dragEdge since we need to
+  // hold the press across keypresses). Mouse-down inset HANDLE_PX
+  // (=6) from the east edge so detectBoxHandle picks 'e'.
+  const r = await readPreviewRect(capturePage);
+  const eX = r.x + r.w * (before!.x + before!.w) / 100 - 4;
+  const midY = r.y + r.h * (before!.y + before!.h / 2) / 100;
+  await capturePage.mouse.move(eX, midY);
+  await capturePage.mouse.down();
+  // Move past CLICK_THRESHOLD_PX so the drag is no-longer-ignorable.
+  await capturePage.mouse.move(eX - 5, midY);
+  // ArrowDown / ArrowUp must not affect geometry on an east handle.
+  for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowDown');
+  // ArrowLeft pulls the east edge inward by one CSS pixel each.
+  for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowLeft');
+  await capturePage.mouse.up();
+
+  const after = await readLastBounds(capturePage, 'rect');
+  expect(after).not.toBeNull();
+  // North / south edges unchanged — ArrowDown was discarded.
+  expect(after!.y).toBeCloseTo(before!.y, 1);
+  expect(after!.h).toBeCloseTo(before!.h, 1);
+  // East edge moved inward by 5 CSS px (mouse move) plus 5 natural
+  // px (the arrow nudges, each = one saved-output pixel). Compare
+  // in natural-pixel space so the assertion is independent of the
+  // test viewport's display scale.
+  const eastBefore = before!.x + before!.w;
+  const eastAfter = after!.x + after!.w;
+  const shiftNatPx = (eastBefore - eastAfter) * r.natW / 100;
+  expect(shiftNatPx).toBeCloseTo(5 * r.natW / r.w + 5, 0);
+
+  await openerPage.close();
+});
+
 // ─── Palette Copy / Save buttons ─────────────────────────────────
 
 test('drawing: palette Save writes the edited PNG via the save-as dialog', async ({

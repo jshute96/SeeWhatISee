@@ -1828,10 +1828,15 @@ overlay.addEventListener('mousemove', (e) => {
   overlay.style.cursor = hit ? cursorForHandle(hit.handle) : 'crosshair';
 });
 
-window.addEventListener('mousemove', (e) => {
+// Apply a drag update from a pointer position in image-rect-local
+// coordinates (i.e. already passed through `localCoords` or its
+// equivalent clamp). Shared between the physical-mousemove path
+// (clientX from the event) and the arrow-key nudge path, which
+// needs to drive the drag with sub-CSS-pixel precision that Chrome
+// would otherwise round away through the MouseEvent's `clientX`.
+function updateDragFromLocalPoint(p: Point): void {
   if (boxDrag) {
     const r = imgRect();
-    const p = localCoords(e);
     const dxPct = ((p.x - boxDrag.originX) / r.width) * 100;
     const dyPct = ((p.y - boxDrag.originY) / r.height) * 100;
     const next = applyEdgeDrag(boxDrag, boxDrag.handle, dxPct, dyPct);
@@ -1844,18 +1849,29 @@ window.addEventListener('mousemove', (e) => {
     return;
   }
   if (dragStart === null) return;
-  dragCurrent = localCoords(e);
+  dragCurrent = p;
   render();
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (boxDrag === null && dragStart === null) return;
+  updateDragFromLocalPoint(localCoords(e));
 });
 
 window.addEventListener('mouseup', (e) => {
   if (boxDrag) {
     // Left-button only for resize drag — ignore any stray right-up.
     if (e.button !== 0) return;
-    const end = localCoords(e);
+    // Commit only if the proposed bounds actually changed from the
+    // pre-drag geometry. Cheaper-and-more-correct than the pointer-
+    // distance check it replaces: it survives arrow-key nudges that
+    // move the synthetic cursor without a physical mouse move (so
+    // `localCoords(e)` would still report the un-nudged position).
     const movedEnough =
-      Math.hypot(end.x - boxDrag.originX, end.y - boxDrag.originY) >=
-      CLICK_THRESHOLD_PX;
+      boxDrag.curX !== boxDrag.startX ||
+      boxDrag.curY !== boxDrag.startY ||
+      boxDrag.curW !== boxDrag.startW ||
+      boxDrag.curH !== boxDrag.startH;
     // Only commit if the drag actually moved — a bare click on a
     // handle shouldn't push or mutate (would pollute Undo history
     // with no-ops).
@@ -1909,7 +1925,13 @@ window.addEventListener('mouseup', (e) => {
   if (dragStart === null) return;
   // Left button only matches the mousedown gate.
   if (e.button !== 0) return;
-  const end = localCoords(e);
+  // Use the last tracked drag position — `dragCurrent` already
+  // reflects every mousemove (including ones synthesised by the
+  // arrow-key nudge handler), whereas `localCoords(e)` would snap
+  // back to the physical mouseup position and lose the keyboard
+  // adjustment. `dragCurrent` is set to `dragStart` on mousedown,
+  // so it's never null by the time we get here.
+  const end = dragCurrent ?? dragStart;
   const r = imgRect();
   const dx = end.x - dragStart.x;
   const dy = end.y - dragStart.y;
@@ -1961,6 +1983,101 @@ window.addEventListener('mouseup', (e) => {
   dragCurrent = null;
   render();
 });
+
+// ─── Arrow-key fine adjustment during a drag ──────────────────────
+//
+// While a left-button draw / resize drag is in flight on the image
+// overlay, an arrow keypress steps the cursor by exactly one
+// *natural* (saved-output) pixel in that direction, clamped to the
+// image-pane edges. Lets the user finish a drag with output-pixel
+// precision without inching the physical mouse.
+//
+// Direction filter mirrors the handle's degrees of freedom:
+//   - n / s (top or bottom edge): up / down only.
+//   - e / w (left or right edge): left / right only.
+//   - corner handle (nw / ne / sw / se), or a fresh draw via the
+//     `dragStart` path: all four arrows step. The dragStart path
+//     covers Box / Crop / Redact rect-creates and the Line / Arrow
+//     tools — for Line / Arrow the moving endpoint lives in
+//     `dragCurrent`, so the same nudge logic adjusts it live and
+//     the committed line / arrow inherits the shifted endpoint on
+//     mouseup.
+//
+// Snap-back is the price of not chasing the OS pointer: the browser
+// can't move the hardware cursor, and the next physical mousemove
+// picks the drag back up at the OS-pointer position — which keeps
+// "where the cursor visibly is" and "where the drag is" in sync.
+//
+// `lastMousePos` (declared further down for the keyboard-zoom path)
+// gives us the last known pointer position; we feed the drag
+// handler directly via `updateDragFromLocalPoint`. Capture phase so
+// the prompt textarea's default arrow-key behaviour doesn't swallow
+// the press when focus happens to sit there during the drag.
+window.addEventListener('keydown', (e) => {
+  if (boxDrag === null && dragStart === null) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  let dx = 0;
+  let dy = 0;
+  switch (e.key) {
+    case 'ArrowLeft':  dx = -1; break;
+    case 'ArrowRight': dx =  1; break;
+    case 'ArrowUp':    dy = -1; break;
+    case 'ArrowDown':  dy =  1; break;
+    default: return;
+  }
+  // Once we're committed to handling an arrow keypress during a
+  // drag, swallow it unconditionally — even on branches we end up
+  // discarding (perpendicular axis on an edge handle, no
+  // `lastMousePos` yet). Otherwise the press leaks through to the
+  // focused element, which is typically the prompt textarea, and
+  // the user gets a caret jump instead of the "no effect" they'd
+  // expect from a key the drag can't consume.
+  e.preventDefault();
+  if (boxDrag) {
+    const h = boxDrag.handle;
+    const isCorner = h === 'nw' || h === 'ne' || h === 'sw' || h === 'se';
+    if (!isCorner) {
+      // Edge handle is 1-DOF — discard arrows on the perpendicular
+      // axis. They're already swallowed above, so nothing reaches
+      // the textarea; this branch just means no nudge happens.
+      if ((h === 'n' || h === 's') && dx !== 0) return;
+      if ((h === 'e' || h === 'w') && dy !== 0) return;
+    }
+  }
+  if (lastMousePos === null) return;
+  // One arrow press → one natural (output) pixel of change in the
+  // saved image, regardless of zoom or DPR. The drag handler maps
+  // a CSS-pixel cursor delta to a percent-space delta via
+  // `cssPx / r.width`, which becomes natural pixels at bake time
+  // via `pct * naturalWidth / 100`. Solving for "one natural px"
+  // gives `stepX = r.width / naturalWidth` (and similarly stepY).
+  // At 1× zoom with DPR=1 this is exactly 1 CSS px; on HiDPI or
+  // when zoomed in the step shrinks below 1 (sub-pixel positions
+  // are fine — the drag math is float). Zoomed out it grows above
+  // 1 so each press still bumps the output by exactly one pixel.
+  const r = imgRect();
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+  const stepX = natW > 0 ? r.width / natW : 1;
+  const stepY = natH > 0 ? r.height / natH : 1;
+  // Clamp to the image rect — mirrors `localCoords` so the
+  // synthetic cursor can't wander outside the visible image pane.
+  const nextX = Math.max(r.left, Math.min(r.right, lastMousePos.x + dx * stepX));
+  const nextY = Math.max(r.top,  Math.min(r.bottom, lastMousePos.y + dy * stepY));
+  if (nextX === lastMousePos.x && nextY === lastMousePos.y) return;
+  lastMousePos = { x: nextX, y: nextY };
+  // Drive the drag handler directly with the float-precise position.
+  // Going through `dispatchEvent(new MouseEvent('mousemove', {...}))`
+  // would lose the sub-CSS-pixel precision: Chrome rounds `clientX`
+  // / `clientY` to integers in the dispatched event, so a
+  // zoomed-in / HiDPI step (always sub-pixel here) would snap back
+  // to the integer pre-press position and successive presses would
+  // never accumulate.
+  updateDragFromLocalPoint({
+    x: Math.max(0, Math.min(r.width, nextX - r.left)),
+    y: Math.max(0, Math.min(r.height, nextY - r.top)),
+  });
+}, true);
 
 undoBtn.addEventListener('click', () => {
   const last = editHistory.pop();
@@ -2680,9 +2797,15 @@ function cursorCenteredZoomStep(
   return true;
 }
 
-// Last viewport-coord mouse position, for the keyboard zoom path.
-// `null` until the first move — pre-move keyboard zoom just changes
-// level without re-centering, which matches the no-cursor case.
+// Last viewport-coord cursor position. Two consumers:
+//   - keyboard zoom (Alt+± below) — re-centers the zoom on the
+//     cursor when known; pre-move presses just change level.
+//   - arrow-key drag-nudge (handler above) — reads it as the
+//     starting position and writes back the nudged position so
+//     successive presses accumulate.
+// `null` until the first mousemove. The arrow-key handler treats
+// that as a "do nothing" case, since there's no cursor anchor to
+// nudge from.
 let lastMousePos: { x: number; y: number } | null = null;
 window.addEventListener('mousemove', (e) => {
   lastMousePos = { x: e.clientX, y: e.clientY };
@@ -5367,6 +5490,16 @@ void loadData();
     for (let i = edits.length - 1; i >= 0; i--) {
       const e = edits[i]!;
       if (e.kind === kind) return { x: e.x, y: e.y, w: e.w, h: e.h };
+    }
+    return null;
+  },
+  // Endpoints of the most-recent line / arrow edit (used by the
+  // arrow-key-during-Line-draw test to assert that the in-flight
+  // endpoint follows keyboard nudges).
+  lastLineBounds: (kind: 'line' | 'arrow') => {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const e = edits[i]!;
+      if (e.kind === kind) return { x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 };
     }
     return null;
   },

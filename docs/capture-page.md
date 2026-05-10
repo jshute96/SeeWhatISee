@@ -526,6 +526,46 @@ fresh edit.
   are discarded so a stray click on a handle (or a drag that
   lands back where it started) doesn't pollute the Undo stack.
 
+### Arrow-key nudge during a drag
+
+- While a left-button draw or resize drag is in flight, an arrow
+  keypress steps the cursor by one *natural* (saved-output) pixel
+  in that direction, so the user can finish the gesture
+  output-pixel-precisely without trying to inch the physical mouse.
+- The CSS-pixel step is `imgRect.width / naturalWidth` (and the
+  same for height). At 1× zoom with DPR=1 it equals 1 CSS px; on
+  HiDPI or zoomed in it shrinks below 1 (sub-pixel cursor positions
+  are fine — the drag math is float); zoomed out it grows above 1
+  so each press still maps to exactly one output pixel.
+- Direction filter mirrors the handle's degrees of freedom:
+  - n / s edge: up / down only.
+  - e / w edge: left / right only.
+  - Corner handle, or a fresh tool draw (no handle): all four
+    arrows. This covers Box / Crop / Redact rect-creates *and* the
+    Line / Arrow tools — for Line / Arrow the moving endpoint
+    lives in `dragCurrent`, so the same nudge logic adjusts it
+    live and the committed segment inherits the shifted endpoint
+    on mouseup.
+- The browser can't move the OS pointer, so after a nudge the
+  hardware cursor and the drag temporarily disagree. The *next*
+  physical mousemove resyncs them — the drag jumps to wherever the
+  OS pointer is — which keeps "what the cursor visibly points at"
+  and "what the drag is doing" the same thing.
+- **Implementation**:
+  - Window-level `keydown` handler registered in capture phase, so
+    the prompt textarea's default arrow-key behaviour doesn't
+    swallow the press when focus sits there.
+  - Updates `lastMousePos` (the shared cursor-tracking variable
+    for the keyboard-zoom path) and then feeds the drag handler
+    directly via `updateDragFromLocalPoint` with float-precise
+    local coordinates.
+  - Direct call rather than `dispatchEvent(new MouseEvent('mousemove'))`
+    because Chrome rounds `MouseEvent.clientX` to an integer in a
+    synthetic event, which would discard the sub-CSS-pixel step
+    precision needed at HiDPI / zoomed-in.
+  - Modifier keys (Ctrl / Alt / Meta) are excluded so the existing
+    Alt+± zoom shortcut and any future modifiers stay free.
+
 ### Edit stack & geometry
 
 - **Undo / Clear** — single edit-history stack of two op kinds:
