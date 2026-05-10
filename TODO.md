@@ -1,33 +1,40 @@
-Features
-* For html snapshots, capture other files too, like ^S SavePage does.
-* Record and save video
-* Flash the screen when it snapshots
-* Avoid making 2 files show up as Chrome downloads each time
-* Add a way to get a longer delay (once). Maybe with a long-click. Maybe user-chosen delay.
-* Maybe more drawing and annotation features
-  - Add inline text
-  - Add arrows
-  - Auto-number annotations (box 1,2,3,etc)
-  - Choose different colors
-* Could we push snapshots to non-CLI consumers, that would pick them up by an API or MCP
-  server rather than a command-line tool and local file access?
-* Cleanup: We have a lot of overlap between multiple skills & commands, and the scripts
-  underneath them.  Some blocks are intentionally the same across several of them.
-  We could probably share more and be more consistent across them.
+# TODO.md
 
-Claude plugin
+## Chrome extension
+
+### Possible features
+* Options
+  - Choose which actions to show on main context menu
+* Docs/help in the app
+* Edit image format (PNG/JPG) and size (rescale)
+
+### Possible big features
+* Record and save video (or repeated screenshots of interactions)
+* Capture full page content as markdown (find the main content pane somehow)
+* HTML element picker (like in Chrome dev console) to capture an element
+
+### Optimizations
+* Refcount stored images and html and share them between Capture and Ask, rather than making a copy.
+* Compress stored html if it's large
+* Resize images if they are too large
+* Make tests faster, skip unnecessary Chrome capture interactions
+
+## Skills and plugins
+
+### Claude plugin
 * Permissions prompts on the re-run of watch skill - can we avoid them?
   - This is https://github.com/jshute96/SeeWhatISee/issues/2.
 
-Gemini plugin
-* Background watching doesn't work because asynchronous background commands aren't supported,
-  so we just have a foreground version of the watch command for now.
+### Gemini plugin
+* Background watching doesn't work because asynchronous background commands aren't supported, so we just have a foreground version of the watch command for now.
 * BUG: command doesn't work if multiple gemini's run in workspaces with the same name, because one of their tmp dirs has -1, and we don't know that. See copy-last-snapshot.sh.
-* Annoying: gemini always prompts for permission to run copy-last-snapshot.sh, at least once per session.
+* Can we do permissions in the extension automatically?
+  - If I don't add them manually, I see Gemini decide it can't run the script, but can read it and will then act as its own interpreter. Crazy.
 
-Release and Packaging
-* Publish Chrome extension
-* Update docs
+### Integrating other tools to read captures
+* CLI skills that work for other tools
+* MCP server version that desktop apps can call
 
-Wishlist
-* I wanted shift-click on the icon for selecting between screenshot and screenshot-with-details. Chrome doesn't give any way to get click modifiers.
+## Ask pages (web chat integration)
+* Maybe allow pinning any page, so users can inject with copy/paste widget
+* Extensible Ask connectors in options, so users can hook up other pages if they figure out the selectors
