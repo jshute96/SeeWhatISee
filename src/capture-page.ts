@@ -1185,6 +1185,35 @@ let dragCurrent: Point | null = null;
 // render() and the mouseup handler.
 let selectedTool: Tool = 'rect';
 
+// ─── Polyline (multi-line / multi-arrow) state ────────────────────
+//
+// Set when the user holds Ctrl (Cmd on macOS) while drawing with
+// the Line or Arrow tool — at the *commit* (mouseup) of each
+// segment, the next segment's start is anchored at the segment's
+// endpoint and `dragStart` stays non-null so the live preview keeps
+// drawing from there. The chain ends when:
+//   - Ctrl/Meta is released (window keyup handler clears state),
+//   - the user switches tools (`setSelectedTool` clears state), or
+//   - the user mouses-up without Ctrl held (the mouseup path
+//     commits the current segment and exits the chain).
+//
+// While active and the mouse button is *not* pressed, mousemove
+// keeps updating `dragCurrent` because `dragStart` stays set, so
+// the preview tracks the cursor between clicks. A click in this
+// state commits the segment from previous endpoint to click point;
+// a drag in this state commits to the release point. Both shapes
+// are handled by the same line/arrow mouseup branch.
+let polylineLineKind: LineKind | null = null;
+
+// True between mousedown and mouseup of any left-button overlay
+// gesture during line/arrow tool — captures both the initial
+// polyline-entry mousedown and a mid-chain continuation mousedown.
+// Lets the keyup handler decide whether Ctrl/Meta release should
+// clear the in-flight drag immediately (between segments) or defer
+// to the upcoming mouseup (mid-drag, so the in-flight segment can
+// still commit). Cleared on mouseup and on window blur.
+let polylineMouseHeld = false;
+
 // ─── Box-resize drag state ────────────────────────────────────────
 //
 // Drives edge-handle drags on rect-shaped edits (rect / redact /
@@ -1766,14 +1795,54 @@ overlay.addEventListener('mousedown', (e) => {
   // on top of stuck draw state, which would leave `panState` and
   // `dragStart`/`boxDrag` both live until the next normal
   // left-mouseup. Sits above the Ctrl-left branch deliberately.
-  if (boxDrag !== null || dragStart !== null) return;
+  //
+  // Polyline mode is the one exception on the `dragStart` side: the
+  // chain leaves `dragStart` set between segments deliberately, and
+  // the next mousedown is meant to start a new segment (its mouseup
+  // commits). Fall through to the polyline-continuation branch
+  // below, which preventDefaults and returns without disturbing
+  // state.
+  if (boxDrag !== null) return;
+  if (dragStart !== null && polylineLineKind === null) return;
+  // Polyline continuation: a fresh left mousedown while the chain
+  // is alive. Don't reset `dragStart` (it's the previous segment's
+  // endpoint, anchoring the next segment); don't pan; just swallow
+  // the press so it doesn't bubble to imageBox (which would start
+  // a Ctrl-left pan). Mouseup commits the segment.
+  if (dragStart !== null && polylineLineKind !== null) {
+    if (me.button !== 0) return;
+    me.preventDefault();
+    me.stopPropagation();
+    polylineMouseHeld = true;
+    // Deliberately *don't* overwrite `dragCurrent` here. The chain
+    // composes with arrow-key nudges: a user can press arrow keys
+    // between segments to fine-tune the next endpoint, and
+    // refreshing `dragCurrent` to the physical click point would
+    // erase that nudge. Real input always has a mousemove between
+    // mouseup and the next mousedown, so `dragCurrent` is already
+    // up to date by the time we get here. Synthetic input that
+    // skips mousemove would land a no-op segment — acceptable
+    // edge case.
+    return;
+  }
   // Ctrl/Cmd + left = pan, mirroring middle-click. We start it here
   // (the overlay sits on top of the image) and `stopPropagation` so
   // the imageBox handler doesn't double-init the same drag. The
   // empty surround around the overlay is handled by imageBox alone.
   // Ctrl + middle still routes through the imageBox middle path —
   // this branch only matches `button === 0`.
-  if (me.button === 0 && (me.ctrlKey || me.metaKey)) {
+  //
+  // Exception: when Line / Arrow is the active tool, Ctrl-left
+  // *enters polyline mode* instead of panning — the pan-vs-polyline
+  // tradeoff is worth it because Line / Arrow are the only tools
+  // where multi-segment chains make sense, and pan is still
+  // available via middle-click for line/arrow users.
+  if (
+    me.button === 0 &&
+    (me.ctrlKey || me.metaKey) &&
+    selectedTool !== 'line' &&
+    selectedTool !== 'arrow'
+  ) {
     me.preventDefault();
     me.stopPropagation();
     startPan(me);
@@ -1795,13 +1864,28 @@ overlay.addEventListener('mousedown', (e) => {
     return;
   }
   const p = localCoords(me);
+  // Polyline entry: Ctrl + Line/Arrow tool starts a multi-segment
+  // chain. Skip the box-handle hit-test (Ctrl is consumed by the
+  // tool here, not by a resize affordance) and stopPropagation so
+  // the imageBox handler doesn't see a Ctrl-left it would otherwise
+  // turn into a pan. The first mouseup commits the first segment
+  // and (if Ctrl is still held) advances `polylineLineKind` to
+  // anchor the next segment from this one's endpoint.
+  const polylineEntry =
+    (me.ctrlKey || me.metaKey) &&
+    (selectedTool === 'line' || selectedTool === 'arrow');
+  if (polylineEntry) {
+    me.stopPropagation();
+  }
   // Box-handle drag wins over the selected tool: hit-tests every
   // rect-shaped edit (rect / redact / crop) topmost-first, plus
   // the image edges as a fallback when no crop exists. Holding
   // Shift bypasses this so the user can start a fresh draw flush
   // against an existing box's edge — e.g. drawing a redact box
   // right next to a crop's edge without snapping the crop instead.
-  const hit = me.shiftKey ? null : detectBoxHandle(p);
+  // Polyline entry also bypasses (the Ctrl press is the polyline
+  // signal, not a box-resize gesture).
+  const hit = me.shiftKey || polylineEntry ? null : detectBoxHandle(p);
   if (hit) {
     me.preventDefault();
     boxDrag = {
@@ -1820,6 +1904,13 @@ overlay.addEventListener('mousedown', (e) => {
   me.preventDefault();
   dragStart = p;
   dragCurrent = dragStart;
+  // Track the mouse-held window for the polyline keyup logic.
+  // Scoped to line/arrow tools — the box / crop / redact tools
+  // don't participate in polyline mode, so leaving the flag false
+  // for them keeps the keyup path's reasoning narrow.
+  if (selectedTool === 'line' || selectedTool === 'arrow') {
+    polylineMouseHeld = true;
+  }
   // Reset any idle-hover resize cursor — we're committing to a
   // tool-driven draw from this spot, and the resize cursor would
   // mislead the user if they started right on a handle.
@@ -1936,6 +2027,10 @@ window.addEventListener('mouseup', (e) => {
   if (dragStart === null) return;
   // Left button only matches the mousedown gate.
   if (e.button !== 0) return;
+  // Mouse is no longer held — ends the keyup handler's mid-drag
+  // window. Cleared even when the upcoming branches end up
+  // commit-or-skip in different ways.
+  polylineMouseHeld = false;
   // Use the last tracked drag position — `dragCurrent` already
   // reflects every mousemove (including ones synthesised by the
   // arrow-key nudge handler), whereas `localCoords(e)` would snap
@@ -1990,8 +2085,42 @@ window.addEventListener('mouseup', (e) => {
     nextEditId++;
     editVersion++;
   }
-  dragStart = null;
-  dragCurrent = null;
+  // Polyline continuation: when Ctrl/Cmd is still held at mouseup
+  // and the active tool is Line / Arrow, anchor the *next* segment
+  // at the just-committed endpoint instead of clearing the drag
+  // state. The next click or drag commits another segment from
+  // there. Empty-segment mouseups (no `pending` because `moved`
+  // was false) still advance the chain — they just don't add an
+  // edit, matching the spec's "each click adds that segment (if
+  // non-empty) and starts a new one".
+  const continuePolyline =
+    (e.ctrlKey || e.metaKey) &&
+    (selectedTool === 'line' || selectedTool === 'arrow');
+  if (continuePolyline) {
+    // Narrow `selectedTool` to LineKind for the assignment — the
+    // type guard above already filters to 'line' | 'arrow'.
+    polylineLineKind = selectedTool as LineKind;
+    dragStart = end;
+    // Re-anchor the next segment's *preview* at the physical
+    // pointer, not at the just-committed endpoint. Two reasons:
+    //   1. If the user fine-tuned this segment with arrow nudges,
+    //      `end` is the synthetic (nudged) point — we don't want
+    //      the next preview line to start there and aim back at
+    //      it. The user wants the next segment to point at where
+    //      the OS cursor visibly is now.
+    //   2. The next physical mousemove would do the same snap on
+    //      its own; doing it now means there's no zero-length
+    //      preview frame between segments.
+    // `lastMousePos` is also reset to the physical viewport
+    // position so subsequent arrow nudges step from there rather
+    // than from the consumed nudge.
+    dragCurrent = localCoords(e);
+    lastMousePos = { x: e.clientX, y: e.clientY };
+  } else {
+    polylineLineKind = null;
+    dragStart = null;
+    dragCurrent = null;
+  }
   render();
 });
 
@@ -2002,6 +2131,16 @@ window.addEventListener('mouseup', (e) => {
 // *natural* (saved-output) pixel in that direction, clamped to the
 // image-pane edges. Lets the user finish a drag with output-pixel
 // precision without inching the physical mouse.
+//
+// Also runs during polyline mode (Ctrl/Cmd-held Line / Arrow chain),
+// even between segments when the mouse button isn't pressed —
+// `dragStart` stays set across the chain, so the same nudge logic
+// shifts `dragCurrent` and the live preview tracks. Releasing Ctrl
+// would normally end the chain, so the modifier gate below admits
+// the Ctrl-held case for polyline (active chain or first-segment
+// entry-drag) while still bailing on Ctrl-Arrow for non-polyline
+// drags. Alt remains blocked because Alt+Left / Alt+Right are
+// Chrome's Back / Forward history-navigation shortcuts.
 //
 // Direction filter mirrors the handle's degrees of freedom:
 //   - n / s (top or bottom edge): up / down only.
@@ -2026,7 +2165,29 @@ window.addEventListener('mouseup', (e) => {
 // the press when focus happens to sit there during the drag.
 window.addEventListener('keydown', (e) => {
   if (boxDrag === null && dragStart === null) return;
-  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  // Alt is excluded — Alt+Left / Alt+Right are Chrome's Back /
+  // Forward history-navigation shortcuts.
+  if (e.altKey) return;
+  // Ctrl / Meta gate:
+  //   - Allowed when polyline mode is active (the chain requires
+  //     the modifier to stay held, so suppressing nudges would
+  //     defeat the feature).
+  //   - Allowed during the polyline-entry drag (seg 1, where
+  //     `polylineLineKind` hasn't been set yet but the user holds
+  //     Ctrl and the active tool is Line/Arrow — that gesture
+  //     promotes to polyline on the upcoming mouseup).
+  //   - Blocked otherwise. The user could in principle start a
+  //     non-polyline Box/Crop/Redact drag and then press Ctrl
+  //     mid-drag (which would set `dragStart` non-null with Ctrl
+  //     held) — but Ctrl+Arrow in that case has no in-page
+  //     meaning, and allowing it would suppress the textarea's
+  //     "move caret by word" behaviour for no reason. Keep the
+  //     original block.
+  const polylineActive = polylineLineKind !== null;
+  const polylineEntryDrag =
+    (e.ctrlKey || e.metaKey) &&
+    (selectedTool === 'line' || selectedTool === 'arrow');
+  if ((e.ctrlKey || e.metaKey) && !polylineActive && !polylineEntryDrag) return;
   let dx = 0;
   let dy = 0;
   switch (e.key) {
@@ -2089,6 +2250,36 @@ window.addEventListener('keydown', (e) => {
     y: Math.max(0, Math.min(r.height, nextY - r.top)),
   });
 }, true);
+
+// ─── Polyline-mode end on Ctrl/Meta release ───────────────────────
+//
+// Polyline mode lasts only "as long as Ctrl is held down" (Cmd on
+// macOS). When the user releases the modifier, end the chain. Two
+// cases:
+//   - Mouse held (mid-segment drag): `polylineMouseHeld` is true.
+//     Just clear `polylineLineKind` so the upcoming mouseup
+//     commits the in-flight segment but won't continue the chain.
+//     Don't touch `dragStart` / `dragCurrent` — they're driving
+//     the live preview of the segment that's about to commit.
+//   - Mouse not held (between segments): clear everything so the
+//     ghost preview disappears immediately. No mouseup is coming
+//     to do this.
+window.addEventListener('keyup', (e) => {
+  if (polylineLineKind === null) return;
+  if (e.key !== 'Control' && e.key !== 'Meta') return;
+  // Use post-keyup synthesised modifier state — entry/continuation
+  // accept either Ctrl OR Meta, so releasing one while the other
+  // is still held shouldn't end the chain. Without this gate, a
+  // Mac user incidentally holding both modifiers would lose the
+  // chain on the first release.
+  if (e.ctrlKey || e.metaKey) return;
+  polylineLineKind = null;
+  if (!polylineMouseHeld) {
+    dragStart = null;
+    dragCurrent = null;
+    render();
+  }
+});
 
 undoBtn.addEventListener('click', () => {
   const last = editHistory.pop();
@@ -2384,6 +2575,17 @@ document.addEventListener('click', (e) => {
 // whole group so exactly one is pushed-down at a time.
 function setSelectedTool(tool: Tool): void {
   selectedTool = tool;
+  // Switching tools mid-polyline ends the chain. Clear the ghost
+  // preview so the new tool doesn't inherit a half-drawn segment
+  // from the previous one. Drag state for boxDrag is left alone:
+  // the box-handle drag is independent of polyline mode and we
+  // don't want a tool switch to abort an in-flight resize.
+  if (polylineLineKind !== null) {
+    polylineLineKind = null;
+    dragStart = null;
+    dragCurrent = null;
+    polylineMouseHeld = false;
+  }
   for (const btn of toolButtons) {
     const isMine = btn.dataset.tool === tool;
     btn.classList.toggle('selected', isMine);
@@ -2902,12 +3104,17 @@ const isMacPlatform =
   /Mac|iP(hone|ad|od)/i.test(navigator.platform || '') ||
   /Mac OS X/.test(navigator.userAgent);
 if (isMacPlatform) {
-  const title = zoomBtn.getAttribute('title');
-  if (title) {
-    zoomBtn.setAttribute(
-      'title',
-      title.replace(/\bCtrl\b/g, 'Cmd').replace(/\bAlt\b/g, 'Option'),
-    );
+  // Swap "Ctrl" / "Alt" → "Cmd" / "Option" anywhere they appear in
+  // the static HTML titles. Covers the Zoom button (Ctrl/Alt) and
+  // the Line / Arrow tool buttons (Ctrl-for-multi-line hint). Any
+  // future button whose title mentions either modifier picks this
+  // up automatically as long as it's loaded by this point.
+  const swapModifiers = (s: string): string =>
+    s.replace(/\bCtrl\b/g, 'Cmd').replace(/\bAlt\b/g, 'Option');
+  for (const id of ['zoom', 'tool-line', 'tool-arrow']) {
+    const el = document.getElementById(id);
+    const title = el?.getAttribute('title');
+    if (el && title) el.setAttribute('title', swapModifiers(title));
   }
 }
 
@@ -3007,10 +3214,25 @@ imageBox.addEventListener('auxclick', (e) => {
 // a middle-mouseup that lands outside the window doesn't reach our
 // `mouseup` listener — `panState` stays set and the next mousemove
 // after refocus would scroll the image-box.
+//
+// Also abort polyline mode on blur — a Ctrl keyup can be missed when
+// focus shifts to another window mid-chain (e.g. the user alt-tabs
+// to a different app), and a stuck polyline would keep the preview
+// line ghosting around the cursor on the next focus-in.
 window.addEventListener('blur', () => {
-  if (!panState) return;
-  panState = null;
-  document.body.classList.remove('panning');
+  if (panState) {
+    panState = null;
+    document.body.classList.remove('panning');
+  }
+  if (polylineLineKind !== null) {
+    polylineLineKind = null;
+    polylineMouseHeld = false;
+    if (dragStart !== null || dragCurrent !== null) {
+      dragStart = null;
+      dragCurrent = null;
+      render();
+    }
+  }
 });
 
 updateZoomButtonLabel();
@@ -5504,6 +5726,10 @@ void loadData();
     }
     return null;
   },
+  // Polyline-mode probe (used by the polyline e2e to assert that
+  // the chain is alive between segments). Returns the active kind
+  // ('line' / 'arrow') or null when polyline mode is off.
+  polylineKind: () => polylineLineKind,
   // Endpoints of the most-recent line / arrow edit (used by the
   // arrow-key-during-Line-draw test to assert that the in-flight
   // endpoint follows keyboard nudges).
@@ -5513,6 +5739,16 @@ void loadData();
       if (e.kind === kind) return { x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 };
     }
     return null;
+  },
+  // All line / arrow segments of the requested kind, in commit
+  // order. Used by the polyline e2e to verify that successive
+  // segments chain endpoint-to-endpoint while Ctrl is held.
+  allLineBounds: (kind: 'line' | 'arrow') => {
+    const out: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+    for (const e of edits) {
+      if (e.kind === kind) out.push({ x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 });
+    }
+    return out;
   },
   // Test-only setter that overwrites the most recent rect-shaped
   // edit's geometry. Used by the "Shrink never grows" regression

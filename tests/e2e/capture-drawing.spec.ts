@@ -1186,6 +1186,455 @@ test('drawing: arrow-key nudge on an east handle is x-only', async ({
   await openerPage.close();
 });
 
+// ─── Polyline (Ctrl-held multi-segment Line / Arrow chains) ─────
+
+// Read every committed line/arrow edit's geometry in commit order.
+// Mirrors `__seeState.allLineBounds` and lets the polyline tests
+// assert that segments chain endpoint-to-endpoint.
+async function readAllLines(
+  capturePage: Page,
+  kind: 'line' | 'arrow',
+): Promise<Array<{ x1: number; y1: number; x2: number; y2: number }>> {
+  return capturePage.evaluate(
+    (k) =>
+      (window as unknown as {
+        __seeState: {
+          allLineBounds: (k: string) => Array<{
+            x1: number; y1: number; x2: number; y2: number;
+          }>;
+        };
+      }).__seeState.allLineBounds(k),
+    kind,
+  );
+}
+
+test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Ctrl-drag with the Line tool selected: the first mouseup
+  // commits segment 1 *and* anchors the next segment at its
+  // endpoint. A second drag (still Ctrl-held) commits segment 2,
+  // whose start is segment 1's end — even if the second drag's
+  // mousedown is at a *different* point. Releasing Ctrl ends the
+  // chain.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+
+  const A = { x: r.x + 100, y: r.y + 100 };
+  const B = { x: r.x + 200, y: r.y + 100 };
+  const C = { x: r.x + 250, y: r.y + 130 };  // mousedown for segment 2 — ignored
+  const D = { x: r.x + 300, y: r.y + 200 };
+
+  await capturePage.keyboard.down('Control');
+  // Segment 1: A → B.
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((A.x + B.x) / 2, (A.y + B.y) / 2);
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Segment 2: chain start is B; the second mousedown's location
+  // (C) doesn't anchor the segment — only its release point does.
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((C.x + D.x) / 2, (C.y + D.y) / 2);
+  await capturePage.mouse.move(D.x, D.y);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Control');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  // Helper: convert percent-space line coords back to viewport
+  // CSS px so the assertions read like the input coordinates.
+  const toCss = (ln: { x1: number; y1: number; x2: number; y2: number }) => ({
+    x1: r.x + (ln.x1 / 100) * r.w,
+    y1: r.y + (ln.y1 / 100) * r.h,
+    x2: r.x + (ln.x2 / 100) * r.w,
+    y2: r.y + (ln.y2 / 100) * r.h,
+  });
+  const seg1 = toCss(lines[0]!);
+  const seg2 = toCss(lines[1]!);
+  // Segment 1 anchors A → B.
+  expect(seg1.x1).toBeCloseTo(A.x, 0);
+  expect(seg1.y1).toBeCloseTo(A.y, 0);
+  expect(seg1.x2).toBeCloseTo(B.x, 0);
+  expect(seg1.y2).toBeCloseTo(B.y, 0);
+  // Segment 2 starts at B (seg1's endpoint), not C — the chain
+  // re-anchors at the previous endpoint regardless of where the
+  // user re-clicks for the next segment.
+  expect(seg2.x1).toBeCloseTo(B.x, 0);
+  expect(seg2.y1).toBeCloseTo(B.y, 0);
+  expect(seg2.x2).toBeCloseTo(D.x, 0);
+  expect(seg2.y2).toBeCloseTo(D.y, 0);
+
+  // After the Ctrl release, polyline state is gone.
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+
+  await openerPage.close();
+});
+
+test('drawing: Ctrl + click adds a polyline segment from the previous endpoint', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // After the first Ctrl-drag, the chain is alive. A subsequent
+  // Ctrl-click (mousedown + mouseup at the same point, no drag)
+  // commits a segment from the previous endpoint to the click
+  // point — the spec's "each click adds that segment (if
+  // non-empty) and starts a new one".
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+
+  const A = { x: r.x + 80, y: r.y + 80 };
+  const B = { x: r.x + 180, y: r.y + 80 };
+  const Cclick = { x: r.x + 250, y: r.y + 150 };
+
+  await capturePage.keyboard.down('Control');
+  // Segment 1 — drag A → B.
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Segment 2 — pure click at Cclick. Mousemove first so
+  // dragCurrent reaches Cclick before the click commit.
+  await capturePage.mouse.move(Cclick.x, Cclick.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Control');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
+  const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
+  // Segment 2 starts at B, ends at the click point.
+  expect(toCssX(lines[1]!.x1)).toBeCloseTo(B.x, 0);
+  expect(toCssY(lines[1]!.y1)).toBeCloseTo(B.y, 0);
+  expect(toCssX(lines[1]!.x2)).toBeCloseTo(Cclick.x, 0);
+  expect(toCssY(lines[1]!.y2)).toBeCloseTo(Cclick.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: releasing Ctrl between polyline segments ends the chain', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Ctrl release between segments clears the ghost preview and
+  // makes a subsequent click a *fresh draw* (not a polyline
+  // continuation). The next Line drag should produce a single
+  // segment with its own start point — not anchored at the prior
+  // endpoint.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+
+  const A = { x: r.x + 60, y: r.y + 60 };
+  const B = { x: r.x + 160, y: r.y + 60 };
+  const C = { x: r.x + 220, y: r.y + 200 };
+  const D = { x: r.x + 320, y: r.y + 220 };
+
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Polyline alive at this point (Ctrl still held). Releasing
+  // Ctrl outside any drag should clear `dragStart` and end the
+  // chain immediately.
+  await capturePage.keyboard.up('Control');
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+
+  // A subsequent (no-Ctrl) Line drag: this should commit a fresh
+  // segment from C to D — *not* from B to D.
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(D.x, D.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
+  const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
+  // The second segment is a fresh draw starting at C.
+  expect(toCssX(lines[1]!.x1)).toBeCloseTo(C.x, 0);
+  expect(toCssY(lines[1]!.y1)).toBeCloseTo(C.y, 0);
+  expect(toCssX(lines[1]!.x2)).toBeCloseTo(D.x, 0);
+  expect(toCssY(lines[1]!.y2)).toBeCloseTo(D.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: polyline mode applies to the Arrow tool too', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Same chain semantics as Line, but each commit is an Arrow.
+  // Two Ctrl-drags should produce two arrows whose endpoints chain.
+  await capturePage.locator('#tool-arrow').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 90, y: r.y + 90 };
+  const B = { x: r.x + 190, y: r.y + 110 };
+  const D = { x: r.x + 280, y: r.y + 200 };
+
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  await capturePage.mouse.move(D.x, D.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Control');
+
+  const arrows = await readAllLines(capturePage, 'arrow');
+  expect(arrows).toHaveLength(2);
+  const kinds = await readEditKinds(capturePage);
+  expect(kinds).toEqual(['arrow', 'arrow']);
+  const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
+  const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
+  // Arrow #2 chains from arrow #1's endpoint.
+  expect(toCssX(arrows[1]!.x1)).toBeCloseTo(B.x, 0);
+  expect(toCssY(arrows[1]!.y1)).toBeCloseTo(B.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segments', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Polyline mode keeps `dragStart` non-null between segments, so
+  // the arrow-key handler can nudge `dragCurrent` whether or not
+  // the mouse button is pressed. Each press = one natural-pixel
+  // step; the segment commit uses the *nudged* endpoint, and the
+  // next segment continues from that nudged point.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 80, y: r.y + 80 };
+  const Bdrag = { x: r.x + 180, y: r.y + 80 };
+  const Cphys = { x: r.x + 240, y: r.y + 130 };
+  const NUDGE_MID = 4;     // ArrowRight presses while dragging seg 1
+  const NUDGE_BETWEEN = 3; // ArrowDown presses while between segments
+
+  await capturePage.keyboard.down('Control');
+  // Segment 1: drag A → near B, then nudge right by 4 natural pixels.
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(Bdrag.x, Bdrag.y);
+  for (let i = 0; i < NUDGE_MID; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.up();
+  // Between segments: no mouse held but `dragStart` is alive.
+  // ArrowDown nudges `dragCurrent` so segment 2's endpoint shifts
+  // even though the OS cursor is at Cphys. Move first so the
+  // physical-pointer reset on the previous mouseup doesn't leave
+  // us at Bdrag.
+  await capturePage.mouse.move(Cphys.x, Cphys.y);
+  for (let i = 0; i < NUDGE_BETWEEN; i++) await capturePage.keyboard.press('ArrowDown');
+  // Click commits segment 2 from the (nudged) seg-1 endpoint to
+  // the (nudged) current synthetic cursor.
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Control');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  // Segment 1's endpoint is Bdrag shifted right by NUDGE_MID natural
+  // pixels. Compare in natural-pixel space so the assertion is
+  // independent of the test viewport's display scale.
+  const seg1EndXNat = lines[0]!.x2 * r.natW / 100;
+  expect(seg1EndXNat).toBeCloseTo(
+    (Bdrag.x - r.x) * r.natW / r.w + NUDGE_MID,
+    0,
+  );
+  // Segment 2 starts where segment 1 ended (chain anchor) — the
+  // chain re-anchors to the nudged endpoint, not the physical
+  // mouse position at mouseup.
+  expect(lines[1]!.x1).toBeCloseTo(lines[0]!.x2, 1);
+  expect(lines[1]!.y1).toBeCloseTo(lines[0]!.y2, 1);
+  // Segment 2's endpoint is Cphys shifted down by NUDGE_BETWEEN
+  // natural pixels. Cphys's CSS-pixel y on the image rect plus the
+  // nudge in natural-pixel terms.
+  const seg2EndYNat = lines[1]!.y2 * r.natH / 100;
+  expect(seg2EndYNat).toBeCloseTo(
+    (Cphys.y - r.y) * r.natH / r.h + NUDGE_BETWEEN,
+    0,
+  );
+
+  await openerPage.close();
+});
+
+test('drawing: releasing Ctrl mid-segment-drag commits the segment and ends the chain', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Exercises the keyup handler's *mid-drag* branch — which only
+  // fires when `polylineLineKind !== null`. That means segment 1
+  // must have already committed (with Ctrl still held, so the
+  // chain is alive) before we release Ctrl during segment 2's
+  // drag. The keyup clears `polylineLineKind` but leaves
+  // `dragStart` / `dragCurrent` alone so the upcoming mouseup can
+  // still commit segment 2; that mouseup then sees `ctrlKey ===
+  // false` and ends the chain.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 80, y: r.y + 80 };
+  const B = { x: r.x + 200, y: r.y + 80 };
+  const Cdown = { x: r.x + 220, y: r.y + 110 };
+  const Dup = { x: r.x + 340, y: r.y + 200 };
+  const E = { x: r.x + 380, y: r.y + 260 };
+  const F = { x: r.x + 460, y: r.y + 300 };
+
+  // Segment 1: Ctrl-drag A → B. Commits and starts the chain.
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Chain is alive — verify before continuing.
+  const polyKindMid = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKindMid).toBe('line');
+
+  // Segment 2: Ctrl-drag from Cdown toward Dup. While the mouse is
+  // still pressed, release Ctrl — this is the mid-drag keyup case.
+  // The polyline state machine should clear `polylineLineKind`
+  // immediately but leave `dragStart` / `dragCurrent` alive so
+  // mouseup can still commit segment 2 (anchored at the chain's
+  // prior endpoint B, not at Cdown).
+  await capturePage.mouse.move(Cdown.x, Cdown.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(Dup.x, Dup.y);
+  await capturePage.keyboard.up('Control');
+  // Inline assertion — at this moment, `polylineLineKind` should
+  // already be null (mid-drag keyup branch), but the in-flight
+  // drag is preserved.
+  const polyKindAfterKeyup = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKindAfterKeyup).toBeNull();
+  await capturePage.mouse.up();
+
+  // Segment 2 should have committed, anchored at B (chain anchor).
+  let lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
+  const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
+  expect(toCssX(lines[1]!.x1)).toBeCloseTo(B.x, 0);
+  expect(toCssY(lines[1]!.y1)).toBeCloseTo(B.y, 0);
+  expect(toCssX(lines[1]!.x2)).toBeCloseTo(Dup.x, 0);
+  expect(toCssY(lines[1]!.y2)).toBeCloseTo(Dup.y, 0);
+
+  // Chain is dead — a subsequent (no-Ctrl) Line drag should
+  // commit fresh from E, not chained from Dup.
+  await capturePage.mouse.move(E.x, E.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(F.x, F.y);
+  await capturePage.mouse.up();
+  lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(3);
+  expect(toCssX(lines[2]!.x1)).toBeCloseTo(E.x, 0);
+  expect(toCssY(lines[2]!.y1)).toBeCloseTo(E.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: switching tools mid-polyline ends the chain', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // After committing the first polyline segment, switching to
+  // another tool must clear `polylineLineKind` (and the live
+  // preview) so a subsequent draw with the new tool isn't
+  // contaminated by the previous chain's state. Ctrl is still
+  // held throughout to guarantee that the only thing ending the
+  // chain is the tool switch.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.move(r.x + 80, r.y + 80);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + 180, r.y + 80);
+  await capturePage.mouse.up();
+  // Switch tools — chain should end here, even though Ctrl stays
+  // pressed. Use programmatic setSelectedTool via the same
+  // mousedown the UI uses; clicking the button works because
+  // `setSelectedTool` runs on mousedown of `.tool-btn`.
+  await capturePage.locator('#tool-box').click();
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+  await capturePage.keyboard.up('Control');
+
+  await openerPage.close();
+});
+
 // ─── Palette Copy / Save buttons ─────────────────────────────────
 
 test('drawing: palette Save writes the edited PNG via the save-as dialog', async ({

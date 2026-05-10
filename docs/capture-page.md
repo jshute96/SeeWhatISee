@@ -382,6 +382,8 @@ fresh edit.
   at the click-release end. Barb length is 25% of the segment
   length, capped at 18 CSS px (scaled to natural pixels in the
   bake-in path).
+- **Polyline mode (Line / Arrow only)** — hold Ctrl (Cmd on macOS)
+  while drawing. See "Polyline mode" below.
 - **Redact** — drag paints a filled black rectangle live, matching
   the committed appearance — opaque fill that hides whatever was
   underneath in the saved PNG.
@@ -390,6 +392,47 @@ fresh edit.
   user sees the final cropped result while dragging. Commits on
   mouseup as a crop region; saved PNG is shrunk to the crop.
   Multiple crops stack; the most-recently-added active crop wins.
+
+### Polyline mode (Line / Arrow chains)
+
+- Holding Ctrl (Cmd on macOS) while drawing with the Line or Arrow
+  tool chains successive segments into a polyline.
+- Entering: Ctrl-left mousedown on the overlay starts the first
+  segment. While the modifier is held, the Ctrl-left-pan branch
+  is suppressed for these two tools (pan is still reachable via
+  middle-click drag).
+- Per-segment commit: each mouseup commits a segment of the
+  selected kind (line or arrow) and re-anchors `dragStart` at
+  that endpoint so the next segment continues from there.
+- Between segments: mouse button is up, but `dragStart` stays
+  set; `mousemove` keeps updating `dragCurrent`, so the live
+  preview tracks the cursor from the previous endpoint.
+- Continuation gestures inside the chain:
+  - A click (mousedown + mouseup with no movement) commits the
+    segment from previous endpoint → click point, *if* it has
+    non-zero length. A click at the previous endpoint is a no-op
+    (still under `CLICK_THRESHOLD_PX`).
+  - A drag commits the segment to the release point.
+- Exiting the chain — any of:
+  - Ctrl/Meta keyup ends the chain.
+    - Mid-drag: in-flight segment still commits (mouseup sees
+      `ctrlKey === false` and stops the chain naturally).
+    - Between segments: ghost preview is cleared immediately.
+  - Mouseup without Ctrl held — segment commits, chain ends.
+  - Switching to a non-Line/Arrow tool — `setSelectedTool`
+    aborts the chain and clears the in-flight segment.
+  - Window blur — defensive cleanup against missed keyups.
+- Arrow-key nudge composes with polyline mode. Each arrow press
+  still steps `dragCurrent` by one natural pixel; the keydown
+  handler's Ctrl/Meta gate is relaxed when `dragStart` is set so
+  the polyline-required modifier doesn't suppress nudges.
+  - Works mid-drag (mouse held) and between segments (mouse not
+    held, but `dragStart` is alive).
+  - The mouseup that commits a polyline segment then re-anchors
+    `dragCurrent` (and `lastMousePos`) to the *physical* pointer,
+    so the next segment's live preview points from the just-
+    committed (possibly nudged) endpoint at where the OS cursor
+    visibly is — not back at the consumed nudge position.
 
 ### Shrink action
 

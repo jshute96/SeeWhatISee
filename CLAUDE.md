@@ -18,6 +18,7 @@ repository. See `README.md` for setup instructions and available commands.
 - **Commit Preparation**:
   - Ensure `README.md` is updated if setup, commands, or user-visible features change.
     - `README.md` is most user-facing documentation. Keep it concise and focus on briefly listing what users can do, without a lot of technical details.
+    - User docs in `README.md` describe the currently released extension. For new features that won't be available until released, add an item under "Pending docs" in `TODO.md` instead.
   - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
   - Include all significant changes in the commit message.
 
