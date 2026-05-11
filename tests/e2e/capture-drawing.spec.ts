@@ -1208,7 +1208,7 @@ async function readAllLines(
   );
 }
 
-test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
+test('drawing: Polyline tool chains a polyline of Line segments', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1219,13 +1219,12 @@ test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
     getServiceWorker,
   );
 
-  // Ctrl-drag with the Line tool selected: the first mouseup
-  // commits segment 1 *and* anchors the next segment at its
-  // endpoint. A second drag (still Ctrl-held) commits segment 2,
-  // whose start is segment 1's end — even if the second drag's
-  // mousedown is at a *different* point. Releasing Ctrl ends the
-  // chain.
-  await capturePage.locator('#tool-line').click();
+  // Polyline tool: each mouseup commits a segment and re-anchors
+  // the chain head at the just-committed endpoint. A second drag
+  // commits a segment whose start is segment 1's end — even if the
+  // second drag's mousedown is at a different point. Esc finishes
+  // the chain.
+  await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
 
   const A = { x: r.x + 100, y: r.y + 100 };
@@ -1233,7 +1232,6 @@ test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
   const C = { x: r.x + 250, y: r.y + 130 };  // mousedown for segment 2 — ignored
   const D = { x: r.x + 300, y: r.y + 200 };
 
-  await capturePage.keyboard.down('Control');
   // Segment 1: A → B.
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
@@ -1247,7 +1245,7 @@ test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
   await capturePage.mouse.move((C.x + D.x) / 2, (C.y + D.y) / 2);
   await capturePage.mouse.move(D.x, D.y);
   await capturePage.mouse.up();
-  await capturePage.keyboard.up('Control');
+  await capturePage.keyboard.press('Escape');
 
   const lines = await readAllLines(capturePage, 'line');
   expect(lines).toHaveLength(2);
@@ -1261,20 +1259,16 @@ test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
   });
   const seg1 = toCss(lines[0]!);
   const seg2 = toCss(lines[1]!);
-  // Segment 1 anchors A → B.
   expect(seg1.x1).toBeCloseTo(A.x, 0);
   expect(seg1.y1).toBeCloseTo(A.y, 0);
   expect(seg1.x2).toBeCloseTo(B.x, 0);
   expect(seg1.y2).toBeCloseTo(B.y, 0);
-  // Segment 2 starts at B (seg1's endpoint), not C — the chain
-  // re-anchors at the previous endpoint regardless of where the
-  // user re-clicks for the next segment.
   expect(seg2.x1).toBeCloseTo(B.x, 0);
   expect(seg2.y1).toBeCloseTo(B.y, 0);
   expect(seg2.x2).toBeCloseTo(D.x, 0);
   expect(seg2.y2).toBeCloseTo(D.y, 0);
 
-  // After the Ctrl release, polyline state is gone.
+  // After Esc, polyline state is gone.
   const polyKind = await capturePage.evaluate(() =>
     (window as unknown as {
       __seeState: { polylineKind: () => string | null };
@@ -1285,7 +1279,7 @@ test('drawing: Ctrl + drag chains a polyline of Line segments', async ({
   await openerPage.close();
 });
 
-test('drawing: Ctrl + click adds a polyline segment from the previous endpoint', async ({
+test('drawing: Polyline tool: click adds a polyline segment from the previous endpoint', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1296,36 +1290,33 @@ test('drawing: Ctrl + click adds a polyline segment from the previous endpoint',
     getServiceWorker,
   );
 
-  // After the first Ctrl-drag, the chain is alive. A subsequent
-  // Ctrl-click (mousedown + mouseup at the same point, no drag)
-  // commits a segment from the previous endpoint to the click
-  // point — the spec's "each click adds that segment (if
-  // non-empty) and starts a new one".
-  await capturePage.locator('#tool-line').click();
+  // After the first drag, the chain is alive. A subsequent click
+  // (mousedown + mouseup at the same point, no drag) commits a
+  // segment from the previous endpoint to the click point. Esc
+  // ends the chain.
+  await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
 
   const A = { x: r.x + 80, y: r.y + 80 };
   const B = { x: r.x + 180, y: r.y + 80 };
   const Cclick = { x: r.x + 250, y: r.y + 150 };
 
-  await capturePage.keyboard.down('Control');
   // Segment 1 — drag A → B.
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(B.x, B.y);
   await capturePage.mouse.up();
-  // Segment 2 — pure click at Cclick. Mousemove first so
-  // dragCurrent reaches Cclick before the click commit.
+  // Segment 2 — pure click at Cclick. Mousemove first so dragCurrent
+  // reaches Cclick before the click commit.
   await capturePage.mouse.move(Cclick.x, Cclick.y);
   await capturePage.mouse.down();
   await capturePage.mouse.up();
-  await capturePage.keyboard.up('Control');
+  await capturePage.keyboard.press('Escape');
 
   const lines = await readAllLines(capturePage, 'line');
   expect(lines).toHaveLength(2);
   const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
   const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
-  // Segment 2 starts at B, ends at the click point.
   expect(toCssX(lines[1]!.x1)).toBeCloseTo(B.x, 0);
   expect(toCssY(lines[1]!.y1)).toBeCloseTo(B.y, 0);
   expect(toCssX(lines[1]!.x2)).toBeCloseTo(Cclick.x, 0);
@@ -1334,7 +1325,7 @@ test('drawing: Ctrl + click adds a polyline segment from the previous endpoint',
   await openerPage.close();
 });
 
-test('drawing: releasing Ctrl between polyline segments ends the chain', async ({
+test('drawing: Ctrl-promote: holding Ctrl at mouseup of a Line draw enters polyline', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1345,11 +1336,11 @@ test('drawing: releasing Ctrl between polyline segments ends the chain', async (
     getServiceWorker,
   );
 
-  // Ctrl release between segments clears the ghost preview and
-  // makes a subsequent click a *fresh draw* (not a polyline
-  // continuation). The next Line drag should produce a single
-  // segment with its own start point — not anchored at the prior
-  // endpoint.
+  // Line tool + Ctrl held at mouseup promotes the just-committed
+  // segment to a polyline chain (legacy power-user shortcut). The
+  // chain is then driven by the same state as the dedicated tool,
+  // but releasing Ctrl ends it. Two distinct entry paths converge
+  // on the same machine.
   await capturePage.locator('#tool-line').click();
   const r = await readPreviewRect(capturePage);
 
@@ -1358,24 +1349,33 @@ test('drawing: releasing Ctrl between polyline segments ends the chain', async (
   const C = { x: r.x + 220, y: r.y + 200 };
   const D = { x: r.x + 320, y: r.y + 220 };
 
-  await capturePage.keyboard.down('Control');
+  // Plain Line draw (mousedown without Ctrl — so it doesn't pan)…
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(B.x, B.y);
+  // …but Ctrl held by the time mouseup fires.
+  await capturePage.keyboard.down('Control');
   await capturePage.mouse.up();
-  // Polyline alive at this point (Ctrl still held). Releasing
-  // Ctrl outside any drag should clear `dragStart` and end the
-  // chain immediately.
-  await capturePage.keyboard.up('Control');
-  const polyKind = await capturePage.evaluate(() =>
-    (window as unknown as {
-      __seeState: { polylineKind: () => string | null };
-    }).__seeState.polylineKind(),
-  );
-  expect(polyKind).toBeNull();
 
-  // A subsequent (no-Ctrl) Line drag: this should commit a fresh
-  // segment from C to D — *not* from B to D.
+  // Chain is alive and tagged as Ctrl-entered.
+  const entryAfterPromote = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineEntry: () => string | null };
+    }).__seeState.polylineEntry(),
+  );
+  expect(entryAfterPromote).toBe('ctrl');
+
+  // Releasing Ctrl ends the Ctrl-promoted chain immediately.
+  await capturePage.keyboard.up('Control');
+  const entryAfterRelease = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineEntry: () => string | null };
+    }).__seeState.polylineEntry(),
+  );
+  expect(entryAfterRelease).toBeNull();
+
+  // A subsequent (no-Ctrl) Line drag: fresh segment from C to D,
+  // *not* chained from B.
   await capturePage.mouse.move(C.x, C.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(D.x, D.y);
@@ -1385,7 +1385,6 @@ test('drawing: releasing Ctrl between polyline segments ends the chain', async (
   expect(lines).toHaveLength(2);
   const toCssX = (xPct: number) => r.x + (xPct / 100) * r.w;
   const toCssY = (yPct: number) => r.y + (yPct / 100) * r.h;
-  // The second segment is a fresh draw starting at C.
   expect(toCssX(lines[1]!.x1)).toBeCloseTo(C.x, 0);
   expect(toCssY(lines[1]!.y1)).toBeCloseTo(C.y, 0);
   expect(toCssX(lines[1]!.x2)).toBeCloseTo(D.x, 0);
@@ -1394,7 +1393,7 @@ test('drawing: releasing Ctrl between polyline segments ends the chain', async (
   await openerPage.close();
 });
 
-test('drawing: polyline mode applies to the Arrow tool too', async ({
+test('drawing: Polyline tool: Esc finishes the chain', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1405,15 +1404,253 @@ test('drawing: polyline mode applies to the Arrow tool too', async ({
     getServiceWorker,
   );
 
-  // Same chain semantics as Line, but each commit is an Arrow.
-  // Two Ctrl-drags should produce two arrows whose endpoints chain.
+  // Esc is the universal "I'm done" gesture for a polyline tool
+  // chain. Verify the chain is alive after segment 1's commit,
+  // then Esc clears it.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + 60, r.y + 60);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + 200, r.y + 60);
+  await capturePage.mouse.up();
+
+  const kindAlive = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(kindAlive).toBe('line');
+
+  await capturePage.keyboard.press('Escape');
+  const kindDead = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(kindDead).toBeNull();
+
+  await openerPage.close();
+});
+
+test('drawing: Polyline tool: zero-length click on chain head finishes the chain', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // After segment 1 commits, a click that doesn't move (≤ CLICK_THRESHOLD_PX
+  // from the chain head) means "I'm done". Covers both the "click
+  // the previous endpoint" and "double-click" patterns — a
+  // double-click's first click commits a segment, the second click
+  // sits at the same place and ends the chain.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 80, y: r.y + 80 };
+  const B = { x: r.x + 220, y: r.y + 80 };
+
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Click at B again — zero-length from chain head, ends chain.
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);  // The click-on-head didn't commit a segment.
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+
+  await openerPage.close();
+});
+
+test('drawing: Polyline tool: double-click ends the chain after committing the segment', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Double-click after some segments: the first click commits a
+  // segment ending at the click point, the second click (same place)
+  // is zero-length and ends the chain. Net effect: a segment ending
+  // at the double-click position, then exit.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 60, y: r.y + 60 };
+  const B = { x: r.x + 200, y: r.y + 60 };
+  const C = { x: r.x + 260, y: r.y + 200 };
+
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Move to C, then double-click. Playwright's dblclick is two fast
+  // mousedown/mouseup pairs at the same location.
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);  // A→B and B→C.
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+
+  await openerPage.close();
+});
+
+test('drawing: Ctrl-promote works for the Arrow tool too', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Promote path is symmetric for the Arrow tool — selecting Arrow
+  // and holding Ctrl at mouseup advances the segment into an arrow
+  // chain. Locks down the parallel branch the Line test covers.
   await capturePage.locator('#tool-arrow').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + 70, r.y + 70);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + 170, r.y + 70);
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.up();
+  const state = await capturePage.evaluate(() => {
+    const s = (window as unknown as {
+      __seeState: {
+        polylineKind: () => string | null;
+        polylineEntry: () => string | null;
+      };
+    }).__seeState;
+    return { kind: s.polylineKind(), entry: s.polylineEntry() };
+  });
+  expect(state.kind).toBe('arrow');
+  expect(state.entry).toBe('ctrl');
+  await capturePage.keyboard.up('Control');
+
+  await openerPage.close();
+});
+
+test('drawing: window blur ends an active polyline chain', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Window blur is the defensive cleanup path — if focus leaves the
+  // capture page mid-chain (alt-tab, focus another window), the chain
+  // must clear so a stuck ghost segment doesn't haunt the next
+  // focus-in. Simulated by firing a blur event on the page.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + 80, r.y + 80);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + 180, r.y + 80);
+  await capturePage.mouse.up();
+  // Chain alive.
+  expect(await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  )).toBe('line');
+
+  // Dispatch blur — the window listener clears the chain.
+  await capturePage.evaluate(() => window.dispatchEvent(new Event('blur')));
+  expect(await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  )).toBeNull();
+
+  await openerPage.close();
+});
+
+test('drawing: Polyline tool ignores Ctrl release (only Ctrl-promoted chains exit on Ctrl)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // A chain entered via the Polyline tool button is independent of
+  // Ctrl — even if the user incidentally taps Ctrl/Cmd between
+  // segments, the chain must stay alive. The exit is Esc / click on
+  // chain head / tool switch.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  // Segment 1.
+  await capturePage.mouse.move(r.x + 60, r.y + 60);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + 160, r.y + 60);
+  await capturePage.mouse.up();
+
+  // Tap Ctrl on and off — must not end the chain.
+  await capturePage.keyboard.down('Control');
+  await capturePage.keyboard.up('Control');
+  const entry = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineEntry: () => string | null };
+    }).__seeState.polylineEntry(),
+  );
+  expect(entry).toBe('tool');
+
+  await capturePage.keyboard.press('Escape');
+
+  await openerPage.close();
+});
+
+test('drawing: Poly-arrow tool chains arrows the same way Polyline chains lines', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Same chain semantics as Polyline, but each commit is an Arrow.
+  // Two drags should produce two arrows whose endpoints chain.
+  await capturePage.locator('#tool-polyarrow').click();
   const r = await readPreviewRect(capturePage);
   const A = { x: r.x + 90, y: r.y + 90 };
   const B = { x: r.x + 190, y: r.y + 110 };
   const D = { x: r.x + 280, y: r.y + 200 };
 
-  await capturePage.keyboard.down('Control');
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(B.x, B.y);
@@ -1421,7 +1658,7 @@ test('drawing: polyline mode applies to the Arrow tool too', async ({
   await capturePage.mouse.move(D.x, D.y);
   await capturePage.mouse.down();
   await capturePage.mouse.up();
-  await capturePage.keyboard.up('Control');
+  await capturePage.keyboard.press('Escape');
 
   const arrows = await readAllLines(capturePage, 'arrow');
   expect(arrows).toHaveLength(2);
@@ -1452,7 +1689,7 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   // the mouse button is pressed. Each press = one natural-pixel
   // step; the segment commit uses the *nudged* endpoint, and the
   // next segment continues from that nudged point.
-  await capturePage.locator('#tool-line').click();
+  await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
   const A = { x: r.x + 80, y: r.y + 80 };
   const Bdrag = { x: r.x + 180, y: r.y + 80 };
@@ -1460,7 +1697,6 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   const NUDGE_MID = 4;     // ArrowRight presses while dragging seg 1
   const NUDGE_BETWEEN = 3; // ArrowDown presses while between segments
 
-  await capturePage.keyboard.down('Control');
   // Segment 1: drag A → near B, then nudge right by 4 natural pixels.
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
@@ -1478,7 +1714,7 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   // the (nudged) current synthetic cursor.
   await capturePage.mouse.down();
   await capturePage.mouse.up();
-  await capturePage.keyboard.up('Control');
+  await capturePage.keyboard.press('Escape');
 
   const lines = await readAllLines(capturePage, 'line');
   expect(lines).toHaveLength(2);
@@ -1519,13 +1755,13 @@ test('drawing: releasing Ctrl mid-segment-drag commits the segment and ends the 
   );
 
   // Exercises the keyup handler's *mid-drag* branch — which only
-  // fires when `polylineLineKind !== null`. That means segment 1
-  // must have already committed (with Ctrl still held, so the
-  // chain is alive) before we release Ctrl during segment 2's
-  // drag. The keyup clears `polylineLineKind` but leaves
-  // `dragStart` / `dragCurrent` alone so the upcoming mouseup can
-  // still commit segment 2; that mouseup then sees `ctrlKey ===
-  // false` and ends the chain.
+  // fires when `polylineLineKind !== null` AND the chain was entered
+  // via Ctrl-promote. Segment 1 must have already committed (with
+  // Ctrl held at its mouseup, promoting to a chain) before we
+  // release Ctrl during segment 2's drag. The keyup clears
+  // `polylineLineKind` but leaves `dragStart` / `dragCurrent` alone
+  // so the upcoming mouseup can still commit segment 2; that mouseup
+  // then sees `ctrlKey === false` and ends the chain.
   await capturePage.locator('#tool-line').click();
   const r = await readPreviewRect(capturePage);
   const A = { x: r.x + 80, y: r.y + 80 };
@@ -1535,11 +1771,12 @@ test('drawing: releasing Ctrl mid-segment-drag commits the segment and ends the 
   const E = { x: r.x + 380, y: r.y + 260 };
   const F = { x: r.x + 460, y: r.y + 300 };
 
-  // Segment 1: Ctrl-drag A → B. Commits and starts the chain.
-  await capturePage.keyboard.down('Control');
+  // Segment 1: plain Line draw A→B, but Ctrl held at mouseup so the
+  // segment is promoted to a chain.
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(B.x, B.y);
+  await capturePage.keyboard.down('Control');
   await capturePage.mouse.up();
   // Chain is alive — verify before continuing.
   const polyKindMid = await capturePage.evaluate(() =>
@@ -1606,23 +1843,16 @@ test('drawing: switching tools mid-polyline ends the chain', async ({
   );
 
   // After committing the first polyline segment, switching to
-  // another tool must clear `polylineLineKind` (and the live
-  // preview) so a subsequent draw with the new tool isn't
-  // contaminated by the previous chain's state. Ctrl is still
-  // held throughout to guarantee that the only thing ending the
-  // chain is the tool switch.
-  await capturePage.locator('#tool-line').click();
+  // another tool must clear the chain state so a subsequent draw
+  // with the new tool isn't contaminated by the previous chain.
+  await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
 
-  await capturePage.keyboard.down('Control');
   await capturePage.mouse.move(r.x + 80, r.y + 80);
   await capturePage.mouse.down();
   await capturePage.mouse.move(r.x + 180, r.y + 80);
   await capturePage.mouse.up();
-  // Switch tools — chain should end here, even though Ctrl stays
-  // pressed. Use programmatic setSelectedTool via the same
-  // mousedown the UI uses; clicking the button works because
-  // `setSelectedTool` runs on mousedown of `.tool-btn`.
+  // Switch tools — chain should end here.
   await capturePage.locator('#tool-box').click();
   const polyKind = await capturePage.evaluate(() =>
     (window as unknown as {
@@ -1630,12 +1860,719 @@ test('drawing: switching tools mid-polyline ends the chain', async ({
     }).__seeState.polylineKind(),
   );
   expect(polyKind).toBeNull();
-  await capturePage.keyboard.up('Control');
 
   await openerPage.close();
 });
 
-// ─── Palette Copy / Save buttons ─────────────────────────────────
+// ─── Snap-to ─────────────────────────────────────────────────────
+//
+// A fresh draw's *start* and a live drag's *target* snap to nearby
+// committed geometry (within ~8 CSS px): box corners, the image
+// bounding box's corners, line endpoints, and the nearest point on
+// any box edge (incl. the image bbox edges). Shift disables snap.
+// Arrow-key nudges bypass snap (one natural pixel per press, on top
+// of the snapped position). When a polyline chain is alive, the
+// chain's first anchor is an extra snap target — clicking near it
+// closes the loop, and the chain stays alive afterwards.
+//
+// Reading the chain-start anchor (mirror of __seeState.polylineChainStart)
+// for tests that want to verify the loop-close target.
+async function readPolylineChainStart(
+  capturePage: Page,
+): Promise<{ x: number; y: number } | null> {
+  return capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineChainStart: () => { x: number; y: number } | null };
+    }).__seeState.polylineChainStart(),
+  );
+}
+
+test('drawing: snap-to: line endpoint snaps to a nearby box corner', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Draw a rect, then start a Line draw whose endpoint passes within
+  // SNAP_PX (8) of the rect's NE corner. The committed line's end
+  // should be *exactly* the corner, not the cursor position.
+  const r = await readPreviewRect(capturePage);
+  await dragRect(
+    capturePage,
+    { xPct: 0.3, yPct: 0.3 },
+    { xPct: 0.5, yPct: 0.5 },
+  );
+  // Read the rect's actual committed bounds — dragRect uses `#overlay`
+  // coords, which can differ from `#preview` (imgRect) coords by a
+  // sub-pixel offset, so deriving the NE corner directly from the
+  // dragRect inputs would mis-target the snap.
+  const rectB = (await readLastBounds(capturePage, 'rect'))!;
+  const ne = {
+    x: r.x + ((rectB.x + rectB.w) / 100) * r.w,
+    y: r.y + (rectB.y / 100) * r.h,
+  };
+
+  await capturePage.locator('#tool-line').click();
+  const lineStart = { x: r.x + r.w * 0.1, y: r.y + r.h * 0.7 };
+  // Aim outside the rect's row + column so the corner is the
+  // unambiguous winner — an aim inside the rect's column would
+  // project onto the (closer) top edge instead, which is correct
+  // snap behaviour but a different test.
+  const aim = { x: ne.x + 3, y: ne.y - 3 };
+  await capturePage.mouse.move(lineStart.x, lineStart.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((lineStart.x + aim.x) / 2, (lineStart.y + aim.y) / 2);
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);
+  // Endpoint snapped onto the rect's NE corner (in image-percent space).
+  const endXcss = r.x + (lines[0]!.x2 / 100) * r.w;
+  const endYcss = r.y + (lines[0]!.y2 / 100) * r.h;
+  expect(endXcss).toBeCloseTo(ne.x, 0);
+  expect(endYcss).toBeCloseTo(ne.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: line endpoint snaps to the nearest point on a box edge', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Box edges snap to the *projected* nearest point — sliding along
+  // the edge, the snapped endpoint tracks the cursor's perpendicular
+  // foot on that edge.
+  const r = await readPreviewRect(capturePage);
+  const rectNW = { x: r.x + r.w * 0.3, y: r.y + r.h * 0.3 };
+  const rectSE = { x: r.x + r.w * 0.5, y: r.y + r.h * 0.5 };
+  await dragRect(
+    capturePage,
+    { xPct: 0.3, yPct: 0.3 },
+    { xPct: 0.5, yPct: 0.5 },
+  );
+  await capturePage.locator('#tool-line').click();
+  // Aim 3 px outside the west edge, midway between top and bottom —
+  // far from any corner.
+  const aim = { x: rectNW.x - 3, y: (rectNW.y + rectSE.y) / 2 };
+  const lineStart = { x: r.x + r.w * 0.05, y: r.y + r.h * 0.1 };
+  await capturePage.mouse.move(lineStart.x, lineStart.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((lineStart.x + aim.x) / 2, (lineStart.y + aim.y) / 2);
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);
+  const endXcss = r.x + (lines[0]!.x2 / 100) * r.w;
+  const endYcss = r.y + (lines[0]!.y2 / 100) * r.h;
+  // Projects onto the west edge: x = rectNW.x, y = aim.y (already
+  // between the edge's top and bottom).
+  expect(endXcss).toBeCloseTo(rectNW.x, 0);
+  expect(endYcss).toBeCloseTo(aim.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: line endpoint snaps to a prior line endpoint', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  const r = await readPreviewRect(capturePage);
+  // First line A→B.
+  await capturePage.locator('#tool-line').click();
+  const A = { x: r.x + 100, y: r.y + 100 };
+  const B = { x: r.x + 300, y: r.y + 100 };
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((A.x + B.x) / 2, A.y);
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+
+  // Second line aiming 5 px short of B — should snap onto B.
+  const C = { x: r.x + 100, y: r.y + 300 };
+  const aim = { x: B.x - 5, y: B.y + 2 };
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((C.x + aim.x) / 2, (C.y + aim.y) / 2);
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const endXcss = r.x + (lines[1]!.x2 / 100) * r.w;
+  const endYcss = r.y + (lines[1]!.y2 / 100) * r.h;
+  expect(endXcss).toBeCloseTo(B.x, 0);
+  expect(endYcss).toBeCloseTo(B.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: holding Shift disables snap', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Same setup as the "snap to line endpoint" test, but holding
+  // Shift across the second drag. Endpoint should remain at the
+  // cursor's released position, not snap onto B.
+  const r = await readPreviewRect(capturePage);
+  await capturePage.locator('#tool-line').click();
+  const A = { x: r.x + 100, y: r.y + 100 };
+  const B = { x: r.x + 300, y: r.y + 100 };
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((A.x + B.x) / 2, A.y);
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+
+  const C = { x: r.x + 100, y: r.y + 300 };
+  const aim = { x: B.x - 5, y: B.y + 2 };
+  await capturePage.keyboard.down('Shift');
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((C.x + aim.x) / 2, (C.y + aim.y) / 2);
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Shift');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const endXcss = r.x + (lines[1]!.x2 / 100) * r.w;
+  const endYcss = r.y + (lines[1]!.y2 / 100) * r.h;
+  // Stays at the un-snapped pointer position.
+  expect(endXcss).toBeCloseTo(aim.x, 0);
+  expect(endYcss).toBeCloseTo(aim.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: arrow-key nudge bypasses snap (steps off the snapped target)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Snap onto a prior line's endpoint, then nudge with the keyboard.
+  // The nudge moves the endpoint one natural-pixel away — the snap
+  // logic doesn't re-grab it (arrow nudges bypass snap).
+  const r = await readPreviewRect(capturePage);
+  await capturePage.locator('#tool-line').click();
+  const A = { x: r.x + 100, y: r.y + 100 };
+  const B = { x: r.x + 300, y: r.y + 100 };
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((A.x + B.x) / 2, A.y);
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+
+  const C = { x: r.x + 100, y: r.y + 300 };
+  // Land snapped right on B.
+  const onB = { x: B.x, y: B.y };
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((C.x + onB.x) / 2, (C.y + onB.y) / 2);
+  await capturePage.mouse.move(onB.x, onB.y);
+  // Step one natural pixel right with the keyboard. With the cursor
+  // sitting directly on a snap target, snap would still resolve onto
+  // B on a fresh mousemove; the arrow path skips that and shifts
+  // dragCurrent by one natural-px on its own.
+  await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const endX = lines[1]!.x2;
+  // Expected end-x in image-percent = B's percent + one natural-px
+  // worth of percent (1/natW * 100).
+  const expectedX = (B.x - r.x) / r.w * 100 + (100 / r.natW);
+  expect(endX).toBeCloseTo(expectedX, 1);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: polyline loop closes when endpoint lands near the chain start', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Polyline chain: A → B → C → near-A. The last click lands within
+  // snap radius of A, so the final segment ends exactly at A —
+  // closing the polygon. The closing segment commits, then the
+  // chain auto-exits (polygon-close is one of the chain-end gestures).
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 100, y: r.y + 100 };
+  const B = { x: r.x + 250, y: r.y + 100 };
+  const C = { x: r.x + 200, y: r.y + 250 };
+  // 5 px from A — within SNAP_PX.
+  const nearA = { x: A.x + 5, y: A.y + 3 };
+
+  // Segment 1: A → B (drag).
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Segment 2: B → C (click at C, having moved there).
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  // Segment 3: C → near-A. Mousemove to nearA so dragCurrent snaps
+  // onto A before the click commits.
+  await capturePage.mouse.move(nearA.x, nearA.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  // Polygon closed — chain auto-exited.
+  const polyKind = await capturePage.evaluate(() =>
+    (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+  const cs = await readPolylineChainStart(capturePage);
+  expect(cs).toBeNull();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(3);
+  // Segment 3 ends exactly at A (snapped from nearA).
+  const endXcss = r.x + (lines[2]!.x2 / 100) * r.w;
+  const endYcss = r.y + (lines[2]!.y2 / 100) * r.h;
+  expect(endXcss).toBeCloseTo(A.x, 0);
+  expect(endYcss).toBeCloseTo(A.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: Ctrl+Shift bypasses the resize hit-test but keeps snap on', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // With the Box tool, a plain mousedown within HANDLE_PX of an
+  // existing rect's edge would start a resize. Shift alone bypasses
+  // that *and* disables snap (existing "force a fresh draw" gesture).
+  // Ctrl+Shift bypasses the resize too, but keeps snap on — lets the
+  // user start a fresh shape exactly against an existing edge.
+  const r = await readPreviewRect(capturePage);
+  await dragRect(
+    capturePage,
+    { xPct: 0.3, yPct: 0.3 },
+    { xPct: 0.5, yPct: 0.5 },
+  );
+  const rectB = (await readLastBounds(capturePage, 'rect'))!;
+  const ne = {
+    x: r.x + ((rectB.x + rectB.w) / 100) * r.w,
+    y: r.y + (rectB.y / 100) * r.h,
+  };
+
+  // Start a Box draw with Ctrl+Shift held, mousedown inside the
+  // existing rect's handle band (would normally resize). Without
+  // Ctrl+Shift the gesture would resize rect 1; with Ctrl+Shift it
+  // creates a second rect. Drag end is far from any snap target so
+  // CLICK_THRESHOLD_PX is comfortably cleared (a near-corner snap on
+  // both mousedown and mouseup can pull the two anchors back onto
+  // each other, leaving no commit — the dedicated corner-snap test
+  // above already covers that behaviour).
+  // Mousedown sits outside the rect's row+column but within
+  // HANDLE_PX of its NE corner (sqrt(3²+3²) ≈ 4.2 < 6 = HANDLE_PX),
+  // so the regular hit-test would grab the corner handle. With
+  // Ctrl+Shift the hit-test is bypassed but the snap still sees a
+  // nearby target; placing the down outside the rect's extents means
+  // the corner wins the snap over any edge projection.
+  const downAt = { x: ne.x + 3, y: ne.y - 3 };
+  const endAt = { x: r.x + r.w * 0.8, y: r.y + r.h * 0.8 };
+
+  await capturePage.keyboard.down('Control');
+  await capturePage.keyboard.down('Shift');
+  await capturePage.mouse.move(downAt.x, downAt.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((downAt.x + endAt.x) / 2, (downAt.y + endAt.y) / 2);
+  await capturePage.mouse.move(endAt.x, endAt.y);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Shift');
+  await capturePage.keyboard.up('Control');
+
+  // Two rects committed — proves the resize hit-test was bypassed.
+  const kinds = await readEditKinds(capturePage);
+  expect(kinds.filter((k) => k === 'rect').length).toBe(2);
+  // Snap landed the new rect's NW corner onto rect 1's NE corner —
+  // the mousedown was 3 px from it and Ctrl+Shift kept snap on.
+  const newRect = (await readLastBounds(capturePage, 'rect'))!;
+  const newCornersCss = [
+    { x: r.x + (newRect.x / 100) * r.w, y: r.y + (newRect.y / 100) * r.h },
+    { x: r.x + ((newRect.x + newRect.w) / 100) * r.w, y: r.y + (newRect.y / 100) * r.h },
+    { x: r.x + (newRect.x / 100) * r.w, y: r.y + ((newRect.y + newRect.h) / 100) * r.h },
+    { x: r.x + ((newRect.x + newRect.w) / 100) * r.w, y: r.y + ((newRect.y + newRect.h) / 100) * r.h },
+  ];
+  const matched = newCornersCss.some(
+    (c) => Math.abs(c.x - ne.x) < 1 && Math.abs(c.y - ne.y) < 1,
+  );
+  expect(matched, `no corner of new rect at (${ne.x}, ${ne.y}); saw ${JSON.stringify(newCornersCss)}`).toBe(true);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: endpoint priority beats a slightly-closer corner', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Place a line endpoint and a box corner near each other, aim
+  // between them so the corner is closer than the endpoint (both
+  // within snap radius). Tier priority means the endpoint wins
+  // anyway: the second line's start snaps onto the endpoint.
+  const r = await readPreviewRect(capturePage);
+  // Box first (default tool is 'rect'); its NW corner is the
+  // tier-2 candidate.
+  await dragRect(
+    capturePage,
+    { xPct: 0.25, yPct: 0.30 },
+    { xPct: 0.50, yPct: 0.50 },
+  );
+  const rectB = (await readLastBounds(capturePage, 'rect'))!;
+  const cornerNW = {
+    x: r.x + (rectB.x / 100) * r.w,
+    y: r.y + (rectB.y / 100) * r.h,
+  };
+  // Line A→B where B sits 14 px west of cornerNW (well outside
+  // HANDLE_PX so the rect's corner-handle hit-test won't fire from
+  // aim). Aim 6.5 px west of cornerNW = 7.5 px east of B: corner
+  // closer (6.5 < 7.5), both within SNAP_PX (8), both outside
+  // HANDLE_PX (6). Tier priority must pull the second draw's
+  // anchor onto B.
+  await capturePage.locator('#tool-line').click();
+  const A = { x: r.x + r.w * 0.05, y: cornerNW.y };
+  const B = { x: cornerNW.x - 14, y: cornerNW.y };
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((A.x + B.x) / 2, A.y);
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+
+  const aim = { x: cornerNW.x - 6.5, y: cornerNW.y };
+  // Sanity-assert the geometry: aim in radius of both, corner closer
+  // than endpoint, but outside HANDLE_PX (6) so no resize gesture.
+  const dB = Math.hypot(aim.x - B.x, aim.y - B.y);
+  const dC = Math.hypot(aim.x - cornerNW.x, aim.y - cornerNW.y);
+  expect(dB).toBeLessThan(8);
+  expect(dC).toBeLessThan(8);
+  expect(dC).toBeGreaterThan(6);
+  expect(dC).toBeLessThan(dB);
+
+  // Second line; start should snap to B (endpoint tier) even though
+  // cornerNW is closer. End far from any snap target so the segment
+  // commits a 2-rect... err 2-line stack regardless of axis-align.
+  const farEnd = { x: r.x + r.w * 0.7, y: r.y + r.h * 0.6 };
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((aim.x + farEnd.x) / 2, (aim.y + farEnd.y) / 2);
+  await capturePage.mouse.move(farEnd.x, farEnd.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  const startXcss = r.x + (lines[1]!.x1 / 100) * r.w;
+  const startYcss = r.y + (lines[1]!.y1 / 100) * r.h;
+  expect(startXcss).toBeCloseTo(B.x, 0);
+  expect(startYcss).toBeCloseTo(B.y, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: line draw snaps to horizontal when near axis-aligned', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Draw a Line that's *almost* horizontal (dy = 3 px); the
+  // axis-align snap should pull the endpoint onto the start's y.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+  const start = { x: r.x + r.w * 0.1, y: r.y + r.h * 0.4 };
+  const end = { x: r.x + r.w * 0.6, y: start.y + 3 };
+  await capturePage.mouse.move(start.x, start.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2);
+  await capturePage.mouse.move(end.x, end.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);
+  // y1 == y2 exactly (axis-aligned).
+  expect(lines[0]!.y2).toBeCloseTo(lines[0]!.y1, 5);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: Shift disables axis-align', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Same near-horizontal draw, with Shift held. The 3 px y-delta
+  // should be preserved (no axis-align).
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+  const start = { x: r.x + r.w * 0.1, y: r.y + r.h * 0.4 };
+  const end = { x: r.x + r.w * 0.6, y: start.y + 3 };
+  await capturePage.keyboard.down('Shift');
+  await capturePage.mouse.move(start.x, start.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2);
+  await capturePage.mouse.move(end.x, end.y);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Shift');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);
+  // y1 != y2; the un-snapped 3 px delta survives.
+  const dy = Math.abs(lines[0]!.y2 - lines[0]!.y1);
+  expect(dy).toBeGreaterThan(0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: line projection snaps to a diagonal line', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // First draw a diagonal line. Then start a second line whose end
+  // passes close to the diagonal — the tier-3 line projection
+  // should snap the endpoint onto the line.
+  await capturePage.locator('#tool-line').click();
+  const r = await readPreviewRect(capturePage);
+  const a = { x: r.x + r.w * 0.10, y: r.y + r.h * 0.10 };
+  const b = { x: r.x + r.w * 0.50, y: r.y + r.h * 0.50 };
+  await capturePage.mouse.move(a.x, a.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2);
+  await capturePage.mouse.move(b.x, b.y);
+  await capturePage.mouse.up();
+
+  // Midpoint of the diagonal in viewport CSS.
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  // Aim a few pixels off the midpoint, perpendicular to the line
+  // (which has slope 1). Normal direction (1, -1) / √2; offset 3 px.
+  const off = 3 / Math.SQRT2;
+  const aim = { x: mid.x + off, y: mid.y - off };
+  const start2 = { x: r.x + r.w * 0.8, y: r.y + r.h * 0.15 };
+  await capturePage.mouse.move(start2.x, start2.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((start2.x + aim.x) / 2, (start2.y + aim.y) / 2);
+  await capturePage.mouse.move(aim.x, aim.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  // The committed endpoint should land on the diagonal, i.e. its
+  // (x,y) projects back to within ~0.5 px of itself on the line —
+  // equivalently x2 == y2 in percent (since a→b has slope 1 and
+  // anchors at equal percentages).
+  expect(lines[1]!.x2).toBeCloseTo(lines[1]!.y2, 0);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: polyline preview does not pull back onto the previous endpoint', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // After segment 1 of a polyline, `dragStart` holds segment 1's
+  // endpoint — which is also a committed line endpoint and thus a
+  // snap candidate. Without the explicit exclusion, segment 2's
+  // endpoint would snap right back onto segment 1's endpoint
+  // whenever the cursor was within snap radius. Move the cursor
+  // ~6 px from B (well inside the radius); the commit should sit
+  // at the cursor, not at B.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + r.w * 0.2, y: r.y + r.h * 0.2 };
+  const B = { x: r.x + r.w * 0.5, y: r.y + r.h * 0.2 };
+  // Click 6 px south of B for segment 2 — within SNAP_PX (8) of B
+  // *and* above CLICK_THRESHOLD_PX (4) so a non-snapped commit is
+  // possible. Without the exclusion, snap would pull onto B and the
+  // segment would collapse to length 0.
+  const justSouth = { x: B.x, y: B.y + 6 };
+
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Segment 2: pure click at justSouth.
+  await capturePage.mouse.move(justSouth.x, justSouth.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.keyboard.press('Escape');
+
+  const lines = await readAllLines(capturePage, 'line');
+  // Two segments committed: A→B and B→justSouth. The second's end
+  // must sit ~near the un-snapped cursor location (snap to B was
+  // suppressed). Without the exclusion this would either commit a
+  // zero-length B→B (no-op, no segment 2) or snap back to B.
+  expect(lines).toHaveLength(2);
+  // Segment 2 must have non-trivial length — if snap had pulled
+  // back to B the y delta would be 0 (or below the click threshold).
+  const seg2_dy_pct = Math.abs(lines[1]!.y2 - lines[1]!.y1);
+  expect(seg2_dy_pct).toBeGreaterThan(0);
+  const endYcss = r.y + (lines[1]!.y2 / 100) * r.h;
+  // Browser rounds clientY to an integer, and the preview's left
+  // edge sits at a sub-pixel x — so allow ~1.5 px of slop on the
+  // CSS-pixel comparison.
+  expect(Math.abs(endYcss - justSouth.y)).toBeLessThan(1.5);
+
+  await openerPage.close();
+});
+
+test('drawing: snap-to: box-resize edge drag snaps the moving edge onto another box edge', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Two rects side-by-side. Drag rect-A's east edge toward rect-B's
+  // west edge from a few pixels short — the edge snaps onto rect-B's
+  // west edge (via the edge-projection snap candidate).
+  const r = await readPreviewRect(capturePage);
+  // Rect A: 20%–40%, rect B: 50%–70%.
+  await dragRect(capturePage, { xPct: 0.20, yPct: 0.30 }, { xPct: 0.40, yPct: 0.50 });
+  await dragRect(capturePage, { xPct: 0.50, yPct: 0.30 }, { xPct: 0.70, yPct: 0.50 });
+
+  // Rect A is the *earlier* edit. `__seeState.lastRectBounds`
+  // returns rect B, so we work from the dragRect inputs (they map
+  // 1:1 onto image-percent space) and verify rect A's east edge by
+  // scanning all SVG <rect> elements below.
+  const rectA_eastX = r.x + r.w * 0.40;
+  const rectB_westX = r.x + r.w * 0.50;
+  const midY = r.y + r.h * 0.40;
+
+  // Drag rect A's east handle. The mousedown inset and the drag inset
+  // are *different* on purpose: equal insets would cancel out and the
+  // un-snapped delta would already land the edge on rectB.westX,
+  // making the test pass without exercising snap. With unequal
+  // insets, only the snap can pull the edge exactly onto 50%.
+  const mouseDownX = rectA_eastX - 2;
+  const targetX = rectB_westX - 6;
+  await capturePage.mouse.move(mouseDownX, midY);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((mouseDownX + targetX) / 2, midY);
+  await capturePage.mouse.move(targetX, midY);
+  await capturePage.mouse.up();
+
+  // Rect A's new east edge should sit exactly at rect B's west edge
+  // (50%). aBefore captured rect B before the resize, so re-read all
+  // edits and pick the resized one (the first 'rect' in stack order
+  // is rect A).
+  const both = await capturePage.evaluate(() => {
+    const all = (window as unknown as {
+      __seeState: {
+        // Not exposed — use a small inline read of editKinds + bounds
+        // by id. Fall back to two lastRectBounds reads.
+        editKinds: () => string[];
+        lastRectBounds: (k: string) => { x: number; y: number; w: number; h: number };
+      };
+    }).__seeState;
+    return { kinds: all.editKinds() };
+  });
+  expect(both.kinds.filter((k) => k === 'rect').length).toBe(2);
+  // Walk the SVG overlay to find rect A's bounds — most reliable here
+  // since the test hook returns only the *last* rect. We assert that
+  // *some* rect on the stack has its east edge at 50%.
+  const eastEdges = await capturePage.evaluate(() => {
+    const svg = document.getElementById('overlay') as unknown as SVGSVGElement;
+    const rects = Array.from(svg.querySelectorAll('rect')) as SVGRectElement[];
+    return rects.map((el) => {
+      const x = parseFloat(el.getAttribute('x') || '0');
+      const w = parseFloat(el.getAttribute('width') || '0');
+      return x + w;
+    });
+  });
+  // Convert rect B's west edge (50%) to CSS px and find a matching east edge.
+  const targetEastCss = rectB_westX - r.x;
+  const matched = eastEdges.some((e) => Math.abs(e - targetEastCss) < 1.5);
+  expect(matched, `no rect's east edge snapped to ${targetEastCss}; saw ${eastEdges.join(',')}`).toBe(true);
+
+  await openerPage.close();
+});
 
 test('drawing: palette Save writes the edited PNG via the save-as dialog', async ({
   extensionContext,

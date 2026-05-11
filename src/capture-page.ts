@@ -1135,7 +1135,28 @@ function formatBytes(n: number): string {
 type Point = { x: number; y: number };
 type RectKind = 'rect' | 'redact' | 'crop';
 type LineKind = 'line' | 'arrow';
-type Tool = RectKind | LineKind;
+// Tool palette identifiers. `polyline` / `polyarrow` are the
+// dedicated polyline tools: each commits as a regular 'line' or
+// 'arrow' edit (see `polylineToolLineKind`) but the tool drives the
+// chain-mode entry semantics — no Ctrl modifier required.
+type PolylineTool = 'polyline' | 'polyarrow';
+type Tool = RectKind | LineKind | PolylineTool;
+
+// Map a polyline tool to the line-edit kind it commits. Returns
+// null for non-polyline tools so callers can branch cleanly.
+function polylineToolLineKind(t: Tool): LineKind | null {
+  if (t === 'polyline') return 'line';
+  if (t === 'polyarrow') return 'arrow';
+  return null;
+}
+
+// True for any tool that draws a line-shaped edit (line / arrow /
+// polyline / polyarrow). Used wherever the drawing pipeline branches
+// "line-family vs box-family" — stroke shape, cursor, Shrink-disabled,
+// arrow-key nudge direction filter, etc.
+function isLineFamilyTool(t: Tool): boolean {
+  return t === 'line' || t === 'arrow' || polylineToolLineKind(t) !== null;
+}
 interface RectEdit {
   id: number;
   kind: RectKind;
@@ -1213,6 +1234,39 @@ let polylineLineKind: LineKind | null = null;
 // to the upcoming mouseup (mid-drag, so the in-flight segment can
 // still commit). Cleared on mouseup and on window blur.
 let polylineMouseHeld = false;
+
+// First segment's anchor for the active polyline chain, captured at
+// the first segment's commit (so the chain is already known to be
+// alive). Lets a subsequent segment's endpoint snap to it, closing
+// the chain into a polygon. Cleared alongside `polylineLineKind` on
+// every chain-ending path.
+let polylineChainStart: Point | null = null;
+
+// Tracks how the active chain was entered:
+//   - `true` — Ctrl/Cmd was held at mouseup of a Line/Arrow draw and
+//     promoted the segment to a chain. Ctrl/Meta release ends the
+//     chain (legacy modifier-driven semantics).
+//   - `false` — entered via the Polyline / Poly-arrow tool button.
+//     Ctrl/Meta release does *nothing*; the user finishes with Esc,
+//     a click on the chain head, a tool switch, or window blur.
+// Distinguishing the two lets us keep the ergonomic Ctrl shortcut
+// for Line/Arrow without bricking the dedicated-tool chain when the
+// user incidentally taps Ctrl.
+let polylineEntryWasCtrl = false;
+
+// Centralises the chain-end cleanup so every exit path (mouseup
+// without continue, keyup, Esc, click-on-head, setSelectedTool, blur)
+// clears state the same way. Re-renders so the live preview ghost
+// disappears immediately.
+function endPolylineChain(): void {
+  polylineLineKind = null;
+  polylineChainStart = null;
+  polylineEntryWasCtrl = false;
+  polylineMouseHeld = false;
+  dragStart = null;
+  dragCurrent = null;
+  render();
+}
 
 // ─── Box-resize drag state ────────────────────────────────────────
 //
@@ -1429,6 +1483,311 @@ function detectBoxHandle(p: Point): BoxHandleHit | null {
     }
   }
   return null;
+}
+
+// ─── Snap-to ──────────────────────────────────────────────────────
+//
+// During any pointer-driven drag (line / arrow draw, box draw, box
+// edge / corner resize), the moving target point snaps to nearby
+// "interesting" geometry when it lands within `SNAP_PX`. Targets
+// are organised into priority tiers (highest first) — the snap
+// picks the closest candidate in the *highest non-empty tier within
+// radius*, so a slightly-further endpoint always wins over a
+// slightly-closer edge projection. The user's intent on a
+// "near-something" gesture usually targets a specific feature, not
+// whichever pixel happened to be closest:
+//
+//   Tier 1 — endpoints:
+//     - Endpoints of every line / arrow edit (`(x1,y1)` and `(x2,y2)`).
+//     - The polyline chain start (when drawing a polyline) — snapping
+//       a segment's endpoint to it closes the loop into a polygon.
+//   Tier 2 — corners:
+//     - The four corners of every box-shaped edit (rect / redact / crop).
+//     - The four corners of the image bounding box.
+//   Tier 3 — edges:
+//     - The nearest point on any box edge (incl. the image bounding
+//       box's edges) — projects the cursor onto the edge segment,
+//       so a near-edge slide "tracks" along the edge.
+//
+// Holding Shift disables snap entirely (and is already used elsewhere
+// to bypass affordances like box-handle hit-testing). Arrow-key
+// nudges bypass snap too — they call `updateDragFromLocalPoint`
+// directly without passing through the snap step, so a user who
+// snapped onto a target with the mouse can still fine-tune one
+// natural pixel at a time with the keyboard.
+//
+// A drag never snaps to its own geometry: the in-flight box-resize
+// excludes the edit it's mutating, and a fresh-draw box has no
+// committed geometry yet to snap to. The image-edge "create a fresh
+// crop" gesture (boxDrag with `editId === null`) additionally
+// excludes the image bounding box from snap candidates — otherwise
+// the cursor would re-snap to the edge it's trying to leave.
+const SNAP_PX = 8;
+
+// Returns the closest point on `rect`'s edges to `p`. `rect` is in
+// image-percent coordinates; `p` and the return value are in
+// display CSS pixels. Picks the closest of the edge-projected
+// candidates by Euclidean distance.
+function nearestPointOnRectEdges(
+  p: Point,
+  rect: { x: number; y: number; w: number; h: number },
+): Point {
+  const r = imgRect();
+  const left = (rect.x / 100) * r.width;
+  const top = (rect.y / 100) * r.height;
+  const right = left + (rect.w / 100) * r.width;
+  const bottom = top + (rect.h / 100) * r.height;
+  // Project p onto each edge segment by clamping the free axis into
+  // the edge's extent.
+  const candidates: Point[] = [
+    { x: Math.max(left, Math.min(right, p.x)), y: top },
+    { x: Math.max(left, Math.min(right, p.x)), y: bottom },
+    { x: left,  y: Math.max(top, Math.min(bottom, p.y)) },
+    { x: right, y: Math.max(top, Math.min(bottom, p.y)) },
+  ];
+  let best = candidates[0]!;
+  let bestD = Math.hypot(best.x - p.x, best.y - p.y);
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[i]!;
+    const d = Math.hypot(c.x - p.x, c.y - p.y);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
+// Returns the closest point on the segment from `a` to `b` to `p`,
+// in the same coordinate space as the inputs. Projects `p` onto the
+// segment's infinite line and clamps the parameter to `[0, 1]` so
+// the result stays on the segment. Used for diagonal line / arrow
+// snap-projection in the lowest priority tier; box edges have a
+// faster axis-aligned form (`nearestPointOnRectEdges`).
+function nearestPointOnSegment(p: Point, a: Point, b: Point): Point {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return { x: a.x, y: a.y };
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+interface SnapOptions {
+  // Polyline chain origin; when the user is mid-chain and the cursor
+  // lands within `SNAP_PX` of it, snap there to close the loop. Pass
+  // `null` (or omit) when no chain is active.
+  chainStart?: Point | null;
+  // Candidate filter: skip any target within `~0.5 CSS px` of this
+  // point. Used by the polyline live preview to drop the previous
+  // segment's endpoint (= `dragStart`) from the candidate set —
+  // without this, the in-flight endpoint would snap *back* onto its
+  // own anchor every time the cursor crossed within `SNAP_PX` of it,
+  // leaving a zero-length preview until the cursor cleared the
+  // radius. Box-resize uses its own self-exclusion path
+  // (`snapBoxDragCursor` filters by `bd.editId`), so this field is
+  // only set for the line/arrow point-snap path.
+  excludeAnchor?: Point | null;
+}
+
+// Returns the snapped version of `p` (in image-rect-local CSS px),
+// or `p` itself when no candidate is within `SNAP_PX`. Priority
+// tiers (highest first): endpoints → corners → edges. The closest
+// candidate in the *highest non-empty tier within radius* wins, so a
+// slightly-further endpoint always beats a slightly-closer corner or
+// edge projection. See the section header above for the full rules.
+function snapPoint(p: Point, opts: SnapOptions = {}): Point {
+  const r = imgRect();
+  const endpoints: Point[] = [];
+  const corners: Point[] = [];
+  const edgePoints: Point[] = [];
+  // Polyline chain start is treated as an endpoint (tier 1) — it IS
+  // segment 1's start point, and the loop-close gesture wants the
+  // strong "snap onto this exact feature" priority.
+  if (opts.chainStart) endpoints.push(opts.chainStart);
+  corners.push({ x: 0,       y: 0        });
+  corners.push({ x: r.width, y: 0        });
+  corners.push({ x: 0,       y: r.height });
+  corners.push({ x: r.width, y: r.height });
+  edgePoints.push(nearestPointOnRectEdges(p, { x: 0, y: 0, w: 100, h: 100 }));
+  for (const e of edits) {
+    if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+      const x = (e.x / 100) * r.width;
+      const y = (e.y / 100) * r.height;
+      const w = (e.w / 100) * r.width;
+      const h = (e.h / 100) * r.height;
+      corners.push({ x,        y        });
+      corners.push({ x: x + w, y        });
+      corners.push({ x,        y: y + h });
+      corners.push({ x: x + w, y: y + h });
+      edgePoints.push(nearestPointOnRectEdges(p, e));
+    } else if (e.kind === 'line' || e.kind === 'arrow') {
+      const a = { x: (e.x1 / 100) * r.width, y: (e.y1 / 100) * r.height };
+      const b = { x: (e.x2 / 100) * r.width, y: (e.y2 / 100) * r.height };
+      endpoints.push(a);
+      endpoints.push(b);
+      // Tier-3 projection onto the line itself — picks up diagonals
+      // that aren't covered by box-edge projections. Endpoint-tier
+      // dominates this when the cursor is near either end.
+      edgePoints.push(nearestPointOnSegment(p, a, b));
+    }
+  }
+  // Filter targets within ~0.5 CSS px of an explicit exclude anchor
+  // (polyline preview drops its own start anchor — see SnapOptions).
+  const anchor = opts.excludeAnchor ?? null;
+  const keep = (t: Point): boolean =>
+    anchor === null || Math.hypot(t.x - anchor.x, t.y - anchor.y) >= 0.5;
+  // Walk tiers in priority order; first tier with a within-radius
+  // candidate wins, and its closest non-excluded member is the snap
+  // target.
+  for (const tier of [endpoints, corners, edgePoints]) {
+    let best: Point | null = null;
+    let bestD = SNAP_PX;
+    for (const t of tier) {
+      if (!keep(t)) continue;
+      const d = Math.hypot(t.x - p.x, t.y - p.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    if (best !== null) return best;
+  }
+  return p;
+}
+
+// Convenience: assemble the SnapOptions for a fresh-draw or line/
+// arrow drag (point-based snap). Box-resize uses `snapBoxDragCursor`
+// below instead — the edge being moved needs to land on the target
+// axis, which isn't the same as snapping the cursor.
+//
+// When polyline mode is alive, `dragStart` holds the previous
+// segment's snapped endpoint — which is ALSO a committed line
+// endpoint in `edits`. Without explicit exclusion the in-flight
+// preview would snap right back onto its anchor, leaving a zero-
+// length segment until the cursor cleared the snap radius.
+function pointSnapOptions(): SnapOptions {
+  return {
+    chainStart: polylineChainStart,
+    excludeAnchor: polylineLineKind !== null ? dragStart : null,
+  };
+}
+
+// Snap a line/arrow segment to horizontal or vertical when the
+// off-axis delta is within `SNAP_PX`. `anchor` is the segment's
+// start (= `dragStart` for fresh draws and for polyline segments);
+// `p` is the candidate endpoint. The axis with the smaller absolute
+// delta wins on a tie — "closer to axis-aligned".
+//
+// Applied AFTER feature snap (and only when feature snap didn't
+// fire). Landing on a specific endpoint / corner / edge expresses
+// stronger intent than "make it horizontal", so feature snap takes
+// precedence — the user who wants axis-align over a nearby feature
+// can hold Shift to disable both, then re-aim.
+function snapAxisAligned(p: Point, anchor: Point): Point {
+  const dx = p.x - anchor.x;
+  const dy = p.y - anchor.y;
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+  if (ady < SNAP_PX && ady <= adx) return { x: p.x, y: anchor.y };
+  if (adx < SNAP_PX && adx < ady)  return { x: anchor.x, y: p.y };
+  return p;
+}
+
+// Axis-aware snap for a box edge / corner resize drag. Instead of
+// snapping the *cursor* (which would offset the edge by the
+// mousedown-inside-the-handle inset), this shifts the cursor delta
+// just enough that the dragged edge lands exactly on a nearby axis
+// of interest. Each free axis snaps independently:
+//   - East / west drags consider only x candidates (other boxes'
+//     vertical edges, line endpoints' x, and — except for the
+//     image-edge crop-create case — the image bbox left/right x).
+//   - North / south drags consider only y candidates.
+//   - Corner handles consider both axes; a corner of another box
+//     contributes its x to the x pool and its y to the y pool, but
+//     the two axes resolve independently so the dragged corner can
+//     align with one box's column and another box's row.
+//
+// Returns the snapped cursor position. The caller passes this into
+// `updateDragFromLocalPoint`, which re-derives dxPct/dyPct from the
+// shifted cursor and feeds `applyEdgeDrag` — landing the edge
+// exactly on the snap axis after the percent rounding.
+function snapBoxDragCursor(p: Point, bd: BoxDragState): Point {
+  const r = imgRect();
+  const h = bd.handle;
+  const draggingTop = h === 'n' || h === 'ne' || h === 'nw';
+  const draggingBottom = h === 's' || h === 'se' || h === 'sw';
+  const draggingLeft = h === 'w' || h === 'nw' || h === 'sw';
+  const draggingRight = h === 'e' || h === 'ne' || h === 'se';
+
+  // Where the dragged edges currently sit (in CSS px image-local),
+  // given the un-snapped cursor `p`. The delta is computed the same
+  // way `updateDragFromLocalPoint` does — keeping the two in sync is
+  // why we shift the cursor by `(target - current)` below.
+  const dxCss = p.x - bd.originX;
+  const dyCss = p.y - bd.originY;
+  const startLeftCss = (bd.startX / 100) * r.width;
+  const startTopCss = (bd.startY / 100) * r.height;
+  const startRightCss = startLeftCss + (bd.startW / 100) * r.width;
+  const startBottomCss = startTopCss + (bd.startH / 100) * r.height;
+
+  const edgeXCss: number | null =
+    draggingLeft  ? startLeftCss  + dxCss :
+    draggingRight ? startRightCss + dxCss :
+    null;
+  const edgeYCss: number | null =
+    draggingTop    ? startTopCss    + dyCss :
+    draggingBottom ? startBottomCss + dyCss :
+    null;
+
+  // Same priority tiers as `snapPoint`, restricted to the moving
+  // axes: endpoints first, then corners. Box edges contribute the
+  // same x / y values as box corners (every rect has 2 corner x's
+  // that also serve as left/right edge x's, likewise for y), so
+  // there's no separate "edges" tier for axis snap.
+  const endpointXs: number[] = [];
+  const endpointYs: number[] = [];
+  const cornerXs: number[] = [];
+  const cornerYs: number[] = [];
+  // The image-edge "create a fresh crop" gesture (editId === null)
+  // is the only case where the dragged geometry IS the image bbox —
+  // including the bbox in the candidate pool would re-snap the edge
+  // back onto itself. Every other drag treats the bbox as a valid
+  // reference.
+  const excludeImageBbox = bd.editId === null;
+  if (!excludeImageBbox) {
+    cornerXs.push(0, r.width);
+    cornerYs.push(0, r.height);
+  }
+  for (const ed of edits) {
+    if (ed.id === bd.editId) continue;
+    if (ed.kind === 'rect' || ed.kind === 'redact' || ed.kind === 'crop') {
+      const x = (ed.x / 100) * r.width;
+      const w = (ed.w / 100) * r.width;
+      const y = (ed.y / 100) * r.height;
+      const hPx = (ed.h / 100) * r.height;
+      cornerXs.push(x, x + w);
+      cornerYs.push(y, y + hPx);
+    } else if (ed.kind === 'line' || ed.kind === 'arrow') {
+      endpointXs.push((ed.x1 / 100) * r.width, (ed.x2 / 100) * r.width);
+      endpointYs.push((ed.y1 / 100) * r.height, (ed.y2 / 100) * r.height);
+    }
+  }
+
+  // Walk tiers in priority order; the first one with a within-radius
+  // candidate decides the shift. Returns 0 when the axis isn't free
+  // (null `cur`) or nothing snaps.
+  const bestAxisShift = (cur: number | null, tiers: number[][]): number => {
+    if (cur === null) return 0;
+    for (const tier of tiers) {
+      let bestD = SNAP_PX;
+      let shift = 0;
+      for (const c of tier) {
+        const d = Math.abs(c - cur);
+        if (d < bestD) { bestD = d; shift = c - cur; }
+      }
+      if (bestD < SNAP_PX) return shift;
+    }
+    return 0;
+  };
+  const shiftX = bestAxisShift(edgeXCss, [endpointXs, cornerXs]);
+  const shiftY = bestAxisShift(edgeYCss, [endpointYs, cornerYs]);
+  return { x: p.x + shiftX, y: p.y + shiftY };
 }
 
 // Given an initial rectangle and a pointer delta (in display
@@ -1759,15 +2118,19 @@ function render(): void {
   }
 
   if (dragStart && dragCurrent) {
-    if (selectedTool === 'line') {
+    // Live-preview shape mirrors what mouseup will commit. The
+    // polyline tools commit each segment as a plain line / arrow
+    // edit, so their preview is the same as the matching base tool.
+    const previewKind = polylineToolLineKind(selectedTool) ?? selectedTool;
+    if (previewKind === 'line') {
       overlay.appendChild(makeLine(
         dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       ));
-    } else if (selectedTool === 'arrow') {
+    } else if (previewKind === 'arrow') {
       appendArrow(
         dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       );
-    } else if (selectedTool === 'rect' || selectedTool === 'redact') {
+    } else if (previewKind === 'rect' || previewKind === 'redact') {
       // Both tools draw exactly what they'll commit, so the user
       // sees the final result live: Box → red stroked rect, Redact
       // → filled black rect. Crop is handled above via `cropPreview`
@@ -1839,31 +2202,38 @@ overlay.addEventListener('mousedown', (e) => {
     // up to date by the time we get here. Synthetic input that
     // skips mousemove would land a no-op segment — acceptable
     // edge case.
+    //
+    // Also note: `dragStart` is NOT re-snapped here either. The
+    // chain anchor is fixed at the previous segment's snapped
+    // endpoint; re-running `snapPoint` on it would (a) be a no-op
+    // because the anchor is already on a feature, or (b) drag it to
+    // a different nearby feature, which would silently move the
+    // chain. The polyline-mousedown path is the only mousedown that
+    // doesn't pass through the snap step — by design.
     return;
   }
-  // Ctrl/Cmd + left = pan, mirroring middle-click. We start it here
-  // (the overlay sits on top of the image) and `stopPropagation` so
-  // the imageBox handler doesn't double-init the same drag. The
-  // empty surround around the overlay is handled by imageBox alone.
-  // Ctrl + middle still routes through the imageBox middle path —
-  // this branch only matches `button === 0`.
+  // Ctrl/Cmd + left = pan, mirroring middle-click. Uniform across
+  // all tools — the polyline entry no longer rides on the modifier
+  // (dedicated Polyline / Poly-arrow tools serve that purpose).
+  // Polyline chains promoted via "Ctrl held at mouseup of a regular
+  // Line/Arrow draw" still work because that path is decided at
+  // mouseup, not at this mousedown.
   //
-  // Exception: when Line / Arrow is the active tool, Ctrl-left
-  // *enters polyline mode* instead of panning — the pan-vs-polyline
-  // tradeoff is worth it because Line / Arrow are the only tools
-  // where multi-segment chains make sense, and pan is still
-  // available via middle-click for line/arrow users.
-  if (
-    me.button === 0 &&
-    (me.ctrlKey || me.metaKey) &&
-    selectedTool !== 'line' &&
-    selectedTool !== 'arrow'
-  ) {
+  // The Ctrl-promote path is also why we don't pre-empt mousedowns
+  // *without* Ctrl on the line/arrow tools: a user who plans to
+  // promote will hold Ctrl only at release. The mousedown stays a
+  // plain fresh-draw.
+  if (me.button === 0 && (me.ctrlKey || me.metaKey) && !me.shiftKey) {
     me.preventDefault();
     me.stopPropagation();
     startPan(me);
     return;
   }
+  // Ctrl/Cmd + Shift falls through this pan branch on purpose: it
+  // means "force a fresh draw, but keep snap on" — the upcoming
+  // box-handle hit-test is bypassed by the Shift check below, and
+  // the snap-disable check in `mousemove` re-enables snap when Ctrl
+  // is held alongside Shift.
   // Left button only — there's no right-click drawing in the new
   // tool model. The browser will surface the right-button context
   // menu untouched.
@@ -1880,28 +2250,13 @@ overlay.addEventListener('mousedown', (e) => {
     return;
   }
   const p = localCoords(me);
-  // Polyline entry: Ctrl + Line/Arrow tool starts a multi-segment
-  // chain. Skip the box-handle hit-test (Ctrl is consumed by the
-  // tool here, not by a resize affordance) and stopPropagation so
-  // the imageBox handler doesn't see a Ctrl-left it would otherwise
-  // turn into a pan. The first mouseup commits the first segment
-  // and (if Ctrl is still held) advances `polylineLineKind` to
-  // anchor the next segment from this one's endpoint.
-  const polylineEntry =
-    (me.ctrlKey || me.metaKey) &&
-    (selectedTool === 'line' || selectedTool === 'arrow');
-  if (polylineEntry) {
-    me.stopPropagation();
-  }
   // Box-handle drag wins over the selected tool: hit-tests every
   // rect-shaped edit (rect / redact / crop) topmost-first, plus
   // the image edges as a fallback when no crop exists. Holding
   // Shift bypasses this so the user can start a fresh draw flush
   // against an existing box's edge — e.g. drawing a redact box
   // right next to a crop's edge without snapping the crop instead.
-  // Polyline entry also bypasses (the Ctrl press is the polyline
-  // signal, not a box-resize gesture).
-  const hit = me.shiftKey || polylineEntry ? null : detectBoxHandle(p);
+  const hit = me.shiftKey ? null : detectBoxHandle(p);
   if (hit) {
     me.preventDefault();
     boxDrag = {
@@ -1918,13 +2273,25 @@ overlay.addEventListener('mousedown', (e) => {
     return;
   }
   me.preventDefault();
-  dragStart = p;
+  // Snap the drag's anchor onto nearby targets when starting a fresh
+  // draw (line / arrow / box / redact / crop) — gives the user a way
+  // to begin a new shape exactly at an existing corner / endpoint /
+  // edge point without precision aiming. Plain Shift suppresses both
+  // snap *and* the resize-handle hit-test above (cleanest "force a
+  // fresh draw here" affordance). Ctrl/Cmd + Shift keeps snap on
+  // while still bypassing the resize hit-test — handy for placing a
+  // new shape exactly against an existing edge handle. No edit
+  // exists yet to exclude; the polyline chain start is irrelevant
+  // at the *start* of a segment (chain-close is endpoint-side).
+  const snapOff = me.shiftKey && !(me.ctrlKey || me.metaKey);
+  dragStart = snapOff ? p : snapPoint(p);
   dragCurrent = dragStart;
   // Track the mouse-held window for the polyline keyup logic.
-  // Scoped to line/arrow tools — the box / crop / redact tools
-  // don't participate in polyline mode, so leaving the flag false
-  // for them keeps the keyup path's reasoning narrow.
-  if (selectedTool === 'line' || selectedTool === 'arrow') {
+  // Scoped to line-family tools (Line / Arrow / Polyline / Poly-arrow)
+  // — the box / crop / redact tools don't participate in polyline
+  // mode, so leaving the flag false for them keeps the keyup path's
+  // reasoning narrow.
+  if (isLineFamilyTool(selectedTool)) {
     polylineMouseHeld = true;
   }
   // Reset any idle-hover resize cursor — we're committing to a
@@ -1973,7 +2340,37 @@ function updateDragFromLocalPoint(p: Point): void {
 
 window.addEventListener('mousemove', (e) => {
   if (boxDrag === null && dragStart === null) return;
-  updateDragFromLocalPoint(localCoords(e));
+  // Snap the live target to nearby geometry — see the "Snap-to"
+  // section above for the rules. Shift bypasses. Box-resize uses
+  // axis-aware snap so the dragged *edge* lands on the target;
+  // fresh-draw and line/arrow drags use point snap on the cursor.
+  // Both snaps are skipped in the arrow-key nudge path, which calls
+  // `updateDragFromLocalPoint` directly (one natural-pixel step,
+  // composes with a previously-snapped position).
+  const raw = localCoords(e);
+  let p = raw;
+  // Plain Shift turns snap off. Ctrl/Cmd + Shift turns it back on
+  // (useful when the user wants to bypass the resize hit-test on
+  // mousedown but still snap the in-flight target).
+  const snapOff = e.shiftKey && !(e.ctrlKey || e.metaKey);
+  if (!snapOff) {
+    if (boxDrag !== null) {
+      p = snapBoxDragCursor(raw, boxDrag);
+    } else {
+      p = snapPoint(raw, pointSnapOptions());
+      // Line / arrow draws additionally snap to horizontal /
+      // vertical when feature snap didn't fire and the cursor is
+      // within `SNAP_PX` of an axis-aligned segment. Polyline
+      // segments use the chain head (`dragStart`) as the anchor, so
+      // each segment can be independently axis-aligned. Feature
+      // snap takes precedence — landing on an existing endpoint or
+      // corner is stronger intent than "make it horizontal".
+      if (p === raw && dragStart !== null && isLineFamilyTool(selectedTool)) {
+        p = snapAxisAligned(raw, dragStart);
+      }
+    }
+  }
+  updateDragFromLocalPoint(p);
 });
 
 window.addEventListener('mouseup', (e) => {
@@ -2060,19 +2457,25 @@ window.addEventListener('mouseup', (e) => {
   const moved = Math.hypot(dx, dy) >= CLICK_THRESHOLD_PX;
   // Real movement required — a bare click shouldn't push a
   // degenerate zero-size shape.
+  // Resolve the commit kind. Polyline / Poly-arrow tools commit as
+  // their underlying line / arrow edit kind; everything else commits
+  // as itself.
+  const lineKindForCommit: LineKind | null =
+    polylineToolLineKind(selectedTool)
+    ?? (selectedTool === 'line' || selectedTool === 'arrow' ? selectedTool : null);
   let pending: Edit | null = null;
   if (moved) {
     const id = nextEditId;
-    if (selectedTool === 'line' || selectedTool === 'arrow') {
+    if (lineKindForCommit !== null) {
       pending = {
         id,
-        kind: selectedTool,
+        kind: lineKindForCommit,
         x1: (dragStart.x / r.width) * 100,
         y1: (dragStart.y / r.height) * 100,
         x2: (end.x / r.width) * 100,
         y2: (end.y / r.height) * 100,
       };
-    } else {
+    } else if (selectedTool === 'rect' || selectedTool === 'redact' || selectedTool === 'crop') {
       const x = Math.min(dragStart.x, end.x);
       const y = Math.min(dragStart.y, end.y);
       const wPct = (Math.abs(dx) / r.width) * 100;
@@ -2101,21 +2504,62 @@ window.addEventListener('mouseup', (e) => {
     nextEditId++;
     editVersion++;
   }
-  // Polyline continuation: when Ctrl/Cmd is still held at mouseup
-  // and the active tool is Line / Arrow, anchor the *next* segment
-  // at the just-committed endpoint instead of clearing the drag
-  // state. The next click or drag commits another segment from
-  // there. Empty-segment mouseups (no `pending` because `moved`
-  // was false) still advance the chain — they just don't add an
-  // edit, matching the spec's "each click adds that segment (if
-  // non-empty) and starts a new one".
-  const continuePolyline =
-    (e.ctrlKey || e.metaKey) &&
-    (selectedTool === 'line' || selectedTool === 'arrow');
+  // Polyline continuation: tool-entered and Ctrl-promoted both end
+  // up in the same state machine.
+  //   1. Dedicated tool — the chain advances on every mouseup of a
+  //      Polyline / Poly-arrow draw, regardless of modifiers. Exit
+  //      gestures: Esc, click on chain head (zero-length click after
+  //      the chain is alive), double-click, tool switch, window blur.
+  //   2. Ctrl-promote — a regular Line / Arrow draw whose mouseup
+  //      sees Ctrl/Cmd held promotes to a chain. Releasing Ctrl is
+  //      the primary exit (legacy modifier semantics, kept as a
+  //      power-user shortcut). The same Esc / click-on-head / tool
+  //      switch / blur exits also work.
+  // Empty-segment mouseups still advance the chain (so the first
+  // mouseup of a Polyline tool draw with no movement still enters
+  // chain mode), but a zero-length mouseup *after* the chain is
+  // already alive ends it — that's the "click on the chain head to
+  // finish" gesture.
+  const isPolylineToolEntry = polylineToolLineKind(selectedTool) !== null;
+  const isCtrlPromote =
+    (e.ctrlKey || e.metaKey)
+    && (selectedTool === 'line' || selectedTool === 'arrow');
+  const continuePolyline = isPolylineToolEntry || isCtrlPromote;
+  const chainWasAlive = polylineLineKind !== null;
   if (continuePolyline) {
-    // Narrow `selectedTool` to LineKind for the assignment — the
-    // type guard above already filters to 'line' | 'arrow'.
-    polylineLineKind = selectedTool as LineKind;
+    if (chainWasAlive && !moved) {
+      // Click on the chain head (or a sub-CLICK_THRESHOLD drag) with
+      // the chain already alive — finish.
+      endPolylineChain();
+      return;
+    }
+    // Polygon-close exit: the just-committed segment ended at the
+    // chain's first anchor (typically via snap pulling onto it).
+    // The closing segment is already in `edits` above, so end the
+    // chain — the polygon is complete and further clicks would be
+    // additional disconnected segments, which the user almost
+    // certainly didn't intend. Only meaningful from segment 2 on
+    // (chainWasAlive); segment 1's commit is when the chain start
+    // is first captured.
+    if (chainWasAlive && polylineChainStart !== null) {
+      const dxClose = end.x - polylineChainStart.x;
+      const dyClose = end.y - polylineChainStart.y;
+      if (Math.hypot(dxClose, dyClose) < 0.5) {
+        endPolylineChain();
+        return;
+      }
+    }
+    // Capture the chain's origin once, at the *first* commit. Read
+    // from `dragStart` while it still holds segment 1's start —
+    // before the `dragStart = end` reassignment below shifts it to
+    // the just-committed endpoint. Subsequent segments' commits
+    // leave this point alone, so the loop-close target stays
+    // anchored at the user's very first click for the entire chain.
+    if (polylineChainStart === null) {
+      polylineChainStart = { x: dragStart.x, y: dragStart.y };
+      polylineEntryWasCtrl = isCtrlPromote;
+    }
+    polylineLineKind = lineKindForCommit;
     dragStart = end;
     // Re-anchor the next segment's *preview* at the physical
     // pointer, not at the just-committed endpoint. Two reasons:
@@ -2133,9 +2577,8 @@ window.addEventListener('mouseup', (e) => {
     dragCurrent = localCoords(e);
     lastMousePos = { x: e.clientX, y: e.clientY };
   } else {
-    polylineLineKind = null;
-    dragStart = null;
-    dragCurrent = null;
+    endPolylineChain();
+    return;
   }
   render();
 });
@@ -2185,25 +2628,26 @@ window.addEventListener('keydown', (e) => {
   // Forward history-navigation shortcuts.
   if (e.altKey) return;
   // Ctrl / Meta gate:
-  //   - Allowed when polyline mode is active (the chain requires
-  //     the modifier to stay held, so suppressing nudges would
-  //     defeat the feature).
-  //   - Allowed during the polyline-entry drag (seg 1, where
-  //     `polylineLineKind` hasn't been set yet but the user holds
-  //     Ctrl and the active tool is Line/Arrow — that gesture
-  //     promotes to polyline on the upcoming mouseup).
+  //   - Allowed when a Ctrl-promoted polyline chain is active — the
+  //     chain requires Ctrl to stay held, so suppressing nudges would
+  //     defeat the feature.
+  //   - Allowed during a Line / Arrow draw with Ctrl held — the
+  //     upcoming mouseup is the Ctrl-promote moment, and the user
+  //     may be fine-tuning the segment end via arrow nudges before
+  //     releasing.
   //   - Blocked otherwise. The user could in principle start a
   //     non-polyline Box/Crop/Redact drag and then press Ctrl
   //     mid-drag (which would set `dragStart` non-null with Ctrl
-  //     held) — but Ctrl+Arrow in that case has no in-page
-  //     meaning, and allowing it would suppress the textarea's
-  //     "move caret by word" behaviour for no reason. Keep the
-  //     original block.
-  const polylineActive = polylineLineKind !== null;
-  const polylineEntryDrag =
+  //     held) — but Ctrl+Arrow in that case has no in-page meaning,
+  //     and allowing it would suppress the textarea's "move caret by
+  //     word" behaviour for no reason. Same for tool-entered polyline
+  //     chains: Ctrl plays no role there, so Ctrl+Arrow is blocked.
+  const ctrlPromoteActive =
+    polylineLineKind !== null && polylineEntryWasCtrl;
+  const ctrlPromoteEntryDrag =
     (e.ctrlKey || e.metaKey) &&
     (selectedTool === 'line' || selectedTool === 'arrow');
-  if ((e.ctrlKey || e.metaKey) && !polylineActive && !polylineEntryDrag) return;
+  if ((e.ctrlKey || e.metaKey) && !ctrlPromoteActive && !ctrlPromoteEntryDrag) return;
   let dx = 0;
   let dy = 0;
   switch (e.key) {
@@ -2267,35 +2711,57 @@ window.addEventListener('keydown', (e) => {
   });
 }, true);
 
-// ─── Polyline-mode end on Ctrl/Meta release ───────────────────────
+// ─── Polyline-mode end on Ctrl/Meta release (Ctrl-promoted only) ──
 //
-// Polyline mode lasts only "as long as Ctrl is held down" (Cmd on
-// macOS). When the user releases the modifier, end the chain. Two
-// cases:
+// Only applies to chains entered via the Ctrl-on-release shortcut
+// on the Line / Arrow tools (`polylineEntryWasCtrl === true`). Chains
+// entered via the dedicated Polyline / Poly-arrow tool buttons ignore
+// Ctrl entirely — those exit via Esc, click-on-head, tool switch, or
+// window blur.
+//
+// Two cases for the Ctrl-promoted chain:
 //   - Mouse held (mid-segment drag): `polylineMouseHeld` is true.
-//     Just clear `polylineLineKind` so the upcoming mouseup
-//     commits the in-flight segment but won't continue the chain.
-//     Don't touch `dragStart` / `dragCurrent` — they're driving
-//     the live preview of the segment that's about to commit.
+//     Just clear `polylineLineKind` so the upcoming mouseup commits
+//     the in-flight segment but won't continue the chain. Don't
+//     touch `dragStart` / `dragCurrent` — they're driving the live
+//     preview of the segment that's about to commit.
 //   - Mouse not held (between segments): clear everything so the
-//     ghost preview disappears immediately. No mouseup is coming
-//     to do this.
+//     ghost preview disappears immediately. No mouseup is coming.
 window.addEventListener('keyup', (e) => {
   if (polylineLineKind === null) return;
+  if (!polylineEntryWasCtrl) return;
   if (e.key !== 'Control' && e.key !== 'Meta') return;
-  // Use post-keyup synthesised modifier state — entry/continuation
-  // accept either Ctrl OR Meta, so releasing one while the other
-  // is still held shouldn't end the chain. Without this gate, a
-  // Mac user incidentally holding both modifiers would lose the
-  // chain on the first release.
+  // Use post-keyup synthesised modifier state — promote accepts
+  // either Ctrl OR Meta, so releasing one while the other is still
+  // held shouldn't end the chain. Without this gate, a Mac user
+  // incidentally holding both modifiers would lose the chain on the
+  // first release.
   if (e.ctrlKey || e.metaKey) return;
-  polylineLineKind = null;
-  if (!polylineMouseHeld) {
-    dragStart = null;
-    dragCurrent = null;
-    render();
+  if (polylineMouseHeld) {
+    // Defer the drag-state clear to the upcoming mouseup so the
+    // in-flight segment can still commit. Just clear the chain
+    // markers.
+    polylineLineKind = null;
+    polylineChainStart = null;
+    polylineEntryWasCtrl = false;
+  } else {
+    endPolylineChain();
   }
 });
+
+// ─── Polyline-mode end on Esc ─────────────────────────────────────
+//
+// Universal cancel for the dedicated polyline tools (and any active
+// chain). Mirrors the "switch tool aborts chain" behaviour but with
+// a keyboard shortcut, so a user mid-chain can just hit Esc to bail.
+// Capture phase so the prompt textarea (if focused) doesn't swallow
+// the press — the focus path doesn't otherwise act on bare Esc.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (polylineLineKind === null) return;
+  e.preventDefault();
+  endPolylineChain();
+}, true);
 
 undoBtn.addEventListener('click', () => {
   const last = editHistory.pop();
@@ -2591,17 +3057,15 @@ document.addEventListener('click', (e) => {
 // whole group so exactly one is pushed-down at a time.
 function setSelectedTool(tool: Tool): void {
   selectedTool = tool;
-  // Switching tools mid-polyline ends the chain. Clear the ghost
-  // preview so the new tool doesn't inherit a half-drawn segment
-  // from the previous one. Drag state for boxDrag is left alone:
-  // the box-handle drag is independent of polyline mode and we
-  // don't want a tool switch to abort an in-flight resize.
-  if (polylineLineKind !== null) {
-    polylineLineKind = null;
-    dragStart = null;
-    dragCurrent = null;
-    polylineMouseHeld = false;
-  }
+  // Switching tools (or re-selecting the same one) ends any
+  // in-flight polyline chain so the new tool doesn't inherit a
+  // half-drawn segment. Also applies when switching between the
+  // two polyline tools — the chain's commit kind is fixed at entry,
+  // so e.g. Polyline → Poly-arrow needs a clean slate. `boxDrag`
+  // state is intentionally untouched: a box-handle resize drag is
+  // independent of polyline mode and a tool switch shouldn't abort
+  // it.
+  if (polylineLineKind !== null) endPolylineChain();
   for (const btn of toolButtons) {
     const isMine = btn.dataset.tool === tool;
     btn.classList.toggle('selected', isMine);
@@ -3170,7 +3634,11 @@ function startPan(e: MouseEvent): void {
 
 imageBox.addEventListener('mousedown', (e) => {
   const isMiddle = e.button === 1;
-  const isCtrlLeft = e.button === 0 && (e.ctrlKey || e.metaKey);
+  // Ctrl+Shift is the "force a fresh draw with snap on" gesture
+  // (overlay handler bypasses the resize hit-test for it) — don't
+  // also start a pan here when the event bubbles up. Plain Ctrl-left
+  // (no Shift) still pans, mirroring middle-click.
+  const isCtrlLeft = e.button === 0 && (e.ctrlKey || e.metaKey) && !e.shiftKey;
   if (!isMiddle && !isCtrlLeft) return;
   if (isMiddle) {
     lastImageMiddleDownTime = e.timeStamp;
@@ -3240,15 +3708,7 @@ window.addEventListener('blur', () => {
     panState = null;
     document.body.classList.remove('panning');
   }
-  if (polylineLineKind !== null) {
-    polylineLineKind = null;
-    polylineMouseHeld = false;
-    if (dragStart !== null || dragCurrent !== null) {
-      dragStart = null;
-      dragCurrent = null;
-      render();
-    }
-  }
+  if (polylineLineKind !== null) endPolylineChain();
 });
 
 updateZoomButtonLabel();
@@ -5746,6 +6206,25 @@ void loadData();
   // the chain is alive between segments). Returns the active kind
   // ('line' / 'arrow') or null when polyline mode is off.
   polylineKind: () => polylineLineKind,
+  // Chain-start anchor of the active polyline chain, in image-rect-
+  // local CSS pixels (or null when no chain is active). Used by the
+  // loop-close e2e to assert that a near-start click snaps to this
+  // point. Doubles as a "chain is alive" boolean for the loop-stays-
+  // alive-after-close test.
+  polylineChainStart: () => (
+    polylineChainStart === null
+      ? null
+      : { x: polylineChainStart.x, y: polylineChainStart.y }
+  ),
+  // How the active chain was entered: 'ctrl' (Ctrl-promoted) or
+  // 'tool' (Polyline / Poly-arrow tool button). Null when no chain
+  // is active. Used by e2e tests to verify the Ctrl-release exit
+  // semantics fire only for Ctrl-promoted chains.
+  polylineEntry: () => (
+    polylineLineKind === null
+      ? null
+      : (polylineEntryWasCtrl ? 'ctrl' : 'tool')
+  ),
   // Endpoints of the most-recent line / arrow edit (used by the
   // arrow-key-during-Line-draw test to assert that the in-flight
   // endpoint follows keyboard nudges).

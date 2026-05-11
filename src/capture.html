@@ -1696,11 +1696,28 @@
         </button>
         <button id="tool-arrow" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="arrow"
-                title="Draw arrows&#10;Hold Ctrl for multi-line"
+                title="Draw arrows&#10;Hold Ctrl on release for polyline"
                 aria-label="Draw arrows"
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-arrow-icon"></use></svg>
         </button>
+        <!--
+          Dedicated polyline tools. Visually placeholder for now (text
+          labels next to the icon tools) — kept here so the polyline
+          mode is discoverable via the palette instead of requiring the
+          Ctrl modifier on Line/Arrow. The Ctrl-on-release modifier
+          path on Line/Arrow still works as a power-user shortcut.
+          Each segment commits as a regular 'line' / 'arrow' edit; the
+          tool drives the chain semantics (entry, exit gestures).
+        -->
+        <button id="tool-polyline" class="tool-btn btn"
+                type="button" data-tool="polyline"
+                title="Draw multi-segment lines&#10;Esc, double-click, or click the chain head to finish"
+                aria-pressed="false">N-Line</button>
+        <button id="tool-polyarrow" class="tool-btn btn"
+                type="button" data-tool="polyarrow"
+                title="Draw multi-segment arrows&#10;Esc, double-click, or click the chain head to finish"
+                aria-pressed="false">N-Arrow</button>
         <button id="tool-redact" class="tool-btn btn"
                 type="button" data-tool="redact"
                 title="Drag to add a black redaction box"

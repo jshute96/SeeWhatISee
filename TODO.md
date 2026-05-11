@@ -9,7 +9,6 @@
 * Edit image format (PNG/JPG) and size (rescale)
 * Drawing tools
   - Drag endpoints of line segments
-  - Snap to points / conners / lines
   - Select tool so we can pick elements to delete or change.
     - Maybe drag to move.
     - Maybe convert object types if you drew the wrong one (box/redact/crop, or line/arrow).
@@ -57,5 +56,66 @@
   - Shift to draw without activating drag
 * Arrow keys to move box selections (and line endpoints) during drag.
   - Moves by one pixel in the output, regardless of the zoom level.
-* Draw polylines or arrows by holding Ctrl
+* Draw polylines or polyarrows via dedicated tool buttons (N-Line, N-Arrow).
+  - Finish with Esc, click on the chain head, double-click, or switch tools.
+  - Holding Ctrl at mouseup of a plain Line/Arrow draw also promotes to a chain (legacy shortcut; releasing Ctrl ends it).
+* Snap-to endpoints/corners/lines.
+  - Shift to draw without snap and without grabbing existing edges
+  - Ctrl+Shift to draw without grabbing existing edges, snap stays on
+  - Ctrl+drag still pans the image
 * Upload image from file (on context menu)
+
+### Draft: user-facing explanation of the new drawing behavior
+
+Stitched together from the bullets above. The goal here is to write
+this in user-facing language so it can drop into README / a help
+popover / a tutorial — concise, no internal jargon, no implementation
+details. Refine before shipping.
+
+**Drawing tools (palette)**
+
+* **Box** — drag to draw a red rectangle.
+* **Line** — drag to draw a red line.
+* **Arrow** — drag to draw a red arrow (head at the release point).
+* **N-Line / N-Arrow (polyline)** — multi-segment line / arrow. Each
+  click or drag adds another segment from where the previous one
+  ended. Finish the chain by pressing **Esc**, **double-clicking**,
+  clicking back on the **last point**, clicking back on the
+  **starting point** (closes the polygon), or switching tools.
+* **Redact** — drag to paint a solid black rectangle over content
+  you want to hide.
+* **Crop** — drag to crop the image to a region. Drag the edges of
+  an existing crop to adjust it; drag past the image edge to remove
+  the crop.
+
+**Tip: quick polyline from a regular Line / Arrow draw** — if
+mid-draw you decide you want to keep going, hold **Ctrl** (or **⌘**
+on Mac) when you release the mouse. That promotes the line to a
+multi-segment chain. Releasing Ctrl ends the chain.
+
+**Snap-to** — while drawing or resizing, the cursor pulls onto
+nearby:
+
+* line / arrow endpoints (highest priority),
+* box corners and the image's corners,
+* box edges and existing diagonal lines (closest point along them).
+
+Snap distance is a few pixels. Hold **Shift** to draw without
+snapping (and without grabbing edges of existing shapes).
+
+**Lines snap to horizontal / vertical** — while drawing a line or
+arrow, if the segment is nearly horizontal or vertical (within a
+few pixels), it snaps to exactly horizontal / vertical. Hold
+**Shift** to keep the literal angle.
+
+**Modifier cheat sheet**
+
+| You want to… | Press |
+|---|---|
+| Pan the image | **Ctrl + drag** (or middle-click drag) |
+| Zoom the image | **Ctrl + mouse-wheel**, or **Alt + +/−** |
+| Draw a new shape over an existing edge, ignoring snap | **Shift + drag** |
+| Draw a new shape over an existing edge, with snap on | **Ctrl + Shift + drag** |
+| Nudge a drag by one pixel | **Arrow keys** while dragging |
+| End a polyline chain | **Esc**, double-click, click the chain start / head, or close the polygon |
+| Make a regular Line into a polyline | Hold **Ctrl** when you release the mouse |

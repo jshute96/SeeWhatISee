@@ -382,8 +382,9 @@ fresh edit.
   at the click-release end. Barb length is 25% of the segment
   length, capped at 18 CSS px (scaled to natural pixels in the
   bake-in path).
-- **Polyline mode (Line / Arrow only)** — hold Ctrl (Cmd on macOS)
-  while drawing. See "Polyline mode" below.
+- **Polyline / Poly-arrow** — dedicated multi-segment line / arrow
+  tools. Each mouseup commits a segment and re-anchors the chain
+  head at the just-committed endpoint. See "Polyline mode" below.
 - **Redact** — drag paints a filled black rectangle live, matching
   the committed appearance — opaque fill that hides whatever was
   underneath in the saved PNG.
@@ -393,39 +394,144 @@ fresh edit.
   mouseup as a crop region; saved PNG is shrunk to the crop.
   Multiple crops stack; the most-recently-added active crop wins.
 
-### Polyline mode (Line / Arrow chains)
+### Snap-to during drags
 
-- Holding Ctrl (Cmd on macOS) while drawing with the Line or Arrow
-  tool chains successive segments into a polyline.
-- Entering: Ctrl-left mousedown on the overlay starts the first
-  segment. While the modifier is held, the Ctrl-left-pan branch
-  is suppressed for these two tools (pan is still reachable via
-  middle-click drag).
-- Per-segment commit: each mouseup commits a segment of the
-  selected kind (line or arrow) and re-anchors `dragStart` at
-  that endpoint so the next segment continues from there.
-- Between segments: mouse button is up, but `dragStart` stays
+- During any pointer-driven drag the moving target snaps onto nearby
+  "interesting" geometry within `SNAP_PX` (8 CSS px). Applies to:
+  - Fresh tool draws (Box / Line / Arrow / Redact / Crop) — both the
+    drag's *anchor* (mousedown) and its in-flight target snap.
+  - Box-edge / corner resize drags — the moving edge or corner snaps.
+  - Polyline segments — the segment endpoint snaps, with the chain
+    start as an extra target (closes the polygon and exits the chain
+    — see "Polyline mode" below).
+- Candidate snap targets, grouped into priority tiers (highest first). The closest candidate in the *highest non-empty
+  tier within radius* wins, so a slightly-further endpoint always
+  beats a slightly-closer corner or edge projection — a user aiming
+  near multiple features almost always means the most "feature-y"
+  one (a specific endpoint or corner), not whichever pixel happened
+  to be closest.
+  - **Tier 1 — endpoints**: each `(x1,y1)` / `(x2,y2)` of every
+    line / arrow edit, plus the polyline chain start (when drawing
+    a polyline; same target as segment 1's start endpoint).
+  - **Tier 2 — corners**: the four corners of every rect-shaped
+    edit (rect / redact / crop), plus the four corners of the image
+    bounding box.
+  - **Tier 3 — edges and line projections**: the nearest point on
+    any box edge (incl. the image bbox edges) — cursor is
+    perpendicular-projected onto the edge segment so a near-edge
+    slide "tracks" along it. Diagonal line / arrow edits get the
+    same treatment: the cursor projects onto the line segment, so
+    you can drop a new shape onto an existing diagonal.
+- A drag never snaps to its own geometry:
+  - Box-resize excludes the edit it's mutating.
+  - The image-edge "create a fresh crop" gesture additionally
+    excludes the image bbox (otherwise the dragged edge would
+    re-snap to itself).
+- Snap-disable rules:
+  - **Shift alone** — disables snap entirely *and* bypasses the
+    box-handle hit-test on mousedown (the existing "force a fresh
+    draw" affordance).
+  - **Ctrl/Cmd + Shift** — bypasses the box-handle hit-test like
+    Shift, but keeps snap on. Lets the user start a new shape exactly
+    against an existing handle.
+  - **Ctrl/Cmd alone** — always pans (uniform across tools).
+- Same priority tiers apply to box-resize axis snap, restricted to
+  the relevant axis: endpoint x's beat corner x's (and edge x's
+  collapse into corner x's for box-shaped edits, since each rect's
+  left/right edge x are also corner x's).
+- Box-resize snap is axis-aware, not cursor-aware:
+  - Snapping the *cursor* would offset the dragged edge by the
+    mousedown-inside-the-handle inset, so the edge would land near —
+    but not on — the target.
+  - Instead each free axis snaps independently: an east/west drag
+    looks at x candidates only, north/south at y candidates only,
+    and corner handles consider both. The cursor delta is then
+    shifted so the dragged edge sits exactly on the snap axis.
+- Snap is applied in the physical-mousemove and the mousedown path
+  but **not** in the arrow-key nudge path. So a user who landed on
+  a snap target with the mouse can still fine-tune one natural pixel
+  at a time from the keyboard without the snap pulling them back.
+- **Axis-align snap (line / arrow only)** — when the live drag is
+  within `SNAP_PX` of being horizontal or vertical relative to its
+  start anchor, the endpoint snaps onto that axis. Polyline segments
+  use the chain head (the previous segment's endpoint) as the
+  anchor, so each segment can be independently axis-aligned. Same
+  Shift / Ctrl+Shift modifiers govern: plain Shift disables, Ctrl+Shift
+  re-enables. Axis-align fires only when feature snap (tiers 1–3)
+  didn't grab the cursor — landing on an existing endpoint or corner
+  is stronger intent than "make it horizontal".
+- **Polyline self-anchor exclusion** — between polyline segments,
+  `dragStart` holds the previous segment's snapped endpoint, which
+  is also a committed line endpoint. The mid-chain preview's snap
+  candidate set drops anything within ~0.5 CSS px of that anchor,
+  so the in-flight endpoint can't pull back onto its own start.
+
+### Polyline mode (chained line / arrow segments)
+
+- A single state machine drives both polyline entry paths
+  (dedicated tool button, or Ctrl-promote of a regular Line/Arrow
+  draw at mouseup). Exit gestures fire from a handful of triggers
+  documented below.
+- **Entry — dedicated tools**:
+  - **Polyline** and **Poly-arrow** tools commit each segment as a
+    `line` / `arrow` edit while keeping the chain alive across
+    mouseups. No modifier required. Discoverable from the palette.
+- **Entry — Ctrl-promote shortcut**:
+  - A regular Line / Arrow tool draw whose **mouseup** sees Ctrl/Cmd
+    held promotes that segment to a chain (`polylineEntryWasCtrl`
+    is set). Lets a user who decided mid-draw to extend without
+    switching tools.
+  - Ctrl held at *mousedown* (or any time before mouseup) just pans
+    — like every other tool. The promote happens only at release.
+- **Per-segment commit**: each mouseup commits a segment of the
+  appropriate kind and re-anchors `dragStart` at that endpoint so
+  the next segment continues from there.
+- **Between segments**: mouse button is up, but `dragStart` stays
   set; `mousemove` keeps updating `dragCurrent`, so the live
   preview tracks the cursor from the previous endpoint.
-- Continuation gestures inside the chain:
-  - A click (mousedown + mouseup with no movement) commits the
-    segment from previous endpoint → click point, *if* it has
-    non-zero length. A click at the previous endpoint is a no-op
-    (still under `CLICK_THRESHOLD_PX`).
+- **Continuation gestures inside the chain**:
   - A drag commits the segment to the release point.
-- Exiting the chain — any of:
-  - Ctrl/Meta keyup ends the chain.
-    - Mid-drag: in-flight segment still commits (mouseup sees
-      `ctrlKey === false` and stops the chain naturally).
-    - Between segments: ghost preview is cleared immediately.
-  - Mouseup without Ctrl held — segment commits, chain ends.
-  - Switching to a non-Line/Arrow tool — `setSelectedTool`
-    aborts the chain and clears the in-flight segment.
-  - Window blur — defensive cleanup against missed keyups.
-- Arrow-key nudge composes with polyline mode. Each arrow press
+  - A click (mousedown + mouseup with no movement) commits the
+    segment from previous endpoint → click point, *if* the move
+    crossed `CLICK_THRESHOLD_PX` from the previous endpoint.
+- **Exit gestures — universal** (apply to both entry paths):
+  - **Esc** — clears the chain immediately. Capture phase so the
+    prompt textarea can't swallow the press.
+  - **Click on the chain head** — a click that doesn't cross
+    `CLICK_THRESHOLD_PX` from the previous endpoint *with the chain
+    already alive* finishes. Covers both "click on the previous
+    endpoint" and "double-click anywhere" (the dblclick's first
+    click commits a segment, the second click sits at that same
+    spot and ends).
+  - **Polygon close** — a segment that ends at the chain start
+    (snap-pulled or pixel-exact) commits as the closing edge and
+    finishes the chain. See "Polygon close" below.
+  - **Tool switch** — `setSelectedTool` clears any active chain.
+  - **Window blur** — defensive cleanup against missed keyups /
+    focus shifts.
+- **Exit gesture — Ctrl-promote only**: releasing Ctrl/Meta ends a
+  chain entered via the Ctrl-promote path (`polylineEntryWasCtrl ===
+  true`). Tool-entered chains ignore Ctrl release entirely.
+  - Mid-drag: in-flight segment still commits (the keyup clears the
+    chain markers but leaves `dragStart` / `dragCurrent` alive; the
+    upcoming mouseup runs the cleanup else-branch).
+  - Between segments: ghost preview is cleared immediately.
+- **Polygon close (exit gesture)** — the chain's first segment-start
+  is remembered as the chain start. A segment whose endpoint lands
+  on that point (typically via snap pulling onto it within
+  `SNAP_PX`) closes the polygon and finishes the chain: the closing
+  segment is committed normally, then the same cleanup as Esc fires.
+  This matches the user mental model "I traced back to where I
+  started, I'm done". Plain Shift suppresses snap so a near-start
+  click won't trigger this; an explicit click at the exact start
+  pixel still ends because the chain-start equality check is on the
+  committed segment's endpoint, not on whether snap fired.
+- **Arrow-key nudge** composes with polyline mode. Each arrow press
   still steps `dragCurrent` by one natural pixel; the keydown
-  handler's Ctrl/Meta gate is relaxed when `dragStart` is set so
-  the polyline-required modifier doesn't suppress nudges.
+  handler's Ctrl/Meta gate admits the Ctrl-held case only when a
+  Ctrl-promoted chain is active (or a Line/Arrow draw with Ctrl
+  held — the would-be promote moment). Tool-entered chains run with
+  the regular plain-Arrow nudge.
   - Works mid-drag (mouse held) and between segments (mouse not
     held, but `dragStart` is alive).
   - The mouseup that commits a polyline segment then re-anchors
@@ -541,7 +647,9 @@ fresh edit.
   skips the hit-test entirely and falls through to a tool draw,
   so the user can start a fresh box flush against an existing
   edge. Mirrored in the hover cursor: Shift-hovering an edge
-  shows the crosshair instead of the resize cursor.
+  shows the crosshair instead of the resize cursor. Plain Shift
+  also disables snap; Ctrl/Cmd + Shift bypasses the hit-test the
+  same way but keeps snap on (see "Snap-to during drags").
 - Small white grip squares mark the four corners of the active
   crop region (or the image's own corners when no crop exists).
   Rect / redact rely on their visible borders for the affordance —
