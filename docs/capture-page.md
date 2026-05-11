@@ -656,10 +656,16 @@ fresh edit.
 
 ### Full-image crop collapses to "no crop"
 
-- A crop with bounds `(0, 0, 100, 100)` is treated as no crop
-  everywhere: `activeCrop()` returns `undefined`, no dim overlay
-  or dashed border, bake-in skipped, and no `isCropped` flag on
-  the saved record.
+- A crop whose bounds reach `(0, 0, 100, 100)` (within a tiny EPS
+  slack, see below) is treated as no crop everywhere:
+  `activeCrop()` returns `undefined`, no dim overlay or dashed
+  border, bake-in skipped, and no `isCropped` flag on the saved
+  record.
+- The EPS slack (0.001%) absorbs float rounding from edge-handle
+  drags — `cssPx / r.width * 100` can land at e.g. 99.999… on
+  some viewport sizes. 0.001% is far below one natural pixel for
+  any plausible image size, so collapsing within that band is
+  indistinguishable from an exact full-image crop.
 - The edit stays in the stack so Undo can still walk back through
   it.
 - Fires when the user drags the crop back out to cover the entire

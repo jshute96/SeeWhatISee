@@ -1301,11 +1301,27 @@ function localCoords(e: MouseEvent): Point {
 // "no crop" everywhere: rendering, the `isCropped` flag on the
 // saved record, and the bake-in transform. The edit itself stays
 // in the stack so Undo can still walk back through it.
+//
+// The boundary check uses a small EPS slack because edge-handle
+// drags route the cursor through `cssPx / r.width * 100` and the
+// resulting percent can land at 99.999… instead of exactly 100 on
+// some viewport sizes. EPS is 0.001 percent — well under one
+// natural pixel even for very large images (1 px in 100 000 px),
+// so collapsing within that band is safely indistinguishable from
+// an exact full-image crop.
+const FULL_IMAGE_EPS = 0.001;
 function activeCrop(): RectEdit | undefined {
   for (let i = edits.length - 1; i >= 0; i--) {
     const e = edits[i]!;
     if (e.kind === 'crop') {
-      if (e.x === 0 && e.y === 0 && e.w === 100 && e.h === 100) return undefined;
+      if (
+        e.x <= FULL_IMAGE_EPS &&
+        e.y <= FULL_IMAGE_EPS &&
+        e.w >= 100 - FULL_IMAGE_EPS &&
+        e.h >= 100 - FULL_IMAGE_EPS
+      ) {
+        return undefined;
+      }
       return e;
     }
   }
