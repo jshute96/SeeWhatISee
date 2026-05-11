@@ -1093,19 +1093,24 @@
     font-size: 14px;
     font-weight: bold;
   }
-  /*
-   * `width: fit-content` shrinks the column to the widest button's
-   * intrinsic width; the column-flex default `align-items: stretch`
-   * then stretches the narrower siblings to that same width — so
-   * every palette button (tool selectors, Undo/Clear, Copy/Save)
-   * ends up sized to the longest label without us having to
-   * hardcode a width.
-   */
   .highlight-buttons {
-    display: flex;
-    flex-direction: column;
+    /* 2-column grid so the SVG-icon tool buttons (Box / Redact,
+     * Line / N-Line, Arrow / N-Arrow) pair up side-by-side, while
+     * every other button (Crop and the action buttons below it)
+     * spans both columns via the `:not(.tool-btn-icon)` rule below.
+     * `width: fit-content` collapses the grid to the widest spanning
+     * child — the longest word-button label — so the icon columns
+     * inherit a sensible width without us having to hardcode it. */
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 6px;
     width: fit-content;
+  }
+  /* Anything that isn't one of the icon tool buttons spans the full
+   * width of the grid — keeps word buttons looking the same as
+   * before (single column, label-width). */
+  .highlight-buttons > *:not(.tool-btn-icon) {
+    grid-column: 1 / -1;
   }
   .highlight-buttons button {
     padding: 6px 12px;
@@ -1117,8 +1122,18 @@
   }
   /* `.btn` shared chrome (raised look + hover/active/.pressed flash +
    * disabled) lives in src/shared-styles.css — linked above. */
-  /* Icon-only tool buttons (Box, Line). The SVG glyph centers
-   * horizontally in the wider button slot (sized by Crop/Redact). */
+  /* SVG-icon tool buttons. The `.highlight-buttons` prefix matches
+   * the specificity of `.highlight-buttons button` (which sets the
+   * default 6px 12px padding) so this rule actually wins. Slim
+   * horizontal padding keeps each icon button's min-content small
+   * enough that two of them plus the 6px gap fit inside the widest
+   * word-button label width — otherwise the grid would expand and
+   * shift the image pane to the right of where it sat before. */
+  .highlight-buttons .tool-btn-icon {
+    padding: 6px 6px;
+  }
+  /* The glyph centers horizontally in the grid cell; padding above
+   * gives the button height. */
   .tool-btn-icon svg {
     display: block;
     width: 22px;
@@ -1261,6 +1276,34 @@
         <polyline points="17.9,8.1 21,3 15,2.9"
               fill="none" stroke="red" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></polyline>
+      </symbol>
+      <!-- draw-polyline-icon: red zigzag (three connected segments,
+           rising-falling-rising) — mirrors what the N-Line tool draws:
+           a chain of straight segments end-to-end. Segments 1 and 3
+           share the (1,-1) direction (so they read as parallel);
+           segment 3 is longer than segment 1, leaving the matching
+           polyarrow icon below clear room for its arrowhead. -->
+      <symbol id="draw-polyline-icon" viewBox="0 0 24 16">
+        <polyline points="3,13 9,7 13,11 21,3"
+              fill="none" stroke="red" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></polyline>
+      </symbol>
+      <!-- draw-polyarrow-icon: same zigzag as draw-polyline-icon, with
+           an arrowhead at the final endpoint. Barb endpoints (~6 units
+           from tip, ±30° from the reverse of the last segment's
+           direction vector (8,-8)) frame the tip symmetrically. -->
+      <symbol id="draw-polyarrow-icon" viewBox="0 0 24 16">
+        <polyline points="3,13 9,7 13,11 21,3"
+              fill="none" stroke="red" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></polyline>
+        <polyline points="15.2,4.6 21,3 19.4,8.8"
+              fill="none" stroke="red" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></polyline>
+      </symbol>
+      <!-- draw-redact-icon: filled black rectangle, mirroring the
+           opaque cover the Redact tool paints. -->
+      <symbol id="draw-redact-icon" viewBox="0 0 24 16">
+        <rect x="2" y="2" width="20" height="12" fill="black"></rect>
       </symbol>
       <!-- Down-chevron glyph for the Ask split-button caret. -->
       <symbol id="caret-down-icon" viewBox="0 0 24 24">
@@ -1662,10 +1705,10 @@
   <hr data-capture-main>
 
   <!--
-    Image + drawing-tool sidebar. The user picks one of the four
-    tool buttons in the panel to the left of the image, then drags
-    on the image to commit an edit of that kind. See the
-    `.tool-btn` block below for the per-tool details.
+    Image + drawing-tool sidebar. The user picks a tool button in
+    the panel to the left of the image, then drags on the image to
+    commit an edit of that kind. See the `.tool-btn` block below
+    for the per-tool details.
   -->
   <div class="image-and-highlights" data-capture-main>
     <div class="highlight-controls">
@@ -1676,52 +1719,63 @@
         `.selected`. Each tool's drag paints what it will commit so
         the user sees the final result live: tool-box → red rect,
         tool-line → red line, tool-redact → filled black rect,
+        tool-polyline / tool-polyarrow → multi-segment chains,
         tool-crop → dim-frame cropped preview. Mouseup commits the edit.
         Undo / Clear are *actions*, not modes — they're separated
         from the tool group by an extra top-margin on #undo.
       -->
       <div class="highlight-buttons">
+        <!--
+          The icon tools flow row-by-row into a 2-column grid (see
+          .highlight-buttons CSS) — Box/Redact (rectangles),
+          Line/N-Line, Arrow/N-Arrow — so each polyline variant
+          sits adjacent to its single-segment sibling. The
+          dedicated N-Line / N-Arrow tools make polyline mode
+          discoverable from the palette — the Ctrl-on-release
+          modifier path on Line/Arrow still works as a power-user
+          shortcut.
+        -->
         <button id="tool-box" class="tool-btn tool-btn-icon btn selected"
                 type="button" data-tool="rect"
                 title="Draw boxes" aria-label="Draw boxes"
                 aria-pressed="true">
           <svg aria-hidden="true"><use href="#draw-box-icon"></use></svg>
         </button>
+        <button id="tool-redact" class="tool-btn tool-btn-icon btn"
+                type="button" data-tool="redact"
+                title="Draw black redaction boxes"
+                aria-label="Draw black redaction boxes"
+                aria-pressed="false">
+          <svg aria-hidden="true"><use href="#draw-redact-icon"></use></svg>
+        </button>
         <button id="tool-line" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="line"
-                title="Draw lines&#10;Hold Ctrl for multi-line"
+                title="Draw lines"
                 aria-label="Draw lines"
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-line-icon"></use></svg>
         </button>
+        <button id="tool-polyline" class="tool-btn tool-btn-icon btn"
+                type="button" data-tool="polyline"
+                title="Draw multi-segment lines"
+                aria-label="Draw multi-segment lines"
+                aria-pressed="false">
+          <svg aria-hidden="true"><use href="#draw-polyline-icon"></use></svg>
+        </button>
         <button id="tool-arrow" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="arrow"
-                title="Draw arrows&#10;Hold Ctrl on release for polyline"
+                title="Draw arrows"
                 aria-label="Draw arrows"
                 aria-pressed="false">
           <svg aria-hidden="true"><use href="#draw-arrow-icon"></use></svg>
         </button>
-        <!--
-          Dedicated polyline tools. Visually placeholder for now (text
-          labels next to the icon tools) — kept here so the polyline
-          mode is discoverable via the palette instead of requiring the
-          Ctrl modifier on Line/Arrow. The Ctrl-on-release modifier
-          path on Line/Arrow still works as a power-user shortcut.
-          Each segment commits as a regular 'line' / 'arrow' edit; the
-          tool drives the chain semantics (entry, exit gestures).
-        -->
-        <button id="tool-polyline" class="tool-btn btn"
-                type="button" data-tool="polyline"
-                title="Draw multi-segment lines&#10;Esc, double-click, or click the chain head to finish"
-                aria-pressed="false">N-Line</button>
-        <button id="tool-polyarrow" class="tool-btn btn"
+        <button id="tool-polyarrow" class="tool-btn tool-btn-icon btn"
                 type="button" data-tool="polyarrow"
-                title="Draw multi-segment arrows&#10;Esc, double-click, or click the chain head to finish"
-                aria-pressed="false">N-Arrow</button>
-        <button id="tool-redact" class="tool-btn btn"
-                type="button" data-tool="redact"
-                title="Drag to add a black redaction box"
-                aria-pressed="false">Redact</button>
+                title="Draw multi-segment arrows"
+                aria-label="Draw multi-segment arrows"
+                aria-pressed="false">
+          <svg aria-hidden="true"><use href="#draw-polyarrow-icon"></use></svg>
+        </button>
         <button id="tool-crop" class="tool-btn btn"
                 type="button" data-tool="crop"
                 title="Drag to crop to a region"

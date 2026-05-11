@@ -348,17 +348,24 @@ fresh edit.
 - Bold "Edit image" header (matches the "Prompt:" label's
   weight/size so the two field titles read as siblings) sits above
   the column.
-- Buttons stack vertically, all sized to the widest label. The
-  column has clusters separated by 14px gaps:
-  - Box, Line, Arrow, Redact, Crop (tool selectors).
+- Layout is a 2-column grid (`.highlight-buttons` `display: grid`).
+  The SVG-icon tool buttons flow row-by-row into the two columns;
+  everything else spans both columns. Clusters are separated by
+  14px top-margin on the first button of each cluster:
+  - Tool selectors:
+    - Box, Redact (rectangle outline / filled black box).
+    - Line, N-Line (diagonal line / red zigzag).
+    - Arrow, N-Arrow (diagonal line / red zigzag, each ending in
+      an arrowhead at the upper-right tip).
+    - Crop (word button, full width).
   - Shrink (image-content transform — its own cluster because it
     rewrites a rect's geometry from pixel data, not the edit stack).
+  - Zoom (display-only transform; popover menu picks the mode).
   - Undo, Clear (edit-stack actions).
   - Copy, Save (image-level actions — Copy puts the *current* PNG
     bytes on the clipboard; Save opens the native save-as dialog).
-- Box / Line / Arrow use red icons (rectangle outline, diagonal
-  line, diagonal line with arrowhead); the rest use text labels.
-  Default selected tool is Box.
+- Every tool selector uses a red SVG icon (`.tool-btn-icon`); the
+  other buttons use text labels. Default selected tool is Box.
 - Selected button gets `.selected` (darker face + inset shadow)
   and `aria-pressed="true"`. Tool selection fires on `mousedown`
   (not `click`) so the previously-selected tool deselects the
