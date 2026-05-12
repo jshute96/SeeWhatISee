@@ -2498,6 +2498,367 @@ test('drawing: snap-to: polyline preview does not pull back onto the previous en
   await openerPage.close();
 });
 
+test('drawing: polyline click in the edge-commit buffer outside the image commits at the edge instead of cancelling', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Commit segment 1 inside the image to make the chain alive.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + r.w * 0.2, r.y + r.h * 0.2);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + r.w * 0.4, r.y + r.h * 0.4);
+  await capturePage.mouse.up();
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBe('line');
+
+  // Click 12 px past the image's right edge — inside the 16 px
+  // edge-commit buffer, and inside `imageBox` (Fit mode keeps the
+  // box wider than the image-wrap, so there's gray space here).
+  // The chain should commit a second segment ending at the image's
+  // right edge (clamped by `localCoords`) and stay alive.
+  const aimX = r.x + r.w + 12;
+
+  await capturePage.mouse.move(aimX, r.y + r.h * 0.4);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  // Chain is still alive — buffer hits don't cancel.
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBe('line');
+  const lines = await readAllLines(capturePage, 'line');
+  // Two committed segments: segment 1, then segment 2 ending at
+  // the visible-pane right edge.
+  expect(lines).toHaveLength(2);
+  // Segment 2's far x must be at the visible-pane right edge —
+  // i.e., 100 % of natural width (within a fraction of a percent
+  // for the round-trip CSS↔natural conversion).
+  expect(lines[1]!.x2).toBeGreaterThan(99);
+
+  await openerPage.close();
+});
+
+test('drawing: polyline click on the image-box scrollbar gutter neither commits nor cancels (zoomed)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Zoom in so the image overflows and `imageBox` shows a vertical
+  // scrollbar. Then make the chain alive with a single segment.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom(2),
+  );
+  await capturePage.locator('#tool-polyline').click();
+  const layout = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLElement;
+    const br = box.getBoundingClientRect();
+    return {
+      boxLeft: br.left, boxTop: br.top, boxRight: br.right,
+      boxBottom: br.bottom,
+      // Right scrollbar gutter starts at (boxLeft + clientWidth)
+      // and ends at boxRight.
+      contentRight: br.left + box.clientWidth,
+      contentBottom: br.top + box.clientHeight,
+    };
+  });
+  // Sanity: a scrollbar must actually be present for this test to
+  // exercise the carve-out.
+  expect(layout.boxRight - layout.contentRight).toBeGreaterThan(2);
+
+  // Commit segment 1 inside the visible image.
+  const start = { x: layout.boxLeft + 40, y: layout.boxTop + 40 };
+  const end1  = { x: layout.boxLeft + 80, y: layout.boxTop + 80 };
+  await capturePage.mouse.move(start.x, start.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(end1.x, end1.y);
+  await capturePage.mouse.up();
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBe('line');
+  const before = (await readAllLines(capturePage, 'line')).length;
+
+  // Click in the middle of the right scrollbar gutter — inside
+  // `imageBox`'s bounding rect but past its content area.
+  const scrollX = (layout.contentRight + layout.boxRight) / 2;
+  const scrollY = layout.boxTop + 40;
+  await capturePage.mouse.move(scrollX, scrollY);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  // Chain unchanged: no segment committed, chain still alive.
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBe('line');
+  const after = (await readAllLines(capturePage, 'line')).length;
+  expect(after).toBe(before);
+
+  await openerPage.close();
+});
+
+test('drawing: arrow-key nudge clamps at the visible-pane edge, not the image edge (zoomed)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Arrow nudges drive `dragCurrent` directly, so they bypass the
+  // mouse-event coord clamp. They have their own clamp inside the
+  // keydown handler — verify *that* clamp is the visible-pane rect
+  // too, not raw imgRect. Without the fix, a long press of
+  // ArrowRight under any Nx zoom would walk the drag target deep
+  // into the scrolled-out portion of the image where the user
+  // can't see it. 8× zoom keeps the press-count low (each press
+  // steps ≈ 8 / DPR CSS px) so the test stays under a second.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom(8),
+  );
+  const layout = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const br = box.getBoundingClientRect();
+    const ir = img.getBoundingClientRect();
+    return {
+      visRight: br.left + box.clientWidth,
+      visTop: Math.max(br.top, ir.top),
+      imgLeft: ir.left, imgRight: ir.right, imgW: ir.width,
+    };
+  });
+  // Sanity: image must overflow the box for the test to mean
+  // anything (visible right is strictly inside image right).
+  expect(layout.imgRight).toBeGreaterThan(layout.visRight + 1);
+
+  // Start a Box draw well inside the visible pane, then mash
+  // ArrowRight far past the count needed to reach the visible edge.
+  // Each press steps by `r.width / naturalWidth` CSS px (≈ 8 / DPR
+  // at 8× zoom), so 400 presses moves the target well over a
+  // thousand CSS px — comfortably past `visRight` regardless of
+  // DPR.
+  const x1 = layout.imgLeft + 20;
+  const y1 = layout.visTop + 20;
+  await capturePage.mouse.move(x1, y1);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(x1 + 5, y1 + 5);
+  for (let i = 0; i < 400; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.up();
+
+  // Convert the committed rect's east edge (stored as % of natural
+  // width) back to a viewport-x. With the visible-pane clamp it
+  // must sit at visRight ± slop; without it the value would be at
+  // imgRight (well past visRight).
+  const bounds = await readLastBounds(capturePage, 'rect');
+  expect(bounds).not.toBeNull();
+  const eastCss = layout.imgLeft + ((bounds!.x + bounds!.w) / 100) * layout.imgW;
+  expect(eastCss).toBeGreaterThan(layout.visRight - 2);
+  expect(eastCss).toBeLessThan(layout.visRight + 2);
+
+  await openerPage.close();
+});
+
+test('drawing: drag past the visible-pane edge commits at the visible edge, not off-pane (zoomed)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Zoom in so the image extends past the image-box's content area
+  // (Fit mode has visible-pane == imgRect, which wouldn't exercise
+  // the new clamp). 2× is enough that the rightmost portion of the
+  // image lives in the scroll overflow, off-screen.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom(2),
+  );
+
+  // Read the image-box's content rect (clientWidth excludes the
+  // scrollbar) and the image's rect. With image-wrap pinned to the
+  // box's top-left in 2× mode, `vis.right` sits at
+  // `boxRect.left + clientWidth` (the content area's right edge),
+  // well to the left of `imgRect.right`.
+  const layout = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const br = box.getBoundingClientRect();
+    const ir = img.getBoundingClientRect();
+    return {
+      visRight: br.left + box.clientWidth,
+      visTop: Math.max(br.top, ir.top),
+      visBottom: Math.min(br.top + box.clientHeight, ir.bottom),
+      imgLeft: ir.left, imgTop: ir.top, imgW: ir.width, imgH: ir.height,
+    };
+  });
+  // Sanity: the image must actually overflow the box's content area
+  // for this test to mean anything.
+  expect(layout.imgLeft + layout.imgW).toBeGreaterThan(layout.visRight + 1);
+
+  // Mousedown inside the visible pane, drag past `visRight` toward
+  // the palette. With the new clamp, the committed line's far X (in
+  // CSS coords) must sit at `visRight` rather than at the cursor's
+  // (off-pane) position.
+  await capturePage.locator('#tool-line').click();
+  const startCss = { x: layout.imgLeft + 20, y: layout.visTop + 40 };
+  const aimCss = { x: layout.visRight + 100, y: layout.visTop + 40 };
+  await capturePage.mouse.move(startCss.x, startCss.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move((startCss.x + aimCss.x) / 2, startCss.y);
+  await capturePage.mouse.move(aimCss.x, aimCss.y);
+  await capturePage.mouse.up();
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(1);
+  // Convert the stored x2 percent (of natural width) back to CSS coords.
+  // The image's CSS-pixel scale is `imgW / natW`; the stored coord is a
+  // percent of natural width, so `(x2/100) * imgW` gives image-relative
+  // CSS px, and adding `imgLeft` lands in viewport coords.
+  const endXcss = layout.imgLeft + (lines[0]!.x2 / 100) * layout.imgW;
+  // Allow ~1 px of slop: Chrome rounds clientX to an integer, the
+  // box's right edge can sit at a fractional CSS pixel, and the
+  // round-trip through percent introduces small drift.
+  expect(endXcss).toBeGreaterThan(layout.visRight - 2);
+  expect(endXcss).toBeLessThan(layout.visRight + 2);
+
+  await openerPage.close();
+});
+
+test('drawing: polyline chain ends when clicking the palette Save button (and Save still fires)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await installPageDownloadSpy(capturePage);
+
+  // Make the chain alive: enter N-Line mode and commit segment 1.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + r.w * 0.2, r.y + r.h * 0.2);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + r.w * 0.4, r.y + r.h * 0.4);
+  await capturePage.mouse.up();
+  const aliveKind = await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(aliveKind).toBe('line');
+
+  // Click the Save button. Should both (a) end the chain — the
+  // document-capture mousedown listener fires first, ends the chain,
+  // and doesn't preventDefault — and (b) still trigger the save
+  // (the button's click handler runs as if no polyline was in flight).
+  await capturePage.locator('#download-image-btn').click();
+  await waitForPageDownloads(capturePage, 1);
+
+  const endedKind = await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(endedKind).toBeNull();
+  const dls = await readPageDownloads(capturePage);
+  expect(dls).toHaveLength(1);
+  expect(dls[0].filename).toBe('screenshot.png');
+
+  await openerPage.close();
+});
+
+test('drawing: polyline chain ends when clicking the prompt textarea', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Commit segment 1 to make the chain alive.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  await capturePage.mouse.move(r.x + r.w * 0.2, r.y + r.h * 0.2);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(r.x + r.w * 0.4, r.y + r.h * 0.4);
+  await capturePage.mouse.up();
+  // Sanity: chain is alive before we click outside.
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBe('line');
+
+  // Click on the prompt textarea — a non-image, non-button click target.
+  // Cancels the chain and lets the textarea receive focus normally.
+  await capturePage.locator('#prompt-text').click();
+
+  expect(
+    await capturePage.evaluate(
+      () => (window as unknown as {
+        __seeState: { polylineKind: () => string | null };
+      }).__seeState.polylineKind(),
+    ),
+  ).toBeNull();
+  // The click should have given the textarea focus — the listener
+  // never calls preventDefault, so default click→focus still runs.
+  const focusedId = await capturePage.evaluate(
+    () => (document.activeElement as HTMLElement | null)?.id ?? null,
+  );
+  expect(focusedId).toBe('prompt-text');
+
+  await openerPage.close();
+});
+
 test('drawing: snap-to: box-resize edge drag snaps the moving edge onto another box edge', async ({
   extensionContext,
   fixtureServer,

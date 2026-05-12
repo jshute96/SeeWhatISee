@@ -343,6 +343,28 @@ of that tool's kind. There's no right-click drawing, and no
 in-place "convert this rect to a crop / redact" — every drag is a
 fresh edit.
 
+### Cursor clamping to the visible pane
+
+- All drawing-tool coordinates flow through `localCoords()`, which
+  clamps the *reported point* to the visible image rect (the OS
+  cursor still goes wherever the user drags — we only translate it
+  to a clamped image-relative coord).
+- The visible rect is the intersection of the image's bounding
+  rect and the image-box's content area (`clientWidth/Height`, so
+  the scrollbar gutter doesn't count).
+- The arrow-key nudge handler clamps the same way, so synthetic
+  nudges can't walk the cursor past the visible edge either.
+- In Fit mode the image fits the viewport and visible-pane equals
+  the image rect, so clamping is a no-op.
+- In Nx zoom modes the image extends past the box. Without the
+  clamp, a drag that strays past the viewport would commit
+  endpoints in scrolled-out regions the user can't see; with it,
+  shapes pin to the visible edge instead. Same applies to each
+  polyline segment's commit.
+- The matching `isOverVisibleImage(vx, vy)` half-plane test is what
+  the polyline cancel-on-outside-click handler and the zoom focal-
+  point check both consult.
+
 ### Tool palette
 
 - Bold "Edit image" header (matches the "Prompt:" label's
@@ -513,6 +535,38 @@ fresh edit.
   - **Polygon close** — a segment that ends at the chain start
     (snap-pulled or pixel-exact) commits as the closing edge and
     finishes the chain. See "Polygon close" below.
+  - **Click outside the visible image** — a left-mousedown landing
+    outside the visible image is routed by zone (first match
+    wins):
+    - *On the visible image* — overlay's own bubble-phase handler
+      runs; the document-capture listener does nothing.
+    - *On an `imageBox` scrollbar gutter* — let the browser
+      scroll. The chain stays alive; no segment commits. Scrolling
+      is a navigation gesture, not a draw or a cancel.
+    - *Within `EDGE_COMMIT_BUFFER_PX` of the visible image edge*
+      — forgive the overshoot and commit a segment at the
+      visible-pane edge. The check is a pure distance test, with
+      no container gate; the page layout keeps every interactable
+      element farther than the buffer width from the image, so
+      palette / prompt clicks naturally fall into the next zone.
+      The listener sets `polylineMouseHeld = true` and the window
+      mouseup runs the normal commit branch using `dragCurrent`
+      (already clamped to the visible edge by `localCoords`).
+      Chain stays alive for the next segment.
+    - *Anywhere else past the buffer* (palette, prompt, zoom menu
+      popover, page background) — end the chain and let the click
+      propagate to its real target. No `preventDefault`. Capture
+      phase so the chain is gone before the click target's
+      bubble-phase handlers fire, e.g. Save / Copy / Undo run
+      their normal action in one user gesture.
+    - Middle-click pan (button 1) and right-click (button 2) are
+      exempt from all of the above: neither feels like "clicking
+      somewhere else", and middle-click pan is a legitimate way
+      to reposition the image mid-chain.
+    - `window.mouseup` carries a
+      `polylineLineKind !== null && !polylineMouseHeld` guard so
+      a mouseup whose mousedown was the scrollbar case (no flag
+      set) doesn't accidentally commit a stray segment.
   - **Tool switch** — `setSelectedTool` clears any active chain.
   - **Window blur** — defensive cleanup against missed keyups /
     focus shifts.

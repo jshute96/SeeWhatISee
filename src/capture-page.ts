@@ -1336,11 +1336,38 @@ function imgRect(): DOMRect {
   return previewImg.getBoundingClientRect();
 }
 
+// The *visible* image pane, in viewport coords: the intersection of
+// the image's bounding rect and the image-box's content area
+// (`clientWidth/Height` to exclude scrollbars). In Fit mode this
+// equals `imgRect`. In Nx zoom modes the image extends past the
+// box and only a smaller scroll-window is on screen — clamping to
+// this rect (rather than the raw image) keeps drag previews and
+// polyline segments from drifting into scrolled-out regions the
+// user can't see.
+function visibleImageRect(): { left: number; top: number; right: number; bottom: number } {
+  const r = imgRect();
+  const boxRect = imageBox.getBoundingClientRect();
+  return {
+    left: Math.max(boxRect.left, r.left),
+    top: Math.max(boxRect.top, r.top),
+    right: Math.min(boxRect.left + imageBox.clientWidth, r.right),
+    bottom: Math.min(boxRect.top + imageBox.clientHeight, r.bottom),
+  };
+}
+
 function localCoords(e: MouseEvent): Point {
   const r = imgRect();
+  // Clamp the cursor to the visible-pane rect (see
+  // `visibleImageRect` above), then express in image-relative
+  // coords. Off-screen cursor positions get pinned to the nearest
+  // visible edge, so any drag commit / polyline segment ends at a
+  // point the user can actually see.
+  const v = visibleImageRect();
+  const vx = Math.min(Math.max(e.clientX, v.left), v.right);
+  const vy = Math.min(Math.max(e.clientY, v.top), v.bottom);
   return {
-    x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
-    y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
+    x: vx - r.left,
+    y: vy - r.top,
   };
 }
 
@@ -2440,6 +2467,17 @@ window.addEventListener('mouseup', (e) => {
   if (dragStart === null) return;
   // Left button only matches the mousedown gate.
   if (e.button !== 0) return;
+  // Stray mouseup during an *active* polyline chain — every
+  // legitimate polyline mousedown (line-family tool entry,
+  // overlay continuation, edge-commit buffer) sets
+  // `polylineMouseHeld = true` on press. Press paths that
+  // deliberately don't set it (image-box scrollbar clicks, which
+  // the cancel-on-outside listener lets fall through to the
+  // browser's scroll behaviour) shouldn't commit on the matching
+  // release. Scoped to chain-active state — fresh Box / Crop /
+  // Redact draws never set the flag either, and that's normal:
+  // they fall through to the commit branch as before.
+  if (polylineLineKind !== null && !polylineMouseHeld) return;
   // Mouse is no longer held — ends the keyup handler's mid-drag
   // window. Cleared even when the upcoming branches end up
   // commit-or-skip in different ways.
@@ -2692,10 +2730,14 @@ window.addEventListener('keydown', (e) => {
   const natH = previewImg.naturalHeight;
   const stepX = natW > 0 ? r.width / natW : 1;
   const stepY = natH > 0 ? r.height / natH : 1;
-  // Clamp to the image rect — mirrors `localCoords` so the
-  // synthetic cursor can't wander outside the visible image pane.
-  const nextX = Math.max(r.left, Math.min(r.right, lastMousePos.x + dx * stepX));
-  const nextY = Math.max(r.top,  Math.min(r.bottom, lastMousePos.y + dy * stepY));
+  // Clamp to the visible-pane rect — mirrors `localCoords` so the
+  // synthetic cursor can't wander past what the user can see, even
+  // when zoomed and a chunk of the image lives in the scroll
+  // overflow. Plain `imgRect` would let a string of nudges drift
+  // the drag target into scrolled-out territory.
+  const v = visibleImageRect();
+  const nextX = Math.max(v.left, Math.min(v.right, lastMousePos.x + dx * stepX));
+  const nextY = Math.max(v.top,  Math.min(v.bottom, lastMousePos.y + dy * stepY));
   if (nextX === lastMousePos.x && nextY === lastMousePos.y) return;
   lastMousePos = { x: nextX, y: nextY };
   // Drive the drag handler directly with the float-precise position.
@@ -2706,8 +2748,8 @@ window.addEventListener('keydown', (e) => {
   // to the integer pre-press position and successive presses would
   // never accumulate.
   updateDragFromLocalPoint({
-    x: Math.max(0, Math.min(r.width, nextX - r.left)),
-    y: Math.max(0, Math.min(r.height, nextY - r.top)),
+    x: nextX - r.left,
+    y: nextY - r.top,
   });
 }, true);
 
@@ -2760,6 +2802,59 @@ window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (polylineLineKind === null) return;
   e.preventDefault();
+  endPolylineChain();
+}, true);
+
+// ─── Polyline-mode behavior for clicks outside the visible image ─
+//
+// While a chain is alive, a left-mousedown lands in one of the
+// zones below; this listener routes them. Capture phase so we run before
+// any bubble-phase handlers on the click target — Save / Copy /
+// Undo / textarea-focus all happen *after* the chain decision is
+// made, so the user gets a single intentional action either way.
+//
+// Zones (checked in order; the first match wins):
+//
+//   1. On the visible image — the overlay's own bubble-phase
+//      mousedown handler runs the polyline-continuation branch.
+//      We don't touch the event.
+//   2. On an `imageBox` scrollbar gutter — let the browser scroll
+//      the image. The chain stays alive untouched; scrolling is
+//      navigation, not a draw or a cancel. Checked before the
+//      buffer test because in zoomed modes the scrollbar sits
+//      flush against the visible-pane edge.
+//   3. In the `EDGE_COMMIT_BUFFER_PX` halo just outside the
+//      visible image — forgive the overshoot and commit the
+//      segment at the visible-pane edge. The check is a pure
+//      distance test (no container gate): the layout keeps every
+//      interactable element farther than the buffer width from
+//      the image, so palette / prompt clicks naturally fall into
+//      zone 4 instead. We swallow the event (preventDefault +
+//      stopPropagation) and set `polylineMouseHeld`; the window
+//      mouseup then fires the normal commit branch using
+//      `dragCurrent` (already clamped to the visible edge by the
+//      window-mousemove handler's `localCoords` call).
+//   4. Anywhere else (deeper into the page — palette, prompt,
+//      zoom menu popover, page background) — end the chain and
+//      let the click propagate to its real target, no
+//      `preventDefault`.
+//
+// Middle-click pan (button 1) and right-click context menu
+// (button 2) are exempt — neither feels like "click somewhere
+// else", and middle-click pan is a legitimate way to reposition
+// the image mid-chain.
+document.addEventListener('mousedown', (e) => {
+  const me = e as MouseEvent;
+  if (me.button !== 0) return;
+  if (polylineLineKind === null) return;
+  if (isOverVisibleImage(me.clientX, me.clientY)) return;
+  if (isOverImageBoxScrollbar(me.clientX, me.clientY)) return;
+  if (isWithinEdgeCommitBuffer(me.clientX, me.clientY)) {
+    me.preventDefault();
+    me.stopPropagation();
+    polylineMouseHeld = true;
+    return;
+  }
   endPolylineChain();
 }, true);
 
@@ -3426,23 +3521,49 @@ function nextZoomIndex(curIdx: number, dir: 1 | -1): number {
   return i;
 }
 
-// Is the viewport coord (vx, vy) over the *visible* image — inside
-// both the image's rect AND the box's content area? Just-imgRect
-// doesn't work in Nx mode where the image extends past the box
-// bounds: a cursor on a scrollbar gutter would still test inside
-// imgRect. `clientWidth / clientHeight` exclude the scrollbars, so
-// intersecting imgRect with the box rect clipped to content gives
-// the actually-visible image area.
+// Is the viewport coord (vx, vy) over the *visible* image? Wraps
+// `visibleImageRect` (which already does the imgRect ∩ box-content
+// intersection, so a cursor over a scrollbar gutter or past the
+// scroll edge reads as outside) with an open-right / open-bottom
+// half-plane test — keeps the rect treatment consistent with the
+// `clientX < right` style used elsewhere.
 function isOverVisibleImage(vx: number, vy: number): boolean {
-  const r = imgRect();
-  const boxRect = imageBox.getBoundingClientRect();
-  const visLeft = Math.max(boxRect.left, r.left);
-  const visTop = Math.max(boxRect.top, r.top);
-  const visRight = Math.min(boxRect.left + imageBox.clientWidth, r.right);
-  const visBottom = Math.min(boxRect.top + imageBox.clientHeight, r.bottom);
+  const v = visibleImageRect();
+  return vx >= v.left && vx < v.right && vy >= v.top && vy < v.bottom;
+}
+
+// Forgiveness halo for the polyline cancel-on-outside-click rule.
+// A click within `EDGE_COMMIT_BUFFER_PX` of the visible image
+// edge commits the next segment at the nearest image edge
+// (`localCoords` already clamps the cursor there) instead of
+// cancelling the chain. The check is symmetric on all four sides
+// — buffer is measured purely as distance from the visible image
+// rect, with no container-bounds gate, so the user gets the same
+// forgiveness whether they overshoot toward the palette, the
+// prompt, or the gray space on the right / bottom.
+const EDGE_COMMIT_BUFFER_PX = 16;
+function isWithinEdgeCommitBuffer(vx: number, vy: number): boolean {
+  const v = visibleImageRect();
+  const B = EDGE_COMMIT_BUFFER_PX;
   return (
-    vx >= visLeft && vx < visRight &&
-    vy >= visTop && vy < visBottom
+    vx >= v.left - B && vx < v.right + B &&
+    vy >= v.top - B && vy < v.bottom + B
+  );
+}
+
+// Image-box's scrollbar gutter in viewport coords: inside the
+// box's bounding rect but past its content area (clientWidth /
+// clientHeight exclude scrollbars). Clicking on a gutter is a
+// scroll gesture — neither a draw nor a cancel — so the polyline
+// cancel-on-outside-click rule explicitly carves this region out.
+function isOverImageBoxScrollbar(vx: number, vy: number): boolean {
+  const box = imageBox.getBoundingClientRect();
+  const contentRight = box.left + imageBox.clientWidth;
+  const contentBottom = box.top + imageBox.clientHeight;
+  return (
+    vx >= box.left && vx < box.right &&
+    vy >= box.top && vy < box.bottom &&
+    (vx >= contentRight || vy >= contentBottom)
   );
 }
 
