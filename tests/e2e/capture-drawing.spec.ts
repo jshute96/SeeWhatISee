@@ -1976,12 +1976,33 @@ test('drawing: snap-to: line endpoint snaps to the nearest point on a box edge',
 
   const lines = await readAllLines(capturePage, 'line');
   expect(lines).toHaveLength(1);
+  // Sub-pixel-drift trap: `dragRect` uses `#overlay` coords for its
+  // mouse positions, but the rect-edit and line-edit percentages are
+  // stored against `imgRect()` in capture-page.ts, which can be a
+  // fraction of a pixel offset *and* can shift between the rect-
+  // commit and the line-commit (e.g. layout settling). Re-read the
+  // image rect now so we're decoding both percentages in the same
+  // frame as the line was committed in; converted back, the line's
+  // endpoint should land at the aim's viewport y exactly and at the
+  // rect's west edge (which lives at `rectB.x` in any frame, since
+  // both `rectB.x` and the snap target round-trip through the same
+  // imgRect at line-commit time).
+  const rectB = (await readLastBounds(capturePage, 'rect'))!;
   const endXcss = r.x + (lines[0]!.x2 / 100) * r.w;
   const endYcss = r.y + (lines[0]!.y2 / 100) * r.h;
-  // Projects onto the west edge: x = rectNW.x, y = aim.y (already
-  // between the edge's top and bottom).
-  expect(endXcss).toBeCloseTo(rectNW.x, 0);
-  expect(endYcss).toBeCloseTo(aim.y, 0);
+  // Snap target on this path:
+  //   - x lands on the rect's west edge — derived from `rectB.x`
+  //     (rather than `rectNW.x = r.x + r.w * 0.3`) because Playwright
+  //     hands mouse coords to the page as integers (`MouseEvent.client*`
+  //     is `long` per spec), so the rect-edit's stored percentages
+  //     come out fractionally below 0.3 / 0.5 of `r`. The corner test
+  //     above documents the same trap.
+  //   - y matches the aim's cursor row, but again — `aim.y = 456.8`
+  //     arrives in the page as `456`, so we compare against
+  //     `Math.floor(aim.y)`.
+  const westEdgeXcss = r.x + (rectB.x / 100) * r.w;
+  expect(endXcss).toBeCloseTo(westEdgeXcss, 0);
+  expect(endYcss).toBeCloseTo(Math.floor(aim.y), 0);
 
   await openerPage.close();
 });
