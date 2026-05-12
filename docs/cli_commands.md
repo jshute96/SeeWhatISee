@@ -120,33 +120,41 @@ field on the record. See
 ## Scripts
 
 ```
-skills/claude-plugin/                ← Claude plugin install tree
-  scripts/see-what-i-see_common.sh                        (shared helpers; sourced by each per-skill script)
+skills/claude-plugin/                ← Claude plugin install tree (mirrored into ../SeeWhatISee-claude/plugin/)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see
+  skills/see-what-i-see/scripts/see-what-i-see_common.sh    (shared helpers; sourced via sibling-relative paths)
   skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop
 skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
   skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see
-  skills/see-what-i-see/scripts/see-what-i-see_common.sh         (shared helpers; sourced via sibling-relative paths)
+  skills/see-what-i-see/scripts/see-what-i-see_common.sh    (shared helpers; sourced via sibling-relative paths)
   skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
 ```
 
-Each install tree is self-contained. The plugin tree ships as
-part of the Claude Code plugin; the Gemini tree is mirrored into
-the `../SeeWhatISee-gemini` release repo (which users install as a
+Each install tree is self-contained, and on both sides each skill
+under `skills/<skill>/` carries its own `scripts/` dir — no
+plugin-root-level `scripts/` dir. The plugin tree ships as part
+of the Claude Code plugin (mirrored into the
+`../SeeWhatISee-claude` release repo by
+`skills/copy-claude-plugin-release.sh`); the Gemini tree is
+mirrored into `../SeeWhatISee-gemini` (which users install as a
 Gemini extension) by `skills/copy-gemini-extension-release.sh`.
 
-The Gemini side has only one `see-what-i-see_common.sh`. It lives
-next to the `see-what-i-see` script that owns it; the other scripts
+Both sides keep `see-what-i-see_common.sh` next to the
+`see-what-i-see` skill's main script (the owner); other skills
 that need it reach in via sibling-relative paths:
 
-- `see-what-i-see-watch/scripts/watch-and-copy.sh` sources it as
+- **Claude.** `see-what-i-see-watch/scripts/watch.sh` and
+  `see-what-i-see-stop/scripts/stop.sh` each `source` it as
   `../../see-what-i-see/scripts/see-what-i-see_common.sh`.
-- `see-what-i-see-xtract/scripts/copy-last-snapshot.sh` is a
-  wrapper that `exec`s the see-what-i-see version directly, which
-  in turn sources the common.sh next to itself.
+- **Gemini.** `see-what-i-see-watch/scripts/watch-and-copy.sh`
+  sources it the same way.
+- **Gemini xtract alias.**
+  `see-what-i-see-xtract/scripts/copy-last-snapshot.sh` is a
+  wrapper that `exec`s the see-what-i-see version directly,
+  which in turn sources the common.sh next to itself.
 
 ### The outer scripts
 
@@ -179,14 +187,17 @@ Key differences:
 
 ### Per-tree `see-what-i-see_common.sh` helpers
 
-Each install tree has its own `see-what-i-see_common.sh`:
+Each install tree has its own `see-what-i-see_common.sh`, owned
+by that tree's `see-what-i-see` skill:
 
-- `skills/claude-plugin/scripts/see-what-i-see_common.sh` — sourced by every
-  per-skill script in the Claude plugin tree via
-  `../../../scripts/see-what-i-see_common.sh`.
+- `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
+  — Claude-side helpers.
 - `skills/dot-gemini/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
-  — owns the Gemini-side helpers; other Gemini skills that need
-  them reach in sibling-relative (see the tree above).
+  — Gemini-side helpers.
+
+Sibling skills source whichever one they need via
+`../../see-what-i-see/scripts/see-what-i-see_common.sh` (see the
+tree above).
 
 The two files have overlapping concerns but distinct function sets
 — they're kept separate because each side's helper is tuned to

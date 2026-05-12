@@ -30,12 +30,12 @@ SeeWhatISee-claude/                  # release repo
 └── plugin/
     ├── .claude-plugin/
     │   └── plugin.json              # plugin manifest (name, ...)
-    ├── scripts/                     # only see-what-i-see_common.sh; each skill bundles its own main script
-    │   └── see-what-i-see_common.sh # shared helpers (dir resolution, kill_existing, absolutize_paths)
     └── skills/
         ├── see-what-i-see/
         │   ├── SKILL.md
-        │   └── scripts/get-latest.sh # sources ../../../scripts/see-what-i-see_common.sh
+        │   └── scripts/
+        │       ├── get-latest.sh
+        │       └── see-what-i-see_common.sh  # shared helpers (dir resolution, kill_existing, absolutize_paths)
         ├── see-what-i-see-watch/
         │   ├── SKILL.md
         │   └── scripts/watch.sh      # filesystem watcher; supports --stop
@@ -44,6 +44,11 @@ SeeWhatISee-claude/                  # release repo
         │   └── scripts/stop.sh       # small, dedicated stop-only script
         └── see-what-i-see-help/SKILL.md  # no scripts; help text only
 ```
+
+`see-what-i-see_common.sh` is owned by the `see-what-i-see`
+skill; the other skills' scripts reach in sibling-relative via
+`../../see-what-i-see/scripts/see-what-i-see_common.sh`. No
+plugin-root-level `scripts/` dir.
 
 In **this** repo, those release directories are mirrored under
 `skills/` with prefixed names so they don't collide with the dev-repo's
@@ -246,12 +251,13 @@ two are relevant here.
   cache, not the plugin root.
 - Usable in `allowed-tools` patterns and inline in the skill body.
 - This is what our SKILL.md bodies reference: e.g. the watcher skill runs
-  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each consuming skill bundles its
-  own main script under `plugin/skills/<name>/scripts/` (release-repo
-  path; dev-repo equivalent under `skills/claude-plugin/skills/<name>/scripts/`),
-  and they all source the single shared
-  `plugin/scripts/see-what-i-see_common.sh` via a `..`-traversal that
-  stays inside the plugin root.
+  `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each skill bundles its own
+  `scripts/` dir under `plugin/skills/<name>/scripts/` (release-repo
+  path; dev-repo equivalent under `skills/claude-plugin/skills/<name>/scripts/`).
+  `see-what-i-see_common.sh` lives next to the `see-what-i-see`
+  skill's main script; the other skills' scripts source it via a
+  sibling-relative `../../see-what-i-see/scripts/see-what-i-see_common.sh`
+  that stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
   the plugin layout. It also keeps each `allowed-tools` pattern scoped to
@@ -387,10 +393,13 @@ check — run it before committing any manifest changes.
 - **`..` in skill script paths.** Plugins cached from a marketplace
   can't traverse outside the plugin root via `../`. Keep shared
   scripts inside the plugin dir.
-  - Our per-skill scripts `source` the shared `see-what-i-see_common.sh` via
-    `../../../scripts/see-what-i-see_common.sh`, which goes up to the plugin root
-    and back down — that's allowed. What's disallowed is escaping the
-    plugin root entirely.
+  - The sibling skills (`watch`, `stop`) `source` the shared
+    `see-what-i-see_common.sh` via
+    `../../see-what-i-see/scripts/see-what-i-see_common.sh` — up
+    two levels out of their own `scripts/`, across to the
+    `see-what-i-see` skill, and back down into its `scripts/`.
+    That's allowed because it stays inside the plugin root. What's
+    disallowed is escaping the plugin root entirely.
 - **Relative-path sources only work over git.** If we ever distribute
   the marketplace as a direct URL to `marketplace.json`, we'd need to
   switch the plugin entry to a `github`/`url` source.
@@ -418,9 +427,10 @@ check — run it before committing any manifest changes.
   That broke on Windows clones with `core.symlinks=false`, which check the
   symlinks out as plain text files. The current layout side-steps the
   problem by putting each main script in a real
-  `plugin/skills/<name>/scripts/` directory and keeping only
-  `see-what-i-see_common.sh` at `plugin/scripts/`. The per-skill scripts
-  source `see-what-i-see_common.sh` via `..`-traversal (no symlinks
-  involved). The dev-repo `scripts/` symlinks at the project root are
-  still symlinks, but those are local-dev / test conveniences and not
-  part of the plugin payload that gets installed.
+  `plugin/skills/<name>/scripts/` directory, with no plugin-root
+  `scripts/` dir at all. `see-what-i-see_common.sh` lives next to the
+  `see-what-i-see` skill's own scripts; the other skills source it via
+  `../../see-what-i-see/scripts/see-what-i-see_common.sh` (`..`-traversal,
+  no symlinks involved). The dev-repo `scripts/` symlinks at the
+  project root are still symlinks, but those are local-dev / test
+  conveniences and not part of the plugin payload that gets installed.

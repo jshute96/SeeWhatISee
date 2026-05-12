@@ -262,22 +262,25 @@ provided:
 Layout:
 
 - Each skill that needs a script bundles it in its own
-  `skills/claude-plugin/skills/<name>/scripts/` directory.
-- A single `see-what-i-see_common.sh` lives at
-  `skills/claude-plugin/scripts/see-what-i-see_common.sh` (the only file left
-  under `skills/claude-plugin/scripts/`) and is `source`d by every
-  per-skill script.
+  `skills/claude-plugin/skills/<name>/scripts/` directory. No
+  plugin-root-level `scripts/` dir.
+- The shared `see-what-i-see_common.sh` lives next to its owning
+  skill's main script, at
+  `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`.
+  Sibling skills source it via
+  `../../see-what-i-see/scripts/see-what-i-see_common.sh`.
 - The repo-root `scripts/` directory has symlinks to the per-skill
   scripts so e2e tests and ad-hoc CLI use can find them at a
   stable path.
 
 The scripts:
 
-- `skills/claude-plugin/scripts/see-what-i-see_common.sh` — shared helpers
-  sourced by the per-skill scripts: directory resolution (config
-  file, `--directory`, default), config parsing, `absolutize_paths`
-  (rewrites bare filenames in JSON to absolute paths via sed),
-  and `kill_existing` (kills a watcher recorded in a pidfile).
+- `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
+  — shared helpers sourced by every per-skill script: directory
+  resolution (config file, `--directory`, default), config
+  parsing, `absolutize_paths` (rewrites bare filenames in JSON to
+  absolute paths via sed), and `kill_existing` (kills a watcher
+  recorded in a pidfile).
 - `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`
   — reads the last line of `log.json` and prints a single JSON
   record with absolute paths to stdout. Used by `/see-what-i-see`.

@@ -24,9 +24,9 @@ set -euo pipefail
 
 # ---- Defaults ---------------------------------------------------------------
 
-# This script is DIR/skills/see-what-i-see/scripts/watch.sh,
-# and needs to run DIR/scripts/see-what-i-see_common.sh.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/see-what-i-see_common.sh"
+# see-what-i-see_common.sh is owned by the see-what-i-see skill;
+# reach into its scripts/ dir sibling-relative.
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../see-what-i-see/scripts/see-what-i-see_common.sh"
 
 DIR=""
 LOOP=false

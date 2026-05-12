@@ -1,1 +1,1 @@
-../skills/dot-gemini/scripts/copy-last-snapshot.sh
+../skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh

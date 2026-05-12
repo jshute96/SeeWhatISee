@@ -2,9 +2,7 @@
 # Print the latest capture record as JSON with absolute file paths.
 set -euo pipefail
 
-# This script is DIR/skills/see-what-i-see/scripts/get-latest.sh,
-# and needs to run DIR/scripts/see-what-i-see_common.sh.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../scripts/see-what-i-see_common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/see-what-i-see_common.sh"
 
 DIR=""
 

@@ -68,8 +68,8 @@ Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skill
 | File | Description |
 |------|-------------|
 | `skills/claude-plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `skills/claude-plugin/scripts/see-what-i-see_common.sh` | Shared helpers sourced by the per-skill scripts: directory resolution, config parsing, JSON path absolutization, `kill_existing` watcher pidfile helper |
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` | Print latest capture as JSON with absolute file paths |
+| `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh` | Shared helpers sourced by every per-skill script (sibling-relative): directory resolution, config parsing, JSON path absolutization, `kill_existing` watcher pidfile helper |
 | `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | CLI command to watch for new updates to `log.json` (also accepts `--stop` as a convenience) |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Small script that just stops a running watcher — used by `/see-what-i-see-stop` |
 
@@ -89,20 +89,18 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | File | Description |
 |------|-------------|
 | `skills/dot-gemini/gemini-extension.json` | Gemini extension manifest — installed at the release-repo root |
-| `skills/dot-gemini/scripts/see-what-i-see_common.sh` | Shared Gemini-script helpers — directory resolution, log.json mtime, per-record copy + path rewrite |
-| `skills/dot-gemini/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `see-what-i-see_common.sh`'s `emit_record` |
-| `skills/dot-gemini/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
+| `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` | Emits the latest record from `log.json` via `see-what-i-see_common.sh`'s `emit_record` |
+| `skills/dot-gemini/skills/see-what-i-see/scripts/see-what-i-see_common.sh` | Shared Gemini-script helpers (sibling-relative source target) — directory resolution, log.json mtime, per-record copy + path rewrite |
+| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | Emits one new capture per invocation — supports `--after TIMESTAMP` for loop catch-up and `--help` |
+| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Thin wrapper — execs the sibling `see-what-i-see/scripts/copy-last-snapshot.sh` so the alias shares one implementation |
 
-**NOTE: the commands below are generated from `skills/`, do not edit directly**
+**NOTE: the SKILL.md files below are generated from `skills/`, do not edit directly**
 
 | File | Description |
 |------|-------------|
-| `skills/dot-gemini/commands/see-what-i-see.toml` | Gemini CLI command — describes the latest capture (uses `copy-last-snapshot.sh`) |
-| `skills/dot-gemini/commands/see-what-i-see-watch.toml` | Gemini CLI command — foreground watch loop that describes each new capture (uses `watch-and-copy.sh`) |
-| `skills/dot-gemini/skills/see-what-i-see/SKILL.md` | Skill-format translation of `see-what-i-see.toml` — same body, YAML frontmatter |
-| `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | Skill-format translation of `see-what-i-see-watch.toml` — same body, YAML frontmatter |
+| `skills/dot-gemini/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture (Gemini side) |
+| `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — foreground loop that describes each new capture |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
-| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Thin wrapper — execs the sibling `see-what-i-see/scripts/copy-last-snapshot.sh` so the alias shares one implementation |
 
 ## Extension Source (`src/`)
 
@@ -155,10 +153,10 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |
-| `scripts/copy-last-snapshot.sh` | Symlink to `skills/dot-gemini/scripts/copy-last-snapshot.sh` |
+| `scripts/copy-last-snapshot.sh` | Symlink to `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` |
 | `scripts/get-latest.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` |
 | `scripts/stop.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` |
-| `scripts/watch-and-copy.sh` | Symlink to `skills/dot-gemini/scripts/watch-and-copy.sh` |
+| `scripts/watch-and-copy.sh` | Symlink to `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` |
 | `scripts/watch.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` |
 
 ## Tests (`tests/`)
