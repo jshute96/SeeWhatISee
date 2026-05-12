@@ -7,7 +7,11 @@
 
 set -e
 
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/see-what-i-see_common.sh"
+# Plain $(dirname ...) — no readlink -f. Install layouts (Gemini
+# extension dir, repo-root scripts/ wrappers) never invoke us via a
+# symlink, so $BASH_SOURCE[0] points at our real install path.
+# Avoiding readlink -f keeps us portable to BSD readlink (macOS <= 12.2).
+source "$(dirname "${BASH_SOURCE[0]}")/see-what-i-see_common.sh"
 resolve_target_dir
 
 # Fail if log.json is not found

@@ -269,9 +269,13 @@ Layout:
   `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`.
   Sibling skills source it via
   `../../see-what-i-see/scripts/see-what-i-see_common.sh`.
-- The repo-root `scripts/` directory has symlinks to the per-skill
-  scripts so e2e tests and ad-hoc CLI use can find them at a
-  stable path.
+- The repo-root `scripts/` directory holds one-line `exec` wrappers
+  for the per-skill scripts, so e2e tests and ad-hoc CLI use can
+  find them at a stable path.
+- These used to be symlinks. The shipped scripts now use plain
+  `dirname` (no `readlink -f`, for BSD `readlink` portability —
+  macOS ≤ 12.2), and `dirname` of a symlink doesn't follow it. A
+  wrapper sidesteps that.
 
 The scripts:
 

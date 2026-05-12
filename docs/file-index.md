@@ -153,11 +153,11 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |
-| `scripts/copy-last-snapshot.sh` | Symlink to `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` |
-| `scripts/get-latest.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` |
-| `scripts/stop.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` |
-| `scripts/watch-and-copy.sh` | Symlink to `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` |
-| `scripts/watch.sh` | Symlink to `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` |
+| `scripts/copy-last-snapshot.sh` | Dev-convenience wrapper — `exec`s `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` |
+| `scripts/get-latest.sh` | Dev-convenience wrapper — `exec`s `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` |
+| `scripts/stop.sh` | Dev-convenience wrapper — `exec`s `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` |
+| `scripts/watch-and-copy.sh` | Dev-convenience wrapper — `exec`s `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` |
+| `scripts/watch.sh` | Dev-convenience wrapper — `exec`s `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` |
 
 ## Tests (`tests/`)
 

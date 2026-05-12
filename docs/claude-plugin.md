@@ -422,15 +422,20 @@ check — run it before committing any manifest changes.
   and it was ignored, so the file was removed (commit `0aaee35`).
   Permission gating now relies entirely on skill-level `allowed-tools`
   frontmatter plus the user-level workaround above.
-- **No symlinks inside the plugin tree.** An earlier iteration had per-skill
-  `scripts` symlinks pointing back at a single `plugin/scripts/`.
-  That broke on Windows clones with `core.symlinks=false`, which check the
-  symlinks out as plain text files. The current layout side-steps the
-  problem by putting each main script in a real
-  `plugin/skills/<name>/scripts/` directory, with no plugin-root
-  `scripts/` dir at all. `see-what-i-see_common.sh` lives next to the
-  `see-what-i-see` skill's own scripts; the other skills source it via
-  `../../see-what-i-see/scripts/see-what-i-see_common.sh` (`..`-traversal,
-  no symlinks involved). The dev-repo `scripts/` symlinks at the
-  project root are still symlinks, but those are local-dev / test
-  conveniences and not part of the plugin payload that gets installed.
+- **No symlinks inside the plugin tree.**
+  - **Why.** An earlier iteration had per-skill `scripts` symlinks
+    pointing back at a single `plugin/scripts/`. That broke on
+    Windows clones with `core.symlinks=false`, which check the
+    symlinks out as plain text files.
+  - **Current layout.** Each main script sits in a real
+    `plugin/skills/<name>/scripts/` directory; no plugin-root
+    `scripts/` dir. `see-what-i-see_common.sh` lives next to the
+    `see-what-i-see` skill's own scripts.
+  - **How sibling skills share `common.sh`.** They source it via
+    `../../see-what-i-see/scripts/see-what-i-see_common.sh` —
+    `..`-traversal inside the plugin root, no symlinks involved.
+  - **Dev-repo `scripts/<x>.sh`.** One-line `exec` wrappers (not
+    symlinks): the shipped scripts use plain
+    `$(dirname "${BASH_SOURCE[0]}")` and `dirname` of a symlink
+    doesn't follow it. Local-dev / test convenience only, not part
+    of the plugin payload.
