@@ -44,6 +44,12 @@ user before elaborating further. Default to action over planning.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
 
+## Running tests
+- Prefer running a single test file over `npm test` — the full suite (Playwright e2e) is slow.
+  - Unit: `node --test tests/unit/<file>.test.mjs`
+  - E2E: `npx playwright test tests/e2e/<file>.spec.ts`
+- When you do need a full run, start it with Bash `run_in_background: true` so it doesn't block the turn.
+
 ## Dev repo vs. release repos for skills
 
 This repo holds **development source**. Users install from separate
