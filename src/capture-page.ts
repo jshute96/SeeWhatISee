@@ -589,6 +589,7 @@ function formatImageDataUrl(
 // hierarchy — TypeScript won't let us cast directly across the
 // branches without a `unknown` bridge.
 const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
+const edgesSvg = document.getElementById('viewport-edges') as unknown as SVGSVGElement;
 const imageBox = document.querySelector('.image-box') as HTMLDivElement;
 const highlightControls = document.querySelector(
   '.highlight-controls',
@@ -1347,11 +1348,17 @@ function imgRect(): DOMRect {
 function visibleImageRect(): { left: number; top: number; right: number; bottom: number } {
   const r = imgRect();
   const boxRect = imageBox.getBoundingClientRect();
+  // `clientLeft / clientTop` are the box's border widths — both 0
+  // today since `.image-box` carries no CSS border, but added
+  // defensively so a future border doesn't silently clamp drags
+  // one pixel past the content area.
+  const contentLeft = boxRect.left + imageBox.clientLeft;
+  const contentTop = boxRect.top + imageBox.clientTop;
   return {
-    left: Math.max(boxRect.left, r.left),
-    top: Math.max(boxRect.top, r.top),
-    right: Math.min(boxRect.left + imageBox.clientWidth, r.right),
-    bottom: Math.min(boxRect.top + imageBox.clientHeight, r.bottom),
+    left: Math.max(contentLeft, r.left),
+    top: Math.max(contentTop, r.top),
+    right: Math.min(contentLeft + imageBox.clientWidth, r.right),
+    bottom: Math.min(contentTop + imageBox.clientHeight, r.bottom),
   };
 }
 
@@ -1391,6 +1398,28 @@ function localCoords(e: MouseEvent): Point {
 // so collapsing within that band is safely indistinguishable from
 // an exact full-image crop.
 const FULL_IMAGE_EPS = 0.001;
+// The "effective crop region" used to position the dim frame, the
+// dashed border, and the corner grips: the live drag bounds if a
+// crop drag is in flight (either a Crop-tool *creation* drag or a
+// handle *resize* drag), else the committed `activeCrop`, else
+// the implicit full image (returned to callers as `undefined`).
+function computeCropPreview(): { x: number; y: number; w: number; h: number } | undefined {
+  if (selectedTool === 'crop' && dragStart && dragCurrent) {
+    const r = imgRect();
+    return {
+      x: (Math.min(dragStart.x, dragCurrent.x) / r.width) * 100,
+      y: (Math.min(dragStart.y, dragCurrent.y) / r.height) * 100,
+      w: (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100,
+      h: (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100,
+    };
+  } else if (boxDrag && boxDrag.kind === 'crop') {
+    return { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH };
+  }
+  const crop = activeCrop();
+  if (crop) return { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
+  return undefined;
+}
+
 function activeCrop(): RectEdit | undefined {
   for (let i = edits.length - 1; i >= 0; i--) {
     const e = edits[i]!;
@@ -1974,6 +2003,35 @@ function render(): void {
   const r = imgRect();
   const w = r.width;
   const h = r.height;
+  // Solid black image-edge border: a 1 px stroke centered at
+  // half-pixel offsets one pixel outside the image on each side, with
+  // each side extending 1 px past the corner so the four lines meet
+  // flush. `#overlay` is `overflow: visible`, so these are allowed to
+  // paint outside the SVG's nominal viewBox; `.image-box`'s
+  // `overflow: auto` then clips the segments that scroll out of the
+  // viewport — which is the "shows up if inside the scrolled pane"
+  // behavior we want. Drawn first so subsequent overlay children
+  // (annotations, crop dashes, grips) paint on top — the grip
+  // squares occlude the border at corners just like the prior
+  // CSS-border-with-SVG-overlay did.
+  {
+    const lines: Array<[number, number, number, number]> = [
+      [-0.5, -1, -0.5, h + 1],         // left
+      [w + 0.5, -1, w + 0.5, h + 1],   // right
+      [-1, -0.5, w + 1, -0.5],         // top
+      [-1, h + 0.5, w + 1, h + 0.5],   // bottom
+    ];
+    for (const [x1, y1, x2, y2] of lines) {
+      const el = document.createElementNS(SVG_NS, 'line');
+      el.setAttribute('x1', String(x1));
+      el.setAttribute('y1', String(y1));
+      el.setAttribute('x2', String(x2));
+      el.setAttribute('y2', String(y2));
+      el.setAttribute('stroke', '#000');
+      el.setAttribute('stroke-width', '1');
+      overlay.appendChild(el);
+    }
+  }
   // Stroke width for the user's artistic edits (Box / Line / Arrow):
   // tracks the visual size of the image, dropping by 1 px at each
   // halving below 1× until it bottoms out at 1 px. Crop dashes and
@@ -2045,23 +2103,7 @@ function render(): void {
   // result live while dragging — including a Crop-tool create
   // drag, where the dim frame appears under the bounds the user
   // is currently dragging.
-  let cropPreview:
-    | { x: number; y: number; w: number; h: number }
-    | undefined;
-  if (selectedTool === 'crop' && dragStart && dragCurrent) {
-    const r = imgRect();
-    cropPreview = {
-      x: (Math.min(dragStart.x, dragCurrent.x) / r.width) * 100,
-      y: (Math.min(dragStart.y, dragCurrent.y) / r.height) * 100,
-      w: (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100,
-      h: (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100,
-    };
-  } else if (boxDrag && boxDrag.kind === 'crop') {
-    cropPreview = { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH };
-  } else {
-    const crop = activeCrop();
-    if (crop) cropPreview = { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
-  }
+  const cropPreview = computeCropPreview();
   if (cropPreview) {
     const cx = (cropPreview.x / 100) * w;
     const cy = (cropPreview.y / 100) * h;
@@ -2191,6 +2233,104 @@ function render(): void {
   updateImageSizeBadge();
   composeImageBadgeText();
 }
+
+// Viewport-edge indicators. The "real" image-edge border (solid
+// black, 1 px outside the image) is drawn inside `#overlay` and so
+// scrolls with the image — clipped naturally by `.image-box`'s
+// `overflow: auto` when it slips off-screen. When that happens on a
+// given side, we paint a "virtual" replacement at the corresponding
+// viewport edge instead: a 1 px dashed medium-grey line spanning the
+// same perpendicular extent as the original border would have, just
+// shifted onto the viewport edge.
+//
+// The virtual lines live in a separate top-level SVG (`#viewport-
+// edges`) that sits *outside* `.image-box`'s scroll region, sized
+// and positioned each call to cover the box's content area
+// (excluding scrollbars). Painting above `.image-box` puts the
+// dashed line on top of user annotations near the edge, which is
+// what we want — a red box drawn flush against the image edge
+// shouldn't visually replace the viewport indicator.
+//
+// Edge detection compares the image's measured rect against the
+// box's content area (rather than scroll offsets) so it picks up
+// the wrap's 4 px margin: scrolling 0..4 px keeps the image's actual
+// left edge still inside the viewport, no virtual border yet.
+// 0.5 px tolerance covers Chrome's fractional readouts on HiDPI.
+const EDGE_DASHED_COLOR = '#aaa';
+function drawViewportEdges(): void {
+  // Size + position the SVG to overlay `.image-box`'s content area.
+  // `offsetParent` is `.image-and-highlights` (made `position:
+  // relative` for this purpose). `clientLeft / clientTop` shift past
+  // any border on `.image-box` (currently 0); `clientWidth /
+  // clientHeight` exclude scrollbars so the dashed line never paints
+  // over a scrollbar gutter.
+  const boxRect = imageBox.getBoundingClientRect();
+  const parent = (imageBox.offsetParent as HTMLElement | null) ?? document.body;
+  const parentRect = parent.getBoundingClientRect();
+  const contentX = boxRect.left + imageBox.clientLeft - parentRect.left;
+  const contentY = boxRect.top + imageBox.clientTop - parentRect.top;
+  const vW = imageBox.clientWidth;
+  const vH = imageBox.clientHeight;
+  edgesSvg.style.left = contentX + 'px';
+  edgesSvg.style.top = contentY + 'px';
+  edgesSvg.style.width = vW + 'px';
+  edgesSvg.style.height = vH + 'px';
+
+  while (edgesSvg.firstChild) edgesSvg.removeChild(edgesSvg.firstChild);
+
+  // Image rect in SVG-local coords (SVG (0,0) = box content top-left).
+  const imgR = previewImg.getBoundingClientRect();
+  const iL = imgR.left - (boxRect.left + imageBox.clientLeft);
+  const iT = imgR.top - (boxRect.top + imageBox.clientTop);
+  const iR = iL + imgR.width;
+  const iB = iT + imgR.height;
+
+  // "Show the virtual replacement" once the real border is at least
+  // half-clipped. The real left-side line strokes the column from
+  // `iL-1` to `iL`; that column is fully visible iff `iL >= 1`,
+  // fully clipped iff `iL <= 0`, and half-covered at `iL = 0.5`. We
+  // hand off at the half-coverage mark — earlier than that would
+  // briefly stack the virtual on top of a still-visible real line;
+  // later (e.g. `iL < 0` or `< -0.5`) would leave a 0.5-1 px window
+  // along the edge where neither line is drawn.
+  const leftOff   = iL < 0.5;
+  const rightOff  = iR > vW - 0.5;
+  const topOff    = iT < 0.5;
+  const bottomOff = iB > vH - 0.5;
+
+  if (!(leftOff || rightOff || topOff || bottomOff)) return;
+
+  // Perpendicular extents — same as where the real black border
+  // went (1 px past each image corner). SVG `overflow: hidden`
+  // clips anything past the viewport bounds.
+  const yTop = iT - 1;
+  const yBot = iB + 1;
+  const xLeft = iL - 1;
+  const xRight = iR + 1;
+
+  const dashed = (x1: number, y1: number, x2: number, y2: number): void => {
+    const el = document.createElementNS(SVG_NS, 'line');
+    el.setAttribute('x1', String(x1));
+    el.setAttribute('y1', String(y1));
+    el.setAttribute('x2', String(x2));
+    el.setAttribute('y2', String(y2));
+    el.setAttribute('stroke', EDGE_DASHED_COLOR);
+    el.setAttribute('stroke-width', '1');
+    el.setAttribute('stroke-dasharray', '4 3');
+    edgesSvg.appendChild(el);
+  };
+
+  // Half-pixel inset of the dashed line from the viewport edge
+  // keeps the 1 px stroke landing on a single pixel row/column.
+  if (leftOff)   dashed(0.5,      yTop,    0.5,      yBot);
+  if (rightOff)  dashed(vW - 0.5, yTop,    vW - 0.5, yBot);
+  if (topOff)    dashed(xLeft,    0.5,     xRight,   0.5);
+  if (bottomOff) dashed(xLeft,    vH - 0.5, xRight,  vH - 0.5);
+}
+
+// Pan via `.image-box` scroll changes which sides have scrolled-out
+// content, so the per-side dashed indicator needs to re-evaluate.
+imageBox.addEventListener('scroll', drawViewportEdges, { passive: true });
 
 overlay.addEventListener('mousedown', (e) => {
   const me = e as MouseEvent;
@@ -3224,10 +3364,11 @@ const ZOOM_LABELS: Record<string, string> = {
 // the viewport's bottom and the body's bottom margin.
 //
 // The image's available area is the box's content area minus
-//   - 2 × `WRAP_MARGIN` (the .image-wrap's outer margin, which keeps
-//     the corner crop grips from being clipped by the box's
-//     `overflow: auto`).
-//   - 2 px (the .image-wrap's 1 px borders, top and bottom).
+// 2 × `WRAP_MARGIN` (the .image-wrap's outer margin, which keeps
+// the corner crop grips from being clipped by the box's
+// `overflow: auto`). `.image-box` and `.image-wrap` have no CSS
+// borders of their own — the image-edge black line is drawn in
+// `#overlay` 1 px outside the image, inside the wrap's halo.
 //
 // `imageBox.style.maxHeight` is *not* cleared before measuring: the
 // box's top is set by elements above it in the flex row (the
@@ -3241,9 +3382,8 @@ const WRAP_MARGIN = 4;
 function availableImageHeight(): { box: number; image: number } {
   const top = imageBox.getBoundingClientRect().top;
   const bodyMargin = 24;
-  const wrapBorders = 2;
   const box = Math.max(0, window.innerHeight - top - bodyMargin);
-  const image = Math.max(0, box - 2 * WRAP_MARGIN - wrapBorders);
+  const image = Math.max(0, box - 2 * WRAP_MARGIN);
   return { box, image };
 }
 
@@ -3283,8 +3423,11 @@ function applyZoom(): void {
     // assign explicit pixel `width` and `height`. No surprises, no
     // overflow. Sizes are derived from `targetCssSize()` (1× CSS
     // dimensions) so Fit's `Math.min(1, …)` ceiling matches 1×.
+    // `clientWidth` excludes the box's border regardless of
+    // `box-sizing`, so it's already the box's inner content area.
+    // The wrap's outer footprint inside is its own margins + border.
     const boxW = imageBox.clientWidth;
-    const wMax = Math.max(0, boxW - 2 * WRAP_MARGIN - 2);
+    const wMax = Math.max(0, boxW - 2 * WRAP_MARGIN);
     const hMax = avail.image;
     const { w: targetW, h: targetH } = targetCssSize();
     if (targetW > 0 && targetH > 0 && wMax > 0 && hMax > 0) {
@@ -3319,6 +3462,11 @@ function applyZoom(): void {
     previewImg.style.maxHeight = 'none';
   }
   render();
+  // Zoom changes both the image's measured rect and the viewport's
+  // size (the box's maxHeight is also reset above), so the dashed
+  // virtual-edge SVG needs a re-layout + redraw. The scroll listener
+  // catches user-driven pans on its own.
+  drawViewportEdges();
 }
 
 // Pre-zoom alias retained because callers historically wired this
@@ -3558,8 +3706,11 @@ function isWithinEdgeCommitBuffer(vx: number, vy: number): boolean {
 // cancel-on-outside-click rule explicitly carves this region out.
 function isOverImageBoxScrollbar(vx: number, vy: number): boolean {
   const box = imageBox.getBoundingClientRect();
-  const contentRight = box.left + imageBox.clientWidth;
-  const contentBottom = box.top + imageBox.clientHeight;
+  // Inner content-area edges; see the matching note in
+  // `visibleImageRect`. `clientLeft / clientTop` would shift the
+  // origin past any CSS border (both 0 today, defensive).
+  const contentRight = box.left + imageBox.clientLeft + imageBox.clientWidth;
+  const contentBottom = box.top + imageBox.clientTop + imageBox.clientHeight;
   return (
     vx >= box.left && vx < box.right &&
     vy >= box.top && vy < box.bottom &&

@@ -981,6 +981,9 @@
     display: flex;
     align-items: flex-start;
     gap: 24px;
+    /* Containing block for the absolutely-positioned `#viewport-edges`
+       SVG that overlays `.image-box` from outside its scroll region. */
+    position: relative;
   }
   /*
    * Image-box is the scrollable viewport in non-Fit zoom modes.
@@ -990,6 +993,13 @@
    * the image itself caps at max-width/max-height of the box so no
    * scrollbars appear. JS sets the box's max-height and the
    * image's sizing on every applyZoom() / resize.
+   *
+   * The visible image edge (solid black, 1 px outside the image) is
+   * drawn inside `#overlay` and scrolls with the image; the
+   * viewport-edge replacement (dashed medium grey, drawn when the
+   * image extends past a side of the viewport) is drawn in the
+   * separate `#viewport-edges` SVG that overlays this element from
+   * outside its scroll region — see `drawViewportEdges()`.
    */
   .image-box {
     flex: 1;
@@ -1000,7 +1010,9 @@
      edges so the corner-aligned crop grips (drawn centered on each
      corner — half inside, half outside the image) have a halo of
      box-content area to paint into without hitting `.image-box`'s
-     `overflow: auto` clipping edge. */
+     `overflow: auto` clipping edge. The image-edge black border
+     (drawn 1 px outside the image in `#overlay`) lives inside this
+     same halo. */
   .image-wrap {
     position: relative;
     display: inline-block;
@@ -1010,10 +1022,20 @@
        past .image-box's max-height in Fit mode and producing a
        phantom vertical scrollbar even when the math added up. */
     vertical-align: top;
-    border: 1px solid #888;
     line-height: 0;
     font-size: 0;
     margin: 4px;
+  }
+  /* Viewport-edge dashed indicators. JS sizes this SVG to cover
+     `.image-box`'s content area (excluding scrollbars). It paints
+     above `.image-box` (later in DOM order) so the dashed lines
+     overlay any user annotations that touch the viewport edge.
+     `pointer-events: none` keeps clicks falling through to the
+     scrollbar gutters and the overlay below. */
+  #viewport-edges {
+    position: absolute;
+    pointer-events: none;
+    overflow: hidden;
   }
   .image-box img {
     display: block;
@@ -1831,6 +1853,7 @@
         <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
     </div>
+    <svg id="viewport-edges" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
   <!--

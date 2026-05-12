@@ -1348,8 +1348,35 @@ re-activation is required:
 - Re-runs on window resize, after the prompt textarea grows
   (image's top moves down), and on image load.
 - Available content height (for the image itself) is the box
-  height minus `2 * WRAP_MARGIN` (4 px each side) and the wrap's
-  borders (1 px each side). See `availableImageHeight()`.
+  height minus `2 * WRAP_MARGIN` (4 px each side). See
+  `availableImageHeight()`. `.image-box` and `.image-wrap` carry no
+  CSS borders — the image-edge line is drawn in `#overlay` (see
+  below).
+- Edges — two co-operating lines, both drawn by JS:
+  - **Real image-edge border.** Drawn inside `#overlay` by
+    `render()`: four 1 px black `<line>`s, each one centered half
+    a pixel outside the image and extending 1 px past the corners
+    so the four meet flush. `#overlay` has `overflow: visible`
+    and scrolls with the image inside `.image-box`'s
+    `overflow: auto` clip, so segments off-screen on a given side
+    are simply not painted there. Drawn first in `render()` so
+    later overlay children (annotations, crop dashes, grips)
+    paint on top.
+  - **Virtual viewport-edge replacement.** When the image edge has
+    actually scrolled past a side, the off-screen real border is
+    replaced by a 1 px dashed medium-grey (`#aaa`) line at the
+    visible viewport edge. Drawn in a separate `#viewport-edges`
+    SVG that sits *outside* `.image-box`'s scroll region (sized
+    each call to the box's content-area rect, scrollbars
+    excluded), so the dashed line stays put while the image
+    scrolls and paints above any user annotation that touches the
+    edge.
+  - Perpendicular extent of the virtual line matches where the
+    real border went — 1 px past each image corner — clipped by
+    the `#viewport-edges` SVG's own `overflow: hidden`.
+  - `drawViewportEdges()` runs from `applyZoom()` (post-render)
+    and from the `imageBox.scroll` listener so both zoom changes
+    and user pans re-evaluate the dashed lines.
 - Does not clear `imageBox.style.maxHeight` before measuring:
   doing so briefly removes the overflow constraint, snaps
   `scrollTop / scrollLeft` to 0, and would lose the user's pan
