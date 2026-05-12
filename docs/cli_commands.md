@@ -6,7 +6,7 @@ and Gemini CLI) read them via slash commands. This doc covers:
 - what each command does,
 - how the two CLIs' versions differ,
 - the shell scripts that back them, and
-- the per-CLI `see-what-i-see_common.sh` helpers they share within each tree.
+- the per-CLI `see-what-i-see_common.sh` helper each tree shares.
 
 ## Commands at a glance
 
@@ -46,7 +46,7 @@ field on the record. See
 
 ### Gemini CLI
 
-- Backed by `skills/dot-gemini/scripts/copy-last-snapshot.sh`.
+- Backed by `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`.
 - Same `tail -1` + path rewrite, **plus** it copies referenced
   files from `$SRC_DIR` into `$TARGET_DIR` (a
   Gemini-workspace-specific tmp dir). The rewritten paths point
@@ -54,6 +54,10 @@ field on the record. See
 - Copy is required because Gemini's sandbox restricts file reads
   to the active workspace's tmp dir; it can't read
   `~/Downloads/SeeWhatISee/` directly.
+- The `see-what-i-see-xtract` alias skill ships a one-line wrapper
+  at `.../see-what-i-see-xtract/scripts/copy-last-snapshot.sh` that
+  `exec`s this same script via `../../see-what-i-see/scripts/...`,
+  so there's only one implementation.
 
 ## `/see-what-i-see-watch` — keep describing new captures
 
@@ -87,7 +91,7 @@ field on the record. See
 
 ### Gemini CLI (foreground loop)
 
-- Backed by `skills/dot-gemini/scripts/watch-and-copy.sh`.
+- Backed by `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh`.
 - Gemini CLI has no async background worker with a completion
   callback, so the loop is built agent-side: each iteration runs
   `watch-and-copy.sh` synchronously, which blocks until there's
@@ -117,23 +121,32 @@ field on the record. See
 
 ```
 skills/claude-plugin/                ← Claude plugin install tree
-  scripts/see-what-i-see_common.sh                 (shared helpers; sourced by each per-skill script)
+  scripts/see-what-i-see_common.sh                        (shared helpers; sourced by each per-skill script)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see
   skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop
-skills/dot-gemini/scripts/           ← Gemini install tree (copied into ~/.gemini/scripts/)
-  see-what-i-see_common.sh                         (shared by the two Gemini scripts)
-  copy-last-snapshot.sh              ← /see-what-i-see
-  watch-and-copy.sh                  ← /see-what-i-see-watch
-scripts/                             ← convenience symlinks at repo root
-  get-latest.sh, watch.sh, stop.sh   → skills/claude-plugin/skills/<name>/scripts/...
-  copy-last-snapshot.sh, watch-and-copy.sh
-                                     → skills/dot-gemini/scripts/...
+skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
+  skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see
+  skills/see-what-i-see/scripts/see-what-i-see_common.sh         (shared helpers; sourced via sibling-relative paths)
+  skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch
+  skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
+                                                          ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
 ```
 
 Each install tree is self-contained. The plugin tree ships as
-part of the Claude Code plugin; the Gemini tree is copied into
-`~/.gemini/` by `scripts/gemini-install.sh`.
+part of the Claude Code plugin; the Gemini tree is mirrored into
+the `../SeeWhatISee-gemini` release repo (which users install as a
+Gemini extension) by `skills/copy-gemini-extension-release.sh`.
+
+The Gemini side has only one `see-what-i-see_common.sh`. It lives
+next to the `see-what-i-see` script that owns it; the other scripts
+that need it reach in via sibling-relative paths:
+
+- `see-what-i-see-watch/scripts/watch-and-copy.sh` sources it as
+  `../../see-what-i-see/scripts/see-what-i-see_common.sh`.
+- `see-what-i-see-xtract/scripts/copy-last-snapshot.sh` is a
+  wrapper that `exec`s the see-what-i-see version directly, which
+  in turn sources the common.sh next to itself.
 
 ### The outer scripts
 
@@ -142,8 +155,8 @@ part of the Claude Code plugin; the Gemini tree is copied into
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`         | `$DIR` | `$DIR` (in place) | last record | `--directory`, `--help` |
 | `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`        | `$DIR` | `$DIR` (in place) | all new records until killed | `--directory`, `--after`, `--loop`, `--stop`, `--print_selection`, `--help` |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`          | `$DIR` | `$DIR` (in place) | none (just stops the watcher) | `--directory`, `--help` |
-| `skills/dot-gemini/scripts/copy-last-snapshot.sh`                          | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
-| `skills/dot-gemini/scripts/watch-and-copy.sh`                              | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
+| `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`    | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | last record | (none) |
+| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh`  | `$SRC_DIR` → `$TARGET_DIR` | `$TARGET_DIR` (copied) | one new record per invocation | `--after`, `--help` |
 
 Key differences:
 
@@ -166,10 +179,18 @@ Key differences:
 
 ### Per-tree `see-what-i-see_common.sh` helpers
 
-The two `see-what-i-see_common.sh` files have overlapping concerns but distinct
-function sets — they're kept separate because each side's helper
-is tuned to its environment. More sharing between these is likely
-possible.
+Each install tree has its own `see-what-i-see_common.sh`:
+
+- `skills/claude-plugin/scripts/see-what-i-see_common.sh` — sourced by every
+  per-skill script in the Claude plugin tree via
+  `../../../scripts/see-what-i-see_common.sh`.
+- `skills/dot-gemini/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
+  — owns the Gemini-side helpers; other Gemini skills that need
+  them reach in sibling-relative (see the tree above).
+
+The two files have overlapping concerns but distinct function sets
+— they're kept separate because each side's helper is tuned to
+its environment. More sharing between these is likely possible.
 
 ## Skill / command prompts
 
@@ -177,10 +198,11 @@ Several files drive the prompts:
 
 - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
 - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
-- `skills/dot-gemini/commands/see-what-i-see.toml`
-- `skills/dot-gemini/commands/see-what-i-see-watch.toml`
-- `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (skill-format mirror of the command)
-- `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (skill-format mirror of the command)
+- `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
+- `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
+- `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
+- `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
+- `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
 
 All skill and command prompts are **generated from templates** in
 `skills/`:

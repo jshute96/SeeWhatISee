@@ -102,8 +102,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `skills/dot-gemini/skills/see-what-i-see/SKILL.md` | Skill-format translation of `see-what-i-see.toml` — same body, YAML frontmatter |
 | `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | Skill-format translation of `see-what-i-see-watch.toml` — same body, YAML frontmatter |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
-| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Per-skill copy of the `see-what-i-see` `copy-last-snapshot.sh` (sourced common.sh stays alongside) |
-| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/see-what-i-see_common.sh` | Per-skill copy of the shared Gemini helpers — duplicated so the alias has self-contained scripts |
+| `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Thin wrapper — execs the sibling `see-what-i-see/scripts/copy-last-snapshot.sh` so the alias shares one implementation |
 
 ## Extension Source (`src/`)
 
