@@ -131,31 +131,10 @@ on each snapshot. For example,
 
 ### Chrome web store
 
-Install from the Chrome web store.  Link pending.
+**[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/seewhatisee/mdfeigicgahogllcdiibkeidfllhddae).**
 
 > [!TIP]
 > Pin the extension on your toolbar using **Pin to toolbar** on the **Manage extension** page, or using the "Extensions" (puzzle piece) toolbar icon.
-
-### Chrome extension (from a release zip)
-
-1. Download `SeeWhatISee-extension-vX.Y.Z.zip` from the [Releases page](https://github.com/jshute96/SeeWhatISee/releases) and unzip it.
-2. In Chrome: open `chrome://extensions`, enable **Developer mode**,
-   click **Load unpacked**, and select the unzipped directory.
-
-### Chrome extension (from source)
-
-1. Clone this repo and install dependencies:
-   ```bash
-   git clone https://github.com/jshute96/SeeWhatISee.git
-   cd SeeWhatISee
-   npm install
-   ```
-2. Build the extension:
-   ```bash
-   npm run build
-   ```
-3. In Chrome: open `chrome://extensions`, enable **Developer mode**,
-   click **Load unpacked**, and select the `dist/` directory.
 
 ### Claude Code plugin
 
@@ -187,11 +166,9 @@ To avoid this, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` wi
 
 [Issue #2](https://github.com/jshute96/SeeWhatISee/issues/2) is about finding a better workaround to avoid permission prompts.
 
-### Gemini CLI commands
+### Gemini CLI extension
 
-#### Gemini Extension
-
-A Gemini extension is available, packaging the commands as skills. Install by running:
+Install the Gemini extension:
 
 ```bash
 gemini extensions install https://github.com/jshute96/SeeWhatISee-gemini
@@ -219,6 +196,17 @@ If `gemini extensions install` directly from GitHub doesn't work, clone the rele
 git clone https://github.com/jshute96/SeeWhatISee-gemini.git
 gemini extension install SeeWhatISee-gemini
 ```
+
+### Skills for other coding agents
+
+The release has skill plugins for Claude and Gemini so far.
+These skills and scripts may work for other coding agents too.
+
+The released Claude skills are in [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude), under `plugin/skills`.
+
+The released Gemini skills are in [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini), under `skills/`.
+
+See [Developing skills](#developing-skills) below for more details.
 
 ## Output files
 
@@ -276,21 +264,48 @@ present when that item was included or available.
 `filename` fields have file basenames in `log.json` in the `Downloads` folder.
 The scripts that extract these records to pass to agents expand `filename` to hold absolute paths.
 
-## Development setup
+## Development
+
+### Setup
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-## Building
+### Developing skills
+
+The `skills/` directory in this repository uses templates to generate similar skills tuned for different coding agents, and packaged for their plugin mechanisms. Adding more variations is possible.
+
+The released skills are [linked above](#skills-for-other-coding-agents).
+These may work for other coding agents too.
+
+Differences:
+* Claude scripts read the screenshot files in place. Gemini scripts copy them to a tmp directory first to avoid permission issues reading external files.
+* The Claude `/see-what-i-see-watch` skill runs in the background. The Gemini version runs in the foreground.
+
+Send a PR if you get skills working for another tool.
+
+### Building
 
 ```bash
 npm run build        # one-shot build into dist/
 npm run watch        # rebuild on TS changes
 ```
 
-## Testing
+### Install Chrome extension from source
+
+The extension builds in `dist/`.
+
+In Chrome: open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the `dist/` directory.
+
+### Install Chrome extension from a release zip
+
+1. Download `SeeWhatISee-extension-vX.Y.Z.zip` from the [Releases page](https://github.com/jshute96/SeeWhatISee/releases) and unzip it.
+2. In Chrome: open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select the unzipped directory.
+
+### Testing
 
 ```bash
 npm test             # validate skill templates, then run Playwright e2e tests
@@ -305,7 +320,7 @@ calling capture functions on the background service worker — Playwright
 can't click the browser toolbar, so each capture mode is also exposed
 on `self.SeeWhatISee` for test/console access.
 
-## Updating the Claude plugin in marketplace
+### Updating the Claude plugin in marketplace
 
 The plugin won't update if the version is the same.
 
@@ -317,7 +332,7 @@ Release new versions to users by running `skills/copy-claude-plugin-release.sh`,
 
 The Gemini extension has the equivalent `skills/copy-gemini-extension-release.sh` for the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo.
 
-## Running the Claude plugin locally
+### Running the Claude plugin locally
 
 For local development, a plugin directory can be set manually:
 
@@ -327,7 +342,7 @@ claude --plugin-dir $(pwd)/skills/claude-plugin
 
 (The repo also auto-discovers the plugin via `.claude/skills/` symlinks, so running `claude` from inside this checkout normally works without the flag.)
 
-## Watching for screenshots from CLI
+### Watching for screenshots from CLI
 
 ```bash
 scripts/get-latest.sh     # print the latest capture record
@@ -335,7 +350,7 @@ scripts/watch.sh          # wait for the next capture, print it, exit
 scripts/watch.sh --loop   # keep printing captures until ^C
 ```
 
-## Building a Chrome extension release
+### Building a Chrome extension release
 
 Cut a Chrome extension release with `scripts/release-extension.sh`
 (tag `extension-vX.Y.Z`). The `extension-` prefix leaves room for
@@ -356,7 +371,7 @@ and calls `gh release create` with auto-generated notes and the zip
 attached. The default is a draft so you can review and publish from the
 GitHub UI.
 
-## Layout
+### Code layout
 
 - `src/` — TypeScript sources and `manifest.json`
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
