@@ -346,7 +346,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 | File | Purpose |
 |------|---------|
-| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`. Resolves target tab (with stale-pin detection), focuses it, runs the injected runtime, and pins the destination on success. |
+| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`, `friendlyInjectError`. Resolves target tab (with stale-pin detection), runs the injected runtime, focuses the tab on success / closes a fresh failed tab, and pins the destination on success. |
 | `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
@@ -611,12 +611,22 @@ Capture page (capture-page.ts)
         (askAiDefault: resolveAsk() picks destination)          │
         sendToAi() ◀───────────────────────────────────────────┘
           ├── resolve tab (existing or new — wait 'complete' up to 15s)
-          ├── focus tab + window
+          │     new tabs open with active: false so a policy-block
+          │     failure can be silently torn down
           ├── executeScript({ files: ['ask-inject.js'], world: 'MAIN' })
           │     installs the postMessage bridge listener (see below)
-          ├── executeScript({ files: ['ask-widget.js'], world: 'ISOLATED' })
-          │     widget walks each item via the bridge — see ask-widget.md
-          └── on success: write 'askPin' = { provider, tabId }
+          ├── on inject success:
+          │     ├── executeScript({ files: ['ask-widget.js'], world: 'ISOLATED' })
+          │     │     widget walks each item via the bridge — see ask-widget.md
+          │     ├── focus tab + window
+          │     └── write 'askPin' = { provider, tabId }
+          └── on inject failure:
+                ├── patch widget record with friendlyInjectError()
+                │     (policy blocks like "ExtensionsSettings" / "cannot
+                │     be scripted" pass through verbatim; everything else
+                │     becomes "Check if the tab is on a prompt screen.")
+                └── if we opened a fresh new tab, close it so a blank
+                    provider tab isn't left orphaned behind the Capture page
     show #ask-status: "Sent." or error
     refresh labels + per-provider rows (the pin may have moved)
     if ctrl-click: sendMessage({ action: 'closeCapturePage' })

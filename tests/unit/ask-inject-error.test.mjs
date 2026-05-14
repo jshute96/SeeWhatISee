@@ -14,8 +14,12 @@ test('friendlyInjectError: returns raw message for ExtensionsSettings policy blo
   assert.equal(friendlyInjectError(err), errMsg);
 });
 
-test('friendlyInjectError: returns raw message for cannot be scripted error', () => {
-  const errMsg = 'Cannot access contents of the page. Extension cannot be scripted here.';
+test('friendlyInjectError: defensive — returns raw message for any "cannot be scripted" variant', () => {
+  // The known Chrome string already contains "ExtensionsSettings", so the
+  // /cannot be scripted/i branch is purely defensive: it catches hypothetical
+  // future Chrome wording that drops the identifier but keeps the phrasing.
+  // The string below is synthetic — not a real Chrome message.
+  const errMsg = 'synthetic: page cannot be scripted by this extension';
   const err = new Error(errMsg);
   assert.equal(friendlyInjectError(err), errMsg);
 });

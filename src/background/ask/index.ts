@@ -810,19 +810,23 @@ export async function sendToAi(
     }
   } catch (err) {
     const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
-    await patchWidgetRecord(tabId, { status: 'error', error: message });
-
-    // Auto-cleanup: if this was a fresh new tab we opened, close it
-    // so we don't leave a blank/broken provider tab orphaned behind
-    // the active Capture page.
+    // Auto-cleanup for the newTab path: close the freshly-opened tab so
+    // we don't leave a blank/broken provider tab orphaned behind the
+    // Capture page. We skip the error-state record patch in that case
+    // because `installWidgetStoreCleanup` clears storage on tab removal,
+    // and writing `status: 'error'` right before close would either flash
+    // the error widget for one frame or leave a phantom record if the
+    // remove races ahead. The user-facing message still comes back via
+    // the returned `error` field.
     if (destination.kind === 'newTab') {
       try {
         await chrome.tabs.remove(tabId);
       } catch (closeErr) {
-        console.warn('[SeeWhatISee] failed to close failed new tab:', closeErr);
+        console.log('[SeeWhatISee] [warn] failed to close failed new tab:', closeErr);
       }
+      return { ok: false, error: message };
     }
-
+    await patchWidgetRecord(tabId, { status: 'error', error: message });
     return { ok: false, error: message, tabId };
   }
 
@@ -1240,9 +1244,12 @@ function describe(err: unknown): string {
  * `chrome.scripting.executeScript` calls that load the bridge and
  * mount the widget. Every error reaching this point is Chrome's
  * own — not ours — and they're all implementation-leaking AND
- * locale-translated. The known cases all share the same
- * user-actionable resolution (verify the tab is on a real prompt
- * page) so we collapse them into one message.
+ * locale-translated. Most cases share the same user-actionable
+ * resolution (verify the tab is on a real prompt page) so we
+ * collapse them into one message. The exception is admin-policy
+ * blocks (`ExtensionsSettings`) — those need a different fix from
+ * the user (talk to IT) and the raw Chrome message is the clearest
+ * signal we can give, so we pass it through verbatim.
  *
  * Known underlying messages from Chrome (English; other locales
  * differ):
@@ -1253,6 +1260,13 @@ function describe(err: unknown): string {
  *      → tab closed or frame gone.
  *   - "Frame with ID 0 was removed."
  *      → SPA navigation tore down the frame.
+ *   - "This page cannot be scripted due to an ExtensionsSettings
+ *      policy."
+ *      → enterprise/admin policy explicitly excludes the host. The
+ *        only non-collapsed case: we return this string verbatim so
+ *        the user (or their admin) can see *why* it's blocked. Only
+ *        matched in English locales — the `ExtensionsSettings`
+ *        identifier appears unlocalized; the prose around it varies.
  *
  * The raw error is logged for debugging via the SW console (open
  * via chrome://extensions → the extension's "service worker" link).

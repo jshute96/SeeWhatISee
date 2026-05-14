@@ -64,7 +64,6 @@
   - Ctrl+Shift to draw without grabbing existing edges, snap stays on
   - Ctrl+drag still pans the image
 * Upload image from file (on context menu)
-* Better error handling when a page blocks script injection
 
 ### Draft: user-facing explanation of the new drawing behavior
 
