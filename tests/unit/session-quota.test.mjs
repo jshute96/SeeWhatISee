@@ -38,7 +38,7 @@ test('formatBytes: B / KB / MB ladder with whole-MB collapse', () => {
   assert.equal(formatBytes(Math.round(4.8 * 1024 * 1024)), '4.8 MB');
 });
 
-test('formatQuotaError: capture variant names the image and quotes both sides', () => {
+test('formatQuotaError: capture variant with no breakdown falls back to "needs X"', () => {
   const result = {
     ok: false,
     needBytes: 7.2 * 1024 * 1024,
@@ -46,9 +46,43 @@ test('formatQuotaError: capture variant names the image and quotes both sides', 
     quotaBytes: 10 * 1024 * 1024,
   };
   const msg = formatQuotaError('capture', result);
-  assert.match(msg, /Image is too large to load/);
+  assert.match(msg, /Capture is too large/);
   assert.match(msg, /needs 7\.2 MB/);
   assert.match(msg, /4\.8 MB of 10 MB extension storage free/);
+});
+
+test('formatQuotaError: capture variant with one breakdown part drops the `+` / `=`', () => {
+  const result = {
+    ok: false,
+    needBytes: 5 * 1024 * 1024,
+    freeBytes: 4 * 1024 * 1024,
+    quotaBytes: 10 * 1024 * 1024,
+  };
+  const msg = formatQuotaError('capture', result, [
+    { label: 'image', bytes: 5 * 1024 * 1024 },
+    { label: 'HTML', bytes: 0 }, // filtered out
+  ]);
+  assert.match(msg, /^Capture is too large \(5 MB image; /);
+  assert.doesNotMatch(msg, /\+/);
+  assert.doesNotMatch(msg, /= /);
+});
+
+test('formatQuotaError: capture variant joins multiple breakdown parts with `+` and totals with `=`', () => {
+  const result = {
+    ok: false,
+    needBytes: 11 * 1024 * 1024,
+    freeBytes: -1 * 1024 * 1024, // already over the cap; clamp to 0 B
+    quotaBytes: 10 * 1024 * 1024,
+  };
+  const msg = formatQuotaError('capture', result, [
+    { label: 'image', bytes: 3 * 1024 * 1024 },
+    { label: 'HTML', bytes: 7 * 1024 * 1024 },
+    { label: 'selection', bytes: 1 * 1024 * 1024 },
+  ]);
+  assert.match(
+    msg,
+    /^Capture is too large \(3 MB image \+ 7 MB HTML \+ 1 MB selection = 11 MB; only 0 B of 10 MB extension storage free\)\.$/,
+  );
 });
 
 test('formatQuotaError: ask variant uses Ask-specific phrasing', () => {

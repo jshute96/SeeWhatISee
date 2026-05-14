@@ -114,26 +114,59 @@ export async function checkSessionStorageRoom(
   return { ok: true, needBytes, freeBytes: freeBytes - needBytes, quotaBytes: cap };
 }
 
+/** One named contributor to a quota-busting payload. The capture
+ *  flow passes `{ image, HTML, selection }` so the error message can
+ *  tell the user which artifact is the long pole — knowing "the HTML
+ *  is 12 MB" suggests a different fix than "the image is 12 MB". */
+export interface QuotaBreakdownPart {
+  label: string;
+  bytes: number;
+}
+
 /**
  * Format a `QuotaCheckFail` as a single user-facing line. Quotes the
  * proposed and free sizes so the user knows whether they're a little
  * over or hugely over — the action they need to take ("crop the
- * screenshot" vs "use a different image") differs.
+ * screenshot" vs "trim the page" vs "use a different image") differs.
  *
  * `kind` lets the caller put the message in the right voice without
  * each site re-implementing the formatting:
- *   - 'capture' → "Image is too large to load…"
- *   - 'ask'     → "Not enough browser storage to send this Ask…"
+ *   - 'capture' → "Capture is too large…"
+ *   - 'ask'     → "Not enough extension storage to send this Ask…"
+ *
+ * `breakdown` is an optional per-artifact size split, rendered as
+ * `A label1 + B label2 + ... = needBytes` when ≥2 parts are
+ * non-zero, or just `bytes label` when only one is. Zero / missing
+ * parts drop out so a screenshot-only capture reads "5 MB image"
+ * rather than "5 MB image + 0 B HTML + 0 B selection". Sums of
+ * rounded byte counts may visually disagree with the total (5 + 6 =
+ * 12 if each was 5.6); `needBytes` is the authoritative figure and
+ * always wins.
  */
 export function formatQuotaError(
   kind: 'capture' | 'ask',
   result: QuotaCheckFail,
+  breakdown: QuotaBreakdownPart[] = [],
 ): string {
-  const need = formatBytes(result.needBytes);
   const free = formatBytes(Math.max(0, result.freeBytes));
   const cap = formatBytes(result.quotaBytes);
+  const need = formatNeedClause(result.needBytes, breakdown);
   if (kind === 'capture') {
-    return `Image is too large to load (needs ${need}; only ${free} of ${cap} extension storage free).`;
+    return `Capture is too large (${need}; only ${free} of ${cap} extension storage free).`;
   }
-  return `Not enough extension storage to send this Ask (needs ${need}; only ${free} of ${cap} free).`;
+  return `Not enough extension storage to send this Ask (${need}; only ${free} of ${cap} free).`;
+}
+
+function formatNeedClause(
+  needBytes: number,
+  breakdown: QuotaBreakdownPart[],
+): string {
+  const parts = breakdown.filter((p) => p.bytes > 0);
+  if (parts.length === 0) return `needs ${formatBytes(needBytes)}`;
+  if (parts.length === 1) {
+    const only = parts[0]!;
+    return `${formatBytes(only.bytes)} ${only.label}`;
+  }
+  const sum = parts.map((p) => `${formatBytes(p.bytes)} ${p.label}`).join(' + ');
+  return `${sum} = ${formatBytes(needBytes)}`;
 }

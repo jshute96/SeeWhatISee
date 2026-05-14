@@ -1545,8 +1545,13 @@ re-activation is required:
   of the generic `#missing-session-error` pane.
   - Messages are produced by `friendlyErrorMessage` (rewrites of
     common throw-site strings like *"Couldn't find a tab to
-    capture…"*) or by `formatQuotaError` (size-aware quota text like
-    *"Image is too large to load (needs 7.2 MB; only 4.8 MB of 10
-    MB extension storage free)."*).
+    capture…"*) or by `formatQuotaError` (size-aware quota text).
+    The `formatQuotaError` shape depends on how many artifacts are
+    non-empty:
+    - multi-artifact: *"Capture is too large (3 MB image + 7 MB HTML +
+      1 MB selection = 11 MB; only 0 B of 10 MB extension storage
+      free)."*
+    - single artifact: *"5 MB image"* (no `+` / `=`).
+    - no breakdown (Ask flow): falls back to *"needs 11 MB"*.
   - Same pane chrome (`.early-state-pane` class) so the visual
     hierarchy matches the upload-landing and stale-page panes.

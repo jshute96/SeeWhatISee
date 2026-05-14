@@ -20,7 +20,42 @@ import {
 import {
   checkSessionStorageRoom,
   formatQuotaError,
+  type QuotaBreakdownPart,
 } from './session-quota.js';
+
+/**
+ * Per-artifact size split of an `InMemoryCapture` for the quota
+ * error message. Uses `JSON.stringify(value).length` (the same
+ * accounting `getBytesInUse` uses), and only includes artifacts that
+ * are present and non-empty — a screenshot-only upload then reads
+ * as "5 MB image" rather than "5 MB image + 0 B HTML + 0 B selection".
+ *
+ * The sum may not equal the session's grand total — the wrapper
+ * structure (`DetailsSession` keys, `bases`, …) also costs bytes —
+ * so `formatQuotaError` shows the authoritative `needBytes` total
+ * alongside the parts.
+ */
+function captureBreakdown(capture: InMemoryCapture): QuotaBreakdownPart[] {
+  const parts: QuotaBreakdownPart[] = [];
+  if (capture.screenshotDataUrl) {
+    parts.push({
+      label: 'image',
+      bytes: JSON.stringify(capture.screenshotDataUrl).length,
+    });
+  }
+  if (capture.html) {
+    parts.push({ label: 'HTML', bytes: JSON.stringify(capture.html).length });
+  }
+  // `selections` is undefined when no selection was captured. Even
+  // when present, all three bodies can be empty strings (e.g. a
+  // future caller that pre-fills the shape) — guard against that so
+  // we don't report a `40 B selection` line for nothing.
+  const sel = capture.selections;
+  if (sel && (sel.html || sel.text || sel.markdown)) {
+    parts.push({ label: 'selection', bytes: JSON.stringify(sel).length });
+  }
+  return parts;
+}
 
 /**
  * Synthetic Capture-page defaults for the image-context flow. The
@@ -375,7 +410,7 @@ async function openCapturePageWithSession(
     buildSession(),
   );
   if (!probe.ok) {
-    const message = formatQuotaError('capture', probe);
+    const message = formatQuotaError('capture', probe, captureBreakdown(data));
     await chrome.tabs.create({
       ...createProps,
       url: capturePageUrlWithError(message),
@@ -1498,15 +1533,18 @@ export function installDetailsMessageHandlers(): void {
           // Pre-flight quota check before the actual `set`. Large
           // user uploads (full-resolution photos) can exceed the
           // 10 MiB session-storage cap by themselves. A pre-check
-          // lets us surface "image is too large" with the actual
-          // sizes rather than the runtime's bare quota-exceeded
-          // string, which doesn't tell the user what to do.
+          // lets us surface "Capture is too large" with the actual
+          // per-artifact sizes rather than the runtime's bare
+          // quota-exceeded string, which doesn't tell the user what
+          // to do.
           const room = await checkSessionStorageRoom(
             detailsStorageKey(tabId),
             session,
           );
           if (!room.ok) {
-            sendResponse({ error: formatQuotaError('capture', room) });
+            sendResponse({
+              error: formatQuotaError('capture', room, captureBreakdown(capture)),
+            });
             return;
           }
           await saveDetailsSession(tabId, session);
