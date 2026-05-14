@@ -638,7 +638,7 @@ The Capture page assembles the payload from existing checkbox state:
 
 | Field | Source |
 |-------|--------|
-| `attachments[]` (image/png) | `previewImg.src`, baked via `renderHighlightedPng()` if there are edits, when `screenshotBox.checked` |
+| `attachments[]` (image/png\|jpeg) | `previewImg.src`, baked via `renderHighlightedImage()` if there are edits, when `screenshotBox.checked`. Mime + extension are sticky on the source (JPG stays JPG; everything else is PNG) |
 | `attachments[]` (text/html, `contents.html`) | `captured.html`, when `htmlBox.checked` |
 | `attachments[]` (text/markdown\|plain\|html, `selection.{md,txt,html}`) | `captured[wireKind]` for the selected format, when selection master is checked |
 | `promptText` | `promptInput.value.trim()` |

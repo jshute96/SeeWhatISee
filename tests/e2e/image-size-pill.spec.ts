@@ -5,9 +5,10 @@
 //
 //   1. Pill text matches the bytes / dimensions that actually land
 //      on disk after Save (PNG capture, no edits).
-//   2. Drawing on a JPG-source capture flips the format label from
-//      JPG to PNG (bake re-encodes), and the post-bake dimensions
-//      and bytes still agree with the saved file.
+//   2. Drawing on a JPG-source capture keeps the label as JPG
+//      (sticky format) and on a WEBP-source capture flips the label
+//      to PNG (non-PNG/JPG sources re-encode); in both cases the
+//      post-bake dimensions and bytes still agree with the saved file.
 //   3. Dimensions update *live* while the user is drawing a crop
 //      box with the Crop tool — before mouseup commits — so the
 //      readout works as a selection-size preview.
@@ -130,9 +131,9 @@ test('image pill: PNG capture shows format + dims + size matching the saved file
   await openerPage.close();
 });
 
-// ─── 2. JPG → PNG flip after a bake ──────────────────────────────
+// ─── 2a. JPG source stays JPG across a bake (sticky format) ──────
 
-test('image pill: JPG-source capture flips to PNG after a draw, and matches the saved file', async ({
+test('image pill: JPG-source capture stays JPG after a draw, and matches the saved file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -153,14 +154,63 @@ test('image pill: JPG-source capture flips to PNG after a draw, and matches the 
   expect(before.width).toBe(200);
   expect(before.height).toBe(200);
 
-  // Draw a Box highlight. Bakes the canvas as PNG, so the pill's
-  // label flips. Bytes change too (PNG re-encode of the same
-  // pixels is generally larger than the original JPEG).
+  // Draw a Box highlight. The bake re-encodes as JPEG (sticky
+  // output format) — pill label stays `JPG`. Bytes still change
+  // because the re-encode is a different JPEG than the original.
   await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
 
-  // The pill update happens synchronously inside `render()` once
-  // the editVersion bumps on mouseup, but assert via `toHaveText`
-  // so a flake-prone race window is impossible.
+  await expect(capturePage.locator('#image-size-badge')).toHaveText(/^JPG ·/);
+  const after = await readImagePill(capturePage);
+  expect(after.label).toBe('JPG');
+  expect(after.width).toBe(200);
+  expect(after.height).toBe(200);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const jpgPath = await findCapturedDownload(sw, '.jpg');
+  const buf = fs.readFileSync(jpgPath);
+  // No JPEG decode helper handy — assert the saved size matches
+  // the pill, which is enough to prove the pill tracked the bytes.
+  expect(formatBytes(buf.length)).toBe(after.size);
+  // And the bytes are real JPEG (`FF D8 FF`).
+  expect(buf[0]).toBe(0xff);
+  expect(buf[1]).toBe(0xd8);
+  expect(buf[2]).toBe(0xff);
+
+  await openerPage.close();
+});
+
+// ─── 2b. WEBP → PNG flip after a bake (non-PNG/JPG source) ───────
+
+test('image pill: WEBP-source capture flips to PNG after a draw, and matches the saved file', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openImageDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'red-image.html',
+    undefined,
+    undefined,
+    '#http-webp', // 200×200 WEBP served with image/webp.
+  );
+
+  await expect(capturePage.locator('#image-size-badge')).toHaveText(PILL_RE);
+  const before = await readImagePill(capturePage);
+  expect(before.label).toBe('WEBP');
+  expect(before.width).toBe(200);
+  expect(before.height).toBe(200);
+
+  // Draw a Box highlight. Bakes the canvas as PNG (WEBP is not in
+  // the sticky-format allow-list), so the pill's label flips.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+
   await expect(capturePage.locator('#image-size-badge')).toHaveText(/^PNG ·/);
   const after = await readImagePill(capturePage);
   expect(after.label).toBe('PNG');

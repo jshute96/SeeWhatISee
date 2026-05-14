@@ -160,13 +160,14 @@ referenced from this doc live in
   on the right (Image / HTML / Selection, top-to-bottom).
   - `<FORMAT> · <W>×<H> · <size>` (Image) — what the screenshot
     *would* be when saved right now: the original capture data URL
-    when there are no bake-able edits, else the freshly-baked PNG
-    from `renderHighlightedPng`. Three parts:
+    when there are no bake-able edits, else the freshly-baked image
+    from `renderHighlightedImage`. Three parts:
     - **Format label** comes from the data URL's MIME prefix —
       `PNG` for the standard `captureVisibleTab` path and
       image-context PNGs, `JPG` for image-context JPEGs, etc.
-      Once any edit needs baking the label flips to `PNG`
-      because the bake always re-encodes as PNG.
+      Sticky output format: a JPG source stays `JPG` after edits;
+      a non-PNG/JPG source (WEBP / GIF / …) flips to `PNG` after
+      the first bake because those formats are re-encoded as PNG.
     - **Dimensions** are the bake's source rectangle — an active
       crop's pixel size when one exists, else `previewImg`'s
       natural size.
@@ -997,22 +998,23 @@ If the user has any edits *and* is saving the screenshot:
   original pixels in the bake, which is the whole point.
 - A clip rectangle matching the canvas size keeps any edit that
   extends past the crop from bleeding onto the saved bytes.
-- The resulting `canvas.toDataURL('image/png')` is sent back to
-  the background as a `screenshotOverride` field on the
-  `saveDetails` runtime message, alongside three per-kind edit
-  flags (`highlights`, `hasRedactions`, `isCropped`).
+- The resulting bake data URL (`image/png` or `image/jpeg` — see
+  the sticky-format bullet below) is sent back to the background
+  as a `screenshotOverride` field on the `saveDetails` runtime
+  message, alongside three per-kind edit flags (`highlights`,
+  `hasRedactions`, `isCropped`).
   - `highlights` is `true` iff at least one red rectangle or line
     is on the stack. Redactions and crops are separate edit kinds
     and flip their own flag instead.
   - `hasRedactions` is `true` iff any redaction rectangle is
-    baked into the PNG.
-  - `isCropped` is `true` iff the saved PNG was cropped to a
+    baked into the image.
+  - `isCropped` is `true` iff the saved image was cropped to a
     region.
   - The three are independent — any combination can be true at
     once on a single save.
 - The background passes `screenshotOverride` through to
   `ensureScreenshotDownloaded` (the same helper the Copy-filename
-  buttons use). On a cache miss it becomes the body of the PNG
+  buttons use). On a cache miss it becomes the body of the image
   download; on a cache hit (the page already pre-downloaded at
   this `editVersion`) it's dropped because the on-disk file
   already matches. `recordDetailedCapture` then writes the
@@ -1025,20 +1027,27 @@ If the user has any edits *and* is saving the screenshot:
 - If there are no edits, or the screenshot isn't being saved, no
   override is sent and the record's screenshot object stays bare
   (just `filename`, no edit flags).
-- **Bake-in always emits PNG.** `renderHighlightedPng` →
-  `canvas.toDataURL('image/png')` is rasterized PNG regardless of
-  the source format. `ensureScreenshotDownloaded` swaps the
-  filename's extension to `.png` before write whenever
-  `screenshotOverride` is set, and reverts to
-  `screenshotOriginalExt` when the user undoes back to clean.
+- **Bake-in is format-sticky.** `renderHighlightedImage` picks
+  `bakeMime()` based on the source data URL: JPEG source →
+  `toDataURL('image/jpeg', 0.92)`; everything else →
+  `toDataURL('image/png')`. The bake canvas only writes those two
+  formats, so non-PNG/JPEG sources (WEBP / GIF / AVIF / …) collapse
+  to PNG on the first bake.
+  - `ensureScreenshotDownloaded` rewrites the filename's extension
+    to match the override's MIME prefix (via `extFromDataUrl`)
+    before write, and reverts to `screenshotOriginalExt` when the
+    user undoes back to clean.
+  - The clipboard "copy image" path always forces PNG —
+    `renderHighlightedImage('image/png')` — because that's the
+    only image MIME `ClipboardItem` accepts reliably.
   - Repeat Copy clicks at an unchanged `editVersion` skip the
     rewrite. The page short-circuits `screenshotOverride` to
     undefined on a same-version Copy (the SW would cache-hit
     anyway, so the bake is wasted).
   - The SW treats the absent override as "the per-tab download
     cache is authoritative", not "no edits, revert ext." The
-    cached PNG stays the truth for the on-disk file, so the
-    filename keeps its `.png` ext.
+    cached file stays the truth for the on-disk bytes, so the
+    filename keeps the post-bake extension.
 
 ## `isEdited` sidecar flag
 
@@ -1124,8 +1133,8 @@ If the user has any edits *and* is saving the screenshot:
   - Screenshot cache is keyed by an `editVersion` — a monotonic
     counter the page bumps on every highlight draw / undo /
     clear. On mismatch the SW re-downloads with the page's
-    freshly baked-in PNG (sent as `screenshotOverride` in the
-    message).
+    freshly baked-in image (sent as `screenshotOverride` in the
+    message — PNG or JPEG depending on the source format).
   - HTML cache is unconditional until the user edits the body via
     the Edit HTML dialog — `updateArtifact { kind: 'html' }`
     clears the cache so the next Copy / Capture writes the edited
@@ -1468,7 +1477,7 @@ re-activation is required:
     `getBoundingClientRect()` readout.
   - Crop dashed border and corner grips stay at 1 px (UI
     affordances, not picture content).
-- The bake (`renderHighlightedPng`) ignores the display ratio: it
+- The bake (`renderHighlightedImage`) ignores the display ratio: it
   always renders strokes at a fixed 3 natural px (with the default
   arrow-head cap), so the saved PNG looks the same regardless of
   what zoom mode the user happened to be in at save time. Zoom

@@ -587,12 +587,12 @@ export interface InMemoryCapture {
    *
    * Mutable across the session: when the Capture-page user bakes
    * highlights / redactions / a crop into the screenshot, the bake
-   * step always emits PNG bytes (canvas → `toDataURL('image/png')`),
-   * and the SW rewrites this filename's extension to `.png` so the
-   * bytes on disk match the name. Reverting all edits (no bake)
-   * flips it back to the original extension. See
-   * `screenshotOriginalExt` for the immutable record of the
-   * pre-bake extension.
+   * step emits image bytes in the sticky output format (JPEG for a
+   * JPEG source, PNG otherwise — see `bakeMime` on the page side),
+   * and the SW rewrites this filename's extension to match (via
+   * `extFromDataUrl`). Reverting all edits (no bake) flips it back
+   * to the original extension. See `screenshotOriginalExt` for the
+   * immutable record of the pre-bake extension.
    */
   screenshotFilename: string;
   /**

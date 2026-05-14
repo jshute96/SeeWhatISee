@@ -255,6 +255,23 @@ function nextBumpIndex(
   return prev.revision === currentRevision ? prev.bumpIndex : prev.bumpIndex + 1;
 }
 
+/**
+ * Pick the filename extension that matches a `data:` URL's MIME
+ * prefix, narrowed to the two formats the Capture-page bake can
+ * emit: JPEG (when the source was JPEG) or PNG (everything else).
+ * Used by the screenshot-override path to keep the on-disk
+ * filename's extension in sync with the bytes the page just baked.
+ *
+ * The parser is intentionally tolerant of the two encodings
+ * `canvas.toDataURL` actually produces (`data:image/jpeg;base64,…`
+ * and `data:image/png;base64,…`); other MIMEs fall back to `.png`
+ * since the page side never writes them.
+ */
+function extFromDataUrl(dataUrl: string): 'png' | 'jpg' {
+  // No `i` flag — `canvas.toDataURL` always emits lowercase MIME.
+  return /^data:image\/jpeg[;,]/.test(dataUrl) ? 'jpg' : 'png';
+}
+
 export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
   // Capture both artifacts *before* opening the new tab so we
   // snapshot the user's current page (not the empty capture.html
@@ -816,15 +833,17 @@ export async function ensureScreenshotDownloaded(
     },
   });
   // Sync the filename's extension to the bytes we're about to write.
-  // The Capture-page bake (`renderHighlightedPng` →
-  // `canvas.toDataURL('image/png')`) always produces PNG, so when an
-  // override is present the on-disk file must end in `.png`. With no
-  // override we write the original bytes verbatim and the filename
-  // reverts to the pre-bake extension (tracked in
-  // `screenshotOriginalExt`). Doing the rewrite before download — and
-  // persisting the session — keeps `recordDetailedCapture` (which
-  // reads `capture.screenshotFilename`) in sync with the actual bytes
-  // even when the user toggles edits between Copy and Capture clicks.
+  // The Capture-page bake (`renderHighlightedImage`) emits the same
+  // format as the source for JPG, and PNG for everything else (sticky
+  // output format — see `bakeMime` on the page side). So the override's
+  // own MIME prefix is the authoritative source for the target ext:
+  // `image/jpeg` → `.jpg`, anything else → `.png`. With no override we
+  // write the original bytes verbatim and the filename reverts to the
+  // pre-bake extension (tracked in `screenshotOriginalExt`). Doing the
+  // rewrite before download — and persisting the session — keeps
+  // `recordDetailedCapture` (which reads `capture.screenshotFilename`)
+  // in sync with the actual bytes even when the user toggles edits
+  // between Copy and Capture clicks.
   //
   // Skip the rewrite on a cache hit at the requested `editVersion`:
   // the page short-circuits `screenshotOverride` to undefined when
@@ -840,7 +859,9 @@ export async function ensureScreenshotDownloaded(
   const cached = pre.downloads?.screenshot;
   const cacheHit = cached !== undefined && cached.editVersion === editVersion;
   if (!cacheHit) {
-    const targetExt = screenshotOverride ? 'png' : pre.capture.screenshotOriginalExt;
+    const targetExt = screenshotOverride
+      ? extFromDataUrl(screenshotOverride)
+      : pre.capture.screenshotOriginalExt;
     // Skip the rewrite if `screenshotOriginalExt` is empty — currently
     // unreachable (every constructor sets it) but the regex would
     // otherwise produce a trailing-dot filename.

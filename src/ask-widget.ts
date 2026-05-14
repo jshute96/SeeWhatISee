@@ -859,9 +859,10 @@
   ): string {
     // Filename suffixes are the same ones produced by
     // `buildAskAttachments` in `src/capture-page.ts` — see
-    // `SELECTION_FILE_META` and the hard-coded `'contents.html'` /
-    // `'screenshot.png'` there. If the naming scheme ever changes
-    // both sides need to move together.
+    // `SELECTION_FILE_META` and the `'contents.html'` /
+    // `screenshot.<bakeExt()>` naming there (image extension is
+    // sticky on the source format). If the naming scheme ever
+    // changes both sides need to move together.
     const parts: string[] = [];
     if (attachments.some((a) => a.kind === 'image')) parts.push('screenshot');
     if (attachments.some((a) => a.filename.endsWith('.html'))) parts.push('HTML');

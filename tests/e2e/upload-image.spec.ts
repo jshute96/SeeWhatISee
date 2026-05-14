@@ -21,6 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, '../fixtures/pages');
 const RED_PNG = path.join(FIXTURES_DIR, 'red-pixel.png');
 const RED_JPG = path.join(FIXTURES_DIR, 'red-pixel.jpg');
+const RED_WEBP = path.join(FIXTURES_DIR, 'red-pixel.webp');
 const PURPLE_HTML = path.join(FIXTURES_DIR, 'purple.html');
 // 24 bytes of plain text, named `.png` — passes the MIME-prefix
 // check (Chrome stamps `image/png` from the extension) but fails
@@ -242,6 +243,44 @@ test('upload: JPG happy-path saves under .jpg with no edits', async ({
   expect(record.imageUrl).toBeUndefined();
 });
 
+test('upload: WEBP happy-path saves under .webp with no edits (no PNG conversion)', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // Sticky-format counterpart: even though a WEBP source bakes to
+  // PNG once edited (canvas only writes PNG / JPEG), a no-edits save
+  // must NOT convert — the SW writes the original WEBP bytes
+  // verbatim and the filename keeps `.webp`. Without this guarantee,
+  // every upload would silently re-encode at save time even when
+  // nothing was drawn on it.
+  const page = await extensionContext.newPage();
+  const sw = await getServiceWorker();
+
+  await page.goto(`chrome-extension://${extensionId}/capture.html?upload=true`);
+  await page.locator('#upload-file-input').setInputFiles(RED_WEBP);
+
+  await expect(page.locator('#upload-landing')).toBeHidden();
+  await expect(page.locator('#captured-title')).toHaveText('Uploaded image');
+
+  await Promise.all([
+    page.waitForEvent('close'),
+    page.locator('#capture').click(),
+  ]);
+
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.webp$/);
+  expect(record.url).toBe('file:///red-pixel.webp');
+
+  // Bytes on disk are real WEBP (RIFF header `52 49 46 46 …`).
+  const webpPath = await findCapturedDownload(sw, '.webp');
+  const buf = fs.readFileSync(webpPath);
+  expect(buf[0]).toBe(0x52);
+  expect(buf[1]).toBe(0x49);
+  expect(buf[2]).toBe(0x46);
+  expect(buf[3]).toBe(0x46);
+});
+
 test('upload: shift-click captures with edits between bump as -1, -2 (no stacked suffixes)', async ({
   extensionContext,
   extensionId,
@@ -299,14 +338,15 @@ test('upload: shift-click captures with edits between bump as -1, -2 (no stacked
   expect(records[2].screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}-2\.png$/);
 });
 
-test('upload: JPG + highlight bakes a PNG but keeps the original file: URL on .jpg', async ({
+test('upload: JPG + highlight stays .jpg (sticky output format)', async ({
   extensionContext,
   extensionId,
   getServiceWorker,
 }) => {
-  // Same JPG-source bake-in semantics as the right-click image
-  // flow — verifies the upload path uses the same Capture-page
-  // machinery rather than diverging.
+  // Sticky output format: a JPG upload that the user draws on must
+  // still save as `.jpg` (with JPEG bytes), not `.png`. A JPEG
+  // bake keeps a photographic upload from ballooning in size on
+  // every minor markup edit.
   const page = await extensionContext.newPage();
   const sw = await getServiceWorker();
 
@@ -339,11 +379,61 @@ test('upload: JPG + highlight bakes a PNG but keeps the original file: URL on .j
   ]);
 
   const record = await readLatestRecord(sw);
-  // Saved under .png because the canvas bake always emits PNG…
-  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
+  // Sticky output: ext stays .jpg even with highlights.
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.jpg$/);
   expect(record.screenshot?.hasHighlights).toBe(true);
-  // …but `url` still records the original .jpg filename — nothing
-  // about the user's edits changes the source we read it from.
+  // `url` echoes the source filename — nothing about the user's
+  // edits changes the source we read it from.
   expect(record.url).toBe('file:///red-pixel.jpg');
   expect(record.title).toBe('Uploaded image');
+
+  // Bytes on disk are real JPEG (header `FF D8 FF`).
+  const jpgPath = await findCapturedDownload(sw, '.jpg');
+  const buf = fs.readFileSync(jpgPath);
+  expect(buf[0]).toBe(0xff);
+  expect(buf[1]).toBe(0xd8);
+  expect(buf[2]).toBe(0xff);
+});
+
+test('upload: WEBP + highlight bakes to .png (non-JPG/PNG source converts)', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // Companion to the JPG-sticky test above: a WEBP upload bakes to
+  // PNG because the canvas can only write PNG or JPEG, and PNG is
+  // the catch-all for non-JPEG sources. Confirms that the
+  // sticky-output rule converts away from formats the bake can't
+  // re-encode, rather than leaving stale `.webp` filenames pointing
+  // at PNG bytes.
+  const page = await extensionContext.newPage();
+  const sw = await getServiceWorker();
+
+  await page.goto(`chrome-extension://${extensionId}/capture.html?upload=true`);
+  await page.locator('#upload-file-input').setInputFiles(RED_WEBP);
+
+  await expect(page.locator('#preview')).toBeVisible();
+  await page.waitForFunction(() => {
+    const img = document.getElementById('preview') as HTMLImageElement | null;
+    return !!(img && img.complete && img.naturalWidth > 0 && img.clientWidth > 0);
+  });
+
+  await dragRect(page, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+
+  await Promise.all([
+    page.waitForEvent('close'),
+    page.locator('#capture').click(),
+  ]);
+
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+  expect(record.url).toBe('file:///red-pixel.webp');
+
+  const pngPath = await findCapturedDownload(sw, '.png');
+  const buf = fs.readFileSync(pngPath);
+  expect(buf[0]).toBe(0x89);
+  expect(buf[1]).toBe(0x50);
+  expect(buf[2]).toBe(0x4e);
+  expect(buf[3]).toBe(0x47);
 });

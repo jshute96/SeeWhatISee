@@ -1,4 +1,4 @@
-// Regression coverage for the JPG↔PNG extension sync across cached
+// Regression coverage for the source-ext ↔ PNG sync across cached
 // repeat-Copy clicks.
 //
 // Bug background: the page's Copy handler short-circuits the
@@ -9,10 +9,15 @@
 // `screenshotOverride === undefined` as "no edits, revert filename
 // extension to the original", which is wrong on a cache-hit click:
 // the cached bytes are still PNG. Symptom: clicking Copy again on a
-// JPG source after baking highlights flipped `screenshotFilename`
-// back to `.jpg` while the on-disk file was `.png`. A subsequent
-// Capture would then log a `.jpg` filename even though the saved
-// file was PNG bytes.
+// non-PNG source after baking highlights flipped `screenshotFilename`
+// back to the source ext while the on-disk file was `.png`. A
+// subsequent Capture would then log a stale-ext filename even though
+// the saved file was PNG bytes.
+//
+// Uses a WEBP source: now that the bake is format-sticky, a JPG
+// source would mask the bug (JPG stays `.jpg` end-to-end — there's
+// no ext flip to mis-revert). WEBP is non-PNG/JPG, so the bake
+// converts to PNG and the ext rewrite has somewhere to break.
 //
 // Fix: skip the extension rewrite when the SW's per-tab download
 // cache holds an entry at the requested `editVersion`. The cached
@@ -30,7 +35,7 @@ import {
   waitForClipboardWrites,
 } from './details-helpers';
 
-test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext', async ({
+test('image flow: WEBP → highlight → copy → repeat-copy keeps the .png ext', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -42,9 +47,9 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
     'red-image.html',
     undefined,
     undefined,
-    '#http-jpeg', // 200×200 real JPEG served with image/jpeg.
+    '#http-webp', // 200×200 real WEBP served with image/webp.
   );
-  expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
+  expect(imageUrl).toMatch(/\/red-pixel\.webp$/);
 
   const sw = await getServiceWorker();
 
@@ -61,10 +66,10 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
   // included). Waiting for it serializes the clicks.
   await installClipboardSpy(capturePage);
 
-  // 1. Copy with no edits → SW issues a .jpg download.
+  // 1. Copy with no edits → SW issues a .webp download.
   await capturePage.locator('#copy-screenshot-name').click();
   await waitForClipboardWrites(capturePage, 1);
-  expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.webp')).toBe(1);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(0);
 
   // 2. Draw a highlight → editVersion bumps → next copy bakes a PNG.
@@ -77,17 +82,17 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
 
   // 4. Copy AGAIN without edits — page short-circuits override to
   //    undefined (cache-hit shortcut). Without the fix, the SW
-  //    rewrote `capture.screenshotFilename` back to .jpg here even
+  //    rewrote `capture.screenshotFilename` back to .webp here even
   //    though the cache (and on-disk file) is still .png. The cache
   //    short-circuit means no new download issues either way.
   await capturePage.locator('#copy-screenshot-name').click();
   await waitForClipboardWrites(capturePage, 3);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
-  expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(1);
+  expect(await countDownloadsBySuffix(sw, '.webp')).toBe(1);
 
   // 5. Capture and verify the saved record references .png (the
-  //    bug surfaced as a .jpg filename in the log even though the
-  //    file on disk was PNG bytes).
+  //    bug surfaced as a stale-ext filename in the log even though
+  //    the file on disk was PNG bytes).
   await Promise.all([
     capturePage.waitForEvent('close'),
     capturePage.locator('#capture').click(),
@@ -111,7 +116,7 @@ test('image flow: JPG → highlight → copy → repeat-copy keeps the .png ext'
   await openerPage.close();
 });
 
-test('image flow: JPG → edit → copy → undo-all → copy correctly reverts to .jpg', async ({
+test('image flow: WEBP → edit → copy → undo-all → copy correctly reverts to .webp', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -126,9 +131,9 @@ test('image flow: JPG → edit → copy → undo-all → copy correctly reverts 
     'red-image.html',
     undefined,
     undefined,
-    '#http-jpeg',
+    '#http-webp',
   );
-  expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
+  expect(imageUrl).toMatch(/\/red-pixel\.webp$/);
 
   const sw = await getServiceWorker();
 
@@ -139,30 +144,30 @@ test('image flow: JPG → edit → copy → undo-all → copy correctly reverts 
 
   await capturePage.locator('#undo').click();
   await capturePage.locator('#copy-screenshot-name').click();
-  // Cache miss at the new editVersion → SW issues a fresh .jpg
+  // Cache miss at the new editVersion → SW issues a fresh .webp
   // download with the original bytes.
-  await expect.poll(() => countDownloadsBySuffix(sw, '.jpg')).toBe(1);
+  await expect.poll(() => countDownloadsBySuffix(sw, '.webp')).toBe(1);
 
   await openerPage.close();
 });
 
-test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Capture must keep .png in log', async ({
+test('image flow: WEBP → highlight → shift-Capture → repeat-Copy → Capture must keep .png in log', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
   // Regression for the multi-capture rebump path: a Capture against a
-  // JPEG with highlights bakes a `.png` and pins
+  // WEBP with highlights bakes a `.png` and pins
   // `saved.screenshot = { bumpIndex: 0, revision }`. A subsequent
   // same-revision Copy click would then enter `rebumpFilenameIfLocked`
   // with `saved` set; pre-fix, the rebump derived its desired filename
-  // from `bases.screenshot` (which carries the original `.jpg` ext),
+  // from `bases.screenshot` (which carries the original `.webp` ext),
   // saw it differ from the current `…png`, stomped the filename back
-  // to `.jpg` and dropped the cache. With override=undefined on a
-  // page-side cache-hit Copy, the rewrite kept `.jpg` and original
-  // JPEG bytes landed under that name. A follow-up shift-Capture then
-  // cache-hit the stale `.jpg` and wrote a `screenshot.filename:
-  // …jpg` log entry alongside `hasHighlights: true` — the user's
+  // to `.webp` and dropped the cache. With override=undefined on a
+  // page-side cache-hit Copy, the rewrite kept `.webp` and original
+  // WEBP bytes landed under that name. A follow-up shift-Capture then
+  // cache-hit the stale `.webp` and wrote a `screenshot.filename:
+  // …webp` log entry alongside `hasHighlights: true` — the user's
   // exact reported symptom. Fix: rebump no-ops on same-revision so
   // the post-rewrite filename survives.
   const { openerPage, capturePage, imageUrl } = await openImageDetailsFlow(
@@ -172,9 +177,9 @@ test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Captur
     'red-image.html',
     undefined,
     undefined,
-    '#http-jpeg',
+    '#http-webp',
   );
-  expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
+  expect(imageUrl).toMatch(/\/red-pixel\.webp$/);
 
   const sw = await getServiceWorker();
   // Same enqueue/commit-race guard as test 1 — the page-side
@@ -201,7 +206,7 @@ test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Captur
   //    download). The SECOND copy short-circuits on the page side
   //    (`lastSent` now matches) and sends `screenshotOverride =
   //    undefined`. This is the click that previously corrupted
-  //    `screenshotFilename` back to `.jpg` via the rebump. Wait
+  //    `screenshotFilename` back to `.webp` via the rebump. Wait
   //    on each clipboard write so the second click is guaranteed
   //    to see `lastSent` updated by the first.
   await capturePage.locator('#copy-screenshot-name').click();
@@ -209,10 +214,10 @@ test('image flow: JPG → highlight → shift-Capture → repeat-Copy → Captur
   await capturePage.locator('#copy-screenshot-name').click();
   await waitForClipboardWrites(capturePage, 2);
   expect(await countDownloadsBySuffix(sw, '.png')).toBe(1);
-  expect(await countDownloadsBySuffix(sw, '.jpg')).toBe(0);
+  expect(await countDownloadsBySuffix(sw, '.webp')).toBe(0);
 
   // 3. shift-Capture again at the same editVersion. The bug-shape
-  //    record was `{ filename: '…jpg', hasHighlights: true }`. Post
+  //    record was `{ filename: '…webp', hasHighlights: true }`. Post
   //    fix the second log line must still reference the original
   //    `.png` file with `hasHighlights: true`.
   await capturePage.locator('#capture').click({ modifiers: ['Shift'] });

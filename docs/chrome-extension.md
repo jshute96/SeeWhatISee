@@ -524,14 +524,22 @@ three-step ladder:
   the bug we're avoiding).
 - Filename is `screenshot-<ts>.<ext>` so the bytes stay honest.
 
-### Bake-in always emits PNG
+### Bake-in keeps the source format sticky
 
-The Capture-page bake (`renderHighlightedPng` →
-`canvas.toDataURL('image/png')`) is rasterized PNG regardless of
-the source format. To keep the filename honest,
-`ensureScreenshotDownloaded` swaps the extension to `.png` before
-writing whenever `screenshotOverride` is set, and reverts to
-`screenshotOriginalExt` when the user undoes back to clean.
+The Capture-page bake (`renderHighlightedImage`) emits the same
+encoding the user dropped in for JPEG, and PNG for everything else.
+
+- JPG source → bake re-encodes as JPEG (`toDataURL('image/jpeg', q)`).
+- PNG source → bake emits PNG.
+- WEBP / GIF / AVIF / … → bake emits PNG (canvas re-encode is lossy
+  anyway, and PNG keeps the markup crisp).
+
+`ensureScreenshotDownloaded` rewrites the filename's extension to
+match the override's MIME prefix (via `extFromDataUrl`) before
+writing, and reverts to `screenshotOriginalExt` when the user undoes
+back to clean. The clipboard "copy image" path always forces PNG
+(see `renderHighlightedImage('image/png')`) because that's the only
+image MIME `ClipboardItem` accepts reliably.
 
 ### Routing summary
 

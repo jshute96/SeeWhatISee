@@ -218,7 +218,7 @@ files plus an updated `log.json` sidecar.
 
 Each capture writes one or more of these, by filename prefix:
 
-- `screenshot-<timestamp>.png` — the captured PNG.
+- `screenshot-<timestamp>.png` — the captured PNG (or JPG).
 - `contents-<timestamp>.html` — the captured full-page HTML.
 - `selection-<timestamp>.{html,txt,md}` — the captured text selection. Exactly one file per capture — the extension reflects the format the user picked (HTML fragment, plain text, or markdown).
 

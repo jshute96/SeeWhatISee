@@ -589,16 +589,16 @@ test('image flow: Capture page inherits stored defaultButton (ask)', async ({
   await openerPage.close();
 });
 
-// ─── Edit-bake forces .png filename even for non-PNG sources ─────
+// ─── Edit-bake keeps the source format sticky ────────────────────
 
-// `renderHighlightedPng` always emits PNG (canvas.toDataURL('image/png')).
-// On a JPEG source, the original filename is `screenshot-<ts>.jpg`;
-// once the user bakes any edit in, the bytes become PNG and the SW
-// must rewrite the filename's extension so the file on disk matches
-// its contents. Without this, downstream tools that key off the
-// extension (image viewers, agents reading `log.json`) would
-// disagree with the actual bytes.
-test('image flow: JPEG source + bake-in writes .png with PNG bytes', async ({
+// `renderHighlightedImage` picks its output MIME from the source
+// (`bakeMime`): JPEG source → JPEG bake; PNG source → PNG bake;
+// anything else (WEBP / GIF / AVIF / …) → PNG bake. This test exercises
+// the JPEG path — a JPEG-sourced capture with edits saves as `.jpg`
+// with JPEG bytes (not `.png`, which would be the pre-sticky
+// behavior). Without sticky output, photographic JPGs would balloon
+// in size on every minor markup edit.
+test('image flow: JPEG source + bake-in stays .jpg with JPEG bytes', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -625,31 +625,35 @@ test('image flow: JPEG source + bake-in writes .png with PNG bytes', async ({
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
 
-  // Filename ext flipped from .jpg → .png to match the baked bytes.
-  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
+  // Filename ext stays .jpg — sticky output format.
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.jpg$/);
   expect(record.screenshot?.hasHighlights).toBe(true);
   expect(record.imageUrl).toBe(imageUrl);
 
-  // Bytes on disk are real PNG (header `89 50 4E 47`).
-  const pngPath = await findCapturedDownload(sw, '.png');
-  const buf = fs.readFileSync(pngPath);
-  expect(buf[0]).toBe(0x89);
-  expect(buf[1]).toBe(0x50);
-  expect(buf[2]).toBe(0x4e);
-  expect(buf[3]).toBe(0x47);
+  // Bytes on disk are real JPEG (header `FF D8 FF`).
+  const jpgPath = await findCapturedDownload(sw, '.jpg');
+  const buf = fs.readFileSync(jpgPath);
+  expect(buf[0]).toBe(0xff);
+  expect(buf[1]).toBe(0xd8);
+  expect(buf[2]).toBe(0xff);
 
   await openerPage.close();
 });
 
 // ─── Undo-all reverts filename back to the original extension ─────
 
-// The bake-in fix flips the screenshot filename's extension to
-// `.png` when there's an override. The reverse path matters too:
+// The bake-in path rewrites the screenshot filename's extension to
+// match the override's MIME prefix. The reverse path matters too:
 // after the user undoes every edit, the override goes away, the
-// bytes saved are the original (e.g. JPEG) bytes, and the filename
-// must revert to `.jpg`. Without this, JPEG bytes would land under
-// a `.png` filename — the same lie in reverse.
-test('image flow: JPEG source + bake then undo-all writes original .jpg', async ({
+// bytes saved are the original (e.g. WEBP) bytes, and the filename
+// must revert to the source extension. Without this, WEBP bytes
+// would land under a `.png` filename — a downstream lie.
+//
+// Uses a WEBP source so the test exercises a real format flip
+// (`.webp` → `.png` on bake, back to `.webp` on undo). A JPG source
+// would mask the bug — sticky output keeps a JPG capture at `.jpg`
+// throughout, so there's no ext to revert.
+test('image flow: WEBP source + bake then undo-all writes original .webp', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -661,14 +665,14 @@ test('image flow: JPEG source + bake then undo-all writes original .jpg', async 
     'red-image.html',
     undefined,
     undefined,
-    '#http-jpeg',
+    '#http-webp',
   );
-  expect(imageUrl).toMatch(/\/red-pixel\.jpg$/);
+  expect(imageUrl).toMatch(/\/red-pixel\.webp$/);
 
   // Bake an edit, then undo it — both via the in-page tool palette.
   // The `editVersion` counter bumps on each step (draw + undo are
   // both edits), so the SW sees two distinct versions and the
-  // filename should land at `.jpg` once the override is gone.
+  // filename should land at `.webp` once the override is gone.
   await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
   await capturePage.locator('#undo').click();
 
@@ -679,17 +683,61 @@ test('image flow: JPEG source + bake then undo-all writes original .jpg', async 
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.jpg$/);
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.webp$/);
   // No highlight flag — the undo cleared the only edit.
   expect(record.screenshot?.hasHighlights).toBeUndefined();
   expect(record.imageUrl).toBe(imageUrl);
 
-  // Bytes on disk are the original JPEG (header `FF D8 FF`).
-  const jpgPath = await findCapturedDownload(sw, '.jpg');
-  const buf = fs.readFileSync(jpgPath);
-  expect(buf[0]).toBe(0xff);
-  expect(buf[1]).toBe(0xd8);
-  expect(buf[2]).toBe(0xff);
+  // Bytes on disk are the original WEBP (RIFF header `52 49 46 46`).
+  const webpPath = await findCapturedDownload(sw, '.webp');
+  const buf = fs.readFileSync(webpPath);
+  expect(buf[0]).toBe(0x52);
+  expect(buf[1]).toBe(0x49);
+  expect(buf[2]).toBe(0x46);
+  expect(buf[3]).toBe(0x46);
+
+  await openerPage.close();
+});
+
+// Companion to the JPEG-stays-JPG test above: a WEBP source bakes
+// to PNG because the canvas only writes PNG or JPEG, and PNG is the
+// catch-all. Pairs with the WEBP-undo test above for full coverage
+// of the format flip in both directions.
+test('image flow: WEBP source + bake-in writes .png with PNG bytes', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage, imageUrl } = await openImageDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'red-image.html',
+    undefined,
+    undefined,
+    '#http-webp',
+  );
+  expect(imageUrl).toMatch(/\/red-pixel\.webp$/);
+
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#capture').click(),
+  ]);
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
+  expect(record.screenshot?.hasHighlights).toBe(true);
+
+  const pngPath = await findCapturedDownload(sw, '.png');
+  const buf = fs.readFileSync(pngPath);
+  expect(buf[0]).toBe(0x89);
+  expect(buf[1]).toBe(0x50);
+  expect(buf[2]).toBe(0x4e);
+  expect(buf[3]).toBe(0x47);
 
   await openerPage.close();
 });

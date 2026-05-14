@@ -404,11 +404,11 @@ function refreshPillsCompactness(): void {
  * Refresh the Image size pill's bake-derived parts (format + bytes).
  * Hidden when no screenshot was captured (`screenshotErrored`),
  * otherwise reflects what *would* be saved right now: the
- * freshly-baked PNG when the user has any drawn / cropped /
+ * freshly-baked image when the user has any drawn / cropped /
  * redacted edits, else the original captureVisibleTab data URL
- * verbatim. Format label comes from the data URL's MIME prefix; it
- * always resolves to "PNG" once edits have been baked because
- * `renderHighlightedPng` always re-encodes as PNG.
+ * verbatim. Format label comes from the data URL's MIME prefix; on
+ * a bake the label is "PNG" or "JPG" depending on the sticky output
+ * format `renderHighlightedImage` picks (`bakeMime`).
  *
  * The pill's text isn't written here directly — it's composed
  * by `composeImageBadgeText`, which adds the live dimensions
@@ -440,10 +440,11 @@ function updateImageSizeBadge(): void {
   const key = `${editVersion}|${previewImg.naturalWidth}|${previewImg.naturalHeight}`;
   if (lastImageBadgeKey === key && !imageSizeBadge.hidden) return;
   lastImageBadgeKey = key;
-  // `renderHighlightedPng` short-circuits to `previewImg.src` when
-  // no edits need baking, so the no-edits path is just the original
-  // capture data URL — no canvas re-encode.
-  const dataUrl = renderHighlightedPng();
+  // `renderHighlightedImage` short-circuits to `previewImg.src` when
+  // no edits need baking and the source already matches `bakeMime`,
+  // so the no-edits path is just the original capture data URL — no
+  // canvas re-encode.
+  const dataUrl = renderHighlightedImage();
   const formatted = formatImageDataUrl(dataUrl);
   if (!formatted) {
     imageSizeBadge.hidden = true;
@@ -484,7 +485,7 @@ function composeImageBadgeText(): void {
 }
 
 /**
- * Pixel dimensions of the image that `renderHighlightedPng` would
+ * Pixel dimensions of the image that `renderHighlightedImage` would
  * produce right now: the active crop's pixel size when one exists,
  * else `previewImg`'s natural size. Returns null while the
  * previewImg is still decoding (`naturalWidth === 0`) — callers
@@ -3495,9 +3496,9 @@ function setZoom(m: ZoomMode): void {
 // here is the editor's 1× zoom (1 source-CSS-pixel ≈ 1 editor CSS
 // pixel), not the natural-pixel size of the image — so the ratio is
 // 1.0 at 1×, 2.0 at 2×, and < 1 only when the editor has shrunk
-// below the source page's size. The bake (`renderHighlightedPng`)
+// below the source page's size. The bake (`renderHighlightedImage`)
 // does NOT use this — it always renders strokes at a fixed default
-// width in natural pixels so the saved PNG looks the same regardless
+// width in natural pixels so the saved image looks the same regardless
 // of the user's zoom level at save time.
 function currentDisplayScale(): number {
   const target = targetCssSize();
@@ -4480,11 +4481,13 @@ for (const format of SELECTION_FORMATS) {
 // ─── Download (Save as…) buttons ──────────────────────────────────
 //
 // Each row's download button opens a native save dialog seeded with a
-// generic default filename (`screenshot.png`, `contents.html`,
+// generic default filename (`screenshot.<png|jpg>`, `contents.html`,
 // `selection.{html,txt,md}`) under the user's default download
 // directory. The bytes written reflect the *current* edited state:
-//   - Screenshot: the highlighted/cropped PNG via `renderHighlightedPng`
-//     when there are bake-able edits, else the original capture.
+//   - Screenshot: the highlighted/cropped image via
+//     `renderHighlightedImage` when there are bake-able edits, else
+//     the original capture. Output format is sticky on the source
+//     (JPG stays JPG; everything else writes PNG) — see `bakeMime`.
 //   - HTML / selection: the `captured[kind]` mirror, which the Edit
 //     dialogs keep in sync with the SW after each save.
 // `chrome.downloads.download({ saveAs: true })` is callable directly
@@ -4507,13 +4510,18 @@ downloadImageBtn.addEventListener('click', () => {
 });
 
 async function copyImageToClipboard(): Promise<void> {
-  // `renderHighlightedPng` short-circuits to the original
-  // `previewImg.src` data URL when no edits need baking, so the
-  // bytes here are always either the original captureVisibleTab
-  // output or a freshly-baked render — never a re-fetch from the
-  // source page. The `fetch()` call is on the data URL (local
-  // base64 decode), not a network request.
-  const url = renderHighlightedPng();
+  // Forcing PNG keeps this aligned with the `ClipboardItem` MIME
+  // below: browsers only accept `image/png` in `ClipboardItem`
+  // reliably, so even a JPG- or WEBP-source capture is re-encoded
+  // to PNG for the clipboard.
+  // - PNG source, no edits → short-circuits to `previewImg.src`.
+  // - JPG / WEBP / GIF / … source → canvas re-encode to PNG runs
+  //   even with no edits (otherwise the blob's MIME would mismatch
+  //   the `'image/png'` `ClipboardItem` key below).
+  // - Any source + edits → canvas re-encode to PNG runs.
+  // The `fetch()` call is on the data URL (local base64 decode),
+  // not a network request to the source page.
+  const url = renderHighlightedImage('image/png');
   try {
     // Wrap the fetch in a Promise passed directly to ClipboardItem.
     // navigator.clipboard.write must be called synchronously within the
@@ -4558,13 +4566,14 @@ async function downloadAs(
   kind: 'screenshot' | EditableArtifactKind,
 ): Promise<void> {
   if (kind === 'screenshot') {
-    // `renderHighlightedPng` short-circuits to the original capture's
-    // data URL when no edits need baking — see its docstring.
-    const url = renderHighlightedPng();
+    // `renderHighlightedImage` short-circuits to the original
+    // capture's data URL when no edits need baking and the source
+    // already matches `bakeMime` — see its docstring.
+    const url = renderHighlightedImage();
     // Screenshot is a data: URL — nothing to revoke. The other kinds
     // use blob URLs (built from the editable body) and route through
     // `downloadEditableAs`, which handles its own revocation.
-    await runSaveAsDialog(url, 'screenshot.png', null);
+    await runSaveAsDialog(url, `screenshot.${bakeExt()}`, null);
     return;
   }
   await downloadEditableAs(kind, captured[kind]);
@@ -5192,12 +5201,12 @@ async function copyArtifactPath(
   // Skip the bake + override when the SW will cache-hit. The cache
   // is keyed by `editVersion`, so if we already shipped this version
   // (and therefore the SW already has the matching file on disk),
-  // there's no point baking a fresh PNG just for the SW to drop.
+  // there's no point baking a fresh image just for the SW to drop.
   const needsBake =
     kind === 'screenshot' &&
     hasBakeableEdits() &&
     editVersion !== lastSentScreenshotEditVersion;
-  const screenshotOverride = needsBake ? renderHighlightedPng() : undefined;
+  const screenshotOverride = needsBake ? renderHighlightedImage() : undefined;
   const response = (await chrome.runtime.sendMessage({
     action: 'ensureDownloaded',
     kind,
@@ -5214,13 +5223,48 @@ async function copyArtifactPath(
   await writeClipboardText(response.path);
 }
 
-// Render the preview image with all current edits baked into the
-// PNG bytes, at the screenshot's natural resolution. Used when the
-// user saves a screenshot that has edits — we want the saved file
-// to show the markup (and the cropped region, if any), not just the
-// underlying screenshot.
+// MIME type of the current preview image's source data URL. Used by
+// `bakeMime` / `bakeExt` to keep the saved format sticky: a JPG that
+// the user draws on stays a JPG; PNG stays PNG; anything else
+// (WEBP / GIF / AVIF / …) becomes PNG, since those are the only two
+// encodings the bake canvas writes.
+function sourceMime(): string {
+  const m = /^data:([^;,]+)[;,]/.exec(previewImg.src);
+  return m ? m[1]!.toLowerCase() : '';
+}
+
+// Format the bake should produce for save / Ask: JPG passes through,
+// everything else writes PNG. The page caches this on edit-version
+// changes via the badge cache, but the function itself is cheap (a
+// regex on a short prefix) so callers can read it freely.
+function bakeMime(): 'image/png' | 'image/jpeg' {
+  return sourceMime() === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+}
+
+// Filename extension matching `bakeMime`. Used for the Save-as
+// dialog's default name and the Ask attachment filename.
+function bakeExt(): 'png' | 'jpg' {
+  return bakeMime() === 'image/jpeg' ? 'jpg' : 'png';
+}
+
+// JPEG quality for the bake re-encode. 0.92 mirrors what most browsers
+// pick when `toDataURL('image/jpeg')` is called with no explicit
+// quality — high enough that overlay markings stay crisp, low enough
+// that a photographic JPG-source capture doesn't blow up in size the
+// way a PNG re-encode of the same pixels would.
+const JPEG_BAKE_QUALITY = 0.92;
+
+// Render the preview image with all current edits baked into image
+// bytes at the screenshot's natural resolution. Used when the user
+// saves a screenshot that has edits — we want the saved file to show
+// the markup (and the cropped region, if any), not just the underlying
+// screenshot.
 //
-// Strokes in the saved PNG are always rendered at the same default
+// Output format follows the sticky rule above unless the caller forces
+// one (the clipboard path forces `image/png` because that's the only
+// image MIME `ClipboardItem` accepts reliably across browsers).
+//
+// Strokes in the saved image are always rendered at the same default
 // width (3 natural px), independent of the display→natural ratio
 // at the moment of save. The overlay still scales its stroke with
 // the visible image (so editing at 4× shows fatter lines than
@@ -5234,13 +5278,20 @@ async function copyArtifactPath(
 // translated into the cropped frame so the bake-in output shows
 // exactly what the user saw through the dim overlay.
 //
-// Short-circuits to `previewImg.src` (the original captureVisibleTab
-// data URL) when there are no bake-able edits — same pixels, but
-// avoids the 30–100ms canvas re-encode AND preserves byte identity
-// with the original capture. Callers can therefore always invoke
-// this without first guarding on `hasBakeableEdits()`.
-function renderHighlightedPng(): string {
-  if (!hasBakeableEdits()) return previewImg.src;
+// Short-circuits to `previewImg.src` (the original capture data URL)
+// when there are no bake-able edits — same pixels, but avoids the
+// 30–100ms canvas re-encode AND preserves byte identity with the
+// original capture. Callers without a `forceMime` get back the
+// source bytes regardless of format (WEBP / GIF / … stay as-is on a
+// no-edits save). When the caller forces a specific output MIME
+// (clipboard path: `image/png`), the re-encode still has to run on
+// a no-edits source whose MIME doesn't already match — otherwise
+// the caller's `ClipboardItem` MIME would mismatch the bytes.
+function renderHighlightedImage(forceMime?: 'image/png' | 'image/jpeg'): string {
+  if (!hasBakeableEdits()) {
+    if (!forceMime || sourceMime() === forceMime) return previewImg.src;
+  }
+  const outMime: 'image/png' | 'image/jpeg' = forceMime ?? bakeMime();
   const natW = previewImg.naturalWidth;
   const natH = previewImg.naturalHeight;
   const crop = activeCrop();
@@ -5329,11 +5380,13 @@ function renderHighlightedPng(): string {
   }
   ctx.restore();
 
-  return canvas.toDataURL('image/png');
+  return outMime === 'image/jpeg'
+    ? canvas.toDataURL('image/jpeg', JPEG_BAKE_QUALITY)
+    : canvas.toDataURL('image/png');
 }
 
 // True iff there is at least one edit whose effect must be baked
-// into the saved PNG: any red rect / line / redaction, or an
+// into the saved image: any red rect / line / redaction, or an
 // effective crop. A crop that covers the whole image contributes
 // nothing to the bake (`activeCrop()` returns undefined for it),
 // so a stack whose only edits are full-image crops skips the bake
@@ -5384,7 +5437,7 @@ captureBtn.addEventListener('click', (e) => {
   const closeAfter = closeAfterFromModifiers(e, true);
 
   try {
-    // Only bake edits into a fresh PNG when both apply: there's
+    // Only bake edits into a fresh image when both apply: there's
     // something to bake, and the user is actually saving the image.
     // If the screenshot isn't being saved, the override would be
     // wasted bytes on the message channel. "Edits" here covers red
@@ -5392,9 +5445,9 @@ captureBtn.addEventListener('click', (e) => {
     // changes the pixels that end up on disk.
     const hasEdits = hasBakeableEdits();
     const bakeIn = hasEdits && screenshotBox.checked;
-    const screenshotOverride = bakeIn ? renderHighlightedPng() : undefined;
+    const screenshotOverride = bakeIn ? renderHighlightedImage() : undefined;
     // Per-kind flags only matter when we're actually saving the
-    // screenshot — they describe what's baked into the PNG, so
+    // screenshot — they describe what's baked into the image, so
     // there's nothing for the SW to flag on a record that doesn't
     // include the image. `bakeIn` already folds both conditions in.
     const flags = bakeIn
@@ -5445,7 +5498,7 @@ captureBtn.addEventListener('click', (e) => {
       }
     })();
   } catch (err) {
-    // Synchronous failure (e.g. renderHighlightedPng / toDataURL
+    // Synchronous failure (e.g. renderHighlightedImage / toDataURL
     // throwing). Re-enable so the user can retry, surface the
     // failure in the page status slot rather than the toolbar.
     console.warn('[SeeWhatISee] capture submit failed:', err);
@@ -6169,17 +6222,20 @@ const SELECTION_FILE_META: Record<
 function buildAskAttachments(): AskAttachment[] {
   const out: AskAttachment[] = [];
   if (screenshotBox.checked && !screenshotBox.disabled) {
-    // Bake current edits into the PNG when there are any — Ask uses
+    // Bake current edits into the image when there are any — Ask uses
     // the same on-screen state the user is looking at, mirroring the
-    // Capture button's bake-on-save policy. `renderHighlightedPng`
-    // short-circuits to the original capture's data URL when no
-    // edits need baking.
-    const data = renderHighlightedPng();
+    // Capture button's bake-on-save policy. `renderHighlightedImage`
+    // short-circuits to the original capture's data URL when no edits
+    // need baking and the source format already matches `bakeMime`.
+    // Mime + extension stay in sync via `bakeMime`/`bakeExt` so a JPG
+    // source stays JPG end-to-end (sticky output format).
+    const data = renderHighlightedImage();
+    const mime = bakeMime();
     out.push({
       data,
       kind: 'image',
-      mimeType: 'image/png',
-      filename: 'screenshot.png',
+      mimeType: mime,
+      filename: `screenshot.${bakeExt()}`,
     });
   }
   if (htmlBox.checked && !htmlBox.disabled && captured.html) {

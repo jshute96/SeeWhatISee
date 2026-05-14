@@ -1835,11 +1835,13 @@
         <!--
           Image-level Copy + Save. Mirror the per-row Copy / Save-as
           buttons next to the Save-screenshot checkbox above, but
-          live in the palette next to the image. Copy puts the PNG
-          bytes (with current edits baked in) on the clipboard;
-          Save opens the native download dialog seeded with
-          `screenshot.png`. Both are disabled when the screenshot
-          capture errored, same as the per-row buttons.
+          live in the palette next to the image. Copy puts PNG bytes
+          (with current edits baked in) on the clipboard regardless
+          of source format — `ClipboardItem` only accepts image/png
+          reliably; Save opens the native download dialog seeded
+          with `screenshot.<bakeExt>` (sticky output format — JPG
+          stays JPG). Both are disabled when the screenshot capture
+          errored, same as the per-row buttons.
         -->
         <button id="copy-image-btn" type="button" class="btn"
                 title="Copy screenshot to clipboard">Copy</button>
