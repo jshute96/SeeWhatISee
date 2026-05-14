@@ -1,8 +1,12 @@
-// ─── Ask flow ─────────────────────────────────────────────────────
+// Ask flow on the Capture page — the "send the staged capture to an
+// AI on the web" half of the page. Wires the horizontal Ask button
+// row (`.button-row`, wraps to multiple lines on a narrow viewport),
+// the destination-picker menu, the cross-tab storage listener, and
+// the send + pre-send-guard pipeline. `initAsk(ctx)` is the only
+// entry point; everything else closes over the ctx binding at
+// module scope.
 //
-// Horizontal Ask button row (`.button-row`, wraps to multiple
-// lines on a narrow viewport). Three button kinds, in source
-// order after `#capture`:
+// Three button kinds in source order after `#capture`:
 //   - `#ask-btn`   ("Ask <provider>") resolves the default
 //                    destination via the SW (pinned tab if alive,
 //                    else preferred-new-tab provider, else the

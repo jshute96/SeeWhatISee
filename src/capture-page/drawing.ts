@@ -1,4 +1,11 @@
-// ─── Highlight overlay ────────────────────────────────────────────
+// Highlight overlay + canvas bake for the Capture page. Owns the
+// entire annotation surface: the edit stack (`edits`, `editHistory`,
+// `editVersion`), the tool palette and selection state, snap-to,
+// box-resize handles, polyline chains, the live SVG `render()`, the
+// dashed viewport-edge indicators, Shrink, and `renderHighlightedImage`
+// — the canvas twin of `render()` that bakes the same edits into
+// natural-resolution PNG/JPEG bytes for save / clipboard / Ask.
+// `initDrawing(ctx)` is the only entry point.
 //
 // Drawing is *modal*: one of the tool buttons (Box / Line / Arrow /
 // Redact / Crop) is selected at a time, and a left-button drag on the

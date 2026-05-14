@@ -5,20 +5,23 @@
 // lives in the sub-modules — this file stays thin on purpose.
 
 import {
-  _setLargeScreenshotThresholdForTest,
   captureBothToMemory,
-  captureImageAsScreenshot,
-  captureImageToMemory,
   captureSelection,
   captureVisible,
-  clearCaptureLog,
-  downloadHtml,
-  downloadScreenshot,
-  downloadSelection,
-  LOG_STORAGE_KEY,
   recordDetailedCapture,
   savePageContents,
 } from './capture.js';
+import { _setLargeScreenshotThresholdForTest } from './capture/recompress.js';
+import {
+  downloadHtml,
+  downloadScreenshot,
+  downloadSelection,
+} from './capture/downloads.js';
+import { clearCaptureLog, LOG_STORAGE_KEY } from './capture/log-store.js';
+import {
+  captureImageAsScreenshot,
+  captureImageToMemory,
+} from './capture/image-source.js';
 import {
   installUnhandledRejectionHandler,
   reportCaptureError,

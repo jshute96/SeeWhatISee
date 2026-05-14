@@ -1,4 +1,8 @@
-// ─── Image fit + Zoom, pan, wheel/keyboard zoom ──────────────────
+// Image fit / Zoom / Pan for the Capture page. `initZoom(ctx)`
+// wires the zoom dropdown, Ctrl+wheel and Alt+± stepping, the
+// middle-click + Ctrl-left pan, and the window resize / image-load
+// re-fit hooks. Also owns the `lastMousePos` cache that drawing's
+// arrow-key nudge reads and writes.
 //
 // Two display modes:
 //   - 'fit' (default) — image shrinks to the remaining viewport

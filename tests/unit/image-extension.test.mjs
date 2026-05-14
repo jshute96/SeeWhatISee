@@ -1,5 +1,5 @@
-// Unit tests for `imageExtensionFor` in `src/capture.ts` — the
-// fallback table + URL-pathname + `.unknown` ladder used by the
+// Unit tests for `imageExtensionFor` in `src/capture/image-source.ts`
+// — the fallback table + URL-pathname + `.unknown` ladder used by the
 // image right-click capture path. End-to-end tests cover the
 // known-MIME case (PNG and JPEG); the off-table and unknown paths
 // only get exercised here, since they require synthetic MIME /
@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { imageExtensionFor } from '../../dist/capture.js';
+import { imageExtensionFor } from '../../dist/capture/image-source.js';
 
 test('imageExtensionFor: known MIMEs use the canonical short table form', () => {
   assert.equal(imageExtensionFor('image/png', 'https://example.com/p'), 'png');

@@ -130,7 +130,11 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
-| `src/capture.ts` | Capture dispatch, selection scraping + download, large-screenshot PNG→JPEG recompress, `log.json` sidecar writing |
+| `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules below |
+| `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
+| `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete` |
+| `src/capture/log-store.ts` | Capture log + on-disk `log.json` sidecar — `LOG_STORAGE_KEY`, `clearCaptureLog`/`appendToLog`/`writeJsonFile`/`serializeRecord`/`serializeWrite`, `compactTimestamp` |
+| `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
 | `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |

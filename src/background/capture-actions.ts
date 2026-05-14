@@ -2,13 +2,15 @@ import {
   captureBothToMemory,
   captureSelection,
   captureVisible,
-  downloadHtml,
-  downloadScreenshot,
-  downloadSelection,
   recordDetailedCapture,
   savePageContents,
   type SelectionFormat,
 } from '../capture.js';
+import {
+  downloadHtml,
+  downloadScreenshot,
+  downloadSelection,
+} from '../capture/downloads.js';
 import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 import { startCaptureWithDetails } from './capture-details.js';
 

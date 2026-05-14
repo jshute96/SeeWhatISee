@@ -10,11 +10,9 @@ import {
   findProviderForTab,
   getAskPin,
 } from './ask/index.js';
-import {
-  DOWNLOAD_SUBDIR,
-  LOG_STORAGE_KEY,
-  type CaptureRecord,
-} from '../capture.js';
+import { type CaptureRecord } from '../capture.js';
+import { DOWNLOAD_SUBDIR } from '../capture/downloads.js';
+import { LOG_STORAGE_KEY } from '../capture/log-store.js';
 import {
   CAPTURE_ACTIONS,
   captureActionsWithDelay,

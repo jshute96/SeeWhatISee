@@ -1,18 +1,22 @@
 import {
   captureBothToMemory,
-  captureImageToMemory,
-  compactTimestamp,
-  downloadHtml,
-  downloadScreenshot,
-  downloadSelection,
-  imageExtensionFor,
   noSelectionContentMessage,
   recordDetailedCapture,
-  waitForDownloadComplete,
   type EditableArtifactKind,
   type InMemoryCapture,
   type SelectionFormat,
 } from '../capture.js';
+import {
+  downloadHtml,
+  downloadScreenshot,
+  downloadSelection,
+  waitForDownloadComplete,
+} from '../capture/downloads.js';
+import { compactTimestamp } from '../capture/log-store.js';
+import {
+  captureImageToMemory,
+  imageExtensionFor,
+} from '../capture/image-source.js';
 import {
   getCaptureDetailsDefaults,
   type CaptureDetailsDefaults,
