@@ -19,40 +19,267 @@ import {
 } from './capture-page-defaults.js';
 import {
   checkSessionStorageRoom,
+  formatBytes,
   formatQuotaError,
   type QuotaBreakdownPart,
 } from './session-quota.js';
+import {
+  isCompressed,
+  prepareStoredText,
+  readStoredText,
+  storedTextBytes,
+  storedTextHardCapBytes,
+  type StoredText,
+} from './text-compression.js';
 
 /**
- * Per-artifact size split of an `InMemoryCapture` for the quota
- * error message. Uses `JSON.stringify(value).length` (the same
- * accounting `getBytesInUse` uses), and only includes artifacts that
- * are present and non-empty — a screenshot-only upload then reads
- * as "5 MB image" rather than "5 MB image + 0 B HTML + 0 B selection".
+ * Storage-shape of an `InMemoryCapture`. Text artifacts go through
+ * `StoredText` (plain when small, gzip-base64 when over the 100 KiB
+ * threshold) so a heavy SPA's inlined HTML doesn't blow the 10 MiB
+ * `chrome.storage.session` cap. The screenshot data URL is left
+ * untouched — base64-PNG / JPEG bytes barely compress at all and
+ * we already manage screenshot size at capture time via the
+ * recompress path in `capture.ts`.
  *
- * The sum may not equal the session's grand total — the wrapper
- * structure (`DetailsSession` keys, `bases`, …) also costs bytes —
- * so `formatQuotaError` shows the authoritative `needBytes` total
- * alongside the parts.
+ * Lives only at the storage boundary: handlers always see the
+ * decompressed `InMemoryCapture` thanks to `loadDetailsSession`
+ * decompressing on read.
  */
-function captureBreakdown(capture: InMemoryCapture): QuotaBreakdownPart[] {
+export interface StoredCapture
+  extends Omit<InMemoryCapture, 'html' | 'selections'> {
+  html: StoredText;
+  selections?: {
+    html: StoredText;
+    text: StoredText;
+    markdown: StoredText;
+  };
+}
+
+// Compile-time guard: `StoredCapture` only differs from
+// `InMemoryCapture` in the `html` and `selections` field types. If
+// someone adds a new storage-only field to `StoredCapture` (and not
+// to `InMemoryCapture`), this turns into `never` and the build
+// fails — which forces them to either mirror the field onto
+// `InMemoryCapture` too or update `deserializeStoredCapture`'s
+// rest-spread to drop it. Without this, the new field would silently
+// ride the spread into the plain capture and leak into page-side
+// consumers.
+type _StoredCaptureExtraFields = Exclude<
+  keyof StoredCapture,
+  keyof InMemoryCapture | 'html' | 'selections'
+>;
+const _storedCaptureShapeOk: [_StoredCaptureExtraFields] extends [never] ? true : never =
+  true;
+// Reference the guard so dead-code elimination doesn't strip it
+// before tsc can complain.
+void _storedCaptureShapeOk;
+
+/** Storage-shape of `DetailsSession`. Same fields, but `capture`
+ *  is the compressed `StoredCapture`. */
+export type StoredDetailsSession = Omit<DetailsSession, 'capture'> & {
+  capture: StoredCapture;
+};
+
+/**
+ * Compress an `InMemoryCapture` for storage. Each text artifact is
+ * fed through `prepareStoredText`; if its compressed size exceeds
+ * the per-artifact 2 MiB cap (or the selection bundle's three
+ * compressed formats sum past 2 MiB), the artifact is dropped from
+ * the returned `stored` and a user-facing error string comes back
+ * in `htmlError` / `selectionError`. Callers apply those to the
+ * companion `InMemoryCapture` so the Capture page's row error icon
+ * + greyed-out save row line up with what's actually stored.
+ *
+ * Selection is treated as a single artifact: the cap applies to
+ * the sum of the three compressed formats (html / text / markdown).
+ * If any individual format fails the cap on its own, the whole
+ * selection is rejected with a sum-based message — the user only
+ * sees one error per row regardless of which format was the long
+ * pole.
+ */
+async function serializeStoredCapture(
+  capture: InMemoryCapture,
+): Promise<{
+  stored: StoredCapture;
+  htmlError?: string;
+  selectionError?: string;
+}> {
+  // ---- HTML ----------------------------------------------------
+  let storedHtml: StoredText;
+  let htmlError: string | undefined;
+  const htmlPrep = await prepareStoredText(capture.html);
+  if (htmlPrep.ok) {
+    storedHtml = htmlPrep.stored;
+  } else {
+    storedHtml = { kind: 'plain', text: '', uncompressedBytes: 0 };
+    htmlError = htmlPrep.message;
+  }
+
+  // ---- Selection (bundle of html / text / markdown) -----------
+  let storedSelections: StoredCapture['selections'];
+  let selectionError: string | undefined;
+  if (capture.selections) {
+    const sel = capture.selections;
+    const [h, t, m] = await Promise.all([
+      prepareStoredText(sel.html),
+      prepareStoredText(sel.text),
+      prepareStoredText(sel.markdown),
+    ]);
+    if (!h.ok || !t.ok || !m.ok) {
+      // At least one format individually blew the 2 MiB cap. Sum
+      // whatever sizes we have (using the rejected entries'
+      // measured byte counts) and present a single bundle-level
+      // message — the row's error icon doesn't distinguish formats.
+      selectionError = bundleSelectionTooLargeMessage(h, t, m);
+    } else {
+      const compressedTotal =
+        compressedBytesOf(h.stored)
+        + compressedBytesOf(t.stored)
+        + compressedBytesOf(m.stored);
+      const uncompressedTotal =
+        h.stored.uncompressedBytes
+        + t.stored.uncompressedBytes
+        + m.stored.uncompressedBytes;
+      if (compressedTotal > storedTextHardCapBytes()) {
+        selectionError = formatSelectionTooLargeMessage(
+          uncompressedTotal,
+          compressedTotal,
+        );
+      } else {
+        storedSelections = { html: h.stored, text: t.stored, markdown: m.stored };
+      }
+    }
+  }
+
+  const stored: StoredCapture = {
+    ...capture,
+    html: storedHtml,
+    selections: storedSelections,
+    // Mirror the size-rejection errors onto the stored shape too —
+    // the deserialize side reads these straight off the storage
+    // record, so `htmlError` / `selectionError` MUST live on
+    // `stored` (not just the in-memory `capture`) for the Capture
+    // page to actually see "Content too large…" on the row icon.
+    ...(htmlError ? { htmlError } : {}),
+    ...(selectionError ? { selectionError } : {}),
+  };
+  return {
+    stored,
+    ...(htmlError ? { htmlError } : {}),
+    ...(selectionError ? { selectionError } : {}),
+  };
+}
+
+/** Inverse of `serializeStoredCapture` — decompress text artifacts
+ *  back into the plain `InMemoryCapture` shape every handler
+ *  consumes. */
+async function deserializeStoredCapture(
+  stored: StoredCapture,
+): Promise<InMemoryCapture> {
+  const html = await readStoredText(stored.html);
+  let selections: InMemoryCapture['selections'];
+  if (stored.selections) {
+    const [h, t, m] = await Promise.all([
+      readStoredText(stored.selections.html),
+      readStoredText(stored.selections.text),
+      readStoredText(stored.selections.markdown),
+    ]);
+    selections = { html: h, text: t, markdown: m };
+  }
+  // Strip the storage-shape `html` / `selections` off the spread so
+  // their `StoredText`-typed forms don't leak into the
+  // `InMemoryCapture` (which expects plain `string` / `SelectionBodies`).
+  const { html: _h, selections: _s, ...rest } = stored;
+  void _h;
+  void _s;
+  const capture: InMemoryCapture = { ...rest, html };
+  if (selections) capture.selections = selections;
+  return capture;
+}
+
+function compressedBytesOf(stored: StoredText): number {
+  return stored.kind === 'gzip-base64'
+    ? stored.compressedBytes
+    : stored.uncompressedBytes;
+}
+
+/** Compose the same "Content too large: …" message
+ *  `prepareStoredText` emits, but with the bundle's *totals*
+ *  rather than a single format's sizes. Used when the three
+ *  selection formats sum past the cap even though each was
+ *  individually fine. */
+function formatSelectionTooLargeMessage(
+  uncompressedBytes: number,
+  compressedBytes: number,
+): string {
+  return `Content too large: ${formatBytes(uncompressedBytes)}, ${formatBytes(compressedBytes)} compressed (limit ${formatBytes(storedTextHardCapBytes())}).`;
+}
+
+/** Build the selection-rejected message when at least one format
+ *  individually failed the cap. `PreparedText` always carries the
+ *  measured byte counts (even on the failure branch), so we can
+ *  still report sensible totals. */
+function bundleSelectionTooLargeMessage(
+  ...preps: Array<Awaited<ReturnType<typeof prepareStoredText>>>
+): string {
+  let uncompressed = 0;
+  let compressed = 0;
+  for (const p of preps) {
+    if (p.ok) {
+      uncompressed += p.stored.uncompressedBytes;
+      compressed += compressedBytesOf(p.stored);
+    } else {
+      uncompressed += p.uncompressedBytes;
+      compressed += p.compressedBytes;
+    }
+  }
+  return formatSelectionTooLargeMessage(uncompressed, compressed);
+}
+
+/**
+ * Per-artifact size split of a prospective `StoredCapture` for the
+ * quota-error message. Reports each artifact's actual stored byte
+ * cost (the JSON-stringified size `chrome.storage.session.set`
+ * will charge) and labels gzipped text fields as "compressed HTML"
+ * / "compressed selection" so the user knows they're already
+ * looking at the post-compression number.
+ *
+ * The sum won't equal the session's grand total — the wrapper
+ * structure (`DetailsSession` keys, `bases`, …) costs additional
+ * bytes — so `formatQuotaError` shows the authoritative `needBytes`
+ * total alongside the parts.
+ */
+function storedCaptureBreakdown(stored: StoredCapture): QuotaBreakdownPart[] {
   const parts: QuotaBreakdownPart[] = [];
-  if (capture.screenshotDataUrl) {
+  if (stored.screenshotDataUrl) {
     parts.push({
       label: 'image',
-      bytes: JSON.stringify(capture.screenshotDataUrl).length,
+      bytes: JSON.stringify(stored.screenshotDataUrl).length,
     });
   }
-  if (capture.html) {
-    parts.push({ label: 'HTML', bytes: JSON.stringify(capture.html).length });
+  if (stored.html.uncompressedBytes > 0) {
+    parts.push({
+      label: isCompressed(stored.html) ? 'compressed HTML' : 'HTML',
+      bytes: storedTextBytes(stored.html),
+    });
   }
-  // `selections` is undefined when no selection was captured. Even
-  // when present, all three bodies can be empty strings (e.g. a
-  // future caller that pre-fills the shape) — guard against that so
-  // we don't report a `40 B selection` line for nothing.
-  const sel = capture.selections;
-  if (sel && (sel.html || sel.text || sel.markdown)) {
-    parts.push({ label: 'selection', bytes: JSON.stringify(sel).length });
+  // Selection is reported as one entry — sum of the three formats'
+  // stored bytes — to mirror its "one save row" UX. Labelled
+  // "compressed" iff *any* format ended up gzipped.
+  if (stored.selections) {
+    const sel = stored.selections;
+    const bytes =
+      storedTextBytes(sel.html)
+      + storedTextBytes(sel.text)
+      + storedTextBytes(sel.markdown);
+    if (bytes > 0) {
+      const compressed =
+        isCompressed(sel.html) || isCompressed(sel.text) || isCompressed(sel.markdown);
+      parts.push({
+        label: compressed ? 'compressed selection' : 'selection',
+        bytes,
+      });
+    }
   }
   return parts;
 }
@@ -370,10 +597,26 @@ async function openCapturePageWithSession(
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
   if (opener?.id !== undefined) createProps.openerTabId = opener.id;
 
-  // Build the prospective session up-front so the pre-flight quota
-  // check (and the per-tab `set` below) operate on the same value.
-  const buildSession = (): DetailsSession => ({
-    capture: data,
+  // Compress text artifacts and surface any per-artifact rejections
+  // back onto `data` so the Capture page sees the row's error icon
+  // line up with what's actually stored. `serialized` is the
+  // storage-shape (compressed) form used for both the quota probe
+  // and the eventual `set`.
+  const { stored, htmlError, selectionError } = await serializeStoredCapture(data);
+  if (htmlError) {
+    data.htmlError = htmlError;
+    data.html = '';
+  }
+  if (selectionError) {
+    data.selectionError = selectionError;
+    delete data.selections;
+  }
+
+  // Build the prospective stored session up-front so the pre-flight
+  // quota check (and the per-tab `set` below) operate on the same
+  // value.
+  const buildStoredSession = (): StoredDetailsSession => ({
+    capture: stored,
     openerTabId: opener?.id,
     // Snapshot the original (un-bumped) artifact filenames so the
     // multi-capture filename strategy can produce stable
@@ -407,10 +650,10 @@ async function openCapturePageWithSession(
   // post-create race branch below.
   const probe = await checkSessionStorageRoom(
     detailsStorageKey(0),
-    buildSession(),
+    buildStoredSession(),
   );
   if (!probe.ok) {
-    const message = formatQuotaError('capture', probe, captureBreakdown(data));
+    const message = formatQuotaError('capture', probe, storedCaptureBreakdown(stored));
     await chrome.tabs.create({
       ...createProps,
       url: capturePageUrlWithError(message),
@@ -423,7 +666,7 @@ async function openCapturePageWithSession(
     throw new Error('Failed to open Capture page tab');
   }
   try {
-    await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: buildSession() });
+    await chrome.storage.session.set({ [detailsStorageKey(tab.id)]: buildStoredSession() });
   } catch (err) {
     // Quota race past the pre-flight (or any other storage failure):
     // redirect the just-opened tab to the error pane so the user
@@ -612,7 +855,10 @@ type DetailsMessage =
 async function loadDetailsSession(tabId: number): Promise<DetailsSession | undefined> {
   const key = detailsStorageKey(tabId);
   const stored = await chrome.storage.session.get(key);
-  return stored[key] as DetailsSession | undefined;
+  const record = stored[key] as StoredDetailsSession | undefined;
+  if (!record) return undefined;
+  const capture = await deserializeStoredCapture(record.capture);
+  return { ...record, capture };
 }
 
 /**
@@ -632,8 +878,35 @@ async function requireDetailsSession(tabId: number): Promise<DetailsSession> {
  * `downloads` cache so future Copy / Capture clicks can reuse the
  * already-downloaded files.
  */
+/**
+ * Persist a session to `chrome.storage.session`. Recompresses text
+ * artifacts on every call — most pages are under the 100 KiB
+ * threshold and skip the work entirely; the heavy-SPA case pays a
+ * one-time CompressionStream pass per click, which is small
+ * compared to what `set` will charge for the same payload.
+ *
+ * Mutates `session.capture` in place if the per-artifact 2 MiB cap
+ * dropped an artifact, so the post-save in-memory shape (which
+ * other handlers may still hold via the session reference) matches
+ * what's actually stored. By the time we land here, the artifact
+ * should already have passed the cap at capture / edit-save time;
+ * this is a defense-in-depth path that should never fire in
+ * production — hence the `console.warn`.
+ */
 async function saveDetailsSession(tabId: number, session: DetailsSession): Promise<void> {
-  await chrome.storage.session.set({ [detailsStorageKey(tabId)]: session });
+  const { stored, htmlError, selectionError } = await serializeStoredCapture(session.capture);
+  if (htmlError) {
+    console.warn('[SeeWhatISee] saveDetailsSession: dropping over-cap HTML:', htmlError);
+    session.capture.htmlError = htmlError;
+    session.capture.html = '';
+  }
+  if (selectionError) {
+    console.warn('[SeeWhatISee] saveDetailsSession: dropping over-cap selection:', selectionError);
+    session.capture.selectionError = selectionError;
+    delete session.capture.selections;
+  }
+  const storedSession: StoredDetailsSession = { ...session, capture: stored };
+  await chrome.storage.session.set({ [detailsStorageKey(tabId)]: storedSession });
 }
 
 /**
@@ -1164,6 +1437,43 @@ const EDIT_GUARD_ERROR: Record<EditableArtifactKind, 'htmlError' | 'selectionErr
 };
 
 /**
+ * Pre-flight the storage-shape `2 MiB compressed` cap against an
+ * incoming Edit-dialog save *before* mutating the session. Returns
+ * the user-facing "Content too large: …" message when the new
+ * artifact would be rejected at storage time, or `undefined` when
+ * the edit fits.
+ *
+ * Built by cloning just the text field(s) the edit touches and
+ * running them through `serializeStoredCapture`; the rest of the
+ * capture passes through untouched so we don't accidentally re-
+ * check artifacts the user didn't modify (and trip on a screenshot
+ * issue that's unrelated to this edit).
+ */
+async function precheckArtifactEditFits(
+  capture: InMemoryCapture,
+  kind: EditableArtifactKind,
+  value: string,
+): Promise<string | undefined> {
+  const next: InMemoryCapture = { ...capture };
+  if (kind === 'html') {
+    next.html = value;
+  } else {
+    // Selection format edit. `applyArtifactEdit`'s guard rejects
+    // edits against a session with no selections at all, so this
+    // case is unreachable; bail out without trying to size a
+    // non-existent bundle.
+    if (!capture.selections) return undefined;
+    const format: SelectionFormat =
+      kind === 'selectionHtml' ? 'html'
+      : kind === 'selectionText' ? 'text'
+      : 'markdown';
+    next.selections = { ...capture.selections, [format]: value };
+  }
+  const probe = await serializeStoredCapture(next);
+  return kind === 'html' ? probe.htmlError : probe.selectionError;
+}
+
+/**
  * Apply an Edit-dialog save to the given session: replace the body
  * + set the sticky edited flag + drop the corresponding download
  * cache so the next Copy / Capture re-downloads with the edited
@@ -1325,6 +1635,21 @@ export function installDetailsMessageHandlers(): void {
       void (async () => {
         try {
           const session = await requireDetailsSession(tabId);
+          // Refuse the edit up-front when the new content would
+          // exceed the per-artifact 2 MiB compressed cap. Without
+          // this, `saveDetailsSession` would drop the body and
+          // surface a stale error — the user thinks the edit
+          // landed, then notices Save HTML / Save selection is
+          // greyed out with an error icon.
+          const tooBig = await precheckArtifactEditFits(
+            session.capture,
+            msg.kind,
+            msg.value,
+          );
+          if (tooBig) {
+            sendResponse({ error: tooBig });
+            return;
+          }
           applyArtifactEdit(session, msg.kind, msg.value);
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });
@@ -1523,12 +1848,30 @@ export function installDetailsMessageHandlers(): void {
           // close falls back to the active tab. Acceptable tradeoff;
           // adding it would require keying opener-by-tab-id state
           // somewhere `initializeUploadSession` could look it up.
+          // Upload flow has no HTML and (usually) no selection, so
+          // text-compression won't trigger. Run the serializer anyway
+          // so the quota probe sees the same shape `saveDetailsSession`
+          // is about to write.
+          const { stored: storedCapture, htmlError, selectionError } =
+            await serializeStoredCapture(capture);
+          if (htmlError) {
+            capture.htmlError = htmlError;
+            capture.html = '';
+          }
+          if (selectionError) {
+            capture.selectionError = selectionError;
+            delete capture.selections;
+          }
           const session: DetailsSession = {
             capture,
             bases: {
               screenshot: capture.screenshotFilename,
               contents: capture.contentsFilename,
             },
+          };
+          const storedSession: StoredDetailsSession = {
+            ...session,
+            capture: storedCapture,
           };
           // Pre-flight quota check before the actual `set`. Large
           // user uploads (full-resolution photos) can exceed the
@@ -1539,11 +1882,15 @@ export function installDetailsMessageHandlers(): void {
           // to do.
           const room = await checkSessionStorageRoom(
             detailsStorageKey(tabId),
-            session,
+            storedSession,
           );
           if (!room.ok) {
             sendResponse({
-              error: formatQuotaError('capture', room, captureBreakdown(capture)),
+              error: formatQuotaError(
+                'capture',
+                room,
+                storedCaptureBreakdown(storedCapture),
+              ),
             });
             return;
           }

@@ -72,6 +72,7 @@ import {
   startCaptureWithDetails,
   startCaptureWithDetailsFromImage,
 } from './background/capture-details.js';
+import { _setStoredTextHardCapForTest } from './background/text-compression.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import {
   findProviderForTab,
@@ -435,4 +436,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Lets e2e lower the "PNG too big → try JPEG" threshold so a
   // small fixture can exercise the capture-time recompress path.
   _setLargeScreenshotThresholdForTest,
+  // Lets e2e lower the per-artifact "compressed > 2 MiB" cap so
+  // small fixtures can exercise the over-cap rejection paths
+  // (capture-time and edit-save).
+  _setStoredTextHardCapForTest,
 };

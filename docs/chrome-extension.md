@@ -577,6 +577,56 @@ fidelity for a marginal saving.
 producing an actual 2 MB capture (see
 `tests/e2e/large-screenshot-recompress.spec.ts`).
 
+### Gzipped text storage + per-artifact 2 MiB cap
+
+Motivation:
+
+- `chrome.storage.session` is 10 MiB total, shared with the Ask widget.
+- The image is handled by the JPEG recompress above.
+- The text artifacts (page HTML, the three selection formats) need
+  their own management — heavy SPAs can inline 5–15 MB of CSS /
+  fonts / base64 assets into the page HTML.
+
+The module: `src/background/text-compression.ts`.
+
+Behavior:
+
+- Each text artifact runs through `prepareStoredText` at the storage
+  write boundary.
+- Below the **100 KiB compress threshold** → kept as plain text.
+- Above the threshold → gzipped via `CompressionStream` and base64'd
+  for `chrome.storage.session` JSON compatibility.
+- **2 MiB compressed cap** applies per artifact: HTML, and selection-
+  as-a-bundle (sum of html/text/markdown compressed bytes).
+- Over the cap → artifact dropped, `htmlError` / `selectionError`
+  set on both the in-memory capture and the stored shape.
+- The Capture page row shows greyed-out with an error icon and the
+  message `Content too large: 12 MB, 6 MB compressed (limit 2 MB).`
+
+Read / write boundaries:
+
+- `loadDetailsSession` decompresses on the way out — consumers see
+  plain strings, never the gzipped form.
+- The download path writes the decompressed body to disk, so the
+  user never sees a `.gz` file.
+- Edit-dialog saves run through `precheckArtifactEditFits` first;
+  pasting a too-large body returns the same error to the page
+  without mutating the session.
+- `saveDetailsSession` recompresses on every write (no cache). Most
+  pages skip compression entirely; the heavy-page case pays one
+  CompressionStream pass per Copy / Save click — comparable to what
+  `chrome.storage.session.set` is already charging for the same
+  payload.
+
+Quota-error breakdown labels distinguish stored shapes: parts read
+"compressed HTML" / "compressed selection" when their `StoredText`
+is `gzip-base64`, plain "HTML" / "selection" otherwise.
+
+`_setStoredTextHardCapForTest(bytes | null)` is exposed on
+`self.SeeWhatISee` so e2e can exercise the rejection paths without
+authoring a multi-MB fixture (see
+`tests/e2e/text-compression.spec.ts`).
+
 ### Routing summary
 
 - `IMAGE_CAPTURE_MENU_ID` →

@@ -4264,15 +4264,19 @@ async function loadData(): Promise<void> {
       htmlSizeBadge.hidden = false;
       htmlSizeBadge.textContent = `HTML · ${formatBytes(new Blob([captured.html]).size)}`;
     }
-    if (response.selectionError && !response.htmlError) {
-      // Selection couldn't be scraped *independently* of HTML. In
-      // practice this never fires today — `executeScript` reads both
-      // in one call so the two errors are always twins — but the UI
-      // is ready for a future SW that reports them separately. When
-      // the two fire together, we suppress the icon here: the HTML
-      // row's icon already explains the situation and a duplicate
-      // would just be visual noise. The master + all three format
-      // rows stay in their default disabled state regardless.
+    if (
+      response.selectionError
+      && (!response.htmlError || response.selectionError !== response.htmlError)
+    ) {
+      // Selection has its own failure that's distinct from any HTML
+      // failure. The shared-scrape twin case (both errors literally
+      // equal because `executeScript` failed once and reported the
+      // same string for both) still suppresses the selection icon —
+      // a duplicate marker on a row the user already understands is
+      // greyed-out is visual noise. But for *independent* failures
+      // (e.g. selection-bundle compressed past the 2 MiB cap while
+      // HTML failed for a different reason), both icons fire so the
+      // user can read the per-artifact reason on each row.
       selectionRow.classList.add('has-error');
       selectionErrorIcon.title = `Unable to capture selection: ${response.selectionError}`;
     } else if (response.selections) {
