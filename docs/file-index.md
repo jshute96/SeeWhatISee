@@ -110,12 +110,13 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
 | `src/background/error-reporting.ts` | Capture-failed-page error surface: `runWithErrorReporting`, `reportCaptureError`, `friendlyErrorMessage`, unhandled-rejection suppression |
 | `src/background/session-quota.ts` | Pre-flight `chrome.storage.session` quota check + size-aware error formatter shared by the Capture, Upload, and Ask write paths |
+| `src/background/text-compression.ts` | Gzipped-text storage for `chrome.storage.session` + per-artifact 2 MiB compressed cap |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts, delay/title helpers |
 | `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
 | `src/background/tooltip.ts` | Pure toolbar-tooltip layout — single-line `Save X or Y` row collapse + `saveDefaultsMenuTitle` shared with the menu side |
 | `src/background/menu-hint.ts` | Pure menu-hint composition — `rowScope`, `buildRowGroup`, `buildMenuHint`; extracted for unit-testability without the chrome.* import chain |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
-| `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture filename bump, `runtime.onMessage` handlers |
+| `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, gzip storage boundary, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 | `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
@@ -194,6 +195,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
+| `tests/e2e/text-compression.spec.ts` | E2E for gzipped-text storage + 2 MiB compressed cap — capture-time + edit-save rejection, compressed round-trip |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — pill text matches saved dims/bytes, JPG stays JPG on bake (sticky), WEBP→PNG label flip on bake, live dim updates during a Crop-tool drag |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
@@ -231,6 +233,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
+| `tests/unit/text-compression.test.mjs` | Unit tests for the gzipped-text storage module — plain vs gzip-base64, round-trip, UTF-8 byte counting, cap rejection |
 | `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
 
 ## Design Docs (`docs/`)
