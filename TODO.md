@@ -64,6 +64,7 @@
   - Ctrl+Shift to draw without grabbing existing edges, snap stays on
   - Ctrl+drag still pans the image
 * Upload image from file (on context menu)
+* Screenshots that are >2MB auto-recompress to JPEG if JPEG is ≥10% smaller
 
 ### Draft: user-facing explanation of the new drawing behavior
 

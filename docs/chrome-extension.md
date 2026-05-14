@@ -541,6 +541,42 @@ back to clean. The clipboard "copy image" path always forces PNG
 (see `renderHighlightedImage('image/png')`) because that's the only
 image MIME `ClipboardItem` accepts reliably.
 
+### Capture-time PNG → JPEG recompress for large screenshots
+
+`chrome.tabs.captureVisibleTab` only emits PNG, which inflates
+quickly on photo-heavy pages.
+
+Right after the capture, `maybeRecompressLargeScreenshot` (in
+`capture.ts`) checks the PNG size and, when over the threshold,
+tries a JPEG re-encode via `OffscreenCanvas`. The JPEG wins only
+if it's at least 10% smaller than the PNG — for plain UI / text
+screenshots PNG often beats JPEG, and we don't want to trade
+fidelity for a marginal saving.
+
+- Default threshold: 2 MiB of binary PNG bytes
+  (`LARGE_SCREENSHOT_PNG_THRESHOLD_BYTES_DEFAULT`). Compared
+  against `Blob.size` after decoding the capture's `data:` URL,
+  not the base64-inflated URL length.
+- JPEG quality: 0.92 (matches `JPEG_BAKE_QUALITY` in capture-page.ts).
+- Savings floor: ≥10% smaller, else keep the PNG.
+- Both sizes are logged whenever the JPEG encode runs (`PNG x →
+  JPG y — using JPG / kept PNG`) so the constants can be tuned
+  from real captures. Under-threshold captures are silent.
+- Failure modes (no `OffscreenCanvas`, decode error, encode error)
+  fall back to the PNG with a `console.warn`.
+- Applies to both `captureVisible` (quick-save) and
+  `captureBothToMemory` (Capture-page flow). The image-context
+  right-click flow already starts from a non-PNG source and is
+  governed by sticky-format only.
+- Once the recompress promotes a capture to JPEG, the rest of the
+  pipeline carries `.jpg` through — sticky-format keeps it stable
+  through subsequent edits.
+
+`_setLargeScreenshotThresholdForTest(bytes | null)` is exposed on
+`self.SeeWhatISee` so e2e can exercise both branches without
+producing an actual 2 MB capture (see
+`tests/e2e/large-screenshot-recompress.spec.ts`).
+
 ### Routing summary
 
 - `IMAGE_CAPTURE_MENU_ID` →

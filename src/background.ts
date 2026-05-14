@@ -5,6 +5,7 @@
 // lives in the sub-modules — this file stays thin on purpose.
 
 import {
+  _setLargeScreenshotThresholdForTest,
   captureBothToMemory,
   captureImageAsScreenshot,
   captureSelection,
@@ -431,4 +432,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // tests can snapshot the originals before mutating.
   ASK_PROVIDERS,
   _setAskProvidersForTest,
+  // Lets e2e lower the "PNG too big → try JPEG" threshold so a
+  // small fixture can exercise the capture-time recompress path.
+  _setLargeScreenshotThresholdForTest,
 };

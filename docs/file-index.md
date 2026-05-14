@@ -130,7 +130,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
-| `src/capture.ts` | Capture dispatch, per-format selection scraping + download, `log.json` sidecar writing |
+| `src/capture.ts` | Capture dispatch, selection scraping + download, large-screenshot PNG→JPEG recompress, `log.json` sidecar writing |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
 | `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
@@ -168,6 +168,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/fixtures/capture-quota.ts` | Smart pre-test wait + auto-retry for `chrome.tabs.captureVisibleTab`'s 2/sec quota; replaces the unconditional 600ms sleep |
 | `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, and verifying capture sidecars |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
+| `tests/fixtures/pages/gradient.html` | Multi-stop linear-gradient page — used by the large-screenshot-recompress e2e to produce a capture where JPEG clearly beats PNG |
 | `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |
 | `tests/fixtures/pages/shrink-nested.html` | Grey page → blue card → red inner block — exercises the two-step Shrink (page bg → card → inner block) e2e |
 | `tests/fixtures/pages/red-image.html` | Fixture page with `<img>`s (http PNG, inline JPEG data URL, http JPEG, http WEBP) for the image-context capture e2e tests |
@@ -192,6 +193,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/capture-image-context.spec.ts` | E2E for the image right-click flow — Save-screenshot bytes/path, Capture-page defaults, `imageUrl` persistence (incl. screenshot-unchecked), quiet-disabled HTML |
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
+| `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — pill text matches saved dims/bytes, JPG stays JPG on bake (sticky), WEBP→PNG label flip on bake, live dim updates during a Crop-tool drag |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>gradient</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; }
+      /*
+       * Smooth multi-stop gradient. Used by the
+       * large-screenshot-recompress e2e to produce a capture where
+       * JPEG beats PNG by a lot — photo-like color transitions are
+       * exactly the case the capture-time recompress is meant for.
+       */
+      body {
+        background: linear-gradient(
+          135deg,
+          #ff0000 0%,
+          #ff8800 20%,
+          #ffff00 40%,
+          #00cc00 60%,
+          #0080ff 80%,
+          #8000ff 100%
+        );
+      }
+    </style>
+  </head>
+  <body></body>
+</html>

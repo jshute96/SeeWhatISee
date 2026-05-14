@@ -7,8 +7,13 @@ import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-stat
 // its metadata) to the standard download directory.
 //
 // Each capture writes two files into the download directory:
-//   - screenshot-<timestamp>.png or contents-<timestamp>.html
-//                                  — the content itself (unique per capture)
+//   - screenshot-<timestamp>.{png,jpg} or contents-<timestamp>.html
+//                                  — the content itself (unique per capture).
+//                                    Screenshots default to `.png`; the
+//                                    capture-time PNG→JPEG recompress and the
+//                                    sticky source format (right-click /
+//                                    upload image flows) can promote it to
+//                                    `.jpg`.
 //   - log.json                     — newline-delimited JSON (one record per
 //                                    line), regenerated each time from
 //                                    chrome.storage.local
@@ -53,6 +58,132 @@ async function countdownSleep(delayMs: number): Promise<void> {
       }
     }, 250);
   });
+}
+
+/**
+ * Default threshold above which we try a JPEG re-encode of the
+ * freshly captured PNG. Compared against the *binary* PNG size
+ * (`Blob.size` after decoding the data URL), not the base64-inflated
+ * data-URL string length. PNG of a busy photo page can balloon to
+ * tens of MiB on disk and crowd the in-session `screenshotDataUrl`
+ * (which still carries a ~33% base64 overhead); at this binary size
+ * it's worth seeing if a lossy JPEG would land enough smaller to be
+ * the better default. Tab screenshots of plain UI / text usually
+ * stay well under this and skip the work entirely.
+ *
+ * The live value is held in `largeScreenshotThresholdBytes`, which
+ * `_setLargeScreenshotThresholdForTest` can lower so e2e tests can
+ * exercise the recompress path without producing an actual 2 MiB
+ * capture.
+ */
+export const LARGE_SCREENSHOT_PNG_THRESHOLD_BYTES_DEFAULT = 2 * 1024 * 1024;
+let largeScreenshotThresholdBytes = LARGE_SCREENSHOT_PNG_THRESHOLD_BYTES_DEFAULT;
+
+/**
+ * Test-only setter for `largeScreenshotThresholdBytes` (mirroring
+ * the `_setAskProvidersForTest` pattern in background.ts). Pass
+ * `null` to restore the production default. Re-exported on
+ * `self.SeeWhatISee`.
+ */
+export function _setLargeScreenshotThresholdForTest(bytes: number | null): void {
+  largeScreenshotThresholdBytes =
+    bytes === null ? LARGE_SCREENSHOT_PNG_THRESHOLD_BYTES_DEFAULT : bytes;
+}
+
+/** JPEG quality used when re-encoding an oversized PNG screenshot.
+ *  Matches `JPEG_BAKE_QUALITY` in capture-page.ts so the
+ *  capture-time path and the user-edit bake path produce comparably
+ *  faithful JPEGs. */
+const LARGE_SCREENSHOT_JPG_QUALITY = 0.92;
+/** The JPEG must be at least this fraction smaller than the PNG to
+ *  win — otherwise the lossy encode buys too little to be worth it
+ *  and we keep the PNG. */
+const LARGE_SCREENSHOT_JPG_MIN_SAVINGS = 0.1;
+
+/**
+ * Re-encode an oversized PNG screenshot as JPEG if doing so would be
+ * substantially smaller; otherwise return the PNG unchanged.
+ *
+ * Called right after `chrome.tabs.captureVisibleTab` for both the
+ * quick-save and Capture-page flows. The format is *sticky* from
+ * here on — once we hand back a JPEG, the rest of the pipeline
+ * (in-memory capture, capture-page bake, downloaded file) carries
+ * the `.jpg` extension through.
+ *
+ * Decision flow:
+ *   - Below the threshold → return PNG (no encode, no log).
+ *   - Decode + JPEG re-encode via OffscreenCanvas (MV3 SW has both).
+ *   - Compare sizes; pick the smaller subject to the savings floor.
+ *   - Log both sizes regardless of which one we kept, so the
+ *     threshold/quality constants can be tuned from real captures.
+ *   - Any decode/encode failure falls back to the PNG.
+ */
+async function maybeRecompressLargeScreenshot(
+  pngDataUrl: string,
+): Promise<{ dataUrl: string; ext: 'png' | 'jpg' }> {
+  if (!pngDataUrl.startsWith('data:image/png')) {
+    return { dataUrl: pngDataUrl, ext: 'png' };
+  }
+  let pngBlob: Blob;
+  try {
+    pngBlob = await (await fetch(pngDataUrl)).blob();
+  } catch (err) {
+    console.warn('[SeeWhatISee] large-screenshot fetch failed:', err);
+    return { dataUrl: pngDataUrl, ext: 'png' };
+  }
+  if (pngBlob.size <= largeScreenshotThresholdBytes) {
+    return { dataUrl: pngDataUrl, ext: 'png' };
+  }
+  let jpgBlob: Blob;
+  try {
+    const bitmap = await createImageBitmap(pngBlob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('OffscreenCanvas 2D context unavailable');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    jpgBlob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: LARGE_SCREENSHOT_JPG_QUALITY,
+    });
+  } catch (err) {
+    console.warn('[SeeWhatISee] large-screenshot JPEG re-encode failed:', err);
+    return { dataUrl: pngDataUrl, ext: 'png' };
+  }
+  const useJpg = jpgBlob.size <= pngBlob.size * (1 - LARGE_SCREENSHOT_JPG_MIN_SAVINGS);
+  console.log(
+    `[SeeWhatISee] large-screenshot recompress: PNG ${formatBytesShort(pngBlob.size)} → JPG ${formatBytesShort(jpgBlob.size)} — ${useJpg ? 'using JPG' : 'kept PNG'}`,
+  );
+  if (!useJpg) return { dataUrl: pngDataUrl, ext: 'png' };
+  let jpgDataUrl: string;
+  try {
+    jpgDataUrl = await blobToDataUrl(jpgBlob);
+  } catch (err) {
+    console.warn('[SeeWhatISee] large-screenshot JPEG data-URL build failed:', err);
+    return { dataUrl: pngDataUrl, ext: 'png' };
+  }
+  return { dataUrl: jpgDataUrl, ext: 'jpg' };
+}
+
+function formatBytesShort(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Chunked binary→base64 so we don't blow the call stack on
+ *  multi-MB blobs. SW contexts don't have `FileReader.readAsDataURL`
+ *  reliably, but `btoa` + `arrayBuffer()` is universal. CHUNK is well
+ *  under V8's spread/apply argument-count limit. */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const CHUNK = 0x8000;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type};base64,${btoa(bin)}`;
 }
 
 export const LOG_STORAGE_KEY = 'captureLog';
@@ -325,8 +456,9 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!active) throw new Error('No active tab found to capture');
 
-  const dataUrl = await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
-  return saveCapture(dataUrl, active.url ?? '', active.title ?? '');
+  const pngDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
+  const { dataUrl, ext } = await maybeRecompressLargeScreenshot(pngDataUrl);
+  return saveCapture(dataUrl, active.url ?? '', active.title ?? '', ext);
 }
 
 /**
@@ -717,11 +849,15 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   if (!active) throw new Error('No active tab found to capture');
 
   let screenshotDataUrl = '';
+  let screenshotExt: 'png' | 'jpg' = 'png';
   let screenshotError: string | undefined;
   try {
-    screenshotDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, {
+    const pngDataUrl = await chrome.tabs.captureVisibleTab(active.windowId, {
       format: 'png',
     });
+    const recompressed = await maybeRecompressLargeScreenshot(pngDataUrl);
+    screenshotDataUrl = recompressed.dataUrl;
+    screenshotExt = recompressed.ext;
   } catch (err) {
     console.warn('[SeeWhatISee] captureVisibleTab failed:', err);
     screenshotError = err instanceof Error ? err.message : String(err);
@@ -736,7 +872,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   const ts = compactTimestamp(now);
   const capture = buildInMemoryCapture({
     screenshotDataUrl,
-    screenshotExt: 'png',
+    screenshotExt,
     html: scrape.html,
     selectionRaw: scrape.selectionRaw,
     pageUrl: active.url ?? '',
