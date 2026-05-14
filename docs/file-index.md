@@ -184,7 +184,13 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/capture-paste.spec.ts` | E2E for rich-text paste — html→markdown / html-source routing, source-view short-circuit, real copy/paste round-trips |
 | `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, `triggerCapture` hand-off |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
-| `tests/e2e/capture-drawing.spec.ts` | E2E for drawing tools, Undo/Clear, box-edge resize, arrow-key nudge, polyline chains, and snap-to |
+| `tests/e2e/capture-drawing-helpers.ts` | Shared `__seeState` reads and the `dragEdge` / `expectRedAtRectEdge` utilities for the drawing specs |
+| `tests/e2e/capture-drawing-basic.spec.ts` | E2E for per-tool draw → save flows (Box/Line/Arrow/Crop/Redact) and Undo/Clear button state |
+| `tests/e2e/capture-drawing-resize-nudge.spec.ts` | E2E for box-edge resize, arrow-key nudge of an in-flight drag, and visible-pane clamping under zoom |
+| `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
+| `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
+| `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
+| `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom-mode sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, and stroke-width ladder + DPR-stub regressions |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |

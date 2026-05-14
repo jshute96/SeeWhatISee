@@ -1,5 +1,7 @@
 // E2E coverage for the Capture-page zoom modes' sizing math and the
-// SVG-overlay stroke widths derived from them.
+// SVG-overlay stroke widths derived from them. (Other drawing-overlay
+// behaviour lives in the `capture-drawing-*.spec.ts` family — this
+// file is the home of the zoom × stroke-width seam in particular.)
 //
 // "1×" means 1 source-CSS-pixel = 1 editor CSS pixel — i.e.
 // `naturalSize / window.devicePixelRatio`. The `applyZoom()` Fit

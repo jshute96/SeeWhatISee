@@ -26,8 +26,8 @@ import {
 } from './details-helpers';
 
 // chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Mirrors the cushion in capture-drawing.spec.ts so neighboring
-// captures don't trip the quota.
+// Mirrors the cushion the capture-drawing-*.spec.ts files use so
+// neighboring captures don't trip the quota.
 test.beforeEach(async () => {
   await new Promise((r) => setTimeout(r, 600));
 });

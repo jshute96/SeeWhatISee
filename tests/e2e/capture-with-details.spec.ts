@@ -11,8 +11,14 @@
 //   - `capture-paste.spec.ts`        — rich-text paste handling
 //     (html→markdown / html-source routing, source-view short-
 //     circuit, real CodeJar copy/paste round-trips).
-//   - `capture-drawing.spec.ts`     — drawing tool palette
+//   - `capture-drawing-*.spec.ts`   — drawing tool palette
 //     (Box/Line/Crop/Redact + Undo/Clear, crop-edge resize, bake-in).
+//     Split into per-topic specs: `-basic` (per-tool draw/save flow),
+//     `-resize-nudge` (edge resize + arrow-key nudge + visible-pane
+//     clamp), `-polyline` (Ctrl-promote / N-Line chains), `-snap`
+//     (snap-to-corner / -edge / -endpoint / axis-align), `-palette`
+//     (Save / Copy palette buttons), `-shrink` (Shrink-tool operator).
+//     Shared helpers live in `capture-drawing-helpers.ts`.
 //   - `toolbar-dispatch.spec.ts`    — toolbar `handleActionClick`,
 //     click-with-selection routing, default-id migration,
 //     copyLastSelectionFilename.
