@@ -577,6 +577,41 @@ fidelity for a marginal saving.
 producing an actual 2 MB capture (see
 `tests/e2e/large-screenshot-recompress.spec.ts`).
 
+### HTML byte-size cap at capture + edit-save
+
+`chrome.storage.session` is 10 MiB total, shared with the Ask
+widget. The image is handled by the JPEG recompress above. The
+remaining sharp edge is page HTML: heavy SPAs can inline 5–15 MB
+of CSS / fonts / base64 assets into `documentElement.outerHTML`
+and blow the cap on a single capture before the screenshot adds
+its share.
+
+The cap:
+
+- **2 MiB UTF-8 bytes** of HTML, measured via `TextEncoder`.
+- Applied at the storage boundary in `openCapturePageWithSession`
+  (`applyHtmlSizeCap`) and in the `updateArtifact` handler for
+  `kind: 'html'`.
+- Over the cap → HTML is dropped (`capture.html = ''`,
+  `capture.htmlError = "Content too large: 12 MB (limit 2 MB)."`).
+- The Capture page's existing `htmlError` path takes over: Save
+  HTML row greyed-out, error icon with the message, size badge
+  hidden. Rest of the capture (image, URL, prompt, selection)
+  proceeds normally.
+
+Edit-dialog saves run the same byte-length check on the incoming
+value before mutating the session; over-cap pastes return the
+"Content too large" error to the page without touching the body.
+
+`_setHtmlSizeCapForTest(bytes | null)` is exposed on
+`self.SeeWhatISee` so e2e can exercise both branches without
+authoring a multi-MB fixture (see
+`tests/e2e/html-size-cap.spec.ts`).
+
+Selection content is not capped in this version — it's typically
+much smaller than HTML and would need its own scoping decision
+(per-format vs bundled).
+
 ### Routing summary
 
 - `IMAGE_CAPTURE_MENU_ID` →
