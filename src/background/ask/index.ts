@@ -757,18 +757,6 @@ export async function sendToAi(
     if (!stillStaged) return { ok: false, error: 'Cancelled' };
   }
 
-  // Best-effort focus. If this fails we still try to inject — the
-  // user just won't see the AI tab pop forward.
-  try {
-    await chrome.tabs.update(tabId, { active: true });
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.windowId !== undefined) {
-      await chrome.windows.update(tab.windowId, { focused: true });
-    }
-  } catch {
-    // Swallow — see comment above.
-  }
-
   // Promote the placeholder record (or write afresh on the
   // existing-tab path) to status `injecting` with a new runId.
   // The fresh runId is what the widget's storage listener latches
@@ -807,8 +795,37 @@ export async function sendToAi(
     // it died on a transient document, this is the first real
     // mount and reads the now-`injecting` record straight away.
     await mountAskWidget(tabId);
+
+    // Best-effort focus now that injection succeeded. If this fails we
+    // still wait for completion — the user just won't see the AI tab
+    // pop forward.
+    try {
+      await chrome.tabs.update(tabId, { active: true });
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.windowId !== undefined) {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      }
+    } catch {
+      // Swallow
+    }
   } catch (err) {
     const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
+    // Auto-cleanup for the newTab path: close the freshly-opened tab so
+    // we don't leave a blank/broken provider tab orphaned behind the
+    // Capture page. We skip the error-state record patch in that case
+    // because `installWidgetStoreCleanup` clears storage on tab removal,
+    // and writing `status: 'error'` right before close would either flash
+    // the error widget for one frame or leave a phantom record if the
+    // remove races ahead. The user-facing message still comes back via
+    // the returned `error` field.
+    if (destination.kind === 'newTab') {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (closeErr) {
+        console.log('[SeeWhatISee] [warn] failed to close failed new tab:', closeErr);
+      }
+      return { ok: false, error: message };
+    }
     await patchWidgetRecord(tabId, { status: 'error', error: message });
     return { ok: false, error: message, tabId };
   }
@@ -1054,7 +1071,7 @@ async function openNewProviderTabWithPlaceholder(
 ): Promise<number> {
   const created = await chrome.tabs.create({
     url: provider.newTabUrl,
-    active: true,
+    active: false,
   });
   if (created.id === undefined) {
     throw new Error('Could not create new tab');
@@ -1227,9 +1244,12 @@ function describe(err: unknown): string {
  * `chrome.scripting.executeScript` calls that load the bridge and
  * mount the widget. Every error reaching this point is Chrome's
  * own — not ours — and they're all implementation-leaking AND
- * locale-translated. The known cases all share the same
- * user-actionable resolution (verify the tab is on a real prompt
- * page) so we collapse them into one message.
+ * locale-translated. Most cases share the same user-actionable
+ * resolution (verify the tab is on a real prompt page) so we
+ * collapse them into one message. The exception is admin-policy
+ * blocks (`ExtensionsSettings`) — those need a different fix from
+ * the user (talk to IT) and the raw Chrome message is the clearest
+ * signal we can give, so we pass it through verbatim.
  *
  * Known underlying messages from Chrome (English; other locales
  * differ):
@@ -1240,6 +1260,13 @@ function describe(err: unknown): string {
  *      → tab closed or frame gone.
  *   - "Frame with ID 0 was removed."
  *      → SPA navigation tore down the frame.
+ *   - "This page cannot be scripted due to an ExtensionsSettings
+ *      policy."
+ *      → enterprise/admin policy explicitly excludes the host. The
+ *        only non-collapsed case: we return this string verbatim so
+ *        the user (or their admin) can see *why* it's blocked. Only
+ *        matched in English locales — the `ExtensionsSettings`
+ *        identifier appears unlocalized; the prose around it varies.
  *
  * The raw error is logged for debugging via the SW console (open
  * via chrome://extensions → the extension's "service worker" link).
@@ -1247,14 +1274,20 @@ function describe(err: unknown): string {
  * they come back over the bridge, get marked as per-item failures,
  * and surface through `summarizeErrors`.
  */
-function friendlyInjectError(err: unknown): string {
+export function friendlyInjectError(err: unknown): string {
+  const msg = describe(err);
   // `console.log` rather than `console.warn` to match the
   // convention in `ask-inject.ts` / `ask-widget.ts`: warnings
   // surface as actionable items at chrome://extensions and
   // crowd out user-facing problems with internal noise. The
   // `[warn]` prefix keeps the bad-path lines visually distinct
   // when reading the SW console.
-  console.log('[SeeWhatISee] [warn] Inject error:', describe(err));
+  console.log('[SeeWhatISee] [warn] Inject error:', msg);
+
+  if (/ExtensionsSettings/i.test(msg) || /cannot be scripted/i.test(msg)) {
+    return msg;
+  }
+
   return 'Check if the tab is on a prompt screen.';
 }
 

@@ -13,6 +13,7 @@
 .gemini/settings.json
 .gemini/policies/
 .gemini/tmp/
+.jetskicli/
 
 .playwright-mcp/
 
