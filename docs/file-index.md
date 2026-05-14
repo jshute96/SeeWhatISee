@@ -220,6 +220,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 |------|-------------|
 | `tests/unit/markdown.test.mjs` | Pure unit tests for `src/markdown.ts` — run via `node --test` (no browser required) |
 | `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/background/ask/index.ts` (`globMatch` / `matchesAny`) |
+| `tests/unit/ask-inject-error.test.mjs` | Unit tests for `friendlyInjectError` in `src/background/ask/index.ts` (policy block error propagation) |
 | `tests/unit/ask-settings.test.mjs` | Unit tests for the Ask provider settings normalizer + default-rotation helper |
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
