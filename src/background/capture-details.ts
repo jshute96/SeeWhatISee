@@ -19,9 +19,61 @@ import {
 } from './capture-page-defaults.js';
 import {
   checkSessionStorageRoom,
+  formatBytes,
   formatQuotaError,
   type QuotaBreakdownPart,
 } from './session-quota.js';
+
+/**
+ * Hard cap on HTML byte size. Heavy SPAs frequently inline
+ * 5–15 MB of CSS / fonts / base64 assets into the page HTML, which
+ * can blow the 10 MiB `chrome.storage.session` cap on a single
+ * capture before the screenshot even adds its share — and there's
+ * no fix at the user end other than "capture a different page."
+ * Refusing the HTML up-front lets the rest of the capture (image,
+ * URL, prompt, selection) still go through, with the Save HTML row
+ * greyed-out and explained.
+ *
+ * Compared against the UTF-8 byte length of the scraped HTML so
+ * the user-facing number matches what they'd see if they viewed
+ * the source. Storage cost includes some JSON-stringify overhead
+ * on top, but the difference is sub-percent at multi-MB scale.
+ */
+const HTML_SIZE_CAP_BYTES_DEFAULT = 2 * 1024 * 1024;
+let htmlSizeCapBytes = HTML_SIZE_CAP_BYTES_DEFAULT;
+
+/** Test-only setter (mirrors `_setLargeScreenshotThresholdForTest`).
+ *  Pass `null` to restore the production default. Exposed on
+ *  `self.SeeWhatISee`. */
+export function _setHtmlSizeCapForTest(bytes: number | null): void {
+  htmlSizeCapBytes = bytes === null ? HTML_SIZE_CAP_BYTES_DEFAULT : bytes;
+}
+
+/** UTF-8 byte length of `s`. Not `.length` (which counts UTF-16
+ *  code units and mis-sizes CJK / emoji pages by ~2×). */
+function utf8ByteLength(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/**
+ * Apply the HTML byte-size cap to an `InMemoryCapture` in place.
+ * If `capture.html` exceeds the cap, drops the body and sets
+ * `htmlError` to the user-facing "Content too large: …" message.
+ * Mutates `capture`. Idempotent — once `html === ''` and `htmlError`
+ * is set, a re-run is a no-op.
+ *
+ * Called at every storage boundary that takes a fresh
+ * `InMemoryCapture` (capture-page open, upload session init).
+ * The `updateArtifact` html branch runs its own check against the
+ * incoming edit value before mutating.
+ */
+function applyHtmlSizeCap(capture: InMemoryCapture): void {
+  if (!capture.html) return;
+  const bytes = utf8ByteLength(capture.html);
+  if (bytes <= htmlSizeCapBytes) return;
+  capture.html = '';
+  capture.htmlError = `Content too large: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`;
+}
 
 /**
  * Per-artifact size split of an `InMemoryCapture` for the quota
@@ -369,6 +421,11 @@ async function openCapturePageWithSession(
   };
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
   if (opener?.id !== undefined) createProps.openerTabId = opener.id;
+
+  // Drop over-cap HTML before it can blow the session-storage quota.
+  // The Capture page's existing `htmlError` path takes over from here
+  // (Save HTML row greyed-out with an error icon and the message).
+  applyHtmlSizeCap(data);
 
   // Build the prospective session up-front so the pre-flight quota
   // check (and the per-tab `set` below) operate on the same value.
@@ -1325,6 +1382,22 @@ export function installDetailsMessageHandlers(): void {
       void (async () => {
         try {
           const session = await requireDetailsSession(tabId);
+          // Refuse an HTML edit-save that would exceed the cap up-
+          // front. Without this, the bytes would land on the in-
+          // memory capture and the next `chrome.storage.session.set`
+          // would either succeed (silently consuming most of the
+          // session quota) or fail with a generic "values were not
+          // stored." We only check the HTML kind here — selection
+          // edit-saves stay uncapped in this version.
+          if (msg.kind === 'html') {
+            const bytes = utf8ByteLength(msg.value);
+            if (bytes > htmlSizeCapBytes) {
+              sendResponse({
+                error: `Content too large: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`,
+              });
+              return;
+            }
+          }
           applyArtifactEdit(session, msg.kind, msg.value);
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });

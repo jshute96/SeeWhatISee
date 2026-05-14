@@ -65,6 +65,7 @@ import {
   refreshPinAskTargetMenu,
 } from './background/context-menu.js';
 import {
+  _setHtmlSizeCapForTest,
   ensureHtmlDownloaded,
   ensureScreenshotDownloaded,
   ensureSelectionDownloaded,
@@ -435,4 +436,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Lets e2e lower the "PNG too big → try JPEG" threshold so a
   // small fixture can exercise the capture-time recompress path.
   _setLargeScreenshotThresholdForTest,
+  // Lets e2e lower the "HTML > 2 MiB → drop" cap so small fixtures
+  // can exercise the capture-time + edit-save rejection paths.
+  _setHtmlSizeCapForTest,
 };

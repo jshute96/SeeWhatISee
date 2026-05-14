@@ -24,6 +24,10 @@
 * Compress stored html if it's large
 * Resize images if they are too large
 * Make tests faster, skip unnecessary Chrome capture interactions
+* Architecture change to avoid using session storage to hold data and pass between SW and capture page.
+  - Instead, keep it in RAM, and pass it back and forth over a port. This avoids 10MB session quota issues.
+  - Passing data to Ask page still uses session storage, so it might do the same switch.
+* Store HTML (and selection) compressed, at least if they are large.
 
 ## Skills and plugins
 
@@ -65,6 +69,7 @@
   - Ctrl+drag still pans the image
 * Upload image from file (on context menu)
 * Screenshots that are >2MB auto-recompress to JPEG if JPEG is ≥10% smaller
+* HTML is omitted on the capture page (with an error) if >2MB
 
 ### Draft: user-facing explanation of the new drawing behavior
 
