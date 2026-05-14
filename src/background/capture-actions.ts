@@ -170,10 +170,18 @@ export async function saveDefaults(delayMs = 0): Promise<void> {
   const useWithSelection = contentfulFormats.length > 0;
   const branch = useWithSelection ? defaults.withSelection : defaults.withoutSelection;
 
+  // `htmlUnavailable` is the image-flow signal (right-click image,
+  // upload, or an image-tab capture) that no page HTML exists to
+  // save. Skip the HTML write silently — same posture as the
+  // selection-not-present branch below. A user with `branch.html=true`
+  // navigating to a bare image gets the image (the important thing)
+  // without a noisy error.
+  const includeHtml = branch.html && !data.htmlUnavailable;
+
   if (branch.screenshot && data.screenshotError) {
     throw new Error(data.screenshotError);
   }
-  if (branch.html && data.htmlError) {
+  if (includeHtml && data.htmlError) {
     throw new Error(data.htmlError);
   }
 
@@ -186,13 +194,13 @@ export async function saveDefaults(delayMs = 0): Promise<void> {
   }
 
   if (branch.screenshot) await downloadScreenshot(data);
-  if (branch.html) await downloadHtml(data);
+  if (includeHtml) await downloadHtml(data);
   if (selectionFormat) await downloadSelection(data, selectionFormat);
 
   await recordDetailedCapture({
     capture: data,
     includeScreenshot: branch.screenshot,
-    includeHtml: branch.html,
+    includeHtml,
     selectionFormat,
   });
 }
@@ -222,11 +230,16 @@ export async function captureAll(delayMs = 0): Promise<void> {
   if (data.screenshotError) {
     throw new Error(data.screenshotError);
   }
-  if (data.htmlError) {
+  // `htmlUnavailable` (image-tab / image-context / upload) means
+  // there's no page HTML to save in the first place — skip silently,
+  // same as the selection-not-present branch below. "Save everything"
+  // here means "everything we have."
+  const includeHtml = !data.htmlUnavailable;
+  if (includeHtml && data.htmlError) {
     throw new Error(data.htmlError);
   }
   await downloadScreenshot(data);
-  await downloadHtml(data);
+  if (includeHtml) await downloadHtml(data);
 
   const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
   const contentfulFormats = data.selections
@@ -245,7 +258,7 @@ export async function captureAll(delayMs = 0): Promise<void> {
   await recordDetailedCapture({
     capture: data,
     includeScreenshot: true,
-    includeHtml: true,
+    includeHtml,
     selectionFormat,
   });
 }

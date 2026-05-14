@@ -88,6 +88,32 @@ referenced from this doc live in
   [capture-actions.md → More submenu](capture-actions.md#more-submenu)
   for the menu wiring.
 
+## Image-tab capture
+
+- When the active tab is a bare image file (Chrome's built-in image
+  viewer — any `image/*` Content-Type), `captureBothToMemory` and
+  `captureVisible` skip `captureVisibleTab` and fetch the source
+  image bytes via `fetchImageInPage` (same path as the right-click
+  image flow).
+- Detection: `probeActiveTabImage` injects a one-shot `executeScript`
+  that reads `document.contentType` / `location.href` /
+  `document.title`. URL-extension sniffing alone is unreliable (an
+  HTML page can still end in `.png`).
+- The resulting `InMemoryCapture` mirrors the upload-image shape:
+  - `screenshotDataUrl` = source image bytes; `screenshotOriginalExt`
+    follows the source MIME (JPEG stays `.jpg`, etc).
+  - `url` = the tab/image URL; `title` = the tab's auto-generated
+    title (typically the image filename).
+  - `htmlUnavailable: true`, `useImageFlowDefaults: true`.
+  - `imageUrl` is **not** set — the tab URL already *is* the image
+    URL, mirroring the upload path.
+  - Selection is ignored — Chrome's viewer doesn't normally allow
+    one, and treating it as a page selection would conflict with
+    the "this is an image" framing.
+- Probe failures fall through to the normal screenshot path. Common
+  triggers: restricted URLs, or `file://` tabs without the
+  per-extension "Allow access to file URLs" toggle.
+
 ## Graceful handling of failed screenshot / HTML / selection scrape
 
 - `captureBothToMemory` catches failures from

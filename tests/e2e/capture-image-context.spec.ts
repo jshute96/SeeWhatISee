@@ -536,9 +536,10 @@ test('image flow: canvas fallback rescues a fetch failure on a painted <img>', a
     ).SeeWhatISee.captureImageAsScreenshot(active, src);
   }, imageUrl);
 
-  // Record landed: imageUrl preserved; canvas always emits PNG so
-  // the saved bytes have a `.png` extension regardless of the
-  // source image's original format.
+  // Record landed: imageUrl preserved; the canvas fallback's output
+  // MIME follows the URL extension (`/red-pixel.png` → PNG), so
+  // saved bytes match the source format here. The JPG sibling test
+  // below covers the JPEG case.
   const record = await readLatestRecord(sw);
   expect(record.imageUrl).toBe(imageUrl);
   expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.png$/);
@@ -550,6 +551,178 @@ test('image flow: canvas fallback rescues a fetch failure on a painted <img>', a
   expect(buf[1]).toBe(0x50);
   expect(buf[2]).toBe(0x4e);
   expect(buf[3]).toBe(0x47);
+
+  await openerPage.close();
+});
+
+// Sibling of the canvas-fallback test above for a JPEG-sourced
+// painted <img>. Before the source-format-aware canvas fallback fix,
+// a fetch failure on a cross-origin JPG would silently re-encode the
+// `<img>` to PNG and save it under `.png`. Now the fallback picks
+// `image/jpeg` from the URL extension and writes JPEG bytes.
+test('image flow: canvas fallback on a JPEG <img> keeps JPEG output', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
+  await openerPage.bringToFront();
+  // `#http-jpeg` is the 200x200 JPEG served as `image/jpeg`.
+  const imageUrl = await openerPage.locator('#http-jpeg').evaluate(
+    (el) => (el as HTMLImageElement).src,
+  );
+  expect(imageUrl).toMatch(/\.jpg$/);
+
+  const sw = await getServiceWorker();
+  await sw.evaluate(async () => {
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (!active?.id) throw new Error('no active tab');
+    await chrome.scripting.executeScript({
+      target: { tabId: active.id },
+      func: () => {
+        (window as unknown as { fetch: typeof fetch }).fetch =
+          (() => Promise.reject(new Error('simulated 403 from test'))) as typeof fetch;
+      },
+    });
+  });
+
+  await sw.evaluate(async (src) => {
+    interface SpyState {
+      __seeDl?: { id: number; name: string }[];
+      __seeDlOrig?: typeof chrome.downloads.download;
+    }
+    const g = self as unknown as SpyState;
+    if (!g.__seeDlOrig) {
+      g.__seeDlOrig = chrome.downloads.download.bind(chrome.downloads);
+      (chrome.downloads as { download: typeof chrome.downloads.download }).download =
+        (async (opts: chrome.downloads.DownloadOptions) => {
+          const id = await g.__seeDlOrig!(opts);
+          if (typeof id === 'number') {
+            g.__seeDl!.push({ id, name: opts.filename ?? '' });
+          }
+          return id;
+        }) as typeof chrome.downloads.download;
+    }
+    g.__seeDl = [];
+
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (!active) throw new Error('no active tab');
+    await (
+      self as unknown as {
+        SeeWhatISee: {
+          captureImageAsScreenshot: (
+            tab: chrome.tabs.Tab,
+            srcUrl: string,
+          ) => Promise<unknown>;
+        };
+      }
+    ).SeeWhatISee.captureImageAsScreenshot(active, src);
+  }, imageUrl);
+
+  const record = await readLatestRecord(sw);
+  expect(record.imageUrl).toBe(imageUrl);
+  expect(record.screenshot?.filename).toMatch(/^screenshot-\d{8}-\d{6}-\d{3}\.jpg$/);
+
+  // Bytes on disk are real JPEG (header `FF D8 FF`) — the canvas
+  // re-encode lost the original bytes but the format survives.
+  const jpgPath = await findCapturedDownload(sw, '.jpg');
+  const buf = fs.readFileSync(jpgPath);
+  expect(buf[0]).toBe(0xff);
+  expect(buf[1]).toBe(0xd8);
+  expect(buf[2]).toBe(0xff);
+
+  await openerPage.close();
+});
+
+// Regression for the data-URL MIME-normalization fix in
+// `fetchImageInPage`: when the server returns the JPEG bytes but
+// omits / mislabels Content-Type, `blob.type` reads back empty. The
+// Capture-page bake's sticky-format check is `sourceMime() ===
+// 'image/jpeg'`, so the in-memory `screenshotDataUrl` *must* carry
+// the canonical `data:image/jpeg` prefix — otherwise the bake
+// silently flips a JPG to PNG on save with edits.
+//
+// We exercise the load-bearing path (the in-memory data URL prefix)
+// rather than just the on-disk extension. The latter is already
+// handled by `imageExtensionFor`'s URL-pathname fallback, which
+// shipped before this fix — a screenshot-only test would pass even
+// without the normalization step.
+test('image flow: server with empty Content-Type produces canonical data:image/jpeg URL', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.local.clear());
+
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
+  await openerPage.bringToFront();
+  const imageUrl = await openerPage.locator('#http-jpeg').evaluate(
+    (el) => (el as HTMLImageElement).src,
+  );
+  expect(imageUrl).toMatch(/\.jpg$/);
+
+  const sw = await getServiceWorker();
+  // Wrap `window.fetch` to strip Content-Type from the response so
+  // `blob.type` reads as the empty string. Same isolated-world
+  // persistence trick the canvas-fallback test uses.
+  await sw.evaluate(async () => {
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (!active?.id) throw new Error('no active tab');
+    await chrome.scripting.executeScript({
+      target: { tabId: active.id },
+      func: () => {
+        const orig = window.fetch.bind(window);
+        (window as unknown as { fetch: typeof fetch }).fetch = (async (
+          ...args: Parameters<typeof fetch>
+        ) => {
+          const res = await orig(...args);
+          const buf = await res.arrayBuffer();
+          const stripped = new Blob([buf], { type: '' });
+          return new Response(stripped, { status: res.status });
+        }) as typeof fetch;
+      },
+    });
+  });
+
+  // Drive the in-memory image capture (the same helper the Capture-
+  // page flow uses) and read its `screenshotDataUrl` out.
+  const dataUrlPrefix: string = await sw.evaluate(async (src) => {
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (!active) throw new Error('no active tab');
+    const cap = await (
+      self as unknown as {
+        SeeWhatISee: {
+          captureImageToMemory?: (
+            tab: chrome.tabs.Tab,
+            srcUrl: string,
+          ) => Promise<{ screenshotDataUrl: string }>;
+        };
+      }
+    ).SeeWhatISee.captureImageToMemory!(active, src);
+    // Slice just the prefix so the test doesn't drag the entire
+    // base64 payload across the IPC boundary.
+    return cap.screenshotDataUrl.slice(0, 32);
+  }, imageUrl);
+
+  expect(dataUrlPrefix.startsWith('data:image/jpeg')).toBe(true);
 
   await openerPage.close();
 });

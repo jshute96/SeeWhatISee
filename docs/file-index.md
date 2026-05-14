@@ -190,7 +190,8 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureAll` (PNG + HTML + selection-if-any + record) |
-| `tests/e2e/capture-image-context.spec.ts` | E2E for the image right-click flow — Save-screenshot bytes/path, Capture-page defaults, `imageUrl` persistence (incl. screenshot-unchecked), quiet-disabled HTML |
+| `tests/e2e/capture-image-context.spec.ts` | E2E for the image right-click flow — Save-screenshot bytes/path, Capture-page defaults, `imageUrl` persistence (incl. screenshot-unchecked), quiet-disabled HTML, JPEG format preservation (canvas fallback + MIME normalization) |
+| `tests/e2e/capture-image-tab.spec.ts` | E2E for the image-tab routing — `captureVisible` / `captureAll` / `startCaptureWithDetails` on a bare image URL save source bytes, skip HTML, open the Capture page in upload-flow shape |
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |

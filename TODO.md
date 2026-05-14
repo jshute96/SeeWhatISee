@@ -51,7 +51,7 @@
 
 ## Documentation
 
-### Pending docs for features not released yet
+### Pending docs for features not released yet (1.0.1)
 * Help buttons
 * Zoom changes, plus keyboard zoom controls.
   - Ctrl-mousewheel to zoom, or Alt-plus/minus.
@@ -68,8 +68,13 @@
   - Ctrl+Shift to draw without grabbing existing edges, snap stays on
   - Ctrl+drag still pans the image
 * Upload image from file (on context menu)
+
+### Pending docs for features not released yet (1.0.2)
+* Better error handling when Ask script injection is blocked by site policy
 * Screenshots that are >2MB auto-recompress to JPEG if JPEG is ≥10% smaller
+* JPG images stay as JPG, event after drawing on them (previous conversion to PNG causes size blowup)
 * HTML is omitted on the capture page (with an error) if >2MB
+* When capturing an image directly (e.g. from a file: or http: URL ending in .jpg or .png), we just take the image, not a screenshot
 
 ### Draft: user-facing explanation of the new drawing behavior
 

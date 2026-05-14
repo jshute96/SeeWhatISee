@@ -480,11 +480,30 @@ This section covers the Chrome-platform plumbing.
   without permissive CORS may still fail — the failure surfaces
   as a `capture.html?error=…` tab via `runWithErrorReporting`.
 
-### Image bytes via page-side fetch
+### Image bytes via `fetchImageBytes`
 
-Both entries call `fetchImageInPage(tabId, srcUrl)` which runs a
-one-shot `executeScript` in the page's isolated world. Two
-strategies, in order:
+Both entries call `fetchImageBytes(tabId, srcUrl)`, which routes by
+URL scheme:
+
+- **`file://`** → SW-side `fetch()` (in the extension's own
+  `chrome-extension://` origin, gated by `<all_urls>` + the user's
+  "Allow access to file URLs" toggle).
+  - Why not page-side: Chromium's file:// origin model rejects
+    same-origin fetch from inside a file:// page even when the
+    extension has the file-URL toggle on. Going through the
+    page-side ladder would land on the canvas fallback and lose
+    the original bytes (lossy JPEG re-encode, different size).
+  - On failure (toggle off, file moved, …) we fall through to the
+    page-side ladder rather than erroring out — the canvas
+    fallback may still recover something.
+- **Everything else** (`http(s)`, `data:`, `blob:`) →
+  `fetchImageInPage(tabId, srcUrl)`, a one-shot `executeScript` in
+  the page's isolated world. Page context is correct here because
+  it has the user's cookies for cross-origin authenticated images,
+  `blob:` URLs are scoped to the page that created them, and the
+  painted-`<img>` canvas fallback only exists there.
+
+`fetchImageInPage` itself tries two strategies in order:
 
 - **fetch().** Carries the user's cookies for the URL's origin
   and respects the page-side CORS environment. Works for
@@ -492,15 +511,25 @@ strategies, in order:
   same-origin / CORS-clean cross-origin images. The original
   encoded bytes pass through losslessly — JPEG photos stay JPEG.
 - **Canvas snapshot.** When fetch fails (403 from a site whose
-  auth doesn't accept anonymous CORS, hot-link protection
-  rejecting our `Sec-Fetch-Site`, expired signed-URL params,
-  etc.), the fallback finds an `<img>` whose `currentSrc` or
-  `src` matches the right-clicked URL, draws it onto a canvas,
-  and reads PNG bytes back. Lossy for JPEG sources but preserves
-  the visual content the user already saw painted. Fails on
-  tainted canvases (cross-origin without
-  `crossorigin="anonymous"` on the original `<img>`); the error
-  surfaces with a clear message explaining why.
+  auth doesn't accept anonymous CORS, hot-link protection,
+  expired signed-URL params, …), the fallback finds an `<img>`
+  whose `currentSrc` or `src` matches the right-clicked URL and
+  draws it onto a canvas.
+  - Output MIME follows the URL extension: `.jpg` / `.jpeg`
+    re-encodes as JPEG at quality 0.92 (matches the Capture-page
+    bake); everything else falls back to PNG. Re-encode is lossy
+    but the format survives end-to-end.
+  - Tainted canvases (cross-origin `<img>` without
+    `crossorigin="anonymous"`) throw on `toDataURL`; we surface a
+    clear error rather than a silent failure.
+- **MIME normalization.** Both `fetchImageBytes` paths (SW-side
+  and page-side) rewrite the resulting data URL's `data:<mime>`
+  prefix to the canonical MIME for the chosen `imageExtensionFor`
+  extension (e.g. `.jpg` → `data:image/jpeg`); bytes are untouched.
+  - Why: the Capture-page bake's sticky-format check is
+    `sourceMime() === 'image/jpeg'`. A server that omits or
+    mislabels `Content-Type` leaves `blob.type` empty / wrong, the
+    check misses the JPEG, and the bake silently flips to PNG.
 - **Errors round-trip.** The injected function catches its own
   rejections and returns an `error` field. `executeScript`
   discards page-side rejections, so the explicit envelope is the
