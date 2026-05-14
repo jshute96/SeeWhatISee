@@ -3,7 +3,9 @@
 The Capture page opens in a new tab, previews the pre-captured
 screenshot, and waits for the user to pick which artifacts to save
 before writing anything. Implementation lives in
-`src/background.ts`, `src/capture.html`, and `src/capture-page.ts`.
+`src/background.ts`, `src/capture.html`, `src/capture-page.ts`
+(controller + glue), and the submodules under `src/capture-page/`
+(`paste.ts`, `ask.ts`, `zoom.ts`, `drawing.ts`).
 
 For the broader architecture and the action that opens this page,
 see [`architecture.md`](architecture.md) and
