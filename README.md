@@ -375,7 +375,7 @@ GitHub UI.
 
 - `src/` — TypeScript sources and `manifest.json`:
   - `src/background/` — MV3 service-worker modules.
-  - `src/background/ask/` — Ask-flow logic on the SW side.
+  - `src/ask/` — Ask-flow logic on the SW side.
   - `src/capture/` — SW-side "save a thing" pipeline.
   - `src/capture-page/` — Capture-page controller submodules.
   - `src/icons/` — toolbar action icons and provider brand logos.

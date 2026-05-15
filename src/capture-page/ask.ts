@@ -38,7 +38,7 @@
 // pins the chosen destination on every successful send so the next
 // plain-Ask reuses the same tab.
 
-import type { AskProviderId } from '../background/ask/providers.js';
+import type { AskProviderId } from '../ask/providers.js';
 import { excludedSuffix } from '../url-helpers.js';
 
 // `SelectionFormat` and `EditableArtifactKind` are inlined here for

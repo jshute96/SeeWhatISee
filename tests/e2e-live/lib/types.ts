@@ -3,7 +3,7 @@
 // against any AI site:
 //
 //   - The selectors the runtime should use (mirrors the values in
-//     `src/background/ask/<provider>.ts` — divergence here is the
+//     `src/ask/<provider>.ts` — divergence here is the
 //     early-warning signal that prod selectors haven't been updated).
 //   - DOM-verification helpers that locate the provider-specific
 //     equivalent of "image preview", "file thumbnail", and
@@ -17,7 +17,7 @@ import type { Locator, Page } from '@playwright/test';
 import type {
   AskAttachmentKind,
   AskInjectSelectors,
-} from '../../../src/background/ask/providers.js';
+} from '../../../src/ask/providers.js';
 
 export interface LiveProvider {
   /** Stable id, used in fixture filenames and run-tag prefixes. */
@@ -26,7 +26,7 @@ export interface LiveProvider {
   label: string;
   /** Page opened for each test. */
   newTabUrl: string;
-  /** Selectors imported from `src/background/ask/<provider>.ts`. */
+  /** Selectors imported from `src/ask/<provider>.ts`. */
   selectors: AskInjectSelectors;
   /**
    * Attachment kinds the destination's composer actually accepts at

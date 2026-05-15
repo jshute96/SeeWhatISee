@@ -4,13 +4,13 @@
 // its own listener so the message-type union doesn't have to share a
 // discriminator with the unrelated Capture-page traffic in
 // `capture-details.ts` — Chrome dispatches to all registered listeners.
-import { ASK_PROVIDERS } from './ask/providers.js';
+import { ASK_PROVIDERS } from '../ask/providers.js';
 import {
   DEFAULT_ASK_PROVIDER_SETTINGS,
   getAskProviderSettings,
   setAskProviderSettings,
   type AskProviderSettings,
-} from './ask/settings.js';
+} from '../ask/settings.js';
 import { CAPTURE_ACTIONS } from './capture-actions.js';
 import {
   DEFAULT_CAPTURE_DETAILS_DEFAULTS,

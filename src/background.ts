@@ -83,10 +83,10 @@ import {
   getAskPin,
   installAskMessageHandler,
   setAskPin,
-} from './background/ask/index.js';
-import { installWidgetStoreCleanup } from './background/ask/widget-store.js';
-import { ASK_PROVIDERS, _setAskProvidersForTest } from './background/ask/providers.js';
-import { getAskProviderSettings } from './background/ask/settings.js';
+} from './ask/index.js';
+import { installWidgetStoreCleanup } from './ask/widget-store.js';
+import { ASK_PROVIDERS, _setAskProvidersForTest } from './ask/providers.js';
+import { getAskProviderSettings } from './ask/settings.js';
 
 // Install side-effect listeners that were previously declared at
 // module top level. Each module exposes an explicit `install*`

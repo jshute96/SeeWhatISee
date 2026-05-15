@@ -7,7 +7,7 @@
 //
 // Selectors are plain data so they can be passed across the
 // `chrome.scripting.executeScript` boundary as `args` — see
-// background/ask/index.ts.
+// ask/index.ts.
 
 import { chatgptProvider } from './chatgpt.js';
 import { claudeProvider } from './claude.js';

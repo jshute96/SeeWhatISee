@@ -10,7 +10,7 @@ These tests are **not** part of `npm test` — they require a
 manually-launched browser, a logged-in test account, and they
 create real conversations on that account. Run them when:
 
-- You change selectors in `src/background/ask/<provider>.ts`.
+- You change selectors in `src/ask/<provider>.ts`.
 - You change timings in `src/ask-inject.ts`.
 - You suspect upstream DOM drift after an Ask failure in the wild.
 - Before cutting a release.
@@ -262,7 +262,7 @@ scripts/open-test-browser.sh
 
 Most likely upstream DOM drift. Open the test browser yourself,
 go to the provider's site, inspect the elements that match each
-of the prod selectors, and update `src/background/ask/<provider>.ts`.
+of the prod selectors, and update `src/ask/<provider>.ts`.
 
 The live spec imports those selectors directly — there's no
 separate mirror to keep in sync.
@@ -291,7 +291,7 @@ checking against the running extension, reload it first.
 
 1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`:
    - Import `selectors` and `newTabUrl` from the prod adapter at
-     `src/background/ask/<provider>.ts`.
+     `src/ask/<provider>.ts`.
    - Write the four DOM-verification helpers + `readComposerText`
      for that provider's chip / message DOM.
    - Call `runLiveSuite(provider)`.

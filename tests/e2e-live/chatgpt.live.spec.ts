@@ -2,14 +2,14 @@
 //
 // All test cases live in `lib/live-suite.ts` — this file just wires
 // up the ChatGPT-specific provider config: selectors are imported
-// directly from `src/background/ask/chatgpt.ts` (single source of
+// directly from `src/ask/chatgpt.ts` (single source of
 // truth — prod adapter and live tests can't drift), and a few
 // DOM-verification helpers are added that target ChatGPT's
 // `group/file-tile` attachment chips and `data-message-author-role`
 // user-message element. Setup is in `docs/ask-live-tests.md`.
 
 import { expect, type Locator, type Page } from '@playwright/test';
-import { chatgptProvider } from '../../src/background/ask/chatgpt.js';
+import { chatgptProvider } from '../../src/ask/chatgpt.js';
 import { runLiveSuite } from './lib/live-suite.js';
 import type { LiveProvider } from './lib/types.js';
 

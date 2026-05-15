@@ -29,7 +29,7 @@
 //   (composer text + attachment pills) without navigating.
 
 import { expect, type Locator, type Page } from '@playwright/test';
-import { claudeProvider } from '../../src/background/ask/claude.js';
+import { claudeProvider } from '../../src/ask/claude.js';
 import { runLiveSuite } from './lib/live-suite.js';
 import type { LiveProvider } from './lib/types.js';
 

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { globMatch, matchesAny } from '../../dist/background/ask/index.js';
+import { globMatch, matchesAny } from '../../dist/ask/index.js';
 
 test('globMatch: literal prefix with trailing wildcard', () => {
   assert.equal(globMatch('https://claude.ai/settings', 'https://claude.ai/settings*'), true);

@@ -20,7 +20,7 @@ import {
   formatKindList,
   resolveAcceptedKinds,
   resolveDestinationLabel,
-} from '../../dist/background/ask/index.js';
+} from '../../dist/ask/index.js';
 
 const baseProvider = {
   id: 'claude',

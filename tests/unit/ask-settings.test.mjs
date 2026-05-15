@@ -13,7 +13,7 @@ import {
   DEFAULT_ASK_PROVIDER_SETTINGS,
   normalizeAskProviderSettings,
   pickNextEnabledDefault,
-} from '../../dist/background/ask/settings.js';
+} from '../../dist/ask/settings.js';
 
 test('normalize: undefined → factory defaults', () => {
   assert.deepEqual(

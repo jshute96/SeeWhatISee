@@ -36,7 +36,7 @@ import {
 import {
   checkSessionStorageRoom,
   formatQuotaError,
-} from '../session-quota.js';
+} from '../background/session-quota.js';
 
 /**
  * Effective accepted attachment kinds for a destination (provider +

@@ -346,15 +346,15 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 | File | Purpose |
 |------|---------|
-| `src/background/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`, `friendlyInjectError`. Resolves target tab (with stale-pin detection), runs the injected runtime, focuses the tab on success / closes a fresh failed tab, and pins the destination on success. |
-| `src/background/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
-| `src/background/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
-| `src/background/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
-| `src/background/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
-| `src/background/ask/google.ts` | Google Search adapter — `newTabOnly`, image-only, types into a `<textarea>` instead of a contenteditable; submit posts the search form to `/search`. |
+| `src/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`, `friendlyInjectError`. Resolves target tab (with stale-pin detection), runs the injected runtime, focuses the tab on success / closes a fresh failed tab, and pins the destination on success. |
+| `src/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
+| `src/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
+| `src/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
+| `src/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
+| `src/ask/google.ts` | Google Search adapter — `newTabOnly`, image-only, types into a `<textarea>` instead of a contenteditable; submit posts the search form to `/search`. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
 | `src/ask-widget.ts` | In-page status / recovery widget that runs in the AI tab's ISOLATED world (see "Status widget" below). |
-| `src/background/ask/widget-store.ts` | `chrome.storage.session` wrapper for the widget — one record per destination tabId. |
+| `src/ask/widget-store.ts` | `chrome.storage.session` wrapper for the widget — one record per destination tabId. |
 | `src/capture.html` + `src/capture-page.ts` | Ask button, menu, status line, payload assembly. |
 
 ### Provider registry
@@ -502,7 +502,7 @@ Two cooperating fields live on `AskProvider`:
   the destination URL wins.
 
 `resolveAcceptedKinds(provider, url)` — exported from
-`src/background/ask/index.ts` — walks the variant list and falls back
+`src/ask/index.ts` — walks the variant list and falls back
 to the provider-level default. Used in three places:
 
 - `listAskProviders` populates per-tab `acceptedAttachmentKinds` on
@@ -570,7 +570,7 @@ uses.
 
 ### Adding a new provider
 
-1. Create `src/background/ask/<provider>.ts`, export an
+1. Create `src/ask/<provider>.ts`, export an
    `AskProvider` with selectors specific to that site.
 2. Append it to `ASK_PROVIDERS` in `providers.ts`.
 3. Add the id to `PROVIDER_IDS`, `DEFAULT_ROTATION`, and
@@ -589,7 +589,7 @@ uses.
 Capture page (capture-page.ts)
   click #ask-menu-btn ("Ask…") ───────────────────────┐
     sendMessage({ action: 'askListProviders' }) ──▶   │
-      background/ask/index.ts                         │
+      ask/index.ts                         │
         listAskProviders() + resolveAsk()             │
           chrome.tabs.query(provider.urlPatterns)     │
           read 'askPin' + 'askPreferredNewTabProvider'│
@@ -597,7 +597,7 @@ Capture page (capture-page.ts)
                                                       │
   user picks a destination ◀────────────────────────  ┘
     sendMessage({ action: 'askSetDefault', destination }) ──▶
-      background/ask/index.ts
+      ask/index.ts
         setAskDefault() — writes 'askPin' (existingTab) or
                           'askPreferredNewTabProvider' (newTab)
     refresh labels + per-provider rows (no send)
@@ -607,7 +607,7 @@ Capture page (capture-page.ts)
                                                                 │
   click "Ask <Provider>" (one of the per-provider rows) ─────► ▼
     sendMessage({ action: 'askAi', destination, payload }) ──▶  │
-      background/ask/index.ts                                   │
+      ask/index.ts                                   │
         (askAiDefault: resolveAsk() picks destination)          │
         sendToAi() ◀───────────────────────────────────────────┘
           ├── resolve tab (existing or new — wait 'complete' up to 15s)

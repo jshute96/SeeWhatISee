@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { friendlyInjectError } from '../../dist/background/ask/index.js';
+import { friendlyInjectError } from '../../dist/ask/index.js';
 
 test('friendlyInjectError: returns generic message for unrecognized errors', () => {
   const err = new Error('Some random error');

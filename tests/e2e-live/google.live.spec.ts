@@ -30,7 +30,7 @@ import {
   type Browser,
   type Page,
 } from '@playwright/test';
-import { googleProvider } from '../../src/background/ask/google.js';
+import { googleProvider } from '../../src/ask/google.js';
 import { driveBridge, type AskAttachment } from './lib/bridge.js';
 
 const CDP_ENDPOINT = process.env.SEE_LIVE_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';

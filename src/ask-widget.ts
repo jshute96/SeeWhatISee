@@ -32,7 +32,7 @@
 (() => {
   // ─── Types ───────────────────────────────────────────────────────
   // Mirror the writer-side `AskWidgetRecord` in
-  // `src/background/ask/widget-store.ts`. We don't import the type
+  // `src/ask/widget-store.ts`. We don't import the type
   // because that would force module emission (see file header).
 
   interface AskWidgetAttachment {

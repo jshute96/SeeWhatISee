@@ -2,13 +2,13 @@
 //
 // All test cases live in `lib/live-suite.ts` — this file just wires
 // up the Claude-specific provider config: selectors are imported
-// directly from `src/background/ask/claude.ts` (single source of
+// directly from `src/ask/claude.ts` (single source of
 // truth — prod adapter and live tests can't drift), and a few
 // DOM-verification helpers are added that target claude.ai's
 // data-testids. Setup is in `docs/ask-live-tests.md`.
 
 import { expect, type Locator, type Page } from '@playwright/test';
-import { claudeProvider } from '../../src/background/ask/claude.js';
+import { claudeProvider } from '../../src/ask/claude.js';
 import { runLiveSuite } from './lib/live-suite.js';
 import type { LiveProvider } from './lib/types.js';
 

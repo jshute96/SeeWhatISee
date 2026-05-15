@@ -438,7 +438,7 @@ function readCaptureDetailsDefaults(): CaptureDetailsDefaults {
  * Pick the next enabled provider in the rendered (alphabetical-by-
  * label) order, starting one slot after `from` and wrapping. Returns
  * null when no provider is enabled. Mirrors `pickNextEnabledDefault`
- * in `src/background/ask/settings.ts` so the page's local default-
+ * in `src/ask/settings.ts` so the page's local default-
  * shifting matches what the SW normalizer would do on save.
  *
  * Drift hazard: the page sorts by label, the SW uses a hard-coded
@@ -498,7 +498,7 @@ function renderAskProvidersTable(data: OptionsData): void {
     // than silently rendering the row as unchecked.
     if (!(provider.id in data.askProviderSettings.enabled)) {
       console.warn(
-        `[SeeWhatISee] options: provider "${provider.id}" missing from askProviderSettings.enabled — defaulting to unchecked. Update PROVIDER_IDS in src/background/ask/settings.ts.`,
+        `[SeeWhatISee] options: provider "${provider.id}" missing from askProviderSettings.enabled — defaulting to unchecked. Update PROVIDER_IDS in src/ask/settings.ts.`,
       );
     }
     enabledBox.checked = data.askProviderSettings.enabled[provider.id] ?? false;

@@ -106,7 +106,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 
 - **`src/` (top level)** — entry-point files and pure shared helpers.
 - **`src/background/`** — MV3 service-worker modules.
-- **`src/background/ask/`** — Ask-flow logic on the SW side.
+- **`src/ask/`** — Ask-flow logic on the SW side.
 - **`src/capture/`** — SW-side "save a thing" pipeline.
 - **`src/capture-page/`** — Capture-page controller submodules.
 - **`src/icons/`** — toolbar action icons and provider brand logos.
@@ -147,18 +147,18 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
-### Ask flow, SW side (`src/background/ask/`)
+### Ask flow, SW side (`src/ask/`)
 
 | File | Description |
 |------|-------------|
-| `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
-| `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
-| `src/background/ask/settings.ts` | User-facing Ask provider preferences — per-provider enabled flags + default provider; normalize/get/set with auto-shift on disable |
-| `src/background/ask/claude.ts` | Claude provider data — URLs, ranked selectors, and a `urlVariants` entry for the image-only `/code` (Claude Code) sub-page |
-| `src/background/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
-| `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; declares `attachmentPreview` for chip-count verification |
-| `src/background/ask/google.ts` | Google Search provider — `newTabOnly` (no pinning), image-only via `acceptedAttachmentKinds`, types into the search textarea and submits to `/search` |
-| `src/background/ask/widget-store.ts` | `chrome.storage.session` wrapper for the in-page Ask widget — record per destination tabId with overall status, per-item state, payload, plus tab-removal cleanup |
+| `src/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
+| `src/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
+| `src/ask/settings.ts` | User-facing Ask provider preferences — per-provider enabled flags + default provider; normalize/get/set with auto-shift on disable |
+| `src/ask/claude.ts` | Claude provider data — URLs, ranked selectors, and a `urlVariants` entry for the image-only `/code` (Claude Code) sub-page |
+| `src/ask/gemini.ts` | Gemini provider data — adds `preFileInputClicks` since Gemini's file input is created on-demand by its upload menu |
+| `src/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; declares `attachmentPreview` for chip-count verification |
+| `src/ask/google.ts` | Google Search provider — `newTabOnly` (no pinning), image-only via `acceptedAttachmentKinds`, types into the search textarea and submits to `/search` |
+| `src/ask/widget-store.ts` | `chrome.storage.session` wrapper for the in-page Ask widget — record per destination tabId with overall status, per-item state, payload, plus tab-removal cleanup |
 
 ### Capture hub (`src/capture/`)
 
@@ -277,8 +277,8 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | File | Description |
 |------|-------------|
 | `tests/unit/markdown.test.mjs` | Pure unit tests for `src/markdown.ts` — run via `node --test` (no browser required) |
-| `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/background/ask/index.ts` (`globMatch` / `matchesAny`) |
-| `tests/unit/ask-inject-error.test.mjs` | Unit tests for `friendlyInjectError` in `src/background/ask/index.ts` (policy block error propagation) |
+| `tests/unit/ask-glob.test.mjs` | Unit tests for the URL-glob matcher in `src/ask/index.ts` (`globMatch` / `matchesAny`) |
+| `tests/unit/ask-inject-error.test.mjs` | Unit tests for `friendlyInjectError` in `src/ask/index.ts` (policy block error propagation) |
 | `tests/unit/ask-settings.test.mjs` | Unit tests for the Ask provider settings normalizer + default-rotation helper |
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |

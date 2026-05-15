@@ -96,7 +96,7 @@ interface AskProviderSettings {
 ```
 
 - Storage key: `askProviderSettings`.
-- Implementation: `src/background/ask/settings.ts`.
+- Implementation: `src/ask/settings.ts`.
 - Fresh-install defaults: all enabled, default Claude.
 - Read on every Ask resolution (`resolveAsk`, `listAskProviders`,
   `findProviderForTab`, `sendToAi`) so disabling a provider takes

@@ -9,7 +9,7 @@
 import {
   findProviderForTab,
   getAskPin,
-} from './ask/index.js';
+} from '../ask/index.js';
 import { type CaptureRecord } from '../capture/types.js';
 import { DOWNLOAD_SUBDIR } from '../capture/downloads.js';
 import { LOG_STORAGE_KEY } from '../capture/log-store.js';

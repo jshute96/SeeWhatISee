@@ -96,7 +96,7 @@ export async function callBridge(
 
 /** Drive the runtime the way the widget does: one `attachFile` op
  *  per file, then `typePrompt` (only when non-empty after trimming —
- *  matches `buildItems` in `src/background/ask/index.ts`), then
+ *  matches `buildItems` in `src/ask/index.ts`), then
  *  `clickSubmit` when `autoSubmit` is on. The try/catch lets call
  *  sites use `expect(result.ok, result.error).toBe(true)` like the
  *  pre-bridge runtime did. */
