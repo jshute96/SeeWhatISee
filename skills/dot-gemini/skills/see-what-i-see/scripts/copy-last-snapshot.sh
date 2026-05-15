@@ -1,29 +1,30 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Thin wrapper: compute the Gemini-readable tmp dir and defer to
+# SeeWhatISee.sh in --get-latest --copy-to-dir mode.
+#
+# Gemini CLI restricts tool file reads to a workspace-named tmp dir
+# under $HOME/.gemini/tmp/. The Chrome extension writes captures into
+# $HOME/Downloads/SeeWhatISee/, which Gemini can't see directly — so
+# we copy the latest record's referenced files into the workspace tmp
+# dir and rewrite the JSON paths to point there.
+#
+# Honors $TARGET_DIR from the environment when set (used by tests).
+# In that case, the destination is $TARGET_DIR/SeeWhatISee — matching
+# the historical behavior of this script.
 
-# This script reads the latest capture record from log.json and copies
-# its referenced files from ~/Downloads/SeeWhatISee to a readable tmp dir.
-# It updates the file paths inside the copied record to point to that dir
-# and then prints the modified JSON content to stdout.
+set -euo pipefail
 
-set -e
-
-# Plain $(dirname ...) — no readlink -f. Install layouts (Gemini
-# extension dir, repo-root scripts/ wrappers) never invoke us via a
-# symlink, so $BASH_SOURCE[0] points at our real install path.
-# Avoiding readlink -f keeps us portable to BSD readlink (macOS <= 12.2).
-source "$(dirname "${BASH_SOURCE[0]}")/see-what-i-see_common.sh"
-resolve_target_dir
-
-# Fail if log.json is not found
-if [ ! -f "$LOG_JSON" ]; then
-    echo "Error: $LOG_JSON not found. No screenshots yet?" >&2
-    exit 1
+if [[ -z "${TARGET_DIR:-}" ]]; then
+  WORKSPACE=$(basename "$(pwd)")
+  # Match Gemini's workspace-dir munging: `.` -> `-`, then lowercase.
+  WORKSPACE="${WORKSPACE//./-}"
+  WORKSPACE="${WORKSPACE,,}"
+  # Gemini-side path computation deliberately uses $HOME (Gemini's own
+  # view of home), not SNAP_REAL_HOME — the .gemini/tmp dir lives
+  # wherever Gemini puts it.
+  TARGET_DIR="$HOME/.gemini/tmp/$WORKSPACE"
 fi
-# Check for empty log.
-if [ ! -s "$LOG_JSON" ]; then
-    echo "Error: $LOG_JSON is empty. No screenshots yet." >&2
-    exit 1
-fi
+TARGET_DIR="$TARGET_DIR/SeeWhatISee"
 
-# Extract the latest record (last line of the NDJSON log) and emit it.
-emit_record "$(tail -1 "$LOG_JSON")"
+exec "$(dirname "${BASH_SOURCE[0]}")/SeeWhatISee.sh" \
+  --get-latest --copy-to-dir "$TARGET_DIR" "$@"

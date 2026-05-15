@@ -6,22 +6,28 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WATCH_SCRIPT = path.resolve(__dirname, '../../scripts/watch.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+// The Claude /see-what-i-see-watch wrapper was a thin
+// `exec SeeWhatISee.sh --watch --pid-lockfile "$@"` script. These
+// tests inline that prefix so they exercise the unified backend
+// directly. The single exception is --help, which doesn't combine
+// with an action, so we drop the prefix in that one test below.
+const WATCH_PREFIX = ['--watch', '--pid-lockfile'];
 
 // These tests are standalone — they create a temp directory with a fake
 // log.json file and simulate captures by appending to it, then verify
-// watch.sh reacts correctly. No extension or browser needed.
+// the watch action reacts correctly. No extension or browser needed.
 const test = base;
 
 // ---- Helpers ---------------------------------------------------------------
 
-/** Start watch.sh and collect its combined stdout+stderr. */
+/** Start a watch invocation and collect its combined stdout+stderr. */
 function startWatch(args: string[], opts?: { cwd?: string }): {
   proc: ChildProcess;
   output: () => string;
   kill: () => void;
 } {
-  const proc = spawn('bash', [WATCH_SCRIPT, ...args], {
+  const proc = spawn('bash', [SCRIPT, ...WATCH_PREFIX, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: opts?.cwd,
   });
@@ -100,9 +106,14 @@ function runScript(
   };
 }
 
-/** Run watch.sh synchronously (for short-lived invocations like --after / --stop). */
+/** Run a short-lived watch invocation (e.g. for `--after` catch-up). */
 function runWatch(args: string[], opts?: { cwd?: string }): { stdout: string; stderr: string; exitCode: number } {
-  return runScript(WATCH_SCRIPT, args, opts);
+  return runScript(SCRIPT, [...WATCH_PREFIX, ...args], opts);
+}
+
+/** Run a non-watch action — `--stop`, `--help`, etc. — without the watch prefix. */
+function runAction(args: string[], opts?: { cwd?: string }): { stdout: string; stderr: string; exitCode: number } {
+  return runScript(SCRIPT, args, opts);
 }
 
 /** Build a fake capture record. */
@@ -171,18 +182,18 @@ test.beforeEach(() => {
 
 test.afterEach(() => {
   // Kill any watcher left behind.
-  try { execSync(`bash ${WATCH_SCRIPT} --stop --directory ${tmpDir}`, { timeout: 3000 }); } catch { /* ok */ }
+  try { execSync(`bash ${SCRIPT} --stop --directory ${tmpDir}`, { timeout: 3000 }); } catch { /* ok */ }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 // ---- Functional tests ------------------------------------------------------
 
-test.describe('watch.sh', () => {
+test.describe('SeeWhatISee.sh --watch', () => {
   // These tests have >1s waits between simulated captures (filesystem
   // mtime granularity), so total time can add up.
   test.setTimeout(30_000);
   test('--help prints usage and exits 0', () => {
-    const r = runWatch(['--help']);
+    const r = runAction(['--help']);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('Usage:');
     expect(r.stdout).toContain('--directory');
@@ -549,7 +560,7 @@ test.describe('watch.sh', () => {
 
 // ---- Concurrency tests -----------------------------------------------------
 
-test.describe('watch.sh concurrency', () => {
+test.describe('SeeWhatISee.sh --watch concurrency', () => {
   test.setTimeout(30_000);
   test('pidfile is created and cleaned up on exit', async () => {
     const pidfile = path.join(tmpDir, '.watch.pid');
@@ -595,7 +606,7 @@ test.describe('watch.sh concurrency', () => {
     const watch = startWatch(['--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 500));
 
-    const stop = runWatch(['--stop', '--directory', tmpDir]);
+    const stop = runAction(['--stop', '--directory', tmpDir]);
     expect(stop.stdout).toContain('Stopping existing watcher');
 
     const code = await waitForExit(watch.proc, 5_000);
@@ -603,14 +614,14 @@ test.describe('watch.sh concurrency', () => {
   });
 
   test('--stop with no watcher reports nothing to stop', () => {
-    const stop = runWatch(['--stop', '--directory', tmpDir]);
+    const stop = runAction(['--stop', '--directory', tmpDir]);
     expect(stop.stdout).toContain('No existing watcher to stop');
   });
 });
 
 // ---- Config file (.SeeWhatISee) tests ---------------------------------------
 
-test.describe('watch.sh config file', () => {
+test.describe('SeeWhatISee.sh --watch config file', () => {
   test.setTimeout(30_000);
 
   // These tests run watch.sh from a temp directory that contains a

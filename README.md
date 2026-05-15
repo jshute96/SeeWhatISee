@@ -345,9 +345,11 @@ claude --plugin-dir $(pwd)/skills/claude-plugin
 ### Watching for screenshots from CLI
 
 ```bash
-scripts/get-latest.sh     # print the latest capture record
-scripts/watch.sh          # wait for the next capture, print it, exit
-scripts/watch.sh --loop   # keep printing captures until ^C
+scripts/SeeWhatISee.sh                          # print the latest capture record
+scripts/SeeWhatISee.sh --watch                  # wait for the next capture, print it, exit
+scripts/SeeWhatISee.sh --watch --loop           # keep printing captures until ^C
+scripts/SeeWhatISee.sh --watch --pid-lockfile   # killable from another shell via --stop
+scripts/SeeWhatISee.sh --stop                   # stop a watcher running with --pid-lockfile
 ```
 
 ### Building a Chrome extension release

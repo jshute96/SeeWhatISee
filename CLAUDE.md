@@ -82,6 +82,12 @@ and the same steps to take for each. To keep them consistent, they are
 **generated from shared templates** in `skills/` — never edit the
 generated files directly.
 
+The same generator also propagates `skills/SeeWhatISee.sh` (the
+unified backend script behind every per-skill wrapper) into each
+release bundle's `scripts/` dir as a verbatim byte-for-byte copy.
+Edit the canonical `skills/SeeWhatISee.sh` and re-run the generator —
+do not edit the per-bundle copies.
+
 - Templates live in `skills/` (one file per generated target, plus
   shared blocks like `json-record.template.md` and `process.template.md`
   which are embedded via `[[filename]]` placeholders).
@@ -99,11 +105,11 @@ generated files directly.
   - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
-  - `skills/dot-gemini/commands/see-what-i-see.toml`
-  - `skills/dot-gemini/commands/see-what-i-see-watch.toml`
   - `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (TOML→skill translation of `gemini.see.md`)
   - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (TOML→skill translation of `gemini.watch.md`)
   - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
+  - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
+  - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

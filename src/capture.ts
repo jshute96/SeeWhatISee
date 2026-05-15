@@ -525,15 +525,14 @@ export function buildInMemoryCapture(input: BuildInMemoryCaptureInput): InMemory
  * call paths (contents and selection) would otherwise duplicate
  * the same "set iff truthy" conditional.
  *
- * Wire-format constraint: the shell consumers of `log.json` in
- * `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
- * and `skills/dot-gemini/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
- * anchor their sed/grep rewrites on `"filename"` appearing *first*
- * inside the artifact object. `JSON.stringify` preserves insertion
- * order, so the object literal here must keep `filename` before
- * `isEdited`. If another caller ever builds an `Artifact` via a
- * spread / `Object.assign`, preserve the same ordering (or update
- * those consumers to stop relying on it).
+ * Wire-format constraint: the shell consumer of `log.json` in
+ * `skills/SeeWhatISee.sh` (propagated verbatim into both install
+ * trees by `skills/generate-skills.py`) anchors its sed rewrites on
+ * `"filename"` appearing *first* inside the artifact object.
+ * `JSON.stringify` preserves insertion order, so the object literal
+ * here must keep `filename` before `isEdited`. If another caller
+ * ever builds an `Artifact` via a spread / `Object.assign`, preserve
+ * the same ordering (or update that consumer to stop relying on it).
  */
 function artifact(filename: string, edited?: boolean): Artifact {
   return edited ? { filename, isEdited: true } : { filename };
@@ -559,11 +558,9 @@ function selectionArtifactOf(
  * Build a `ScreenshotArtifact` object for inclusion in a
  * `CaptureRecord`. Same wire-format constraint as `artifact()`:
  * `filename` must appear first (before any edit flags) so the shell
- * consumers in
- * `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
- * and `skills/dot-gemini/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
- * can anchor their rewrites on `"filename"` being the first key
- * inside the object.
+ * consumer in `skills/SeeWhatISee.sh` (propagated verbatim into both
+ * install trees by `skills/generate-skills.py`) can anchor its
+ * rewrites on `"filename"` being the first key inside the object.
  *
  * Flags are only emitted when true, so the object shape stays
  * minimal on un-edited captures.

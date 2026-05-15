@@ -31,6 +31,11 @@ from pathlib import Path
 
 # (template filename in skills/, target path relative to project root,
 #  optional transform name applied to the expanded template).
+#
+# The "verbatim" transform skips template expansion entirely and just
+# copies the source file's bytes — used for the SeeWhatISee.sh master
+# script, which is propagated unchanged into each release-bundle's
+# install location so it can be invoked sibling-relative.
 PAIRS = [
     ("claude.see.md",   "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md", "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
@@ -42,6 +47,8 @@ PAIRS = [
     ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md",        "toml-to-skill"),
     ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md",  "toml-to-skill"),
     ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md", "toml-to-skill"),
+    ("SeeWhatISee.sh",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh", "verbatim"),
+    ("SeeWhatISee.sh",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh",    "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
@@ -151,12 +158,18 @@ def main(argv: list[str]) -> int:
             print(f"  MISSING TEMPLATE  {src_name}")
             any_diff = True
             continue
-        generated = expand(src_dir, src_path.read_text())
-        if transform is not None:
-            fn = TRANSFORMS.get(transform)
-            if fn is None:
-                raise RuntimeError(f"unknown transform: {transform!r}")
-            generated = fn(target_rel, generated)
+        # The "verbatim" transform skips the [[...]] expansion pass —
+        # shell scripts can legitimately contain `[[ test ]]` syntax
+        # that would otherwise be misinterpreted as template includes.
+        if transform == "verbatim":
+            generated = src_path.read_text()
+        else:
+            generated = expand(src_dir, src_path.read_text())
+            if transform is not None:
+                fn = TRANSFORMS.get(transform)
+                if fn is None:
+                    raise RuntimeError(f"unknown transform: {transform!r}")
+                generated = fn(target_rel, generated)
         current = target_path.read_text() if target_path.is_file() else None
         matches = current == generated
 
@@ -166,6 +179,10 @@ def main(argv: list[str]) -> int:
             else:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(generated)
+                # Preserve the source file's mode bits — matters for the
+                # SeeWhatISee.sh propagation (exec bit) and is harmless for
+                # markdown targets, which inherit 0644 either way.
+                target_path.chmod(src_path.stat().st_mode & 0o777)
                 print(f"  updated    {target_rel}")
         else:
             if matches:

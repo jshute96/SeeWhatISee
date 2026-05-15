@@ -6,20 +6,30 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../scripts/copy-last-snapshot.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
 
-// copy-last-snapshot.sh reads from $HOME/Downloads/SeeWhatISee and copies
-// files into $TARGET_DIR/SeeWhatISee. We fake both via env vars.
+// The Gemini /see-what-i-see flow used to ship as
+// `copy-last-snapshot.sh`, a wrapper that computed
+// `$TARGET_DIR/SeeWhatISee` (defaulting from the workspace name)
+// and exec'd `SeeWhatISee.sh --get-latest --copy-to-dir <that>`.
+// Source dir defaulted to `$HOME/Downloads/SeeWhatISee`.
+// These tests replicate that wrapper by faking $HOME and computing
+// `<TARGET_DIR>/SeeWhatISee` directly into --copy-to-dir.
 
 function run(
   env: { HOME: string; TARGET_DIR: string },
 ): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [SCRIPT], {
-    timeout: 5_000,
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const copyToDir = path.join(env.TARGET_DIR, 'SeeWhatISee');
+  const result = spawnSync(
+    'bash',
+    [SCRIPT, '--get-latest', '--copy-to-dir', copyToDir],
+    {
+      timeout: 5_000,
+      encoding: 'utf8',
+      env: { ...process.env, HOME: env.HOME },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   return {
     stdout: (result.stdout as string) ?? '',
     stderr: (result.stderr as string) ?? '',
@@ -49,7 +59,7 @@ test.afterEach(() => {
   fs.rmSync(targetDir, { recursive: true, force: true });
 });
 
-test.describe('copy-last-snapshot.sh', () => {
+test.describe('SeeWhatISee.sh --copy-to-dir', () => {
   test('copies files and rewrites paths to TARGET_DIR', () => {
     const { fakeHome, srcDir } = makeFakeHome();
 

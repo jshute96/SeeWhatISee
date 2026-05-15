@@ -269,42 +269,52 @@ Layout:
 - Each skill that needs a script bundles it in its own
   `skills/claude-plugin/skills/<name>/scripts/` directory. No
   plugin-root-level `scripts/` dir.
-- The shared `see-what-i-see_common.sh` lives next to its owning
-  skill's main script, at
-  `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`.
-  Sibling skills source it via
-  `../../see-what-i-see/scripts/see-what-i-see_common.sh`.
-- The repo-root `scripts/` directory holds one-line `exec` wrappers
-  for the per-skill scripts, so e2e tests and ad-hoc CLI use can
-  find them at a stable path.
-- These used to be symlinks. The shipped scripts now use plain
-  `dirname` (no `readlink -f`, for BSD `readlink` portability —
-  macOS ≤ 12.2), and `dirname` of a symlink doesn't follow it. A
-  wrapper sidesteps that.
+- All per-skill scripts are thin wrappers around a single unified
+  backend, `SeeWhatISee.sh`. The backend lives next to its owning
+  skill's wrapper at
+  `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh`,
+  and is a verbatim copy of the canonical `skills/SeeWhatISee.sh`
+  (propagated by `skills/generate-skills.py`). Sibling-skill
+  wrappers reach across to it via
+  `../../see-what-i-see/scripts/SeeWhatISee.sh`.
+- The repo-root `scripts/` directory holds a single relative
+  symlink, `scripts/SeeWhatISee.sh -> ../skills/SeeWhatISee.sh`,
+  for direct dev-time and e2e-test invocation of the unified
+  backend. The per-skill wrappers' install-time defaults
+  (`--watch --pid-lockfile`, `--copy-to-dir <tmp>`, etc.) are
+  inlined into the test calls instead of going through the
+  wrapper scripts, so we don't need a separate dev-tree wrapper
+  per skill.
+- The shipped per-skill wrappers continue to use plain
+  `dirname "${BASH_SOURCE[0]}"` (no `readlink -f`) for sibling
+  reach, since install layouts never invoke them via a symlink
+  and avoiding `readlink -f` keeps us portable to BSD `readlink`
+  (macOS ≤ 12.2).
 
 The scripts:
 
-- `skills/claude-plugin/skills/see-what-i-see/scripts/see-what-i-see_common.sh`
-  — shared helpers sourced by every per-skill script: directory
-  resolution (config file, `--directory`, default), config
-  parsing, `absolutize_paths` (rewrites bare filenames in JSON to
-  absolute paths via sed), and `kill_existing` (kills a watcher
-  recorded in a pidfile).
+- `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh`
+  — unified backend with all the actual logic. Actions
+  (`--get-latest`, `--watch`, `--stop`) are combinable; options
+  (`--directory`, `--copy-to-dir`, `--pid-lockfile`, `--loop`,
+  `--after`, `--catch-up-one`, `--print_selection`) tune behavior.
+  Handles directory resolution (config file / `--directory` /
+  default), JSON path absolutization, optional file copy into a
+  sandbox-readable target dir, mtime polling, pidfile management,
+  and `--after` catch-up. See `cli_commands.md` for the full
+  flag inventory.
 - `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`
-  — reads the last line of `log.json` and prints a single JSON
-  record with absolute paths to stdout. Used by `/see-what-i-see`.
+  — `exec`s `SeeWhatISee.sh --get-latest`. Reads the last line of
+  `log.json` and prints a single JSON record with absolute paths.
 - `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`
-  — filesystem watcher used by `/see-what-i-see-watch`. Detects
-  changes to `log.json` by polling mtime every 0.5s. Supports
-  `--after TIMESTAMP` to catch up on missed captures; TIMESTAMP
-  is the ISO `timestamp` field from a previous record (matched
-  against `log.json`). Emits JSON records with absolute paths to
-  stdout; status messages go to stderr. Also accepts `--stop` as
-  a convenience when running the script directly.
-- `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` — small
-  dedicated stop script invoked by `/see-what-i-see-stop`.
-  Resolves the watch directory the same way as the others, then
-  calls the shared `kill_existing` against `$DIR/.watch.pid`.
+  — `exec`s `SeeWhatISee.sh --watch --pid-lockfile` and forwards
+  the watcher flags (`--loop`, `--after`, `--print_selection`,
+  `--stop`, `--directory`). The backend polls `log.json`'s mtime
+  every 0.5s and emits records with absolute paths to stdout;
+  status messages go to stderr.
+- `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
+  — `exec`s `SeeWhatISee.sh --stop` (which auto-implies
+  `--pid-lockfile`). Used by `/see-what-i-see-stop`.
 
 All of these resolve the download directory the same way: if
 `--directory` is not given, look for a `.SeeWhatISee` config file
