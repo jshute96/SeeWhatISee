@@ -1,4 +1,4 @@
-import { noSelectionContentMessage } from '../capture.js';
+import { noSelectionContentMessage } from '../capture/types.js';
 
 // User-visible error reporting for failed captures.
 //

@@ -23,6 +23,17 @@
 
 import { attachHtmlAwarePaste } from './capture-page/paste.js';
 import { initAsk } from './capture-page/ask.js';
+import { anyEditDialogOpen, initEditDialogs } from './capture-page/edit-dialog.js';
+import { handleUploadFlow } from './capture-page/upload.js';
+import {
+  composeImageBadgeText,
+  formatBytes,
+  initPills,
+  setScreenshotErrored,
+  updateImageSizeBadge,
+  updateSelectionSizeBadge,
+} from './capture-page/pills.js';
+import { downloadEditableAs, initSaveAs } from './capture-page/save-as.js';
 import {
   initZoom,
   applyZoom,
@@ -364,242 +375,12 @@ function wireSelectionControls(): void {
 }
 wireSelectionControls();
 
-/**
- * Refresh the Selection size badge. The pill describes what was
- * captured and is available to save — mirroring the HTML pill — so
- * its visibility is gated on "did we capture any selection?", NOT
- * on whether the master "Save selection" checkbox is currently on.
- * Format-of-display: the radio that's checked when the master is
- * on, else the sticky last-picked format (`defaultSelectionFormat`),
- * so unchecking the master leaves the pill showing the same size it
- * had a moment earlier. Hidden only when no selection was captured
- * at all (no format had saveable content), in which case
- * `defaultSelectionFormat` is still its initial `null`.
- *
- * Called on every selection-format change, master toggle, and
- * Edit-selection-* save — the body in `captured` is always the
- * live, post-edit value, so the byte count tracks user edits
- * without a separate cache.
- */
-function updateSelectionSizeBadge(): void {
-  const radioFormat = SELECTION_FORMATS.find((f) => selectionRows[f].radio.checked);
-  const format = radioFormat ?? defaultSelectionFormat;
-  if (format === null) {
-    selectionSizeBadge.hidden = true;
-    refreshPillsCompactness();
-    return;
-  }
-  const body = captured[SELECTION_WIRE_KIND[format]];
-  selectionSizeBadge.hidden = false;
-  selectionSizeBadge.textContent = `Selection · ${formatBytes(new Blob([body]).size)}`;
-  refreshPillsCompactness();
-}
-
-/**
- * Toggle `.compact` on the pill column when all three pills (Image
- * / HTML / Selection) end up visible at the same time. The CSS
- * rule pulls the column above and below the card's vertical
- * padding with negative margins, then uses `space-evenly` so the
- * three pills distribute as four equal gaps across the card height
- * (instead of stacking against the top edge). Called from every
- * site that flips a badge's `hidden` state.
- */
-function refreshPillsCompactness(): void {
-  const visible =
-    (imageSizeBadge.hidden ? 0 : 1) +
-    (htmlSizeBadge.hidden ? 0 : 1) +
-    (selectionSizeBadge.hidden ? 0 : 1);
-  capturedPills.classList.toggle('compact', visible >= 3);
-}
-
-/**
- * Refresh the Image size pill's bake-derived parts (format + bytes).
- * Hidden when no screenshot was captured (`screenshotErrored`),
- * otherwise reflects what *would* be saved right now: the
- * freshly-baked image when the user has any drawn / cropped /
- * redacted edits, else the original captureVisibleTab data URL
- * verbatim. Format label comes from the data URL's MIME prefix; on
- * a bake the label is "PNG" or "JPG" depending on the sticky output
- * format `renderHighlightedImage` picks (`bakeMime`).
- *
- * The pill's text isn't written here directly — it's composed
- * by `composeImageBadgeText`, which adds the live dimensions
- * portion. Splitting the two lets a crop-handle drag refresh just
- * the dimensions on every mousemove (cheap text formatting)
- * without paying for a re-bake (potentially multi-megabyte) on
- * every frame.
- *
- * Cached by `editVersion` + the previewImg's natural dimensions so
- * resize / zoom-driven `render()` calls don't trigger a re-bake.
- * The natural-dimension half of the key matters at startup: the
- * first call from `loadData` runs synchronously after
- * `previewImg.src = …`, before the image has decoded, so
- * `naturalWidth` is briefly 0; once the load event fires
- * `applyZoom → render → updateImageSizeBadge`, the key flips and
- * the pill refreshes with real dimensions. After that, only edit
- * commits / undos / clears / shrinks bump the key.
- */
-let lastImageBadgeKey = '';
-let screenshotErrored = false;
-let lastImageBadgeParts: { label: string; bytes: number } | null = null;
-function updateImageSizeBadge(): void {
-  if (screenshotErrored) {
-    imageSizeBadge.hidden = true;
-    lastImageBadgeParts = null;
-    refreshPillsCompactness();
-    return;
-  }
-  const key = `${getEditVersion()}|${previewImg.naturalWidth}|${previewImg.naturalHeight}`;
-  if (lastImageBadgeKey === key && !imageSizeBadge.hidden) return;
-  lastImageBadgeKey = key;
-  // `renderHighlightedImage` short-circuits to `previewImg.src` when
-  // no edits need baking and the source already matches `bakeMime`,
-  // so the no-edits path is just the original capture data URL — no
-  // canvas re-encode.
-  const dataUrl = renderHighlightedImage();
-  const formatted = formatImageDataUrl(dataUrl);
-  if (!formatted) {
-    imageSizeBadge.hidden = true;
-    lastImageBadgeParts = null;
-    refreshPillsCompactness();
-    return;
-  }
-  lastImageBadgeParts = { label: formatted.label, bytes: formatted.bytes };
-  imageSizeBadge.hidden = false;
-  // Compose the text now too, not only via the `render()`-driven
-  // path — `loadData` calls this synchronously *before* the
-  // `await previewImg.load`, and we don't want to rely on the load
-  // listener's render() to fill in the text (defensive against a
-  // hypothetical sync-load edge case where the listener doesn't
-  // fire before body visibility flips). The `render()` call is
-  // still needed for the live-drag refresh; the cost of one
-  // duplicate textContent write per edit commit is negligible.
-  composeImageBadgeText();
-  refreshPillsCompactness();
-}
-
-/**
- * Compose the Image pill's textContent from the cached bake-derived
- * parts (format + bytes) and the live dimensions
- * (`liveCropDimensions` while a crop drag is in flight, else
- * `savedImageDimensions`). Cheap — no allocations beyond the
- * template string and the DOM update — so calling this on every
- * mousemove during a crop drag is fine. Bails when the bake-derived
- * parts haven't been computed yet (e.g. a `screenshotErrored`
- * capture; pill is hidden in that branch anyway).
- */
-function composeImageBadgeText(): void {
-  if (!lastImageBadgeParts) return;
-  const dims = liveCropDimensions() ?? savedImageDimensions();
-  const dimText = dims ? ` · ${dims.width}×${dims.height}` : '';
-  imageSizeBadge.textContent =
-    `${lastImageBadgeParts.label}${dimText} · ${formatBytes(lastImageBadgeParts.bytes)}`;
-}
-
-/**
- * Pixel dimensions of the image that `renderHighlightedImage` would
- * produce right now: the active crop's pixel size when one exists,
- * else `previewImg`'s natural size. Returns null while the
- * previewImg is still decoding (`naturalWidth === 0`) — callers
- * elide the dimension portion of the pill text in that window.
- *
- * Routed through `pctRectToPixels` so the integer derivation
- * matches the canvas the bake actually allocates (round-then-
- * subtract, vs. a `Math.round(w * factor)` that can land 1px
- * different from the floor that `canvas.width = float` would
- * apply). Otherwise the pill could disagree with `file <saved>.png`
- * by a pixel for some crop fractions.
- */
-function savedImageDimensions(): { width: number; height: number } | null {
-  const natW = previewImg.naturalWidth;
-  const natH = previewImg.naturalHeight;
-  if (!natW || !natH) return null;
-  const crop = activeCrop();
-  if (crop) {
-    const px = pctRectToPixels(crop, natW, natH);
-    return { width: px.w, height: px.h };
-  }
-  return { width: natW, height: natH };
-}
-
-/**
- * Pixel dimensions of the crop currently being dragged, if any —
- * the rectangle the user is interactively reshaping or drawing,
- * before they release the mouse and commit. Returns null when no
- * such drag is in flight; callers fall back to
- * `savedImageDimensions` so the pill shows the committed crop
- * (or full image) at rest.
- *
- * Two drag flavors:
- *   - `boxDrag` with `kind === 'crop'` — handle-resize on an
- *     existing crop, or the image-edge "create a new crop" gesture.
- *     Already in percent coordinates, mirrors the values painted by
- *     `render`. A rect/redact resize drag also lives in `boxDrag`
- *     but doesn't change the cropped dims, so we ignore it here.
- *   - Crop-tool create drag — `dragStart` + `dragCurrent` in
- *     display pixels, projected to percent against `imgRect`.
- */
-function liveCropDimensions(): { width: number; height: number } | null {
-  const natW = previewImg.naturalWidth;
-  const natH = previewImg.naturalHeight;
-  if (!natW || !natH) return null;
-  // Both branches build a percent-space rect mirroring what would
-  // commit on mouseup, then route through `pctRectToPixels` so the
-  // live preview uses the same integer derivation as the eventual
-  // bake (and hence `savedImageDimensions`).
-  const bd = getBoxDrag();
-  if (bd && bd.kind === 'crop') {
-    const px = pctRectToPixels(
-      { x: bd.curX, y: bd.curY, w: bd.curW, h: bd.curH },
-      natW,
-      natH,
-    );
-    return { width: px.w, height: px.h };
-  }
-  const ds = getDragStart();
-  const dc = getDragCurrent();
-  if (getSelectedTool() === 'crop' && ds && dc) {
-    const r = imgRect();
-    if (!r.width || !r.height) return null;
-    // Zero-area "drag" — mousedown without movement. The mousedown
-    // handler sets `dragCurrent = dragStart` before the first
-    // mousemove arrives, so without this guard the pill would flash
-    // "0×0" the moment the user pressed the mouse button.
-    if (ds.x === dc.x && ds.y === dc.y) {
-      return null;
-    }
-    const x = (Math.min(ds.x, dc.x) / r.width) * 100;
-    const y = (Math.min(ds.y, dc.y) / r.height) * 100;
-    const w = (Math.abs(dc.x - ds.x) / r.width) * 100;
-    const h = (Math.abs(dc.y - ds.y) / r.height) * 100;
-    const px = pctRectToPixels({ x, y, w, h }, natW, natH);
-    return { width: px.w, height: px.h };
-  }
-  return null;
-}
-
-/**
- * Pull the format label and decoded byte count out of a
- * `data:image/...;base64,...` URL. The byte count is computed from
- * the base64 length (not from a Blob) so we avoid the allocation —
- * `dataUrl.length` is already in memory. Returns null for empty /
- * non-image / non-base64 URLs (e.g. the empty string Chrome
- * resolves to the document URL when previewImg.src is left blank).
- */
-function formatImageDataUrl(
-  dataUrl: string,
-): { label: string; bytes: number } | null {
-  const m = /^data:image\/([^;,]+);base64,/.exec(dataUrl);
-  if (!m) return null;
-  const subtype = m[1]!.toLowerCase();
-  // "JPG" reads more naturally than "JPEG" in the pill; everything
-  // else just uppercases the MIME subtype (PNG / WEBP / GIF / …).
-  const label = subtype === 'jpeg' ? 'JPG' : subtype.toUpperCase();
-  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
-  const bytes = Math.floor((b64.length * 3) / 4) - padding;
-  return { label, bytes };
-}
+// ─── Image / HTML / Selection size pills ─────────────────────────
+//
+// The pill refreshers and `formatBytes` live in
+// `capture-page/pills.ts`. `initPills(ctx)` is wired with the
+// other submodule inits at the bottom of this file; the per-pill
+// refreshers are imported above.
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -858,21 +639,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ─── HTML byte size formatting ────────────────────────────────────
-
-function formatBytes(n: number): string {
-  if (n < 1024) return n + ' B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  // 1 decimal under 10, otherwise rounded — keeps display tight.
-  const formatted = v < 10 ? v.toFixed(1) : Math.round(v).toString();
-  return formatted + ' ' + units[i];
-}
 
 
 // Click-flash for every `.btn` on the page (palette buttons, header
@@ -894,126 +660,6 @@ document.addEventListener('click', (e) => {
 
 // ─── Initial data load ────────────────────────────────────────────
 
-/**
- * Reveal the upload-landing card and wire the file picker. Called
- * from `loadData()` on the no-session path when `?upload=true` is
- * in the URL. Once the user picks an image we:
- *
- *   1. FileReader → data URL.
- *   2. Decode-validate the data URL via `<img>` so a corrupt /
- *      0-byte / mislabeled file fails here rather than rendering
- *      a broken-image preview after the navigation.
- *   3. `initializeUploadSession` to the SW (it synthesizes a
- *      `DetailsSession` and stashes it under our tab's key).
- *   4. Strip `?upload=true` from the URL via `replaceState` so a
- *      reload doesn't re-trigger this branch (we now have a real
- *      session and want the normal path).
- *   5. Re-enter `loadData()` — `getDetailsData` returns the
- *      synthetic session and the rest of the page renders.
- *
- * Errors (non-image file, decode failure, FileReader failure, SW
- * init rejection) surface in `#upload-error` below the Choose-image
- * button. The button stays functional so the user can pick a
- * different file without reloading the tab.
- */
-async function handleUploadFlow(): Promise<void> {
-  const landing = document.getElementById('upload-landing') as HTMLDivElement;
-  const chooseBtn = document.getElementById('upload-choose-btn') as HTMLButtonElement;
-  const fileInput = document.getElementById('upload-file-input') as HTMLInputElement;
-  const errorEl = document.getElementById('upload-error') as HTMLDivElement;
-
-  landing.hidden = false;
-
-  function showError(msg: string): void {
-    errorEl.textContent = msg;
-    errorEl.style.display = 'block';
-  }
-  function clearError(): void {
-    errorEl.textContent = '';
-    errorEl.style.display = 'none';
-  }
-
-  chooseBtn.addEventListener('click', () => {
-    clearError();
-    fileInput.click();
-  });
-
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    // Always reset so the user can re-pick the same file after an
-    // error path (the change event won't fire on identical
-    // selections otherwise).
-    const resetInput = (): void => { fileInput.value = ''; };
-
-    if (!file.type.startsWith('image/')) {
-      showError('Not a supported image format.');
-      resetInput();
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onerror = () => {
-      showError('Could not read file. Try again.');
-      resetInput();
-    };
-    reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      // Decode-validate before we ship the bytes off to the SW.
-      // The `accept="image/*"` attribute and the MIME-prefix check
-      // above only filter on declared type — a 0-byte file or a
-      // `.png` carrying garbage bytes still passes both. Loading
-      // through `<img>` and waiting for `onload` / `onerror` runs
-      // the same decode the Capture page would do, so anything that
-      // would render as a broken-image placeholder fails here with
-      // a clear message instead.
-      const decodable = await new Promise<boolean>((resolve) => {
-        const probe = new Image();
-        probe.onload = () => resolve(probe.naturalWidth > 0 && probe.naturalHeight > 0);
-        probe.onerror = () => resolve(false);
-        probe.src = dataUrl;
-      });
-      if (!decodable) {
-        showError('Not a valid image (could not decode).');
-        resetInput();
-        return;
-      }
-      let initRes: { ok?: boolean; error?: string } | undefined;
-      try {
-        initRes = await chrome.runtime.sendMessage({
-          action: 'initializeUploadSession',
-          dataUrl,
-          filename: file.name,
-          mimeType: file.type,
-        });
-      } catch (err) {
-        showError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
-        resetInput();
-        return;
-      }
-      if (!initRes?.ok) {
-        showError(`Upload failed: ${initRes?.error ?? 'no response from background'}`);
-        resetInput();
-        return;
-      }
-      // Synthetic session is now in place. Hide the landing, scrub
-      // `?upload=true` from the URL (so reloads don't loop us back
-      // here), unhide the main-content blocks the no-session
-      // branch hid, clear `staleMode`, and let the normal
-      // `loadData` happy-path render.
-      landing.hidden = true;
-      window.history.replaceState({}, document.title, window.location.pathname);
-      document
-        .querySelectorAll<HTMLElement>('[data-capture-main]')
-        .forEach((el) => {
-          el.hidden = false;
-        });
-      staleMode = false;
-      await loadData();
-    };
-    reader.readAsDataURL(file);
-  });
-}
 
 async function loadData(): Promise<void> {
   try {
@@ -1052,7 +698,12 @@ async function loadData(): Promise<void> {
         });
       const params = new URLSearchParams(window.location.search);
       if (params.get('upload') === 'true') {
-        await handleUploadFlow();
+        await handleUploadFlow({
+          onSessionReady: async () => {
+            staleMode = false;
+            await loadData();
+          },
+        });
         return;
       }
       // `?error=...` means the SW tried to seed a session for us but
@@ -1124,7 +775,7 @@ async function loadData(): Promise<void> {
       // render() calls (which can run before loadData paints the rest
       // of the badges) don't briefly show an "PNG · 0 B" pill from a
       // bogus empty data URL.
-      screenshotErrored = true;
+      setScreenshotErrored(true);
     }
     updateImageSizeBadge();
 
@@ -1384,715 +1035,32 @@ for (const format of SELECTION_FORMATS) {
   });
 }
 
-// ─── Download (Save as…) buttons ──────────────────────────────────
+// ─── Save as… ────────────────────────────────────────────────────
 //
-// Each row's download button opens a native save dialog seeded with a
-// generic default filename (`screenshot.<png|jpg>`, `contents.html`,
-// `selection.{html,txt,md}`) under the user's default download
-// directory. The bytes written reflect the *current* edited state:
-//   - Screenshot: the highlighted/cropped image via
-//     `renderHighlightedImage` when there are bake-able edits, else
-//     the original capture. Output format is sticky on the source
-//     (JPG stays JPG; everything else writes PNG) — see `bakeMime`.
-//   - HTML / selection: the `captured[kind]` mirror, which the Edit
-//     dialogs keep in sync with the SW after each save.
-// `chrome.downloads.download({ saveAs: true })` is callable directly
-// from this extension page (no SW round-trip needed). It rejects with
-// `USER_CANCELED` when the user dismisses the dialog — silenced.
+// Per-row Save-as buttons + the drawing-palette Copy-image and
+// Save-image buttons live in `capture-page/save-as.ts`.
+// `downloadEditableAs` is exported there so the in-dialog Download
+// button in `edit-dialog.ts` shares the same path. `initSaveAs(ctx)`
+// is wired with the other submodule inits at the bottom of this file.
 
-downloadScreenshotBtn.addEventListener('click', () => {
-  void downloadAs('screenshot');
-});
-
-// Image-level Copy / Save-as in the drawing palette. Both reuse the
-// per-row screenshot logic — the Save-as is identical, and the Copy
-// puts the same PNG bytes onto the clipboard as image data (vs. the
-// per-row Copy, which copies the *filename* as text).
-copyImageBtn.addEventListener('click', () => {
-  void copyImageToClipboard();
-});
-downloadImageBtn.addEventListener('click', () => {
-  void downloadAs('screenshot');
-});
-
-async function copyImageToClipboard(): Promise<void> {
-  // Forcing PNG keeps this aligned with the `ClipboardItem` MIME
-  // below: browsers only accept `image/png` in `ClipboardItem`
-  // reliably, so even a JPG- or WEBP-source capture is re-encoded
-  // to PNG for the clipboard.
-  // - PNG source, no edits → short-circuits to `previewImg.src`.
-  // - JPG / WEBP / GIF / … source → canvas re-encode to PNG runs
-  //   even with no edits (otherwise the blob's MIME would mismatch
-  //   the `'image/png'` `ClipboardItem` key below).
-  // - Any source + edits → canvas re-encode to PNG runs.
-  // The `fetch()` call is on the data URL (local base64 decode),
-  // not a network request to the source page.
-  const url = renderHighlightedImage('image/png');
-  try {
-    // Wrap the fetch in a Promise passed directly to ClipboardItem.
-    // navigator.clipboard.write must be called synchronously within the
-    // user gesture (before any await) to prevent the browser from
-    // revoking clipboard access. The browser resolves the promise to
-    // read the blob bytes.
-    const blobPromise = fetch(url).then((r) => r.blob());
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
-  } catch (err) {
-    // Same `NotAllowedError` ("Document is not focused") path as
-    // `writeClipboardText` — `navigator.clipboard.write` rejects the
-    // same way when the page loses focus mid-flight. Reuse the
-    // shared `formatClipboardError` builder so the user-facing
-    // wording stays consistent across all three copy buttons. Same
-    // reasoning as `writeClipboardText`: no `console.warn` so the
-    // expected alt-tab `NotAllowedError` doesn't redirect into the
-    // `chrome://extensions` errors page.
-    setStatusMessage(formatClipboardError(err, 'copy image'), 'error');
-  }
-}
-downloadHtmlBtn.addEventListener('click', () => {
-  void downloadAs('html');
-});
-for (const format of SELECTION_FORMATS) {
-  selectionRows[format].downloadBtn.addEventListener('click', () => {
-    void downloadAs(SELECTION_WIRE_KIND[format]);
-  });
-}
-
-const SELECTION_DOWNLOAD_MIME: Record<SelectionFormat, string> = {
-  html: 'text/html',
-  text: 'text/plain',
-  markdown: 'text/markdown',
-};
-const SELECTION_DOWNLOAD_EXT: Record<SelectionFormat, string> = {
-  html: 'html',
-  text: 'txt',
-  markdown: 'md',
-};
-
-async function downloadAs(
-  kind: 'screenshot' | EditableArtifactKind,
-): Promise<void> {
-  if (kind === 'screenshot') {
-    // `renderHighlightedImage` short-circuits to the original
-    // capture's data URL when no edits need baking and the source
-    // already matches `bakeMime` — see its docstring.
-    const url = renderHighlightedImage();
-    // Screenshot is a data: URL — nothing to revoke. The other kinds
-    // use blob URLs (built from the editable body) and route through
-    // `downloadEditableAs`, which handles its own revocation.
-    await runSaveAsDialog(url, `screenshot.${bakeExt()}`, null);
-    return;
-  }
-  await downloadEditableAs(kind, captured[kind]);
-}
-
-/**
- * Save the given editable-kind body to a user-chosen path via the
- * native save dialog. The body parameter is split out so the
- * in-dialog download button can hand the *current editor source*
- * (uncommitted), while the per-row Save-as button hands
- * `captured[kind]` (the SW-committed mirror).
- */
-async function downloadEditableAs(
-  kind: EditableArtifactKind,
-  body: string,
-): Promise<void> {
-  let mime: string;
-  let filename: string;
-  if (kind === 'html') {
-    mime = 'text/html';
-    filename = 'contents.html';
-  } else {
-    // One of the three selection kinds. Reverse-map the editable kind
-    // back to a SelectionFormat so we can pick the matching MIME and
-    // extension. The selection-radio rows already enforce that the
-    // body is non-empty before enabling this button.
-    const format = (Object.keys(SELECTION_WIRE_KIND) as SelectionFormat[])
-      .find((f) => SELECTION_WIRE_KIND[f] === kind)!;
-    mime = SELECTION_DOWNLOAD_MIME[format];
-    filename = `selection.${SELECTION_DOWNLOAD_EXT[format]}`;
-  }
-  const withNewline = body.endsWith('\n') ? body : `${body}\n`;
-  const blobUrl = URL.createObjectURL(
-    new Blob([withNewline], { type: `${mime};charset=utf-8` }),
-  );
-  await runSaveAsDialog(blobUrl, filename, blobUrl);
-}
-
-/**
- * Open the native save dialog seeded with `defaultName`, downloading
- * `url`. When `blobUrlToRevoke` is set we revoke it after a delay
- * rather than synchronously: `chrome.downloads.download` resolves on
- * the download having *started*, not finished — for large bodies the
- * browser may still be reading the blob when the await returns.
- * Revoking it then would risk truncating the saved file. 30 s is
- * comfortably longer than any plausible read for a save-as payload
- * and the page typically closes long before then anyway.
- */
-const BLOB_REVOKE_DELAY_MS = 30_000;
-async function runSaveAsDialog(
-  url: string,
-  defaultName: string,
-  blobUrlToRevoke: string | null,
-): Promise<void> {
-  try {
-    await chrome.downloads.download({ url, filename: defaultName, saveAs: true });
-  } catch (err) {
-    // USER_CANCELED is the expected outcome when the user dismisses
-    // the save dialog — log other errors so unexpected failures are
-    // visible in the SW devtools without crashing the page.
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/USER_CANCELED/i.test(msg)) {
-      console.warn('[SeeWhatISee] save-as failed:', err);
-    }
-  } finally {
-    if (blobUrlToRevoke) {
-      const u = blobUrlToRevoke;
-      setTimeout(() => URL.revokeObjectURL(u), BLOB_REVOKE_DELAY_MS);
-    }
-  }
-}
-
-// ─── Edit dialogs (catalog-driven) ────────────────────────────────
+// ─── Edit dialogs ─────────────────────────────────────────────────
 //
-// Each editable artifact kind gets one dialog cloned from
-// `#edit-dialog-template` in capture.html. A Save pushes the new
-// body to the SW via `updateArtifact`, which invalidates the
-// corresponding download cache so the next Copy / Capture writes
-// the edited content. Adding a future kind is one entry in
-// `EDIT_KINDS` below plus a pencil button in the markup.
+// Catalog-driven Edit dialogs live in `capture-page/edit-dialog.ts`.
+// `anyEditDialogOpen()` is re-exposed for the page-wide Alt-shortcut
+// handler above; `initEditDialogs(ctx)` is wired with the other
+// submodule inits at the bottom of this file.
 
-// Kept in sync with the canonical declaration in `src/capture.ts`
-// and the `EDITABLE_ARTIFACTS` dispatch table in `src/background.ts`.
-// Inlined rather than `import type`'d for the same reason
-// `SelectionFormat` is duplicated above: keeps the page's payload
-// contract independent of the SW module. New editable kinds must
-// be added to all three sites.
+// Kept in sync with the canonical declaration in
+// `src/capture/types.ts` and the `EDITABLE_ARTIFACTS` dispatch table
+// in `src/background.ts`. Inlined rather than `import type`'d for the
+// same reason `SelectionFormat` is duplicated above: keeps the page's
+// payload contract independent of the SW module. New editable kinds
+// must be added to all three sites.
 type EditableArtifactKind =
   | 'html'
   | 'selectionHtml'
   | 'selectionText'
   | 'selectionMarkdown';
-
-interface EditKindSpec {
-  kind: EditableArtifactKind;
-  /** Hyphenated DOM-id slug used by `createEditDialog` to stamp the
-   * cloned template's ids (e.g. `edit-<slug>-dialog`). Separate from
-   * `kind` so camelCase editable kinds (`selectionMarkdown`) map to
-   * readable DOM ids (`edit-selection-markdown-dialog`) without
-   * forcing the TypeScript union into hyphens. Keep in sync with
-   * the matching button ids in `capture.html`. */
-  domSlug: string;
-  /** Modal heading + editor aria-label. Short, user-visible. */
-  title: string;
-  /** The pencil button inside the Capture-page row for this kind. */
-  openBtn: HTMLButtonElement;
-  /** If set, the dialog exposes the Edit / Preview toggle and
-   * renders a preview using the named renderer:
-   *   - `'html'`     — parse editor source as HTML (DOMParser) and
-   *                    drop it into a sandboxed iframe.
-   *   - `'markdown'` — parse as markdown via `marked`, then reuse
-   *                    the same iframe + sanitizer pipeline on the
-   *                    resulting HTML. Raw HTML inside the markdown
-   *                    flows through the same script / meta-refresh
-   *                    stripping as the HTML preview.
-   * Omitted for plain-text kinds that have nothing meaningful to
-   * render. */
-  preview?: 'html' | 'markdown';
-  /** Optional post-save hook — e.g. refresh the HTML-size readout. */
-  onSaved?: (value: string) => void;
-}
-
-const EDIT_KINDS: EditKindSpec[] = [
-  {
-    kind: 'html',
-    domSlug: 'html',
-    title: 'Page contents HTML',
-    openBtn: editHtmlBtn,
-    preview: 'html',
-    onSaved: (v) => {
-      // Only reachable when the original HTML scrape succeeded —
-      // `loadData` disables `editHtmlBtn` whenever `htmlError` is set,
-      // so the badge here is always populated and visible.
-      htmlSizeBadge.textContent = `HTML · ${formatBytes(new Blob([v]).size)}`;
-    },
-  },
-  {
-    kind: 'selectionHtml',
-    domSlug: 'selection-html',
-    title: 'Selection HTML',
-    openBtn: selectionRows.html.editBtn,
-    preview: 'html',
-    // Each selection edit-save updates the live `captured.selection*`
-    // body before this hook runs, so `updateSelectionSizeBadge` reads
-    // the post-edit byte count when the active format matches the
-    // edited kind. Editing a non-active format leaves the badge
-    // unchanged until the user clicks that format's radio.
-    onSaved: () => updateSelectionSizeBadge(),
-  },
-  {
-    kind: 'selectionText',
-    domSlug: 'selection-text',
-    title: 'Edit selection text',
-    openBtn: selectionRows.text.editBtn,
-    onSaved: () => updateSelectionSizeBadge(),
-  },
-  {
-    kind: 'selectionMarkdown',
-    domSlug: 'selection-markdown',
-    title: 'Selection markdown',
-    openBtn: selectionRows.markdown.editBtn,
-    preview: 'markdown',
-    onSaved: () => updateSelectionSizeBadge(),
-  },
-];
-
-// Populated by `bindEditDialog` once the DOM is cloned from the
-// template; insertion order matches `EDIT_KINDS` so
-// `anyEditDialogOpen()` and future iteration see the same order.
-const editDialogs: HTMLDialogElement[] = [];
-
-interface EditDialogParts {
-  dialog: HTMLDialogElement;
-  /**
-   * The CodeJar-wrapped contenteditable <div> that replaces what used
-   * to be a <textarea>. The DOM id is still `edit-${slug}-textarea`
-   * for backward compatibility with e2e selectors, and the `.value`-
-   * style access is mediated via `getCode` / `setCode` below so
-   * callers don't touch CodeJar's internals directly.
-   */
-  editor: HTMLDivElement;
-  /** Current source as a plain string. Reads from CodeJar so any
-   *  in-flight IME composition / pending input is included. */
-  getCode(): string;
-  /** Replace the editor's contents. Re-runs the highlighter so the
-   *  tokens reflect the new source. */
-  setCode(code: string): void;
-  saveBtn: HTMLButtonElement;
-  cancelBtn: HTMLButtonElement;
-  errorEl: HTMLParagraphElement;
-  modeToggle: HTMLDivElement;
-  editModeBtn: HTMLButtonElement;
-  previewModeBtn: HTMLButtonElement;
-  previewIframe: HTMLIFrameElement;
-  /**
-   * In-dialog "Download this file" button (right of the
-   * Edit / Preview toggle). Saves whatever is currently in the
-   * editor — including un-committed changes — via the same
-   * `chrome.downloads.download({ saveAs: true })` path the per-row
-   * Save-as buttons use.
-   */
-  dialogDownloadBtn: HTMLButtonElement;
-}
-
-/**
- * Clone the edit-dialog template, fill in per-kind ids / text /
- * aria wiring, and append the new <dialog> to document.body.
- * Returns refs to the interactive parts so the caller can wire
- * them up.
- *
- * Per-instance ids follow the `edit-${kind}-${role}` convention
- * (e.g. `edit-html-dialog`, `edit-selection-textarea`) so e2e
- * tests can target a specific kind without knowing the full
- * catalog.
- */
-function createEditDialog(
-  domSlug: string,
-  title: string,
-  kind: EditableArtifactKind,
-): EditDialogParts {
-  const tpl = document.getElementById('edit-dialog-template') as HTMLTemplateElement;
-  const frag = tpl.content.cloneNode(true) as DocumentFragment;
-  const dialog = frag.querySelector('.edit-dialog') as HTMLDialogElement;
-  const titleEl = dialog.querySelector('.edit-dialog-title') as HTMLHeadingElement;
-  const editor = dialog.querySelector('.edit-dialog-textarea') as HTMLDivElement;
-  const errorEl = dialog.querySelector('.edit-dialog-error') as HTMLParagraphElement;
-  const saveBtn = dialog.querySelector('.edit-dialog-save') as HTMLButtonElement;
-  const cancelBtn = dialog.querySelector('.edit-dialog-cancel') as HTMLButtonElement;
-  const modeToggle = dialog.querySelector('.edit-dialog-mode-toggle') as HTMLDivElement;
-  const editModeBtn = dialog.querySelector('.edit-dialog-mode-edit') as HTMLButtonElement;
-  const previewModeBtn = dialog.querySelector('.edit-dialog-mode-preview') as HTMLButtonElement;
-  const previewIframe = dialog.querySelector('.edit-dialog-preview') as HTMLIFrameElement;
-  const dialogDownloadBtn = dialog.querySelector('.edit-dialog-download') as HTMLButtonElement;
-
-  dialog.id = `edit-${domSlug}-dialog`;
-  titleEl.id = `edit-${domSlug}-title`;
-  titleEl.textContent = title;
-  dialog.setAttribute('aria-labelledby', titleEl.id);
-  editor.id = `edit-${domSlug}-textarea`;
-  editor.setAttribute('aria-label', title);
-  // `hljs` class lets the highlight.js theme stylesheet paint the
-  // editor's background + default text color. Must be on the root
-  // element CodeJar writes into.
-  editor.classList.add('hljs');
-  errorEl.id = `edit-${domSlug}-error`;
-  saveBtn.id = `edit-${domSlug}-save`;
-  cancelBtn.id = `edit-${domSlug}-cancel`;
-  editModeBtn.id = `edit-${domSlug}-mode-edit`;
-  previewModeBtn.id = `edit-${domSlug}-mode-preview`;
-  previewIframe.id = `edit-${domSlug}-preview`;
-  dialogDownloadBtn.id = `edit-${domSlug}-download`;
-
-  document.body.appendChild(dialog);
-
-  // Wrap the editor with CodeJar. `spellcheck: false` mirrors the
-  // old textarea attribute; `tab: '\t'` matches textarea behavior
-  // when the user hits Tab (CodeJar swallows it so focus doesn't
-  // move out of the editor). `addClosing: false` suppresses
-  // CodeJar's auto-pair-quotes/brackets default — the old textarea
-  // had no such behavior and auto-pairing inside HTML attributes
-  // ("foo=|bar" typing `"` would insert `""`) is an unwelcome UX
-  // delta.
-  // Rich-text paste: HTML editors should land the actual `text/html`
-  // source the user copied (not the visible-text projection a
-  // plaintext-only contenteditable would otherwise insert), and the
-  // markdown editor should land the `htmlToMarkdown` projection. The
-  // selection-text editor keeps the default plain-text paste — no
-  // listener attached, so CodeJar's own paste handler (below) just
-  // inserts the `text/plain` clipboard value. See the
-  // `attachHtmlAwarePaste` block above for the Ctrl+V vs Ctrl+Shift+V
-  // routing.
-  //
-  // *Order matters*: we attach this listener BEFORE wrapping with
-  // CodeJar. CodeJar's own paste handler short-circuits when
-  // `event.defaultPrevented` is already true, so attaching first
-  // means our handler runs first, calls `preventDefault`, and
-  // CodeJar's bails — otherwise CodeJar would insert the plain-text
-  // version *before* ours runs and we'd end up with both copies in
-  // the editor.
-  if (kind === 'html' || kind === 'selectionHtml') {
-    attachHtmlAwarePaste(editor, 'asHtmlSource');
-  } else if (kind === 'selectionMarkdown') {
-    attachHtmlAwarePaste(editor, 'asMarkdown');
-  }
-
-  const jar = CodeJar(editor, makeHighlighter(hljsLanguageFor(kind)), {
-    tab: '\t',
-    spellcheck: false,
-    addClosing: false,
-  });
-
-  return {
-    dialog, editor,
-    getCode: () => jar.toString(),
-    setCode: (code) => jar.updateCode(code),
-    saveBtn, cancelBtn, errorEl,
-    modeToggle, editModeBtn, previewModeBtn, previewIframe,
-    dialogDownloadBtn,
-  };
-}
-
-/**
- * Build the HTML document for previewing a captured HTML body in a
- * sandboxed iframe. Parses the HTML via DOMParser (`text/html` mode
- * is extremely forgiving — malformed input still yields a document),
- * strips any existing `<base>` (would shadow ours), and injects a
- * fresh one with the captured page's URL + `target="_blank"` so
- * relative links resolve and clicks open in a new tab instead of
- * replacing the preview iframe. Scripts survive parsing but won't
- * execute because the iframe's sandbox denies `allow-scripts`.
- * Returned string is loaded via a `blob:` URL (not `srcdoc`) because
- * srcdoc has a browser attribute-size limit that silently truncates
- * large captures to blank.
- */
-function buildPreviewHtml(htmlBody: string, baseUrl: string): string {
-  const doc = new DOMParser().parseFromString(htmlBody, 'text/html');
-  // Defense-in-depth: sandbox already denies `allow-scripts`, so
-  // inline <script> can't run — but stripping makes the previewed
-  // source match what renders and removes the execution vector
-  // entirely. Also drop `<meta http-equiv="refresh">`: without JS
-  // it's the one remaining way for captured HTML to hijack the
-  // preview (auto-navigate the iframe to an attacker URL).
-  doc.querySelectorAll('script').forEach((s) => s.remove());
-  doc.querySelectorAll('meta[http-equiv]').forEach((m) => {
-    if ((m.getAttribute('http-equiv') ?? '').toLowerCase() === 'refresh') {
-      m.remove();
-    }
-  });
-  doc.querySelectorAll('base').forEach((b) => b.remove());
-  const base = doc.createElement('base');
-  if (baseUrl) base.setAttribute('href', baseUrl);
-  base.setAttribute('target', '_blank');
-  // First child of <head> so it wins over anything later in the
-  // document (e.g. a rogue <base> buried in the body).
-  doc.head.insertBefore(base, doc.head.firstChild);
-  // Force UTF-8 so non-ASCII captures (em dashes, curly quotes,
-  // emoji, CJK) don't render as mojibake. Chrome falls back to
-  // Windows-1252 on blob: documents lacking an explicit charset,
-  // turning e.g. "—" (UTF-8 E2 80 94) into "â€”". Inject a
-  // <meta charset> at the very top of <head> (before <base> so
-  // the charset is locked in before any URL parsing).
-  const existingCharsets = doc.head.querySelectorAll(
-    'meta[charset], meta[http-equiv="Content-Type" i]',
-  );
-  existingCharsets.forEach((m) => m.remove());
-  const meta = doc.createElement('meta');
-  meta.setAttribute('charset', 'utf-8');
-  doc.head.insertBefore(meta, doc.head.firstChild);
-  return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-}
-
-// `marked` is loaded by `marked.umd.js` before this script and
-// exposed as a page-scoped global. Declared (not imported) because
-// the vendor bundle is a classic-script UMD that attaches to
-// `window.marked` — there's no module entry point we could pull
-// from npm cleanly without re-bundling. Loose typing because we
-// only call `.parse` and don't want to install `@types/marked`
-// (whose version we'd then have to keep pinned to the bundled
-// runtime). marked 18's default `async: false` makes `.parse`
-// return a string synchronously; if a future marked flips that
-// default we must pass `{ async: false }` explicitly — calling
-// `marked.parse()` without awaiting would otherwise return a
-// Promise<string> and `buildPreviewHtml` would see "[object Promise]"
-// in the preview.
-declare const marked: { parse: (src: string) => string };
-
-// `hljs` and `CodeJar` are loaded before this script (`highlight.min.js`
-// and `codejar.js` respectively) and exposed as page-scoped globals.
-// Declared (not imported) for the same reason as `marked`: both
-// arrive as classic-script bundles attached to window — hljs as a
-// CDN-flavored UMD, CodeJar as build.mjs's classic-script wrap of
-// the upstream ESM. Loose typing because we only touch a tiny
-// surface (hljs.highlight + the CodeJar factory / its three
-// return members).
-declare const hljs: {
-  highlight(code: string, opts: { language: string; ignoreIllegals?: boolean }): {
-    value: string;
-  };
-};
-declare const CodeJar: (
-  editor: HTMLElement,
-  highlight: (editor: HTMLElement) => void,
-  opt?: Record<string, unknown>,
-) => {
-  updateCode(code: string): void;
-  toString(): string;
-  destroy(): void;
-};
-
-/**
- * Map a dialog kind onto the highlight.js language name we pass to
- * `hljs.highlight`. HTML kinds use `xml` (hljs models HTML as XML),
- * Markdown uses `markdown`, and anything else falls back to
- * `plaintext` so the highlighter still runs (CodeJar requires a
- * callback) without colorizing anything.
- */
-function hljsLanguageFor(kind: EditableArtifactKind): string {
-  if (kind === 'html' || kind === 'selectionHtml') return 'xml';
-  if (kind === 'selectionMarkdown') return 'markdown';
-  return 'plaintext';
-}
-
-/**
- * Build the highlight callback CodeJar calls on every input. The
- * editor element's `textContent` is the current source; we rewrite
- * its innerHTML to the tokenized output from hljs so the
- * `<span class="hljs-*">` spans pick up styles from
- * `highlight-theme.css`. `ignoreIllegals: true` avoids hljs throwing
- * on partial / malformed input mid-typing; we always want a best-
- * effort colorization.
- */
-function makeHighlighter(language: string): (editor: HTMLElement) => void {
-  return (editor: HTMLElement) => {
-    const code = editor.textContent ?? '';
-    editor.innerHTML = hljs.highlight(code, {
-      language,
-      ignoreIllegals: true,
-    }).value;
-  };
-}
-
-/**
- * Render markdown source to an HTML string via `marked`. `marked`
- * does NOT sanitize — raw HTML inside the markdown flows through
- * untouched — so every caller must pipe the result through
- * `buildPreviewHtml`, which strips `<script>` / `<meta refresh>`
- * before the iframe load, and the iframe sandbox denies
- * `allow-scripts` as defense in depth.
- */
-function renderMarkdown(md: string): string {
-  return marked.parse(md);
-}
-
-function bindEditDialog(spec: EditKindSpec): void {
-  const parts = createEditDialog(spec.domSlug, spec.title, spec.kind);
-  editDialogs.push(parts.dialog);
-
-  if (spec.preview) {
-    parts.modeToggle.hidden = false;
-    parts.editModeBtn.addEventListener('click', () => setMode('edit'));
-    parts.previewModeBtn.addEventListener('click', () => setMode('preview'));
-  }
-
-  spec.openBtn.addEventListener('click', () => {
-    parts.setCode(captured[spec.kind]);
-    clearError();
-    // Always open in Edit mode so the default action is direct editing.
-    if (spec.preview) setMode('edit');
-    parts.dialog.showModal();
-    // Defer focus so showModal's own autofocus doesn't overwrite us.
-    requestAnimationFrame(() => {
-      parts.editor.focus();
-      // Place the caret at the start — bodies are often long and
-      // the user is most likely to want to search / scroll from the
-      // top rather than land at the end. `setSelectionRange` doesn't
-      // exist on contenteditable; collapse a Range to the first
-      // offset in the editor instead, then scroll the element to the
-      // top (collapsing alone won't re-scroll it).
-      const range = document.createRange();
-      range.selectNodeContents(parts.editor);
-      range.collapse(true);
-      const sel = window.getSelection();
-      if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-      parts.editor.scrollTop = 0;
-    });
-  });
-
-  /**
-   * Switch the dialog between Edit (editor visible) and Preview
-   * (sandboxed iframe visible, rendering the current editor
-   * source). Preview is best-effort rendering — browsers are
-   * extremely tolerant of malformed HTML, and the sandbox + no
-   * same-origin + no allow-scripts keeps any rendered content from
-   * touching the parent page. `<base href>` is injected so relative
-   * URLs resolve against the captured page; `<base target="_blank">`
-   * plus `allow-popups` in the sandbox list opens link clicks as a
-   * normal new tab instead of replacing the preview iframe.
-   */
-  // Blob URL currently bound to `previewIframe.src`. We revoke it
-  // whenever we replace it (mode switch, dialog close) to release
-  // the (potentially multi-MB) HTML body from memory.
-  let previewBlobUrl: string | null = null;
-
-  function setMode(mode: 'edit' | 'preview'): void {
-    const isPreview = mode === 'preview';
-    parts.editModeBtn.classList.toggle('selected', !isPreview);
-    parts.previewModeBtn.classList.toggle('selected', isPreview);
-    parts.editModeBtn.setAttribute('aria-pressed', String(!isPreview));
-    parts.previewModeBtn.setAttribute('aria-pressed', String(isPreview));
-    // Editor stays in the DOM in both modes so it (a) keeps its
-    // user-resized height defining the slot and (b) can't reflow
-    // the dialog when hidden. `visibility: hidden` hides it visually
-    // but preserves layout; the iframe is positioned absolutely on
-    // top via CSS.
-    parts.editor.style.visibility = isPreview ? 'hidden' : '';
-    parts.previewIframe.hidden = !isPreview;
-    if (isPreview) {
-      // Use a blob: URL rather than `srcdoc`. srcdoc is an HTML
-      // attribute and hits a browser-dependent size limit that
-      // silently drops large captured HTML, leaving the preview
-      // blank. blob: URLs have no such limit and still load under
-      // the iframe's sandbox (unique opaque origin).
-      revokePreviewBlob();
-      // Markdown kinds render via marked first; HTML kinds pass the
-      // editor source verbatim into buildPreviewHtml. Either way,
-      // the final string flows through the same sanitizer (strips
-      // <script>, strips <meta http-equiv=refresh>, injects
-      // <meta charset=utf-8> and <base target=_blank>).
-      let htmlBody = parts.getCode();
-      if (spec.preview === 'markdown') {
-        htmlBody = renderMarkdown(htmlBody);
-      }
-      const html = buildPreviewHtml(htmlBody, capturedUrl);
-      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-      previewBlobUrl = URL.createObjectURL(blob);
-      parts.previewIframe.src = previewBlobUrl;
-    } else {
-      revokePreviewBlob();
-      parts.previewIframe.removeAttribute('src');
-    }
-  }
-
-  function revokePreviewBlob(): void {
-    if (previewBlobUrl) {
-      URL.revokeObjectURL(previewBlobUrl);
-      previewBlobUrl = null;
-    }
-  }
-
-  // Release the blob when the dialog closes (via Save, Cancel, or
-  // Escape) so we don't leak the captured HTML to memory until the
-  // user reopens the dialog.
-  parts.dialog.addEventListener('close', () => {
-    revokePreviewBlob();
-    parts.previewIframe.removeAttribute('src');
-  });
-
-  parts.cancelBtn.addEventListener('click', () => {
-    parts.dialog.close();
-  });
-
-  parts.saveBtn.addEventListener('click', () => {
-    void save();
-  });
-
-  parts.dialogDownloadBtn.addEventListener('click', () => {
-    // Use the editor's current source — including any un-Saved edits
-    // — so the user can export an experiment without first committing
-    // it back to the SW.
-    void downloadEditableAs(spec.kind, parts.getCode());
-  });
-
-  async function save(): Promise<void> {
-    const newValue = parts.getCode();
-    // No-op when unchanged: avoid an SW round-trip (and the cache
-    // invalidation side-effect that would re-download on next Copy).
-    if (newValue === captured[spec.kind]) {
-      parts.dialog.close();
-      return;
-    }
-    clearError();
-    // Disable both Save and Cancel while the SW round-trip is in
-    // flight. The SW has no abort path — if Cancel closed the
-    // dialog mid-await, the edit would still commit server-side and
-    // the "Cancel didn't cancel" drift would show up on the next
-    // dialog open (local mirror stale vs. SW state). Also suppress
-    // Escape via a transient `cancel` listener so the native
-    // dialog-close path can't backdoor around the disabled buttons.
-    parts.saveBtn.disabled = true;
-    parts.cancelBtn.disabled = true;
-    const suppressEscape = (e: Event): void => e.preventDefault();
-    parts.dialog.addEventListener('cancel', suppressEscape);
-    try {
-      const response = (await chrome.runtime.sendMessage({
-        action: 'updateArtifact',
-        kind: spec.kind,
-        value: newValue,
-      })) as { ok?: boolean; error?: string } | undefined;
-      if (!response?.ok) {
-        const detail = response?.error ?? 'no response from background';
-        console.warn(`[SeeWhatISee] updateArtifact(${spec.kind}) failed:`, detail);
-        showError(`Couldn't save edit: ${detail}`);
-        return;
-      }
-      captured[spec.kind] = newValue;
-      spec.onSaved?.(newValue);
-      parts.dialog.close();
-    } finally {
-      parts.dialog.removeEventListener('cancel', suppressEscape);
-      parts.saveBtn.disabled = false;
-      parts.cancelBtn.disabled = false;
-    }
-  }
-
-  function showError(message: string): void {
-    parts.errorEl.textContent = message;
-    parts.errorEl.hidden = false;
-  }
-
-  function clearError(): void {
-    parts.errorEl.textContent = '';
-    parts.errorEl.hidden = true;
-  }
-}
-
-for (const spec of EDIT_KINDS) bindEditDialog(spec);
-
-function anyEditDialogOpen(): boolean {
-  return editDialogs.some((d) => d.open);
-}
 
 // Last `editVersion` we sent the SW with a screenshot override. If
 // the user hasn't drawn / undone since, we skip the (potentially
@@ -2236,11 +1204,30 @@ chrome.runtime.onMessage.addListener((msg: { action: string }) => {
 });
 
 // Initialise the submodules in dependency order:
-//   drawing → zoom (zoom's applyZoom invokes drawing's render +
-//   drawViewportEdges) → ask (independent).
-// Drawing's `render()` callbacks (updateImageSizeBadge,
-// composeImageBadgeText) are hoisted function declarations and
-// available from this point regardless of source-order.
+//   pills (no deps) → drawing (its render() ctx receives the pill
+//   refreshers) → zoom (zoom's applyZoom invokes drawing's render +
+//   drawViewportEdges) → ask + edit-dialog (independent).
+initPills({
+  imageSizeBadge,
+  htmlSizeBadge,
+  selectionSizeBadge,
+  capturedPills,
+  previewImg,
+  selectionRows,
+  captured,
+  getDefaultSelectionFormat: () => defaultSelectionFormat,
+  selectionWireKind: SELECTION_WIRE_KIND,
+  getEditVersion,
+  renderHighlightedImage,
+  activeCrop,
+  pctRectToPixels,
+  getBoxDrag,
+  getDragStart,
+  getDragCurrent,
+  getSelectedTool,
+  imgRect,
+});
+
 initDrawing({
   previewImg,
   imageBox,
@@ -2286,6 +1273,35 @@ initAsk({
   applyDefaultButtonHighlight,
   setPromptEnter: (v) => { currentPromptEnter = v; },
   selectionWireKind: SELECTION_WIRE_KIND,
+});
+
+initSaveAs({
+  downloadScreenshotBtn,
+  downloadHtmlBtn,
+  copyImageBtn,
+  downloadImageBtn,
+  selectionRows,
+  captured,
+  selectionWireKind: SELECTION_WIRE_KIND,
+  renderHighlightedImage,
+  bakeExt,
+  setStatusMessage,
+  formatClipboardError,
+});
+
+initEditDialogs({
+  openBtns: {
+    html: editHtmlBtn,
+    selectionHtml: selectionRows.html.editBtn,
+    selectionText: selectionRows.text.editBtn,
+    selectionMarkdown: selectionRows.markdown.editBtn,
+  },
+  captured,
+  getCapturedUrl: () => capturedUrl,
+  htmlSizeBadge,
+  updateSelectionSizeBadge,
+  formatBytes,
+  downloadEditableAs,
 });
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then

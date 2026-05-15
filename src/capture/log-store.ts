@@ -12,7 +12,7 @@
 // capture uses to stay unique on disk. Lives here because the log
 // is the canonical record of when each capture happened.
 
-import { type CaptureRecord } from '../capture.js';
+import { type CaptureRecord } from './types.js';
 import { downloadArtifact } from './downloads.js';
 
 export const LOG_STORAGE_KEY = 'captureLog';

@@ -4,8 +4,8 @@ import {
   captureVisible,
   recordDetailedCapture,
   savePageContents,
-  type SelectionFormat,
 } from '../capture.js';
+import type { SelectionFormat } from '../capture/types.js';
 import {
   downloadHtml,
   downloadScreenshot,

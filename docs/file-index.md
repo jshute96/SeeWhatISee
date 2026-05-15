@@ -104,10 +104,38 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 
 ## Extension Source (`src/`)
 
+- **`src/` (top level)** — entry-point files and pure shared helpers.
+- **`src/background/`** — MV3 service-worker modules.
+- **`src/background/ask/`** — Ask-flow logic on the SW side.
+- **`src/capture/`** — SW-side "save a thing" pipeline.
+- **`src/capture-page/`** — Capture-page controller submodules.
+- **`src/icons/`** — toolbar action icons and provider brand logos.
+
+### Top-level (`src/`)
+
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
+| `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules under `src/capture/` |
+| `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
+| `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, bake-in — orchestrates the submodules under `src/capture-page/` |
+| `src/ask-inject.ts` | MAIN-world helpers (attach files, type prompt, click submit) callable individually via a `window.postMessage` bridge from the widget; chip-count gate per call |
+| `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
+| `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
+| `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
+| `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
+| `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
+| `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
+| `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
+| `src/shared-styles.css` | Page-wide `.btn` chrome + `.app-header` / `.app-footer` bar layout/colour + `.header-btn` trailing chrome shared by `capture.html` and `options.html` |
+| `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
+| `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
+
+### Background SW modules (`src/background/`)
+
+| File | Description |
+|------|-------------|
 | `src/background/error-reporting.ts` | Capture-failed-page error surface: `runWithErrorReporting`, `reportCaptureError`, `friendlyErrorMessage`, unhandled-rejection suppression |
 | `src/background/session-quota.ts` | Pre-flight `chrome.storage.session` quota check + size-aware error formatter shared by the Capture, Upload, and Ask write paths |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts, delay/title helpers |
@@ -118,6 +146,11 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, HTML byte-size cap, `runtime.onMessage` handlers |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
+
+### Ask flow, SW side (`src/background/ask/`)
+
+| File | Description |
+|------|-------------|
 | `src/background/ask/index.ts` | Ask flow orchestration — `sendToAi`, `listAskProviders`, `resolveAsk` (default destination + stale-pin detection), `installAskMessageHandler`; pins last destination in `chrome.storage.session` |
 | `src/background/ask/providers.ts` | Provider registry types and the `ASK_PROVIDERS` array |
 | `src/background/ask/settings.ts` | User-facing Ask provider preferences — per-provider enabled flags + default provider; normalize/get/set with auto-shift on disable |
@@ -126,28 +159,34 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/background/ask/chatgpt.ts` | ChatGPT provider data — `#upload-files` is in the initial DOM so no preFileInputClicks; declares `attachmentPreview` for chip-count verification |
 | `src/background/ask/google.ts` | Google Search provider — `newTabOnly` (no pinning), image-only via `acceptedAttachmentKinds`, types into the search textarea and submits to `/search` |
 | `src/background/ask/widget-store.ts` | `chrome.storage.session` wrapper for the in-page Ask widget — record per destination tabId with overall status, per-item state, payload, plus tab-removal cleanup |
-| `src/ask-inject.ts` | MAIN-world helpers (attach files, type prompt, click submit) callable individually via a `window.postMessage` bridge from the widget; chip-count gate per call |
-| `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
-| `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
-| `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
-| `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules below |
+
+### Capture hub (`src/capture/`)
+
+| File | Description |
+|------|-------------|
+| `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete` |
 | `src/capture/log-store.ts` | Capture log + on-disk `log.json` sidecar — `LOG_STORAGE_KEY`, `clearCaptureLog`/`appendToLog`/`writeJsonFile`/`serializeRecord`/`serializeWrite`, `compactTimestamp` |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
-| `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
-| `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
-| `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
-| `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, bake-in — orchestrates the submodules below |
+
+### Capture-page modules (`src/capture-page/`)
+
+| File | Description |
+|------|-------------|
 | `src/capture-page/paste.ts` | Capture-page rich-text paste — `attachHtmlAwarePaste` (text/html → markdown or HTML-source), highlighter / markdown detection, nbsp normalization |
 | `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guard, cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: fit/Nx sizing, zoom menu, Ctrl+wheel + Alt+± step, middle-click + Ctrl-left pan, last-mouse-pos cache |
 | `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to, render, drawViewportEdges, Shrink, tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
-| `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
-| `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
-| `src/shared-styles.css` | Page-wide `.btn` chrome + `.app-header` / `.app-footer` bar layout/colour + `.header-btn` trailing chrome shared by `capture.html` and `options.html` |
-| `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
-| `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
+| `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
+| `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
+| `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
+| `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
+
+### Icons (`src/icons/`)
+
+| File | Description |
+|------|-------------|
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons |
 | `src/icons/{claude.svg,gemini.svg,chatgpt.ico,google.ico}` | Provider brand logos used by the Capture page's per-provider Ask buttons (favicon-only squares) |
 

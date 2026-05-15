@@ -5,7 +5,8 @@ screenshot, and waits for the user to pick which artifacts to save
 before writing anything. Implementation lives in
 `src/background.ts`, `src/capture.html`, `src/capture-page.ts`
 (controller + glue), and the submodules under `src/capture-page/`
-(`paste.ts`, `ask.ts`, `zoom.ts`, `drawing.ts`).
+(`paste.ts`, `ask.ts`, `zoom.ts`, `drawing.ts`, `edit-dialog.ts`,
+`upload.ts`, `pills.ts`, `save-as.ts`).
 
 For the broader architecture and the action that opens this page,
 see [`architecture.md`](architecture.md) and
@@ -226,8 +227,9 @@ referenced from this doc live in
     pill), so displayed bytes track the live `captured` body.
     The Selection pill also updates whenever the user picks a
     different format radio.
-  - When all three pills end up visible at once, capture-page.ts
-    flips a `.compact` class on the column. CSS pulls the column
+  - When all three pills end up visible at once,
+    `capture-page/pills.ts` flips a `.compact` class on the
+    column. CSS pulls the column
     above and below the card's vertical padding with negative
     margins, then uses `align-self: stretch` +
     `justify-content: space-evenly` so the three pills distribute
@@ -878,14 +880,14 @@ fresh edit.
   new dialog markup.
 - A single `<template id="edit-dialog-template">` in
   `capture.html` supplies the modal structure.
-  `capture-page.ts::createEditDialog` clones it per kind and
-  stamps `edit-${kind}-${role}` ids onto the inner elements so
-  e2e tests can target a specific kind without knowing the full
-  catalog.
-- `EDIT_KINDS` in `capture-page.ts` is the catalog — one entry
-  per editable kind with its pencil button, title, and optional
-  `onSaved` hook (e.g. HTML's size-readout refresh). Adding a
-  kind is one entry + one markup button.
+  `capture-page/edit-dialog.ts::createEditDialog` clones it per
+  kind and stamps `edit-${kind}-${role}` ids onto the inner
+  elements so e2e tests can target a specific kind without knowing
+  the full catalog.
+- The catalog inside `capture-page/edit-dialog.ts::initEditDialogs`
+  has one entry per editable kind with its pencil button, title,
+  and optional `onSaved` hook (e.g. HTML's size-readout refresh).
+  Adding a kind is one entry + one markup button.
 
 ### Per-kind behavior
 

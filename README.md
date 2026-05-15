@@ -373,7 +373,12 @@ GitHub UI.
 
 ### Code layout
 
-- `src/` — TypeScript sources and `manifest.json`
+- `src/` — TypeScript sources and `manifest.json`:
+  - `src/background/` — MV3 service-worker modules.
+  - `src/background/ask/` — Ask-flow logic on the SW side.
+  - `src/capture/` — SW-side "save a thing" pipeline.
+  - `src/capture-page/` — Capture-page controller submodules.
+  - `src/icons/` — toolbar action icons and provider brand logos.
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)

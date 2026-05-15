@@ -16,13 +16,12 @@
 // the Capture page uploads a file).
 
 import {
-  type CaptureResult,
-  type InMemoryCapture,
   buildInMemoryCapture,
   saveCapture,
   scrapeTabState,
 } from '../capture.js';
 import { compactTimestamp } from './log-store.js';
+import type { CaptureResult, InMemoryCapture } from './types.js';
 
 /**
  * Image right-click flow — fetches the source image bytes from the

@@ -1,11 +1,13 @@
 import {
   captureBothToMemory,
-  noSelectionContentMessage,
   recordDetailedCapture,
+} from '../capture.js';
+import {
+  noSelectionContentMessage,
   type EditableArtifactKind,
   type InMemoryCapture,
   type SelectionFormat,
-} from '../capture.js';
+} from '../capture/types.js';
 import {
   downloadHtml,
   downloadScreenshot,

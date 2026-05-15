@@ -13,7 +13,7 @@
 // the options page reads / writes them via the SW message handlers in
 // `background/options.ts`.
 
-import type { SelectionFormat } from '../capture.js';
+import type { SelectionFormat } from '../capture/types.js';
 
 export type CapturePageDefaultButton = 'capture' | 'ask';
 /**

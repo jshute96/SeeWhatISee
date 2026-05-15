@@ -9,7 +9,7 @@ import {
   type InMemoryCapture,
   type SelectionFormat,
   noSelectionContentMessage,
-} from '../capture.js';
+} from './types.js';
 
 /**
  * Subdirectory under the user's download root where every capture

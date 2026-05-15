@@ -34,10 +34,15 @@ Topic-specific design notes live in companion docs:
                                 |  - captureVisible()         |
                                 |  - savePageContents()       |
                                 |  - captureBothToMemory()    |
-                                |  - downloadScreenshot()     |
-                                |  - downloadHtml()           |
+                                |  - captureSelection()       |
                                 |  - recordDetailedCapture()  |
-                                |  - clearCaptureLog()        |
+                                |  - saveCapture()            |
+                                | + src/capture/              |
+                                |    - types.ts (wire types)  |
+                                |    - downloads.ts           |
+                                |    - log-store.ts           |
+                                |    - recompress.ts          |
+                                |    - image-source.ts        |
                                 +---------------------------+
 ```
 
