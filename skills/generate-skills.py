@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate plugin/.gemini skill files from templates in skills/.
+"""Generate Claude-plugin and Gemini-extension skill files from templates in skills/.
 
 Usage:
   generate-skills.py            Validate: check that each target file exactly
@@ -37,65 +37,18 @@ from pathlib import Path
 # script, which is propagated unchanged into each release-bundle's
 # install location so it can be invoked sibling-relative.
 PAIRS = [
-    ("claude.see.md",   "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
-    ("claude.watch.md", "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
-    ("claude.stop.md",  "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
-    ("claude.help.md",  "skills/claude-plugin/skills/see-what-i-see-help/SKILL.md"),
-    # Generate commands instead of skills. Currently disabled.
-    # ("gemini.see.md",   "skills/dot-gemini/commands/see-what-i-see.toml"),
-    # ("gemini.watch.md", "skills/dot-gemini/commands/see-what-i-see-watch.toml"),
-    ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md",        "toml-to-skill"),
-    ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md",  "toml-to-skill"),
-    ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md", "toml-to-skill"),
+    ("claude.see.md",    "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
+    ("claude.watch.md",  "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
+    ("claude.stop.md",   "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
+    ("claude.help.md",   "skills/claude-plugin/skills/see-what-i-see-help/SKILL.md"),
+    ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md"),
+    ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md"),
+    ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md"),
     ("SeeWhatISee.sh",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh", "verbatim"),
     ("SeeWhatISee.sh",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh",    "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
-
-# Matches a top-level TOML field of the form `name = """\n...\n"""`. The
-# (?ms) flags let `.` cross newlines and `^`/`$` anchor on each line, so the
-# closing `"""` only matches when it sits alone on its own line — i.e. we
-# don't accidentally swallow a stray `"""` inside the body.
-TOML_TRIPLE_RE = re.compile(
-    r'^(?P<key>\w+)\s*=\s*"""\n(?P<value>.*?)\n"""\s*$',
-    re.MULTILINE | re.DOTALL,
-)
-
-
-def toml_to_skill(target_rel: str, content: str) -> str:
-    """Translate a Gemini TOML command into a Claude SKILL.md.
-
-    The skill `name` is taken from the parent directory of the target path
-    (e.g. `skills/dot-gemini/skills/see-what-i-see/SKILL.md` -> `see-what-i-see`),
-    matching how SKILL.md files are conventionally identified. The TOML
-    `description` becomes the YAML `description` field (as a literal block
-    scalar when it spans multiple lines) and the TOML `prompt` becomes the
-    skill body.
-    """
-    fields = {m.group("key"): m.group("value") for m in TOML_TRIPLE_RE.finditer(content)}
-    missing = {"description", "prompt"} - fields.keys()
-    if missing:
-        raise RuntimeError(f"{target_rel}: missing TOML field(s): {sorted(missing)}")
-
-    name = Path(target_rel).parent.name
-    description = fields["description"].strip("\n")
-    body = fields["prompt"].strip("\n")
-
-    if "\n" in description:
-        # Folded block scalar joins single line breaks into spaces; blank
-        # lines stay as paragraph separators. Indent each line by 2.
-        indented = "\n".join(("  " + line) if line else "" for line in description.split("\n"))
-        desc_field = f"description: >\n{indented}"
-    else:
-        desc_field = f"description: {description}"
-
-    return f"---\nname: {name}\n{desc_field}\n---\n\n{body}\n"
-
-
-TRANSFORMS = {
-    "toml-to-skill": toml_to_skill,
-}
 
 
 def expand(src_dir: Path, text: str, stack: tuple = ()) -> str:
@@ -163,13 +116,10 @@ def main(argv: list[str]) -> int:
         # that would otherwise be misinterpreted as template includes.
         if transform == "verbatim":
             generated = src_path.read_text()
-        else:
+        elif transform is None:
             generated = expand(src_dir, src_path.read_text())
-            if transform is not None:
-                fn = TRANSFORMS.get(transform)
-                if fn is None:
-                    raise RuntimeError(f"unknown transform: {transform!r}")
-                generated = fn(target_rel, generated)
+        else:
+            raise RuntimeError(f"unknown transform: {transform!r}")
         current = target_path.read_text() if target_path.is_file() else None
         matches = current == generated
 

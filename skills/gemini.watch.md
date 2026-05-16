@@ -1,7 +1,8 @@
-description = """
-Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, describe what you see (or follow the user's prompt) and then watch for the next, until stopped by the user.
-"""
-prompt = """
+---
+name: see-what-i-see-watch
+description: Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, describe what you see (or follow the user's prompt) and then watch for the next, until stopped by the user.
+---
+
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, process it as described below, then watch for the next one. Keep looping until the user tells you to stop, or until a failure.
@@ -21,4 +22,3 @@ This is a foreground loop: each iteration blocks on a shell command that doesn't
 1. [[json-record.template.md]]
 
 2. [[process.template.md]]
-"""

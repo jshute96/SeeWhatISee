@@ -202,7 +202,7 @@ face value, and the Gemini wrappers compute their workspace tmp
 target dir off the (Gemini-mangled) `$HOME` deliberately, since
 Gemini's tmp dir lives wherever Gemini puts it.
 
-## Skill / command prompts
+## Skill prompts
 
 Several files drive the prompts:
 
@@ -214,8 +214,9 @@ Several files drive the prompts:
 - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
 
-All skill and command prompts are **generated from templates** in
-`skills/`:
+All skill prompts are **generated from templates** in `skills/`,
+which are themselves written in SKILL.md format (YAML frontmatter
++ markdown body) for both Claude and Gemini.
 
 Two shared blocks — the **JSON-record block** and the **"Process the
 capture:" block** — live as their own files (`json-record.template.md`,
@@ -233,5 +234,5 @@ Platform-specific differences stay in the top-level templates:
 The generator `skills/generate-skills.py` runs in validate
 mode by default (exit 1 on drift), is wired into `npm test` via
 `npm run test:skills`, and has `--diff` / `--update` flags. See
-`CLAUDE.md` → "Keep the skill/command files in sync" for the full
+`CLAUDE.md` → "Keep the skill files in sync" for the full
 workflow.

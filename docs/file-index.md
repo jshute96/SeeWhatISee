@@ -39,7 +39,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `skills/generate-skills.py` | Generator/validator that produces the Claude skill and Gemini command files from the templates below, and propagates `skills/SeeWhatISee.sh` verbatim into each release bundle's `scripts/` dir |
+| `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.sh` verbatim into each release bundle's `scripts/` dir |
 | `skills/SeeWhatISee.sh` | Canonical unified backend script (`--get-latest` / `--watch` / `--stop` actions, shared helpers); generator copies it verbatim into both release bundles |
 | `skills/json-record.template.md` | Shared block describing the `log.json` record shape, embedded via `[[...]]` |
 | `skills/process.template.md` | Shared block describing how to process a capture record, embedded via `[[...]]` |
@@ -47,8 +47,8 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/claude.watch.md` | Template for `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/claude.stop.md` | Template for `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md` |
 | `skills/claude.help.md` | Template for `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md` |
-| `skills/gemini.see.md` | Template for `skills/dot-gemini/commands/see-what-i-see.toml` and the matching SKILL.md mirror |
-| `skills/gemini.watch.md` | Template for `skills/dot-gemini/commands/see-what-i-see-watch.toml` and the matching SKILL.md mirror |
+| `skills/gemini.see.md` | Template for `skills/dot-gemini/skills/see-what-i-see/SKILL.md` |
+| `skills/gemini.watch.md` | Template for `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |

@@ -1,9 +1,11 @@
-description = """
-Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension.
+---
+name: see-what-i-see
+description: >
+  Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension.
 
-You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
-"""
-prompt = """
+  You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
+---
+
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 1. Read this JSON object:
@@ -12,4 +14,3 @@ prompt = """
 2. [[json-record.template.md]]
 
 3. [[process.template.md]]
-"""

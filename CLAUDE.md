@@ -58,11 +58,11 @@ release repos that live as siblings of this one:
 - `../SeeWhatISee-claude` — the Claude Code plugin marketplace.
   - `skills/claude-plugin/` here → `plugin/` in the release repo.
   - `skills/dot-claude-plugin/` here → `.claude-plugin/` in the release repo.
-- `../SeeWhatISee-gemini` — the Gemini CLI commands.
+- `../SeeWhatISee-gemini` — the Gemini CLI extension.
   - Each top-level entry under `skills/dot-gemini/` lands as a
-    sibling at the release-repo root — `commands/`, `scripts/`,
-    `skills/`, plus top-level files like `gemini-extension.json` —
-    *not* nested under a `.gemini/` directory.
+    sibling at the release-repo root — `skills/`, plus top-level
+    files like `gemini-extension.json` — *not* nested under a
+    `.gemini/` directory.
 
 Publish with the rsync mirror scripts:
 
@@ -75,9 +75,9 @@ references its own location must use the *release-repo* path
 (e.g. `marketplace.json` says `"source": "./plugin"`). See
 `docs/claude-plugin.md` for the full story.
 
-## Keep the skill/command files in sync
+## Keep the skill files in sync
 
-The Claude skills and Gemini commands describe the same `log.json` outputs
+The Claude and Gemini skills describe the same `log.json` outputs
 and the same steps to take for each. To keep them consistent, they are
 **generated from shared templates** in `skills/` — never edit the
 generated files directly.
@@ -105,8 +105,8 @@ do not edit the per-bundle copies.
   - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see/SKILL.md` (TOML→skill translation of `gemini.see.md`)
-  - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` (TOML→skill translation of `gemini.watch.md`)
+  - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
+  - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
   - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)

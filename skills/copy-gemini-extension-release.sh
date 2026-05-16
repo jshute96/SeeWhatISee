@@ -6,9 +6,9 @@
 #   skills/dot-gemini/<file>   -> <release>/<file>        (rsync -a)
 #
 # i.e. each top-level entry in skills/dot-gemini/ lands as a sibling
-# at the release-repo root. Subdirs (commands/, scripts/, skills/)
-# get `rsync -a --delete` so files removed from the dev side
-# disappear on the release side too. Top-level files (e.g.
+# at the release-repo root. Subdirs (e.g. skills/) get
+# `rsync -a --delete` so files removed from the dev side disappear on
+# the release side too. Top-level files (e.g.
 # gemini-extension.json) are copied without --delete because the
 # release-repo root also holds files we don't manage (README, LICENSE,
 # .git, the release repo's own install script, etc.) — we can't
