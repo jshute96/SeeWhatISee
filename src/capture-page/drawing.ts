@@ -216,6 +216,34 @@ export function isPolylineActive(): boolean {
   return polylineLineKind !== null;
 }
 
+// Rescale every CSS-pixel position stored at module scope. Called
+// from `applyZoom()` whenever the image's rendered dimensions change
+// (zoom step, Fit re-layout on window resize, etc.). Committed edits
+// are stored in percentages and are unaffected — only the in-flight
+// drag/polyline anchors live in image-rect-local CSS px and would
+// otherwise drift after a zoom change, leaving e.g. the next polyline
+// segment disconnected from the previous endpoint and breaking the
+// loop-close hit-test.
+export function rescaleAfterImageResize(scaleX: number, scaleY: number): void {
+  if (scaleX === 1 && scaleY === 1) return;
+  if (dragStart !== null) {
+    dragStart = { x: dragStart.x * scaleX, y: dragStart.y * scaleY };
+  }
+  if (dragCurrent !== null) {
+    dragCurrent = { x: dragCurrent.x * scaleX, y: dragCurrent.y * scaleY };
+  }
+  if (polylineChainStart !== null) {
+    polylineChainStart = {
+      x: polylineChainStart.x * scaleX,
+      y: polylineChainStart.y * scaleY,
+    };
+  }
+  if (boxDrag !== null) {
+    boxDrag.originX *= scaleX;
+    boxDrag.originY *= scaleY;
+  }
+}
+
 // ─── Box-resize drag state ────────────────────────────────────────
 //
 // Drives edge-handle drags on rect-shaped edits (rect / redact /

@@ -29,6 +29,7 @@ import {
 import {
   readAllLines,
   readEditKinds,
+  readPolylineChainStart,
   readPreviewRect,
 } from './capture-drawing-helpers';
 
@@ -912,6 +913,212 @@ test('drawing: polyline chain ends when clicking the prompt textarea', async ({
     () => (document.activeElement as HTMLElement | null)?.id ?? null,
   );
   expect(focusedId).toBe('prompt-text');
+
+  await openerPage.close();
+});
+
+test('drawing: zooming in mid-polyline keeps the chain head aligned with the image', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Polyline state (dragStart, dragCurrent, polylineChainStart) lives
+  // in image-rect-local CSS px. Changing zoom resizes the image, so
+  // those stored coords must be rescaled — otherwise the next segment
+  // starts at a stale offset (often outside the image).
+  await capturePage.locator('#tool-polyline').click();
+  // Force Fit mode so the chain begins at a known scale.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom('fit'),
+  );
+  const r0 = await readPreviewRect(capturePage);
+
+  // Segment 1: A → B (drag). Chain start anchors at A.
+  const A = { x: r0.x + r0.w * 0.2, y: r0.y + r0.h * 0.2 };
+  const B = { x: r0.x + r0.w * 0.5, y: r0.y + r0.h * 0.3 };
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+
+  const startBefore = await readPolylineChainStart(capturePage);
+  expect(startBefore).not.toBeNull();
+  // Chain-start anchor reads back as image-rect-local CSS px; check it
+  // lines up with A in viewport coords. Allow a 1 px slack for sub-
+  // pixel snap rounding (endpoint snap rounds to image-rect corners).
+  expect(Math.abs(r0.x + startBefore!.x - A.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(r0.y + startBefore!.y - A.y)).toBeLessThanOrEqual(1);
+
+  // Zoom in to 2× while the chain is alive. The image grows; the
+  // stored anchors must scale with it.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom(2),
+  );
+  const r1 = await readPreviewRect(capturePage);
+  const sx = r1.w / r0.w;
+  const sy = r1.h / r0.h;
+
+  const startAfter = await readPolylineChainStart(capturePage);
+  expect(startAfter).not.toBeNull();
+  // After the rescale, chain-start should still point to A — its
+  // image-rect-local coords have grown by the same ratio the image did.
+  expect(startAfter!.x).toBeCloseTo(startBefore!.x * sx, 1);
+  expect(startAfter!.y).toBeCloseTo(startBefore!.y * sy, 1);
+
+  // Commit segment 2: drag from some new point D2 → E2. The
+  // mousedown location doesn't matter — segment 2's start must
+  // anchor at segment 1's end (B), scaled by the new zoom. So in
+  // *percent* coords, seg2.start === seg1.end regardless of zoom.
+  // Use viewport coords for D2/E2 that land inside the (now larger)
+  // visible image area; the imageBox may have scrolled when zooming
+  // so we read the post-zoom rect for placement.
+  const visible = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLElement;
+    const br = box.getBoundingClientRect();
+    return {
+      left: br.left, top: br.top,
+      right: br.left + box.clientWidth,
+      bottom: br.top + box.clientHeight,
+    };
+  });
+  const D2 = {
+    x: (visible.left + visible.right) / 2,
+    y: (visible.top + visible.bottom) / 2,
+  };
+  const E2 = { x: D2.x + 30, y: D2.y + 30 };
+  await capturePage.mouse.move(D2.x, D2.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(E2.x, E2.y);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.press('Escape');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  // Segment 2's start must equal segment 1's end (in percent
+  // space) — that's the chain invariant. Pre-fix, the stored CSS-px
+  // anchor would have been stale, so seg2.x1/y1 would drift away
+  // from seg1.x2/y2.
+  expect(lines[1]!.x1).toBeCloseTo(lines[0]!.x2, 1);
+  expect(lines[1]!.y1).toBeCloseTo(lines[0]!.y2, 1);
+
+  await openerPage.close();
+});
+
+test('drawing: zooming out mid-polyline still lets the loop close on the original start anchor', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Complementary to the zoom-in case: the chain begins zoomed in,
+  // the user zooms back out mid-chain, and the loop-close snap must
+  // still hit the *original* start anchor — i.e., the post-zoom-out
+  // chain-start is the pre-zoom anchor scaled by the shrinking
+  // ratio. Pre-fix, the CSS-px anchor was stale after the resize and
+  // the close-the-loop snap would miss.
+  await capturePage.locator('#tool-polyline').click();
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom(2),
+  );
+  const rIn = await readPreviewRect(capturePage);
+
+  // Read the visible content area so we can place the chain inside
+  // it (the image overflows the box at 2×, so picking points by
+  // image-rect coords risks landing in scrolled-out regions).
+  const visIn = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLElement;
+    const br = box.getBoundingClientRect();
+    return {
+      left: br.left, top: br.top,
+      right: br.left + box.clientWidth,
+      bottom: br.top + box.clientHeight,
+    };
+  });
+  const A = {
+    x: visIn.left + (visIn.right - visIn.left) * 0.3,
+    y: visIn.top + (visIn.bottom - visIn.top) * 0.3,
+  };
+  const B = {
+    x: visIn.left + (visIn.right - visIn.left) * 0.6,
+    y: visIn.top + (visIn.bottom - visIn.top) * 0.3,
+  };
+  const C = {
+    x: visIn.left + (visIn.right - visIn.left) * 0.45,
+    y: visIn.top + (visIn.bottom - visIn.top) * 0.55,
+  };
+
+  // Segment 1: A → B (drag). Chain start anchors at A.
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  // Segment 2: B → C (click).
+  await capturePage.mouse.move(C.x, C.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  const startIn = await readPolylineChainStart(capturePage);
+  expect(startIn).not.toBeNull();
+
+  // Zoom out to Fit. Image shrinks; anchors must scale down with it.
+  await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { setZoom: (m: number | 'fit') => void };
+    }).__seeState.setZoom('fit'),
+  );
+  const rOut = await readPreviewRect(capturePage);
+  const sx = rOut.w / rIn.w;
+  const sy = rOut.h / rIn.h;
+  // Ratio < 1 (we zoomed out).
+  expect(sx).toBeLessThan(1);
+  expect(sy).toBeLessThan(1);
+
+  const startOut = await readPolylineChainStart(capturePage);
+  expect(startOut).not.toBeNull();
+  expect(startOut!.x).toBeCloseTo(startIn!.x * sx, 1);
+  expect(startOut!.y).toBeCloseTo(startIn!.y * sy, 1);
+
+  // Close the loop: click within SNAP_PX (8) of where the *original*
+  // start anchor now lives in viewport coords. If the anchor wasn't
+  // rescaled, this click would be far from chainStart and the snap
+  // would miss — the chain would not auto-exit.
+  const closeX = rOut.x + startOut!.x + 3;
+  const closeY = rOut.y + startOut!.y + 2;
+  await capturePage.mouse.move(closeX, closeY);
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+
+  // Polygon-close auto-ends the chain.
+  const polyKind = await capturePage.evaluate(
+    () => (window as unknown as {
+      __seeState: { polylineKind: () => string | null };
+    }).__seeState.polylineKind(),
+  );
+  expect(polyKind).toBeNull();
+
+  // Three segments committed; the closing segment's endpoint snapped
+  // exactly to the chain start (== seg1.x1/y1 in percent space).
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(3);
+  expect(lines[2]!.x2).toBeCloseTo(lines[0]!.x1, 1);
+  expect(lines[2]!.y2).toBeCloseTo(lines[0]!.y1, 1);
 
   await openerPage.close();
 });

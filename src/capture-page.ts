@@ -65,6 +65,7 @@ import {
   drawViewportEdges,
   endPolylineChain,
   isPolylineActive,
+  rescaleAfterImageResize,
 } from './capture-page/drawing.js';
 
 /**
@@ -1252,6 +1253,7 @@ initZoom({
   imgRect,
   isPolylineActive,
   endPolylineChain,
+  rescaleAfterImageResize,
   anyEditDialogOpen,
   isStaleMode: () => staleMode,
   autoGrowPrompt,

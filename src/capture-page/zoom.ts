@@ -70,6 +70,14 @@ export interface ZoomContext {
   isPolylineActive(): boolean;
   endPolylineChain(): void;
 
+  /** Drawing's `rescaleAfterImageResize()` — applyZoom calls it after
+   *  the image's CSS dimensions change so in-flight drag / polyline
+   *  anchors (stored in image-rect-local CSS px) move with the image
+   *  instead of pointing at stale offsets. Without this, a Ctrl+wheel
+   *  zoom mid-polyline would jump the previous endpoint and break the
+   *  loop-close hit-test. */
+  rescaleAfterImageResize(scaleX: number, scaleY: number): void;
+
   /** True iff an edit dialog is up — the Alt+± zoom shortcut bails
    *  in that state so the key isn't swallowed mid-edit. */
   anyEditDialogOpen(): boolean;
@@ -135,6 +143,15 @@ export function targetCssSize(): { w: number; h: number } {
 }
 
 export function applyZoom(): void {
+  // Capture the pre-resize image dimensions so we can scale any
+  // in-flight drag / polyline anchors after the resize. A zero-size
+  // pre-rect (image not yet loaded, or a degenerate measurement)
+  // means there's nothing meaningful to scale relative to — skip
+  // the rescale in that case so we don't divide by zero.
+  const preRect = ctx.imgRect();
+  const preW = preRect.width;
+  const preH = preRect.height;
+
   const avail = availableImageHeight();
   ctx.imageBox.style.maxHeight = avail.box + 'px';
   if (zoomMode === 'fit') {
@@ -188,6 +205,17 @@ export function applyZoom(): void {
     }
     ctx.previewImg.style.maxWidth = 'none';
     ctx.previewImg.style.maxHeight = 'none';
+  }
+  // Rescale in-flight drag / polyline state BEFORE render() so the
+  // re-rendered preview uses the post-zoom anchors rather than the
+  // stale ones (which would otherwise show one frame of a disconnected
+  // segment). Skip when either rect is degenerate (image not yet
+  // loaded) — there's nothing meaningful in flight at that point.
+  const postRect = ctx.imgRect();
+  if (preW > 0 && preH > 0 && postRect.width > 0 && postRect.height > 0) {
+    const sx = postRect.width / preW;
+    const sy = postRect.height / preH;
+    if (sx !== 1 || sy !== 1) ctx.rescaleAfterImageResize(sx, sy);
   }
   ctx.render();
   // Zoom changes both the image's measured rect and the viewport's

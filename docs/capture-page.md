@@ -1420,6 +1420,19 @@ re-activation is required:
   doing so briefly removes the overflow constraint, snaps
   `scrollTop / scrollLeft` to 0, and would lose the user's pan
   position on every resize / re-fit.
+- **Rescales in-flight drag / polyline anchors.**
+  - Captures the pre-resize `imgRect()` dimensions, then after
+    sizing measures `postRect` and calls drawing's
+    `rescaleAfterImageResize(sx, sy)` just before `render()`.
+  - Scales `dragStart`, `dragCurrent`, `polylineChainStart`, and
+    any active `boxDrag.originX/Y` — the four pieces of CSS-px
+    state held at module scope. Committed edits live in percent
+    and are unaffected.
+  - Skipped when either rect is degenerate (image not yet loaded).
+  - Why: zooming mid-polyline used to leave the chain head at a
+    stale CSS-px offset (often outside the new image rect). The
+    next segment drew disconnected from the previous endpoint and
+    the loop-close hit-test missed the original start anchor.
 
 ### Wheel + keyboard zoom + middle-click pan
 
