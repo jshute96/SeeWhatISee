@@ -1131,7 +1131,7 @@ async function openNewProviderTabWithPlaceholder(
     if (isPermanentInjectBlock(err)) {
       chrome.tabs.remove(tabId).catch(() => {});
       throw new EarlyExitError(
-        `Inject into ${provider.label} failed: ${friendlyInjectError(err)}`
+        `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`,
       );
     }
     // Transient — fall through.

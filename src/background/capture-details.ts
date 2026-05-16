@@ -397,12 +397,28 @@ export async function startCaptureWithDetailsFromImage(
   await openCapturePageWithSession(data, tab);
 }
 
+/**
+ * True only when *both* the screenshot and the HTML capture produced
+ * actual error strings — i.e. there is nothing useful to render on the
+ * Capture page. We deliberately do NOT treat `htmlUnavailable` as a
+ * failure here: that flag is set by the image-source / image-tab /
+ * upload flows to *quietly* disable the Save HTML row, and pairing
+ * that with the (separately-thrown) image-decode failures of those
+ * flows is not what this short-circuit is for.
+ */
 function isTotalCaptureFailure(data: InMemoryCapture): boolean {
-  const screenshotFailed = !!data.screenshotError;
-  const htmlFailed = data.htmlUnavailable || !!data.htmlError;
-  return screenshotFailed && htmlFailed;
+  return !!data.screenshotError && !!data.htmlError;
 }
 
+/**
+ * Combine both halves of a total capture failure into one message for
+ * the `?error=` URL. When both halves carry the same string (typical
+ * for policy / restricted-URL blocks — the same Chrome runtime error
+ * surfaces at both the screenshot and the HTML call sites) we collapse
+ * to one line. Otherwise we prefix each half with `Screenshot:` /
+ * `HTML:` and join with `\n`; `#capture-failed-message` has
+ * `white-space: pre-wrap` so the newline renders.
+ */
 function getCombinedCaptureError(data: InMemoryCapture): string {
   if (data.screenshotError && data.screenshotError === data.htmlError) {
     return data.screenshotError;
