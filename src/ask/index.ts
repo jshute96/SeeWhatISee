@@ -580,6 +580,7 @@ export function globMatch(url: string, pattern: string): boolean {
 export async function sendToAi(
   destination: AskDestination,
   payload: AskPayload,
+  sourceTabId?: number,
 ): Promise<AskResult> {
   const provider = getAskProvider(destination.provider);
   if (!provider.enabled) {
@@ -804,24 +805,7 @@ export async function sendToAi(
       files: ['ask-inject.js'],
     });
   } catch (err) {
-    const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
-    // Mirror the cleanup the post-promote catch below does — for
-    // newTab paths we close the freshly-opened tab so we don't
-    // leave a placeholder-widget tab orphaned. existingTab paths
-    // patch the placeholder record to an error state so the widget
-    // surfaces something actionable. Same rationale as the
-    // post-promote catch, just earlier in the flow because we
-    // moved executeScript before writeWidgetRecord.
-    if (destination.kind === 'newTab') {
-      try {
-        await chrome.tabs.remove(tabId);
-      } catch (closeErr) {
-        console.log('[SeeWhatISee] [warn] failed to close failed new tab:', closeErr);
-      }
-      return { ok: false, error: message };
-    }
-    await patchWidgetRecord(tabId, { status: 'error', error: message });
-    return { ok: false, error: message, tabId };
+    return handleLateInjectFailure(provider, destination, tabId, sourceTabId, err);
   }
 
   try {
@@ -843,39 +827,15 @@ export async function sendToAi(
     // it died on a transient document, this is the first real
     // mount and reads the now-`injecting` record straight away.
     await mountAskWidget(tabId);
-
-    // Best-effort focus now that injection succeeded. If this fails we
-    // still wait for completion — the user just won't see the AI tab
-    // pop forward.
-    try {
-      await chrome.tabs.update(tabId, { active: true });
-      const tab = await chrome.tabs.get(tabId);
-      if (tab.windowId !== undefined) {
-        await chrome.windows.update(tab.windowId, { focused: true });
-      }
-    } catch {
-      // Swallow
-    }
   } catch (err) {
-    const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
-    // Auto-cleanup for the newTab path: close the freshly-opened tab so
-    // we don't leave a blank/broken provider tab orphaned behind the
-    // Capture page. We skip the error-state record patch in that case
-    // because `installWidgetStoreCleanup` clears storage on tab removal,
-    // and writing `status: 'error'` right before close would either flash
-    // the error widget for one frame or leave a phantom record if the
-    // remove races ahead. The user-facing message still comes back via
-    // the returned `error` field.
-    if (destination.kind === 'newTab') {
-      try {
-        await chrome.tabs.remove(tabId);
-      } catch (closeErr) {
-        console.log('[SeeWhatISee] [warn] failed to close failed new tab:', closeErr);
-      }
-      return { ok: false, error: message };
-    }
-    await patchWidgetRecord(tabId, { status: 'error', error: message });
-    return { ok: false, error: message, tabId };
+    return handleLateInjectFailure(provider, destination, tabId, sourceTabId, err);
+  }
+
+  // For the existingTab path, focus the picked tab now that injection
+  // succeeded. The newTab path already focused early (after the
+  // scriptability probe passed in openNewProviderTabWithPlaceholder).
+  if (destination.kind === 'existingTab') {
+    await focusTabIfAvailable(tabId);
   }
 
   // Wait for the widget to finish walking the items.
@@ -1100,23 +1060,31 @@ function filterAttachmentsByKinds(
 
 
 /**
- * Open a new tab on `provider.newTabUrl`, write a `placeholder`
- * widget record so the in-page widget can render "Waiting for
- * `<provider>` to load…" the moment it mounts, fire a best-effort
- * early widget mount on the first `'loading'` event, and then
- * wait for the page to fully load before returning. The early
- * mount is a UX win when it lands on the committed-but-still-
- * loading provider document; if it lands on a transient about:blank
- * / chrome://newtab document the navigation tears down, the
- * widget dies with it and we fall back to today's "delay before
- * widget appears" behaviour. The caller's bridge + re-mount call
- * after `waitForTabComplete` covers that case — `mountAskWidget`
- * is idempotent and the second mount sees the same record.
+ * Open a new tab on `provider.newTabUrl`, write the placeholder
+ * widget record, probe scriptability, focus the tab if the probe
+ * passes, fire a best-effort early widget mount, then wait for the
+ * page to fully load before returning.
+ *
+ * Probe-before-focus rationale: if the provider's URL turns out to
+ * be unscriptable (admin policy / restricted host / chrome://),
+ * we'd otherwise pop the tab to front, fail to inject seconds
+ * later, then close the tab — a jarring "tab appears then vanishes"
+ * blip. By inverting that order (create hidden → probe → focus),
+ * a permanent-block failure closes the still-hidden tab and reports
+ * back to the Capture page without the user's focus ever moving.
+ *
+ * The early widget mount is a UX win when it lands on the committed
+ * provider document; if it lands on a transient about:blank /
+ * chrome://newtab the navigation tears it down and the post-load
+ * mount in `sendToAi` covers it. `mountAskWidget` is idempotent.
  */
 async function openNewProviderTabWithPlaceholder(
   provider: AskProvider,
   recordTemplate: Omit<AskWidgetRecord, 'status' | 'runId' | 'updatedAt'>,
 ): Promise<number> {
+  // active: false — see function jsdoc. We focus the tab only after
+  // the scriptability probe passes; on a permanent block we close
+  // the still-hidden tab without ever moving the user's focus.
   const created = await chrome.tabs.create({
     url: provider.newTabUrl,
     active: false,
@@ -1149,6 +1117,29 @@ async function openNewProviderTabWithPlaceholder(
     chrome.tabs.remove(tabId).catch(() => {});
     throw err;
   }
+
+  // Scriptability probe — tiny no-op executeScript on the provider's
+  // document. If it throws with a permanent-block signature
+  // (ExtensionsSettings policy / "cannot be scripted") the tab will
+  // never be useful to us; close it and bail before focusing. A
+  // transient failure (race against navigation teardown, frame
+  // removed) is ignored — the post-load inject in `sendToAi` will
+  // retry and route through the late-failure handling.
+  try {
+    await probeScriptability(tabId);
+  } catch (err) {
+    if (isPermanentInjectBlock(err)) {
+      chrome.tabs.remove(tabId).catch(() => {});
+      throw new EarlyExitError(friendlyInjectError(err));
+    }
+    // Transient — fall through.
+  }
+
+  // Probe passed (or was transient) — focus the new tab so the user
+  // sees it pop forward while the rest of the page loads. Best-effort
+  // — if focus fails the inject still continues.
+  await focusTabIfAvailable(tabId);
+
   void mountAskWidgetOnFirstLoading(tabId);
   // Race the page-load wait against a placeholder-dismiss watcher so
   // that an × on the placeholder widget surfaces 'Cancelled' to the
@@ -1160,13 +1151,130 @@ async function openNewProviderTabWithPlaceholder(
   const dismissed = watchForPlaceholderDismiss(tabId);
   try {
     await Promise.race([
-      waitForTabComplete(tabId, NEW_TAB_LOAD_TIMEOUT_MS),
+      waitForTabStatus(tabId, ['complete'], NEW_TAB_LOAD_TIMEOUT_MS),
       dismissed.promise,
     ]);
   } finally {
     dismissed.cleanup();
   }
   return tabId;
+}
+
+/**
+ * Run a minimal executeScript against `tabId` to verify the tab is
+ * scriptable before we commit to focusing it. Waits for the first
+ * `'loading'` or `'complete'` event so the probe targets the
+ * provider's document rather than the transient about:blank / new-tab
+ * page that briefly precedes it.
+ *
+ * Caller is expected to classify the thrown error via
+ * `isPermanentInjectBlock` — transient races (mid-navigation frame
+ * teardown) shouldn't gate the focus-and-load flow.
+ */
+async function probeScriptability(tabId: number): Promise<void> {
+  await waitForTabStatus(tabId, ['loading', 'complete'], NEW_TAB_LOAD_TIMEOUT_MS);
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    injectImmediately: true,
+    func: () => 1,
+  });
+}
+
+
+/**
+ * Classify an `executeScript` rejection as "permanent block" vs.
+ * "transient." Permanent blocks (admin policy / restricted host)
+ * won't go away on retry — we treat them as cause to abort the Ask
+ * before focusing the new tab. Transient errors (frame torn down
+ * mid-navigation, tab closed) fall through and let the regular
+ * post-load inject retry path handle them.
+ *
+ * Pattern-matched against the same English Chrome strings
+ * `friendlyInjectError` already recognises. Locale-fragile by
+ * design: in a non-English locale a permanent block may be
+ * misclassified as transient, and we'd surface today's behaviour
+ * (focus moves to the new tab, then bounces back on failure). Safe
+ * direction for the fallback.
+ */
+function isPermanentInjectBlock(err: unknown): boolean {
+  const msg = describe(err);
+  if (/ExtensionsSettings/i.test(msg)) return true;
+  if (/cannot be scripted/i.test(msg)) return true;
+  if (/Cannot access contents of the page/i.test(msg)) return true;
+  return false;
+}
+
+/**
+ * Shared handler for the two late-inject-failure catch sites in
+ * `sendToAi` (bridge inject and widget mount). "Late" = post-probe
+ * for the newTab path; for existingTab there is no probe — the tab
+ * was already loaded and scriptable when the user picked it.
+ *
+ * Per destination kind the effect differs and the user-visible
+ * outcome is what matters more than what each statement does:
+ *
+ * - `newTab`: the placeholder widget already mounted (early mount in
+ *   `openNewProviderTabWithPlaceholder`) and the user's focus is on
+ *   the new tab. `patchWidgetRecord` flips the visible placeholder
+ *   to an error display, then `focusTabIfAvailable(sourceTabId)`
+ *   bounces focus back to the Capture page so the toast there is
+ *   visible. We don't close the tab — the user may have started
+ *   interacting with the loaded provider page.
+ *
+ * - `existingTab`: we never moved focus away from Capture; we never
+ *   mounted a widget on the destination tab; on a bridge-inject
+ *   failure no record exists yet, so `patchWidgetRecord` is a no-op;
+ *   on a widget-mount failure the just-written `injecting` record
+ *   gets flipped to `error` but no widget is in the page to render
+ *   it (mount itself is what failed). The error returns to the
+ *   Capture page via the `AskResult`, which is the only surface the
+ *   user actually sees. `focusTabIfAvailable` on the already-active
+ *   Capture page is a no-op.
+ *
+ * The deliberate asymmetry on existingTab matches the request: show
+ * the error on Capture, don't switch tabs, don't decorate the user's
+ * own provider tab with widget UI.
+ */
+async function handleLateInjectFailure(
+  provider: AskProvider,
+  destination: AskDestination,
+  tabId: number,
+  sourceTabId: number | undefined,
+  err: unknown,
+): Promise<AskResult> {
+  const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
+  await patchWidgetRecord(tabId, { status: 'error', error: message });
+  // Skip the focus-back on existingTab — the user never left Capture,
+  // and a redundant chrome.tabs.update on the already-active tab is
+  // wasted work (and would briefly take the Set/Unset toolbar entry
+  // through another active-tab refresh cycle).
+  if (destination.kind === 'newTab') {
+    await focusTabIfAvailable(sourceTabId);
+  }
+  return { ok: false, error: message, tabId };
+}
+
+/**
+ * Best-effort focus on a tab + its window. Used by the post-probe
+ * focus on the newTab path, the post-mount focus on the existingTab
+ * path, and the late-failure switch-back to the source Capture page.
+ *
+ * `undefined` / closed tab is silently ignored — the late-failure
+ * path passes the source Capture page's tabId, which the user may
+ * have already closed (ctrl-click Ask flow).
+ */
+async function focusTabIfAvailable(tabId: number | undefined): Promise<void> {
+  if (tabId === undefined) return;
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId !== undefined) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+  } catch {
+    // Swallow — tab may have closed mid-Ask.
+  }
 }
 
 /**
@@ -1210,7 +1318,7 @@ function watchForPlaceholderDismiss(
  * widget reads the `placeholder` record the SW just wrote and
  * paints the placeholder UI. No bridge yet — the placeholder
  * doesn't post bridge requests; the bridge is loaded in the
- * caller after `waitForTabComplete`.
+ * caller after the page-load wait completes.
  *
  * Failures are swallowed: if the script never fires (tab closed,
  * executeScript races the navigation), we just fall back to the
@@ -1237,16 +1345,36 @@ function mountAskWidgetOnFirstLoading(tabId: number): void {
 }
 
 
-function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
+/**
+ * Resolve as soon as the tab reports a status in `statuses`, either
+ * via the next `chrome.tabs.onUpdated` event or an immediate
+ * `chrome.tabs.get` probe (the tab may already be in that state by
+ * the time we attached the listener). Two callers:
+ *
+ * - `probeScriptability` passes `['loading', 'complete']` so the
+ *   probe targets the provider's actual document, not the transient
+ *   about:blank / new-tab document the tab briefly hosts before the
+ *   navigation commits.
+ * - `openNewProviderTabWithPlaceholder` passes `['complete']` so it
+ *   waits for the page to finish loading before handing off.
+ *
+ * On tab-close mid-wait throws `EarlyExitError('Tab closed during
+ * load')` — `sendToAi` strips the "Could not open <Provider>:" prefix
+ * for `EarlyExitError`, giving the user the bare message.
+ */
+function waitForTabStatus(
+  tabId: number,
+  statuses: ReadonlyArray<'loading' | 'complete'>,
+  timeoutMs: number,
+): Promise<void> {
+  const matches = (status: string | undefined): boolean =>
+    status !== undefined && (statuses as ReadonlyArray<string>).includes(status);
   return new Promise((resolve, reject) => {
     let settled = false;
     const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo): void => {
-      if (id === tabId && info.status === 'complete') finish();
+      if (id === tabId && matches(info.status)) finish();
     };
     const onRemoved = (id: number): void => {
-      // User closed the tab during load — fail fast instead of
-      // waiting out the full timeout. EarlyExitError lets sendToAi
-      // strip the "Could not open <Provider>:" prefix.
       if (id === tabId) finish(new EarlyExitError('Tab closed during load'));
     };
     const finish = (err?: Error): void => {
@@ -1264,21 +1392,12 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
       () => finish(new Error('Tab load timed out')),
       timeoutMs,
     );
-    // Race condition: the tab may already be 'complete' (or already
-    // gone) by the time we attached the listener. Probe and resolve
-    // / reject immediately based on what we find. A `chrome.tabs.get`
-    // rejection at this point almost always means "tab closed before
-    // we could check" — surface as the same EarlyExitError the
-    // tab-removed listener throws so the user-facing read is uniform
-    // regardless of which microsecond the close happens in.
     chrome.tabs
       .get(tabId)
       .then((tab) => {
-        if (tab.status === 'complete') finish();
+        if (matches(tab.status)) finish();
       })
-      .catch(() => {
-        finish(new EarlyExitError('Tab closed during load'));
-      });
+      .catch(() => finish(new EarlyExitError('Tab closed during load')));
   });
 }
 
@@ -1377,7 +1496,13 @@ interface AskMessage {
  */
 export function installAskMessageHandler(): void {
   chrome.runtime.onMessage.addListener(
-    (msg: AskMessage, _sender, sendResponse) => {
+    (msg: AskMessage, sender, sendResponse) => {
+      // The Capture page is the only caller for `askAi` / `askAiDefault`
+      // today. We pass its tabId into `sendToAi` so the late-failure
+      // path can switch focus back to it (where the error toast will
+      // be visible). `undefined` is fine — `sendToAi` no-ops the
+      // switch-back when the source tab is gone.
+      const sourceTabId = sender.tab?.id;
       if (msg?.action === 'askListProviders') {
         void Promise.all([listAskProviders(), resolveAsk()]).then(
           ([providers, resolution]) =>
@@ -1412,7 +1537,7 @@ export function installAskMessageHandler(): void {
           sendResponse({ ok: false, error: 'Missing destination or payload' });
           return false;
         }
-        void sendToAi(msg.destination, msg.payload).then(sendResponse);
+        void sendToAi(msg.destination, msg.payload, sourceTabId).then(sendResponse);
         return true;
       }
       if (msg?.action === 'askAiDefault') {
@@ -1426,7 +1551,7 @@ export function installAskMessageHandler(): void {
             if (!destination) {
               return { ok: false, error: 'No Ask provider available' };
             }
-            return sendToAi(destination, payload);
+            return sendToAi(destination, payload, sourceTabId);
           })
           .then(sendResponse);
         return true;

@@ -346,7 +346,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 
 | File | Purpose |
 |------|---------|
-| `src/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`, `friendlyInjectError`. Resolves target tab (with stale-pin detection), runs the injected runtime, focuses the tab on success / closes a fresh failed tab, and pins the destination on success. |
+| `src/ask/index.ts` | Orchestration: `listAskProviders`, `resolveAsk`, `sendToAi`, `installAskMessageHandler`, `friendlyInjectError`. Resolves target tab (with stale-pin detection), runs the injected runtime, focuses the new tab early after a scriptability probe (closes it if the probe fails, otherwise leaves it open even on late inject failure and switches focus back to the Capture page), and pins the destination on success. |
 | `src/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
@@ -610,23 +610,36 @@ Capture page (capture-page.ts)
       ask/index.ts                                   │
         (askAiDefault: resolveAsk() picks destination)          │
         sendToAi() ◀───────────────────────────────────────────┘
-          ├── resolve tab (existing or new — wait 'complete' up to 15s)
-          │     new tabs open with active: false so a policy-block
-          │     failure can be silently torn down
+          ├── newTab path: chrome.tabs.create({ active: false })
+          │     ├── write placeholder widget record
+          │     ├── scriptability probe (executeScript func: () => 1)
+          │     │     ├── permanent block (ExtensionsSettings /
+          │     │     │     "cannot be scripted") → close tab,
+          │     │     │     return error to Capture page; user's
+          │     │     │     focus never leaves Capture
+          │     │     └── transient error → ignore (post-load retry)
+          │     ├── focus new tab + window (early — user sees the
+          │     │     placeholder widget while the page finishes loading)
+          │     └── wait for 'complete' up to 15s
+          │   existingTab path: tabId = destination.tabId (no open, no
+          │     focus — stays on Capture until inject succeeds)
           ├── executeScript({ files: ['ask-inject.js'], world: 'MAIN' })
           │     installs the postMessage bridge listener (see below)
           ├── on inject success:
           │     ├── executeScript({ files: ['ask-widget.js'], world: 'ISOLATED' })
           │     │     widget walks each item via the bridge — see ask-widget.md
-          │     ├── focus tab + window
+          │     ├── focus tab + window (existingTab only — newTab
+          │     │     was already focused after the probe)
           │     └── write 'askPin' = { provider, tabId }
-          └── on inject failure:
+          └── on inject failure (post-probe — rare):
+                ├── leave tab open (user may have started interacting)
                 ├── patch widget record with friendlyInjectError()
                 │     (policy blocks like "ExtensionsSettings" / "cannot
                 │     be scripted" pass through verbatim; everything else
                 │     becomes "Check if the tab is on a prompt screen.")
-                └── if we opened a fresh new tab, close it so a blank
-                    provider tab isn't left orphaned behind the Capture page
+                └── focus the source Capture page so the error toast
+                    is visible (no-op when the user closed it via
+                    ctrl-click before the failure landed)
     show #ask-status: "Sent." or error
     refresh labels + per-provider rows (the pin may have moved)
     if ctrl-click: sendMessage({ action: 'closeCapturePage' })
