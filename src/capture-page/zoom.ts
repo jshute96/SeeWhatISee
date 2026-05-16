@@ -530,11 +530,41 @@ export function setLastMousePos(p: { x: number; y: number } | null): void {
 // wheel users at one step per detent. Direction change or an idle
 // gap reset the accumulator so a fresh gesture doesn't carry leftover
 // delta from the previous one.
+//
+// The accumulator-only path failed for one device class: a physical
+// mouse on Chromebook (and any other browser/OS combo that emits
+// per-notch `deltaY` somewhere between WHEEL_NOTCH_PIXEL_MIN and
+// WHEEL_STEP_THRESHOLD). A slow turn there produces notches > 200 ms
+// apart, so the idle reset wipes the accumulator between events and
+// no notch ever crosses the threshold; a fast turn packs notches
+// inside 200 ms and zooms. The notch-shortcut below catches these
+// events explicitly so timing no longer matters — see WHEEL_NOTCH_*.
 let wheelAccumDelta = 0;
 let wheelLastDir: 1 | -1 = 1;
 let wheelLastTime = 0;
 const WHEEL_STEP_THRESHOLD = 100;
 const WHEEL_IDLE_RESET_MS = 200;
+
+// Discrete-notch shortcut. An event is treated as a complete wheel
+// notch — and zooms immediately, regardless of the accumulator — when
+// either:
+//   - `deltaMode` is line (1) or page (2): only mouse wheels emit
+//     those modes; trackpads always use DOM_DELTA_PIXEL (0).
+//   - `deltaMode` is pixel but `|deltaY|` is at least
+//     WHEEL_NOTCH_PIXEL_MIN. Browsers that quantize the wheel to
+//     pixel units (macOS, ChromeOS, some Linux builds) still emit
+//     comparatively large per-event values: typically 53, 100, or
+//     120. Trackpad swipe samples sit well below 40 even at full
+//     speed, with only the very start of a momentum tail occasionally
+//     poking above, so 40 is the cleanest cut-point between the two
+//     populations. A stray trackpad sample at 40+ pixels then zooms
+//     one step immediately, where the accumulator would have needed
+//     ~60 more px of follow-up to cross 100 — so a fast trackpad
+//     pinch could in principle fire one extra step at the very start
+//     of a gesture. Acceptable: trackpad samples typically cap well
+//     under 40, and the overall trackpad-runaway protection (one
+//     step per ~100 accumulated px thereafter) is unchanged.
+const WHEEL_NOTCH_PIXEL_MIN = 40;
 
 // ─── Pan (middle-click + Ctrl/Cmd-left-drag) ──────────────────────
 //
@@ -619,6 +649,24 @@ export function initZoom(context: ZoomContext): void {
 
     const now = e.timeStamp;
     const dir: 1 | -1 = e.deltaY < 0 ? 1 : -1;
+
+    // Discrete-notch shortcut — step immediately and bypass the
+    // accumulator. See WHEEL_NOTCH_PIXEL_MIN for the rationale.
+    // Update the accumulator's bookkeeping so a follow-up trackpad
+    // gesture (in either direction) starts from a clean slate rather
+    // than inheriting whatever happened to be left in the accumulator
+    // from before the notch event.
+    const isDiscreteNotch =
+      e.deltaMode !== WheelEvent.DOM_DELTA_PIXEL ||
+      Math.abs(e.deltaY) >= WHEEL_NOTCH_PIXEL_MIN;
+    if (isDiscreteNotch) {
+      wheelAccumDelta = 0;
+      wheelLastDir = dir;
+      wheelLastTime = now;
+      cursorCenteredZoomStep(dir, e.clientX, e.clientY);
+      return;
+    }
+
     if (dir !== wheelLastDir || now - wheelLastTime > WHEEL_IDLE_RESET_MS) {
       wheelAccumDelta = 0;
       wheelLastDir = dir;

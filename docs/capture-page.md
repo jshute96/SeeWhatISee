@@ -1445,15 +1445,30 @@ re-activation is required:
     `.image-box` scroll.
   - Ctrl+wheel is swallowed unconditionally — otherwise the browser's
     page-zoom would fire alongside the app zoom.
-- **Wheel accumulator.** Trackpads emit a continuous stream of small-
-  deltaY events during a swipe (and through the OS-level momentum
-  tail), so a one-event-per-step mapping flies through every level.
-  - Sum `|deltaY|`; step zoom when it crosses ~100 (one mouse-notch).
+- **Discrete-notch shortcut.** Mouse wheels emit one notch per turn:
+  either with `deltaMode` in line/page mode, or pixel mode with a
+  large per-event `|deltaY|` (typically 53 / 100 / 120 — quantized by
+  the browser/OS even when reported as pixels).
+  - Treat an event as a complete notch when `deltaMode !== PIXEL` or
+    `|deltaY| >= 40` (the per-event ceiling for trackpad swipes — they
+    sample at 1–30 pixels even at full speed).
+  - Each such event steps zoom by one, immediately, bypassing the
+    accumulator. Independent of inter-event timing — slow mouse-wheel
+    turns work the same as fast ones.
+  - Reset the accumulator on these so a follow-up trackpad gesture
+    starts from a clean slate.
+- **Trackpad accumulator.** Trackpads emit a continuous stream of
+  small-deltaY events during a swipe (and through the OS-level
+  momentum tail), so a one-event-per-step mapping flies through every
+  level.
+  - For events that *don't* match the notch shortcut above, sum
+    `|deltaY|` and step zoom when it crosses ~100.
   - Cap at one step per event, regardless of accumulated delta.
   - Direction change or 200 ms idle gap resets the accumulator so a
     fresh gesture doesn't carry leftover delta.
-  - Net effect: mouse-wheel users see one step per detent; trackpad
-    users get deliberate-feeling steps instead of flying through.
+  - Net effect: mouse-wheel users see one step per detent at any
+    speed; trackpad users get deliberate-feeling steps instead of
+    flying through.
 - **Cursor-centered** zoom funnels both wheel and keyboard paths
   through `cursorCenteredZoomStep(dir, focalX, focalY)`.
   - The image-fraction the focal point was over pre-zoom is preserved
