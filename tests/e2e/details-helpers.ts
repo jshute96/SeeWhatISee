@@ -116,9 +116,15 @@ export async function openDetailsFlow(
 
   // Set up the page-event listener *before* triggering the SW call,
   // so we don't miss the new tab if it lands fast.
+  //
+  // The 20s budget covers a worst-case cold capture.html open under
+  // load: SW respawn + screenshot + new-tab creation can chain past
+  // 5s on a contended host, and the test-level timeout (30s) is the
+  // real bound. A tighter helper-level timeout just turns slow CI /
+  // dev-box runs into spurious test failures.
   const capturePagePromise = extensionContext.waitForEvent('page', {
     predicate: (p) => p.url().endsWith('/capture.html'),
-    timeout: 5000,
+    timeout: 20000,
   });
 
   const sw = await getServiceWorker();
@@ -543,9 +549,11 @@ export async function openImageDetailsFlow(
 
   if (beforeCapture) await beforeCapture(openerPage);
 
+  // 20s for the same reason as openDetailsFlow's waitForEvent — see
+  // the comment there.
   const capturePagePromise = extensionContext.waitForEvent('page', {
     predicate: (p) => p.url().endsWith('/capture.html'),
-    timeout: 5000,
+    timeout: 20000,
   });
 
   const sw = await getServiceWorker();

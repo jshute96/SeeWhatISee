@@ -275,14 +275,16 @@ test('details: real markdown-editor copy/paste round-trip preserves source exact
   // setEditorCode writes textContent and dispatches `keyup`; CodeJar
   // schedules its highlight pass 30ms later via debounce, so wait
   // for hljs to actually inject token spans before we sample what
-  // the clipboard would carry.
+  // the clipboard would carry. The 5s budget covers a contended
+  // event-loop where hljs's tokenisation can slip well past the
+  // 30ms debounce; a 1s ceiling was previously flaky under load.
   await capturePage.waitForFunction(
     () =>
       /class=["']hljs-/.test(
         document.getElementById('edit-selection-markdown-textarea')!.innerHTML,
       ),
     null,
-    { timeout: 1000 },
+    { timeout: 5000 },
   );
 
   const result = await copyAndPasteRoundTrip(
