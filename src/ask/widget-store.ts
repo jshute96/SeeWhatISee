@@ -100,6 +100,16 @@ export interface AskWidgetRecord {
   /** Provider selectors the widget hands to MAIN-world helpers.
    *  Plain data — selector strings only. */
   selectors: AskInjectSelectorsLike;
+  /** When true, the widget dispatches a one-shot `clearComposer`
+   *  bridge op before walking the items. Set by the SW only when
+   *  BOTH conditions hold:
+   *   - destination is `newTab` (the existingTab/pinned reuse
+   *     path preserves the documented "Ask twice before Send
+   *     accumulates" contract — see the `two prompt-only calls
+   *     accumulate text` live test); AND
+   *   - the provider has opted in via
+   *     {@link AskProvider.clearComposerOnEntry} (ChatGPT today). */
+  clearComposerOnEntry?: boolean;
   /** Monotonic counter incremented on every fresh Ask into the same
    *  tab. Lets the widget orchestrator detect and bail if a re-Ask
    *  lands while a previous run is still walking the items. */

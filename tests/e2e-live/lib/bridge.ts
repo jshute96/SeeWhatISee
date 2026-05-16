@@ -34,6 +34,7 @@ export interface AskSelectors {
 // a slow live op surfaces with the same failure mode it would in
 // production rather than as a generic Playwright timeout.
 export const BRIDGE_TIMEOUTS_MS: Record<string, number> = {
+  clearComposer: 5_000,
   attachFile: 15_000,
   typePrompt: 5_000,
   clickSubmit: 35_000,
@@ -106,8 +107,17 @@ export async function driveBridge(
   attachments: AskAttachment[],
   promptText: string,
   autoSubmit: boolean,
+  /** Mirror of the SW's `clearComposerOnEntry` flag on
+   *  `AskWidgetRecord` — when true, prepend a one-shot `clearComposer`
+   *  op so the live test exercises the same fresh-tab path the widget
+   *  takes on a newTab destination. Default false preserves the
+   *  additive contract that the existing accumulation tests assert. */
+  clearComposerFirst: boolean = false,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    if (clearComposerFirst) {
+      await callBridge(page, 'clearComposer', { selectors });
+    }
     for (const attachment of attachments) {
       await callBridge(page, 'attachFile', { attachment, selectors });
     }

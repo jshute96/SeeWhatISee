@@ -160,6 +160,8 @@ into MAIN-world helpers in `ask-inject.ts`.
   margin above each helper's longest legitimate work, so a healthy
   call never trips them and a crashed/unresponsive bridge can't
   hang the orchestrator:
+  - `clearComposer` — 5 s (synchronous wipe + observer install,
+    sub-second in practice).
   - `attachFile` — 15 s (covers the 1.5 s settle + 8 s
     chip-confirm). The chip gate proves the page accepted the
     selection, NOT that the upload reached the server.
@@ -167,10 +169,19 @@ into MAIN-world helpers in `ask-inject.ts`.
   - `clickSubmit` — 35 s (covers the 30 s submit-enable poll while
     the upload reaches the server). We never wait for the AI's
     response — only for the submit button to be clickable.
+- `clearComposer` is fired once at the start of a run when the
+  record's `clearComposerOnEntry` flag is set. The SW sets that
+  flag only when both (a) destination is `newTab` AND (b) the
+  provider opts in via `AskProvider.clearComposerOnEntry` — today
+  that's ChatGPT alone, as a workaround for its draft-injection
+  behavior. See the dedicated section in `ask-on-web.md` for the
+  full rationale. A bridge failure here is logged but non-fatal —
+  the items still run.
 - The live-test specs in `tests/e2e-live/` drive the same bridge,
-  posting `attachFile` / `typePrompt` / `clickSubmit` requests one at
-  a time so the suite exercises the same code path the widget uses
-  in production.
+  posting `clearComposer` (opt-in via `clearComposerFirst`) /
+  `attachFile` / `typePrompt` / `clickSubmit` requests one at a time
+  so the suite exercises the same code path the widget uses in
+  production.
 
 ## Storage record
 
@@ -189,6 +200,10 @@ into MAIN-world helpers in `ask-inject.ts`.
   - `runId` — monotonic counter incremented on every fresh send. A
     re-Ask while the previous run is still walking causes the old
     run to bail at its next checkpoint and the new run to take over.
+  - `clearComposerOnEntry?` — set by the SW on newTab runs to a
+    provider that opted in (only ChatGPT today); the widget reads
+    it to decide whether to dispatch the one-shot `clearComposer`
+    bridge op before walking items.
   - The full attachment payload + prompt text — enough for the
     widget to render a full recovery surface even after the Capture
     page closes.
@@ -231,13 +246,18 @@ SW sendToAi():
   ├─▶ if !readWidgetRecord(tabId): return "Cancelled"
   │   ── widget × cleared the record during the wait above
   ── both paths ─────────────────────────────────────────────────
+  ├─▶ executeScript MAIN: load ask-inject.js (bridge)
+  │     ── CRITICAL: bridge listener must exist before
+  │        writeWidgetRecord(injecting) below fires the widget's
+  │        storage listener, or the widget's first callMain post
+  │        will race ahead of the listener and be silently dropped
+  │        (postMessage doesn't replay for late subscribers).
   ├─▶ writeWidgetRecord(tabId, {status:'injecting',
   │     items:[…pending], selectors, runId:NEW, …})
   │     ── newTab: promotes the placeholder record (storage event
   │        fires; widget storage listener picks up the runId bump
   │        and starts tryStartRun)
   │     ── existingTab: first write of the record
-  ├─▶ executeScript MAIN: load ask-inject.js (bridge)
   ├─▶ executeScript ISOLATED: stash tabId on window
   ├─▶ executeScript ISOLATED: load ask-widget.js  (idempotent —
   │     re-mount on the loaded page if the early one died on a
@@ -249,6 +269,9 @@ SW sendToAi():
   ───────                                   ─────────────────
   shouldStartOrchestration?
     runItems(record) ─┐
+                      ├─?─ postMessage({op: 'clearComposer', …})
+                      │           ◀── postMessage({ok, error?})
+                      │   (newTab only; failure is logged + non-fatal)
                       ├──▶ postMessage({op: 'attachFile', …})
                       │           ◀── postMessage({ok, error?})
                       │   patchWidgetItem(i, {status: 'success'|'error', …})

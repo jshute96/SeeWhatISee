@@ -684,6 +684,16 @@ export async function sendToAi(
     items,
     autoSubmit: payload.autoSubmit,
     selectors: provider.selectors,
+    // Gated on both destination AND provider opt-in: the
+    // existingTab/pinned path preserves the documented "Ask twice
+    // before Send accumulates" contract, and providers without a
+    // draft-restore quirk don't need the extra bridge round-trip
+    // (they always start a new tab on a clean composer). Today
+    // only ChatGPT sets `provider.clearComposerOnEntry` — see
+    // `docs/ask-on-web.md` for the workaround context.
+    clearComposerOnEntry:
+      destination.kind === 'newTab'
+      && provider.clearComposerOnEntry === true,
   };
 
   // Pre-flight session-storage quota check. The widget record is a
@@ -761,12 +771,59 @@ export async function sendToAi(
   // existing-tab path) to status `injecting` with a new runId.
   // The fresh runId is what the widget's storage listener latches
   // onto to fire `tryStartRun` and walk the items.
+  //
+  // CRITICAL ordering: the bridge listener (executeScript MAIN
+  // below) must be installed BEFORE this `writeWidgetRecord`
+  // commits, otherwise the placeholder widget's already-attached
+  // storage listener fires, starts orchestration, and posts its
+  // first `callMain` request before any listener exists in MAIN
+  // world — `window.postMessage` doesn't replay for late
+  // subscribers, so the request is silently dropped and the widget
+  // waits out the bridge timeout. Observed symptom:
+  // `Bridge op "clearComposer" timed out after Ns` with no
+  // corresponding `bridge op clearComposer: posting … response`
+  // log in the MAIN-world console. We can't move `writeWidgetRecord`
+  // INTO the try block below the executeScript, because its
+  // distinct error path (quota exceeded → user-facing storage
+  // error) is unrelated to the inject-failed cleanup. So the
+  // sequencing is enforced by the try-block layout instead.
   const widgetRecord: AskWidgetRecord = {
     ...recordTemplate,
     status: 'injecting',
     runId: Date.now(),
     updatedAt: Date.now(),
   };
+
+  try {
+    // Load the MAIN-world helper file BEFORE flipping the record to
+    // 'injecting'. Re-loads are no-ops via the IIFE's
+    // `__seeWhatISeeAskBridgeInstalled` flag.
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      files: ['ask-inject.js'],
+    });
+  } catch (err) {
+    const message = `Failed to inject into ${provider.label}: ${friendlyInjectError(err)}`;
+    // Mirror the cleanup the post-promote catch below does — for
+    // newTab paths we close the freshly-opened tab so we don't
+    // leave a placeholder-widget tab orphaned. existingTab paths
+    // patch the placeholder record to an error state so the widget
+    // surfaces something actionable. Same rationale as the
+    // post-promote catch, just earlier in the flow because we
+    // moved executeScript before writeWidgetRecord.
+    if (destination.kind === 'newTab') {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (closeErr) {
+        console.log('[SeeWhatISee] [warn] failed to close failed new tab:', closeErr);
+      }
+      return { ok: false, error: message };
+    }
+    await patchWidgetRecord(tabId, { status: 'error', error: message });
+    return { ok: false, error: message, tabId };
+  }
+
   try {
     await writeWidgetRecord(tabId, widgetRecord);
   } catch (err) {
@@ -781,15 +838,6 @@ export async function sendToAi(
   }
 
   try {
-    // Load the MAIN-world helper file once before the widget walks
-    // its first item — the bridge needs to be listening when the
-    // widget posts its first request. Re-loads are no-ops via the
-    // IIFE's `__seeWhatISeeAskBridgeInstalled` flag.
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      files: ['ask-inject.js'],
-    });
     // Re-mount the widget. Idempotent — if the early placeholder
     // mount survived the navigation, this is a no-op refresh; if
     // it died on a transient document, this is the first real

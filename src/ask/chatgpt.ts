@@ -34,6 +34,12 @@ export const chatgptProvider: AskProvider = {
   newTabUrl: 'https://chatgpt.com/',
   iconFilename: 'chatgpt.ico',
   enabled: true,
+  // ChatGPT re-injects unsent drafts from React state for some time
+  // after the page is "ready" (logged-out test: ~3 s past
+  // window.load; logged-in path appears to keep re-rendering longer).
+  // Opt in to the runtime's persistent-watch draft-wipe — see the
+  // field's jsdoc on `AskProvider`.
+  clearComposerOnEntry: true,
   selectors: {
     fileInput: [
       // The "Add photos & files" entry in the plus-button menu drives

@@ -186,10 +186,175 @@
     return total;
   }
 
+  // Watch observer installed by `clearComposer`. Wide-scope
+  // (attached to `document.documentElement`) so a composer that
+  // hasn't mounted yet at clearComposer time is still caught when
+  // it appears, and so a composer remount doesn't orphan the
+  // observer. Stays alive across the entire run and into the
+  // post-run idle window, disconnecting only on the first trusted
+  // `keydown` (the user taking over). See `docs/ask-on-web.md`
+  // for why this exists — it's a workaround for ChatGPT injecting
+  // unsent drafts into the composer for several seconds after the
+  // page is "ready."
+  //
+  // The `typePrompt` op disconnects the observer at entry so it
+  // doesn't fight our own writes. `attachFiles` does NOT
+  // disconnect: its mutations on the file input and chip-container
+  // DO fire the (wide-scope) observer callback, but the callback's
+  // "is the composer's textContent empty?" early-return short-
+  // circuits since attach doesn't put any text in the composer.
+  let watchObserver: MutationObserver | null = null;
+  let watchKeydownListener: ((ev: KeyboardEvent) => void) | null = null;
+
+  function disconnectWatchObserver(reason: string): void {
+    if (watchObserver) {
+      watchObserver.disconnect();
+      watchObserver = null;
+      log(`clearComposer: watch observer disconnected (${reason})`);
+    }
+    if (watchKeydownListener) {
+      document.removeEventListener('keydown', watchKeydownListener, true);
+      watchKeydownListener = null;
+    }
+  }
+
+  /** Wipe `input` in place. Returns true on success.
+   *  Uses `execCommand('selectAll'+'delete')` for the same reason
+   *  `insertTextLine` uses `execCommand('insertText')`: it's the only
+   *  synthetic edit that reliably round-trips through ProseMirror's
+   *  input pipeline so the editor model and the DOM stay in sync.
+   *  Falls back to a Range-based selection + `deleteContentBackward`
+   *  InputEvent for the day execCommand stops working. */
+  function clearComposerNow(input: HTMLElement): boolean {
+    const before = input.textContent ?? '';
+    if (!before.trim()) return true;
+    input.focus();
+    let cleared = false;
+    try {
+      document.execCommand('selectAll');
+      cleared = document.execCommand('delete');
+    } catch {
+      cleared = false;
+    }
+    if (cleared && !(input.textContent ?? '').trim()) return true;
+    logWarn('clearComposerNow: execCommand path failed, using Range/InputEvent fallback');
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    input.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward',
+      }),
+    );
+    input.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward',
+      }),
+    );
+    return !(input.textContent ?? '').trim();
+  }
+
+  /** Find the composer without the diagnostic logging `findRanked`
+   *  does. Hot-path helper for the persistent observer's callback,
+   *  which can fire many times per second during page hydration —
+   *  we don't want each fire to spam the console with a "matched"
+   *  line. */
+  function findComposerSilent(selectors: string[]): HTMLElement | null {
+    for (const sel of selectors) {
+      const el = document.querySelector<HTMLElement>(sel);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  /** Wipe the composer (best-effort) and install a wide-scope
+   *  MutationObserver that re-wipes any text that re-appears, until
+   *  the first trusted user keystroke disengages it.
+   *
+   *  Only called for providers that opted in via
+   *  {@link AskProvider.clearComposerOnEntry} — today that's
+   *  ChatGPT only, as a workaround for its draft-restore behavior.
+   *  See `docs/ask-on-web.md` for the user-visible bug this exists
+   *  to suppress. */
+  async function clearComposer(selectors: AskSelectors): Promise<void> {
+    // Tear down any prior observer first — a re-Ask into the same tab
+    // would otherwise stack a second observer on top of the first.
+    disconnectWatchObserver('re-entering clearComposer');
+
+    // Best-effort immediate clear when the composer is already
+    // present. If it isn't, the observer below catches the first
+    // mutation that brings it into the DOM and clears it then.
+    const initialInput = findRanked<HTMLElement>(
+      'textInput',
+      selectors.textInput,
+    );
+    if (initialInput) {
+      const ok = clearComposerNow(initialInput);
+      log(`clearComposer: initial clear ${ok ? 'succeeded' : 'failed'}`, {
+        remaining: (initialInput.textContent ?? '').length,
+      });
+    } else {
+      log(
+        'clearComposer: composer not present yet — observer will pick it up',
+      );
+    }
+
+    // Wide-scope observer on `document.documentElement`: fires on
+    // every DOM mutation on the page. On each fire we re-find the
+    // composer (handles composer-not-mounted-yet AND remounts that
+    // would orphan an element-bound observer) and clear it if it's
+    // non-empty. Each callback is a cheap `querySelector` +
+    // textContent read; we only execCommand when there's actually
+    // text to remove.
+    watchObserver = new MutationObserver(() => {
+      const input = findComposerSilent(selectors.textInput);
+      if (!input) return;
+      if (!(input.textContent ?? '').trim()) return;
+      log('clearComposer: observed text in composer — clearing');
+      clearComposerNow(input);
+    });
+    watchObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    // The user takes over with a real keystroke; programmatic
+    // mutations (our execCommand, ChatGPT's React-driven re-renders)
+    // don't fire `keydown`, so `isTrusted` is enough on its own.
+    // Listener on `document` (capture phase) so we disengage whenever
+    // the user types ANYWHERE in the page — close enough as a "user
+    // is interacting" signal, and works even if the composer isn't
+    // the focused element yet.
+    watchKeydownListener = (ev: KeyboardEvent): void => {
+      if (!ev.isTrusted) return;
+      disconnectWatchObserver('user keystroke');
+    };
+    document.addEventListener('keydown', watchKeydownListener, true);
+    log('clearComposer: wide-scope watch observer installed');
+  }
+
   async function attachFiles(
     files: File[],
     selectors: AskSelectors,
   ): Promise<void> {
+    // NOTE: we intentionally do NOT disconnect the clearComposer
+    // watch observer here. attachFile mutates the FILE INPUT
+    // element and the chip-container; the (wide-scope) observer
+    // does fire on those mutations, but its callback re-checks the
+    // composer's textContent and early-returns when empty — and
+    // attach doesn't put any text in the composer, so the firing
+    // is harmless. Keeping the observer alive across attachFile is
+    // what protects the image-only flow (no typePrompt) against a
+    // late draft restore — observed on ChatGPT, where the draft is
+    // re-rendered from cached React state some time after our
+    // initial clear, sometimes after the run is "done."
     log(
       `attachFiles: ${files.length} file(s)`,
       files.map((f) => `${f.name} (${f.type}, ${f.size} bytes)`),
@@ -342,6 +507,13 @@
     text: string,
     selectors: AskSelectors,
   ): Promise<void> {
+    // Hand-off from clearComposer's watch observer — opposite of
+    // attachFiles. Our `execCommand('insertText')` calls below add
+    // text to the composer's contenteditable, which is exactly
+    // what the observer is configured to wipe. Disconnecting here
+    // lets the prompt we type survive; the observer was already
+    // earning its keep on whatever ChatGPT injected before now.
+    disconnectWatchObserver('typePrompt entry');
     if (!text) {
       log('typePrompt: empty prompt, skipping');
       return;
@@ -561,6 +733,11 @@
   // Bridge dispatcher. Each op throws on failure and the bridge
   // reports it as `ok: false`.
   async function dispatchOp(op: string, args: unknown): Promise<unknown> {
+    if (op === 'clearComposer') {
+      const a = args as { selectors: AskSelectors };
+      await clearComposer(a.selectors);
+      return null;
+    }
     if (op === 'attachFile') {
       const a = args as { attachment: AttachmentInput; selectors: AskSelectors };
       await attachFiles([buildFile(a.attachment)], a.selectors);

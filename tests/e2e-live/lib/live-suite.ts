@@ -46,7 +46,7 @@ const ASK_INJECT_PATH = path.join(REPO_ROOT, 'dist/ask-inject.js');
 let SHARED_BROWSER: Browser | null = null;
 const SHARED_PAGES = new Map<string, Page>();
 
-async function getSharedBrowser(providerLabel: string): Promise<Browser> {
+export async function getSharedBrowser(providerLabel: string): Promise<Browser> {
   if (SHARED_BROWSER && SHARED_BROWSER.isConnected()) return SHARED_BROWSER;
   // Old handle (if any) is dead — its `Page` references are bound to
   // the disconnected browser and can't be reused. Drop them so the
@@ -67,7 +67,7 @@ async function getSharedBrowser(providerLabel: string): Promise<Browser> {
   }
 }
 
-async function getSharedProviderPage(
+export async function getSharedProviderPage(
   browser: Browser,
   provider: LiveProvider,
 ): Promise<Page> {
@@ -123,12 +123,12 @@ function accepts(provider: LiveProvider, kind: 'image' | 'text'): boolean {
 }
 
 /**
- * Run the five-test live suite (selectors smoke / multi-file no-submit /
- * two prompt-only calls accumulate / two file-attach calls accumulate /
- * image+html+selection+prompt → submit) against any AI provider that
- * supplies a `LiveProvider` plugin. Per-provider specs in
- * `tests/e2e-live/<provider>.live.spec.ts` are thin wrappers around a
- * single `runLiveSuite(provider)` call.
+ * Run the shared live-test suite (selectors smoke, multi-file
+ * no-submit, two prompt-only calls accumulate, two file-attach
+ * calls accumulate, image+html+selection+prompt → submit) against
+ * any AI provider that supplies a `LiveProvider` plugin. Per-
+ * provider specs in `tests/e2e-live/<provider>.live.spec.ts` are
+ * thin wrappers around a single `runLiveSuite(provider)` call.
  */
 export function runLiveSuite(provider: LiveProvider): void {
   let askInjectSrc: string;
@@ -201,7 +201,13 @@ export function runLiveSuite(provider: LiveProvider): void {
     promptText: string,
     autoSubmit: boolean,
   ): Promise<{ ok: boolean; error?: string }> {
-    return driveBridge(page, provider.selectors, attachments, promptText, autoSubmit);
+    return driveBridge(
+      page,
+      provider.selectors,
+      attachments,
+      promptText,
+      autoSubmit,
+    );
   }
 
   // ─── Selector smoke test ───────────────────────────────────────

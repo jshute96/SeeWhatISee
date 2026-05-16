@@ -207,6 +207,24 @@ export interface AskProvider {
    * for chat-style providers; this only opts out of it.
    */
   newTabOnly?: boolean;
+  /**
+   * Opt in to the runtime's persistent draft-wipe behavior at the
+   * start of a fresh-tab Ask. Only ChatGPT needs this today: it
+   * re-renders unsent composer drafts from React state for some
+   * time after the page is otherwise "ready," which means a
+   * single up-front DOM clear isn't enough. When set, the widget
+   * dispatches a `clearComposer` bridge op before walking items,
+   * and the runtime installs a wide-scope MutationObserver on
+   * `document.documentElement` that re-clears any text that
+   * appears in the composer until the user's first trusted
+   * `keydown` disengages it.
+   *
+   * Other chat providers (Claude, Gemini, Google) start with an
+   * empty composer on a fresh tab and don't need this extra
+   * machinery — leaving the field unset / false skips the bridge
+   * op entirely.
+   */
+  clearComposerOnEntry?: boolean;
 }
 
 export const ASK_PROVIDERS: AskProvider[] = [

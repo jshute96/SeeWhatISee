@@ -650,6 +650,30 @@ Self-contained IIFE, no `import` / `export`, runs in MAIN world.
 Installs a postMessage bridge listener on `window` and exposes the
 ops the ISOLATED-world widget calls one at a time:
 
+- `clearComposer { selectors }` — best-effort initial DOM clear of
+  the composer plus a wide-scope `MutationObserver` that re-wipes
+  any text that re-appears, until the user's first trusted
+  `keydown` disengages it. See the
+  [ChatGPT draft-injection workaround](#chatgpt-draft-injection-workaround)
+  section below for the full rationale and why this is ChatGPT-only.
+  - Dispatched once per run, only when the widget record has
+    `clearComposerOnEntry: true`. The SW sets that flag iff both
+    (a) destination is newTab AND (b) the provider opts in via
+    `AskProvider.clearComposerOnEntry` — today, ChatGPT alone.
+  - Initial clear is `execCommand('selectAll')` + `'delete'` with a
+    Range + `deleteContentBackward` InputEvent fallback. Same
+    edit-pipeline rationale as `typePrompt`.
+  - Observer is attached to `document.documentElement` with
+    `{ childList, subtree, characterData }`. Each callback
+    re-resolves the composer via `selectors.textInput` and clears
+    if non-empty — handles a composer that hasn't mounted yet AND
+    a later composer remount.
+  - `typePrompt` disconnects the observer at entry so our own
+    `execCommand('insertText')` writes don't get clobbered.
+    `attachFile` does NOT disconnect — its mutations on the file
+    input and chip-container do fire the observer, but the
+    callback's "is the composer's textContent empty?" early-return
+    short-circuits since attach puts no text in the composer.
 - `attachFile { attachment, selectors }` — build a `File` from the
   attachment's data (base64 decode for data URLs, `TextEncoder` for
   text), set `input.files` on the resolved file input, dispatch
@@ -688,6 +712,117 @@ bridge protocol and the per-op timeouts the widget enforces.
   manifest permissions.
 - The extension runs zero code on AI sites until the user clicks
   Ask. Smaller surface area, no impact on regular browsing.
+
+## ChatGPT draft-injection workaround
+
+This section documents the `clearComposer` machinery introduced
+for ChatGPT specifically. **It is a workaround for what looks like
+a ChatGPT-side bug** — Claude, Gemini, and Google all start a
+fresh tab with an empty composer and need none of this.
+
+### The bug
+
+- ChatGPT persists unsent composer text under
+  `localStorage['oai/apps/conversationDrafts']`. On every fresh
+  load of `chatgpt.com` (a different window, a reload, or a tab
+  the extension just opened), the page reads that key, restores
+  the draft into React state, and renders it into the composer.
+- That re-render fires several seconds after the page is otherwise
+  "ready," and on logged-in sessions appears to fire repeatedly
+  during hydration. We can't anchor it to a single observable
+  event.
+- User-visible symptom: open chatgpt.com, type something, close
+  the window without sending. Open Capture, run "Ask ChatGPT" with
+  just an image. By the time the Ask flow completes, the old draft
+  text has appeared in the new tab's composer.
+
+### Why a workaround at all
+
+We could not find a single-shot clear that wins this race
+reliably. Approaches we tried and discarded:
+
+- Clear `localStorage['oai/apps/conversationDrafts']` from the SW
+  before opening the tab — too late; ChatGPT had already read it
+  into React state.
+- Clear it at the start of the SW's Ask flow — same problem; the
+  read happens early in page init.
+- A `document_start` content script with a URL-fragment marker
+  wiping the key before page scripts run — works, but requires a
+  manifest change, a per-tab URL marker, and `chrome://extensions`
+  reloads to land. Too heavy for one provider's quirk.
+
+The behavior that did stick was a `MutationObserver` that just
+keeps wiping the composer for as long as ChatGPT keeps trying to
+re-inject the draft.
+
+### The mechanism
+
+- `AskProvider.clearComposerOnEntry` — provider opt-in. Set to
+  `true` on the ChatGPT adapter only.
+- SW: on a `newTab` destination with that provider flag, writes
+  `clearComposerOnEntry: true` on the widget record.
+- Widget: dispatches a one-shot `clearComposer` bridge op before
+  walking the items.
+- Runtime (`ask-inject.ts`):
+  1. Best-effort `execCommand('selectAll')` + `'delete'` on the
+     composer (handles the case where the draft is already there
+     when our op runs).
+  2. Installs a wide-scope `MutationObserver` on
+     `document.documentElement` with
+     `{ childList, subtree, characterData }`. Each callback re-
+     finds the composer via the provider's selectors and clears
+     it if non-empty. Wide scope handles composer-not-yet-mounted
+     AND any later composer remount that would orphan a narrow
+     observer.
+  3. Installs a `keydown` listener (capture phase) on `document`.
+     First trusted (`isTrusted: true`) keystroke anywhere
+     disengages both the observer and itself — the user typing is
+     the "I've taken over" signal. Programmatic mutations
+     (`execCommand`, ChatGPT's React re-renders) don't fire
+     `keydown`, so they can't false-trigger the disengage.
+
+### Constraints the design respects
+
+- **Additive contract preserved:** the existingTab / pinned-reuse
+  path skips `clearComposer` entirely. The documented "Ask twice
+  before Send accumulates" behavior (live test
+  `two prompt-only calls accumulate text`) is unaffected.
+- **`typePrompt` plays nicely:** disconnects the observer at
+  entry so our own `execCommand('insertText')` writes don't get
+  wiped. `attachFile` does NOT disconnect — its mutations do fire
+  the wide-scope observer, but the callback's empty-textContent
+  early-return makes the firing harmless since attach puts no text
+  in the composer.
+- **SW ordering matters:** `executeScript MAIN` (installs the
+  bridge listener) must run BEFORE `writeWidgetRecord('injecting')`
+  so the placeholder widget's storage listener has a usable
+  bridge by the time it posts the first `callMain` request.
+  `window.postMessage` doesn't replay for late subscribers — get
+  the order wrong and the first op times out silently. See the
+  comment block in `sendToAi` around the `executeScript` call.
+
+### If this stops working
+
+Likely first signals:
+- `tests/e2e-live/chatgpt.live.spec.ts` ("after a prior draft
+  leaves the composer clean") fails. That's the regression spec
+  for this whole story.
+- User reports the draft showing up again. The page console will
+  show whether `clearComposer:` logs ran and whether the observer
+  caught text.
+
+The biggest "this could break tomorrow" risk is ChatGPT changing
+their selectors (the runtime's `findComposerSilent` returns null,
+observer fires forever with no work to do — cheap but
+ineffective). The selector smoke test in the live suite catches
+that case.
+
+Known disengage gaps: the "user is taking over" signal is the
+first trusted `keydown`, which doesn't fire on right-click →
+Paste, drag-and-drop, or some on-screen-keyboard input. If the
+user does one of those into the composer before any keystroke,
+the observer wipes it. Treat `"my paste keeps disappearing right
+after an Ask"` as the symptom of this corner.
 
 ## Status widget (`ask-widget.ts`)
 

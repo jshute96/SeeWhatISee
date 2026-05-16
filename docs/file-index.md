@@ -121,7 +121,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules under `src/capture/` |
 | `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
 | `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, bake-in — orchestrates the submodules under `src/capture-page/` |
-| `src/ask-inject.ts` | MAIN-world helpers (attach files, type prompt, click submit) callable individually via a `window.postMessage` bridge from the widget; chip-count gate per call |
+| `src/ask-inject.ts` | MAIN-world helpers (clear composer, attach files, type prompt, click submit) callable via a `window.postMessage` bridge from the widget; chip-count gate per call |
 | `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
@@ -264,11 +264,11 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by the Ask specs so tests don't talk to the real claude.ai |
 | `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin contract for the live test suite — selectors plus per-provider DOM-verification helpers |
 | `tests/e2e-live/lib/bridge.ts` | Shared postMessage-bridge driver (`callBridge`, `driveBridge`) that mirrors the widget's `callMain` so live specs exercise the same code path |
-| `tests/e2e-live/lib/live-suite.ts` | Shared live-test cases parameterized by a `LiveProvider` — runs the same five tests against any provider |
+| `tests/e2e-live/lib/live-suite.ts` | Shared live-test cases parameterized by a `LiveProvider` — same suite runs against any provider |
 | `tests/e2e-live/claude.live.spec.ts` | Claude `LiveProvider` wiring (selectors imported from `claude.ts`, data-testid-based locators) — calls `runLiveSuite` |
 | `tests/e2e-live/claude-code.live.spec.ts` | Claude Code `LiveProvider` wiring — reuses Claude's selectors / locators, declares `acceptedAttachmentKinds: ['image']`; the shared suite swaps in extra images for the text-payload tests |
 | `tests/e2e-live/gemini.live.spec.ts` | Gemini `LiveProvider` wiring (selectors imported from `gemini.ts`, Quill + `uploader-file-preview` chips + Angular `user-query` locators) — calls `runLiveSuite` |
-| `tests/e2e-live/chatgpt.live.spec.ts` | ChatGPT `LiveProvider` wiring (selectors imported from `chatgpt.ts`, `group/file-tile` chips + `data-message-author-role="user"` bubble) — calls `runLiveSuite` |
+| `tests/e2e-live/chatgpt.live.spec.ts` | ChatGPT `LiveProvider` wiring — calls `runLiveSuite`, plus a draft-carryover regression test for the clearComposer workaround |
 | `tests/e2e-live/google.live.spec.ts` | Google live spec — custom (skips `runLiveSuite`); selectors smoke check, image-attaches-no-submit, image+prompt submit navigates to `/search?q=…` |
 
 ## Unit Tests (`tests/unit/`)

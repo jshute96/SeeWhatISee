@@ -80,6 +80,10 @@
     items: AskWidgetItem[];
     autoSubmit: boolean;
     selectors: AskInjectSelectorsLike;
+    // Mirror of the SW-side field; see `widget-store.ts` for the
+    // full rationale. Optional because pre-flag records (any open
+    // tabs at upgrade time) don't carry it.
+    clearComposerOnEntry?: boolean;
     runId: number;
     updatedAt: number;
   }
@@ -325,6 +329,29 @@
       }
       inFlightCount++;
       try {
+        // One-shot composer wipe for fresh-tab runs against
+        // providers that opted in (today: ChatGPT only). Fires
+        // before any item bridge call so a pre-populated composer
+        // doesn't get our text appended onto it. The runtime side
+        // also installs a wide-scope MutationObserver that keeps
+        // wiping any re-injected draft until the user's first
+        // trusted keystroke disengages it — see the
+        // `docs/ask-on-web.md` workaround section. Errors here are
+        // non-fatal: we'd rather run the items against a dirty
+        // composer than abort the whole Ask.
+        if (record.clearComposerOnEntry) {
+          try {
+            await callMain('clearComposer', {
+              selectors: record.selectors,
+            });
+          } catch (err) {
+            console.log(
+              '[SeeWhatISee Widget] [warn] clearComposer failed; continuing',
+              err,
+            );
+          }
+          if (activeRunId !== myRunId) return; // Superseded.
+        }
         for (let i = 0; i < record.items.length; i++) {
           if (activeRunId !== myRunId) return; // Superseded.
           const item = record.items[i];
@@ -582,22 +609,26 @@
   // mid-await — without it, `callMain` would leak its message
   // listener and the orchestrator would hang forever.
   //
-  //   attachFile  — settle (1.5 s) + chip-confirm (8 s) + buffer.
-  //                 The chip gate proves the SITE accepted the
-  //                 selection, NOT that the upload completed; the
-  //                 actual upload runs in the background and is
-  //                 covered by clickSubmit's submit-enable wait.
-  //   typePrompt  — synchronous text insertion; sub-second in
-  //                 practice. 5 s is comfortably above any plausible
-  //                 ProseMirror reset / re-render.
-  //   clickSubmit — polls for the submit button to leave its
-  //                 disabled state (the AI site holds it disabled
-  //                 while the upload is reaching the server). Inner
-  //                 SUBMIT_ENABLE_TIMEOUT_MS is 30 s; the bridge
-  //                 timeout sits just above it. We do NOT wait for
-  //                 the AI's response — only for submit to be
-  //                 clickable.
+  //   clearComposer — synchronous DOM wipe + MutationObserver
+  //                   install; sub-second in practice. 5 s mirrors
+  //                   typePrompt's headroom.
+  //   attachFile    — settle (1.5 s) + chip-confirm (8 s) + buffer.
+  //                   The chip gate proves the SITE accepted the
+  //                   selection, NOT that the upload completed; the
+  //                   actual upload runs in the background and is
+  //                   covered by clickSubmit's submit-enable wait.
+  //   typePrompt    — synchronous text insertion; sub-second in
+  //                   practice. 5 s is comfortably above any plausible
+  //                   ProseMirror reset / re-render.
+  //   clickSubmit   — polls for the submit button to leave its
+  //                   disabled state (the AI site holds it disabled
+  //                   while the upload is reaching the server). Inner
+  //                   SUBMIT_ENABLE_TIMEOUT_MS is 30 s; the bridge
+  //                   timeout sits just above it. We do NOT wait for
+  //                   the AI's response — only for submit to be
+  //                   clickable.
   const CALL_MAIN_TIMEOUTS_MS: Record<string, number> = {
+    clearComposer: 5000,
     attachFile: 15000,
     typePrompt: 5000,
     clickSubmit: 35000,

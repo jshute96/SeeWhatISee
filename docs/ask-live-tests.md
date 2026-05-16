@@ -57,7 +57,7 @@ these):
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote-debug port 9222 + persistent profile |
 | `.chrome-test-profile/` | Persistent browser profile holding AI-provider login sessions (gitignored) |
 | `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin shape: selectors + DOM-verification helpers |
-| `tests/e2e-live/lib/live-suite.ts` | Shared test cases — `runLiveSuite(provider)` runs all five tests against any plugin |
+| `tests/e2e-live/lib/live-suite.ts` | Shared test cases — `runLiveSuite(provider)` runs the suite against any plugin |
 | `tests/e2e-live/<provider>.live.spec.ts` | Thin per-provider wiring: builds a `LiveProvider`, calls `runLiveSuite` |
 
 The deterministic e2e fixture at `tests/fixtures/extension.ts`
@@ -224,7 +224,7 @@ Paths we did *not* take but that would in principle work:
 
 ## Per-provider tests
 
-Each provider runs the same five-test set, defined once in
+Each provider runs the same set of tests, defined once in
 `lib/live-suite.ts`:
 
 | Test | Submits? | Asserts |
@@ -234,6 +234,16 @@ Each provider runs the same five-test set, defined once in
 | Two prompt-only calls accumulate | No | Calling the runtime twice with text but no submit appends — pins the additive contract used by repeat-Ask flows. |
 | Two file-attach calls accumulate | No | Calling the runtime twice with files but no submit shows both attachments — same contract on the upload side. |
 | Multi-file + prompt → submit | **Yes** | Same payload + tagged prompt; provider-specific user-message locator sees the tag in the conversation. Then a follow-up call confirms the composer was reset and the runtime works against a fresh editor. |
+
+### ChatGPT-only
+
+`tests/e2e-live/chatgpt.live.spec.ts` carries one extra test —
+**image-only Ask after a prior draft leaves the composer clean** —
+that exercises the `clearComposer` machinery covering the
+ChatGPT draft-injection workaround documented in
+[`ask-on-web.md`](ask-on-web.md#chatgpt-draft-injection-workaround).
+The other providers don't need this; their fresh-tab composer is
+empty and `clearComposer` doesn't run.
 
 For destinations that accept only a subset of attachment kinds
 (Claude Code is image-only via `LiveProvider.acceptedAttachmentKinds`),
