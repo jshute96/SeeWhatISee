@@ -398,6 +398,38 @@ export async function startCaptureWithDetailsFromImage(
 }
 
 /**
+ * True only when *both* the screenshot and the HTML capture produced
+ * actual error strings — i.e. there is nothing useful to render on the
+ * Capture page. We deliberately do NOT treat `htmlUnavailable` as a
+ * failure here: that flag is set by the image-source / image-tab /
+ * upload flows to *quietly* disable the Save HTML row, and pairing
+ * that with the (separately-thrown) image-decode failures of those
+ * flows is not what this short-circuit is for.
+ */
+function isTotalCaptureFailure(data: InMemoryCapture): boolean {
+  return !!data.screenshotError && !!data.htmlError;
+}
+
+/**
+ * Combine both halves of a total capture failure into one message for
+ * the `?error=` URL. When both halves carry the same string (typical
+ * for policy / restricted-URL blocks — the same Chrome runtime error
+ * surfaces at both the screenshot and the HTML call sites) we collapse
+ * to one line. Otherwise we prefix each half with `Screenshot:` /
+ * `HTML:` and join with `\n`; `#capture-failed-message` has
+ * `white-space: pre-wrap` so the newline renders.
+ */
+function getCombinedCaptureError(data: InMemoryCapture): string {
+  if (data.screenshotError && data.screenshotError === data.htmlError) {
+    return data.screenshotError;
+  }
+  const errors: string[] = [];
+  if (data.screenshotError) errors.push(`Screenshot: ${data.screenshotError}`);
+  if (data.htmlError) errors.push(`HTML: ${data.htmlError}`);
+  return errors.join('\n');
+}
+
+/**
  * Open the Capture page tab next to `opener` and stash the
  * `InMemoryCapture` under the new tab's session-storage key so the
  * page can fetch it via `getDetailsData`. Shared by
@@ -427,6 +459,15 @@ async function openCapturePageWithSession(
   };
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
   if (opener?.id !== undefined) createProps.openerTabId = opener.id;
+
+  if (isTotalCaptureFailure(data)) {
+    const message = getCombinedCaptureError(data);
+    await chrome.tabs.create({
+      ...createProps,
+      url: capturePageUrlWithError(message),
+    });
+    return;
+  }
 
   // Drop over-cap HTML before it can blow the session-storage quota.
   // The Capture page's existing `htmlError` path takes over from here

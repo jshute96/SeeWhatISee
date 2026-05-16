@@ -1595,12 +1595,26 @@ re-activation is required:
 - **Capture-failed pane (`?error=...`).** Every toolbar / hotkey /
   context-menu capture failure routes through
   `runWithErrorReporting`, which opens `capture.html?error=<encoded
-  message>` next to the source tab. The same pane is also reused by
-  the session-storage-quota refusal in `openCapturePageWithSession`,
-  so a too-big screenshot lands in the same place. In the no-session
-  branch, `loadData` reads the param **before** the upload-flow
-  check and reveals `#capture-failed-error` with the message instead
-  of the generic `#missing-session-error` pane.
+  message>` next to the source tab. The same pane is also reused by:
+  - the session-storage-quota refusal in
+    `openCapturePageWithSession`, so a too-big screenshot lands in
+    the same place; and
+  - the **total-capture-failure** short-circuit in
+    `openCapturePageWithSession` — when both the screenshot and the
+    HTML capture produced real error strings
+    (`screenshotError` AND `htmlError` both set), the page would
+    have nothing useful to show, so we open the error pane directly
+    rather than rendering an empty capture card. `htmlUnavailable`
+    on its own does **not** trigger this (it's the
+    deliberately-skip-HTML signal for the image/upload flows, not a
+    failure). Identical screenshot- and HTML-error strings are
+    de-duplicated to one line; otherwise the combined message is
+    rendered as *"Screenshot: …\nHTML: …"* — the
+    `#capture-failed-message` div has `white-space: pre-wrap` so
+    the newline shows up.
+  In the no-session branch, `loadData` reads the param **before** the
+  upload-flow check and reveals `#capture-failed-error` with the
+  message instead of the generic `#missing-session-error` pane.
   - Messages are produced by `friendlyErrorMessage` (rewrites of
     common throw-site strings like *"Couldn't find a tab to
     capture…"*) or by `formatQuotaError` (size-aware quota text).

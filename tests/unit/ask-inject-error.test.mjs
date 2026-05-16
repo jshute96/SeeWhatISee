@@ -24,6 +24,12 @@ test('friendlyInjectError: defensive — returns raw message for any "cannot be 
   assert.equal(friendlyInjectError(err), errMsg);
 });
 
+test('friendlyInjectError: returns raw message for "Cannot access contents" permission block', () => {
+  const errMsg = 'Cannot access contents of the page. Extension manifest must request permission to access the respective host.';
+  const err = new Error(errMsg);
+  assert.equal(friendlyInjectError(err), errMsg);
+});
+
 test('friendlyInjectError: handles string errors', () => {
   assert.equal(friendlyInjectError('ExtensionsSettings policy block'), 'ExtensionsSettings policy block');
 });
