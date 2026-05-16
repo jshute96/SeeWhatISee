@@ -669,3 +669,145 @@ test('details: direct load with no session shows error pane', async ({
 
   await page.close();
 });
+
+test('details: total capture failure with identical errors redirects to error page and deduplicates message', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  const sw = await getServiceWorker();
+
+  // 1. Install stubs in the Service Worker simulating identical errors
+  await sw.evaluate(() => {
+    (self as any).__origCaptureVisibleTab = chrome.tabs.captureVisibleTab;
+    (self as any).__origExecuteScript = chrome.scripting.executeScript;
+
+    chrome.tabs.captureVisibleTab = (async () => {
+      throw new Error('This page cannot be scripted due to an ExtensionsSettings policy.');
+    }) as any;
+
+    chrome.scripting.executeScript = (async () => {
+      throw new Error('This page cannot be scripted due to an ExtensionsSettings policy.');
+    }) as any;
+  });
+
+  try {
+    // 2. Wait for the new page event targeting capture.html
+    const capturePagePromise = extensionContext.waitForEvent('page', {
+      predicate: (p) => p.url().includes('/capture.html'),
+      timeout: 20000,
+    });
+
+    // 3. Trigger the capture flow
+    await sw.evaluate(async () => {
+      await (
+        self as unknown as {
+          SeeWhatISee: { startCaptureWithDetails: () => Promise<void> };
+        }
+      ).SeeWhatISee.startCaptureWithDetails();
+    });
+
+    const capturePage = await capturePagePromise;
+    await capturePage.waitForLoadState('domcontentloaded');
+
+    // 4. Assert redirect and that identical errors are deduplicated (no Screenshot/HTML prefixes)
+    expect(capturePage.url()).toContain('capture.html?error=');
+
+    const errorPane = capturePage.locator('#capture-failed-error');
+    await expect(errorPane).toBeVisible();
+
+    const errorMsg = capturePage.locator('#capture-failed-message');
+    await expect(errorMsg).toHaveText('This page cannot be scripted due to an ExtensionsSettings policy.');
+
+    await capturePage.close();
+  } finally {
+    // 5. Clean up service worker stubs
+    await sw.evaluate(() => {
+      if ((self as any).__origCaptureVisibleTab) {
+        chrome.tabs.captureVisibleTab = (self as any).__origCaptureVisibleTab;
+        delete (self as any).__origCaptureVisibleTab;
+      }
+      if ((self as any).__origExecuteScript) {
+        chrome.scripting.executeScript = (self as any).__origExecuteScript;
+        delete (self as any).__origExecuteScript;
+      }
+    });
+    await openerPage.close();
+  }
+});
+
+test('details: total capture failure with different errors redirects to error page with combined message', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const openerPage = await extensionContext.newPage();
+  await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await openerPage.bringToFront();
+
+  const sw = await getServiceWorker();
+
+  // 1. Install stubs in the Service Worker simulating different errors
+  await sw.evaluate(() => {
+    (self as any).__origCaptureVisibleTab = chrome.tabs.captureVisibleTab;
+    (self as any).__origExecuteScript = chrome.scripting.executeScript;
+
+    chrome.tabs.captureVisibleTab = (async () => {
+      throw new Error('Simulated captureVisibleTab policy block.');
+    }) as any;
+
+    chrome.scripting.executeScript = (async () => {
+      throw new Error('Simulated executeScript policy block.');
+    }) as any;
+  });
+
+  try {
+    // 2. Wait for the new page event targeting capture.html
+    const capturePagePromise = extensionContext.waitForEvent('page', {
+      predicate: (p) => p.url().includes('/capture.html'),
+      timeout: 20000,
+    });
+
+    // 3. Trigger the capture flow
+    await sw.evaluate(async () => {
+      await (
+        self as unknown as {
+          SeeWhatISee: { startCaptureWithDetails: () => Promise<void> };
+        }
+      ).SeeWhatISee.startCaptureWithDetails();
+    });
+
+    const capturePage = await capturePagePromise;
+    await capturePage.waitForLoadState('domcontentloaded');
+
+    // 4. Assert redirect and combined output format
+    expect(capturePage.url()).toContain('capture.html?error=');
+
+    const errorPane = capturePage.locator('#capture-failed-error');
+    await expect(errorPane).toBeVisible();
+
+    const errorMsg = capturePage.locator('#capture-failed-message');
+    await expect(errorMsg).toContainText('Screenshot: Simulated captureVisibleTab policy block.');
+    await expect(errorMsg).toContainText('HTML: Simulated executeScript policy block.');
+
+    await capturePage.close();
+  } finally {
+    // 5. Clean up service worker stubs
+    await sw.evaluate(() => {
+      if ((self as any).__origCaptureVisibleTab) {
+        chrome.tabs.captureVisibleTab = (self as any).__origCaptureVisibleTab;
+        delete (self as any).__origCaptureVisibleTab;
+      }
+      if ((self as any).__origExecuteScript) {
+        chrome.scripting.executeScript = (self as any).__origExecuteScript;
+        delete (self as any).__origExecuteScript;
+      }
+    });
+    await openerPage.close();
+  }
+});
+

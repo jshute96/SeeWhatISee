@@ -1130,7 +1130,9 @@ async function openNewProviderTabWithPlaceholder(
   } catch (err) {
     if (isPermanentInjectBlock(err)) {
       chrome.tabs.remove(tabId).catch(() => {});
-      throw new EarlyExitError(friendlyInjectError(err));
+      throw new EarlyExitError(
+        `Inject into ${provider.label} failed: ${friendlyInjectError(err)}`
+      );
     }
     // Transient — fall through.
   }
@@ -1451,7 +1453,11 @@ export function friendlyInjectError(err: unknown): string {
   // when reading the SW console.
   console.log('[SeeWhatISee] [warn] Inject error:', msg);
 
-  if (/ExtensionsSettings/i.test(msg) || /cannot be scripted/i.test(msg)) {
+  if (
+    /ExtensionsSettings/i.test(msg) ||
+    /cannot be scripted/i.test(msg) ||
+    /Cannot access contents/i.test(msg)
+  ) {
     return msg;
   }
 

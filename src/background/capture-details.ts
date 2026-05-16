@@ -397,6 +397,22 @@ export async function startCaptureWithDetailsFromImage(
   await openCapturePageWithSession(data, tab);
 }
 
+function isTotalCaptureFailure(data: InMemoryCapture): boolean {
+  const screenshotFailed = !!data.screenshotError;
+  const htmlFailed = data.htmlUnavailable || !!data.htmlError;
+  return screenshotFailed && htmlFailed;
+}
+
+function getCombinedCaptureError(data: InMemoryCapture): string {
+  if (data.screenshotError && data.screenshotError === data.htmlError) {
+    return data.screenshotError;
+  }
+  const errors: string[] = [];
+  if (data.screenshotError) errors.push(`Screenshot: ${data.screenshotError}`);
+  if (data.htmlError) errors.push(`HTML: ${data.htmlError}`);
+  return errors.join('\n');
+}
+
 /**
  * Open the Capture page tab next to `opener` and stash the
  * `InMemoryCapture` under the new tab's session-storage key so the
@@ -427,6 +443,15 @@ async function openCapturePageWithSession(
   };
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
   if (opener?.id !== undefined) createProps.openerTabId = opener.id;
+
+  if (isTotalCaptureFailure(data)) {
+    const message = getCombinedCaptureError(data);
+    await chrome.tabs.create({
+      ...createProps,
+      url: capturePageUrlWithError(message),
+    });
+    return;
+  }
 
   // Drop over-cap HTML before it can blow the session-storage quota.
   // The Capture page's existing `htmlError` path takes over from here
