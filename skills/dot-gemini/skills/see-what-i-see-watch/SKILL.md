@@ -7,19 +7,18 @@ description: Watch for new captures from the SeeWhatISee Chrome extension. Each 
 
 Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, process it as described below, then watch for the next one. Keep looping until the user tells you to stop, or until a failure.
 
-This is a foreground loop: each iteration blocks on a shell command that doesn't return until the next capture lands.
+This is a **foreground loop: each iteration blocks** on a shell command that doesn't return until the next capture lands.
 
 ## Getting snapshots in a loop
 
-1. **Start the loop.** Run `./scripts/watch-and-copy.sh` with no timeout. This blocks until there's a capture to process, then prints a JSON record to stdout.
+1. **Wait for the next capture.** Run `./scripts/watch-and-copy.sh` with no timeout. This blocks until there's a capture to process, then prints a JSON record to stdout.  **Block until it completes.**
 
-2. **On each record,** process it as described in the next section, then immediately launch the next iteration: run `./scripts/watch-and-copy.sh --after <timestamp>` (again with no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures that arrived while you were processing.
+2. **Check the exit code:**
+  - **Non-zero exit (killed / error):** Tell the user the watcher stopped and do NOT restart.
+  - **Exit 0 (success — a capture arrived):**
 
-3. **Repeat forever**, but stop on failures. Don't try to recover from failures — just report them and exit.
-
-## Process each snapshot
-
-1. The JSON record contains `{timestamp, url, title}` plus any of:
+3. **Read captured stdout to get the JSON record(s).** 
+  The JSON record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `filename` — absolute path.
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.
@@ -39,7 +38,7 @@ This is a foreground loop: each iteration blocks on a shell command that doesn't
 
   **Look at referenced files only. Don't go fishing for others unless asked to.**
 
-2. Process the capture:
+4. **Process each snapshot record** **before restarting the script for the next iteration**.
   - If `screenshot` is present, read `screenshot.filename`.
     - **If `screenshot.hasHighlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't read the file up front (HTML can be large); wait until you know what to look for.
@@ -50,3 +49,8 @@ This is a foreground loop: each iteration blocks on a shell command that doesn't
     - For HTML-only captures, report that you have an HTML snapshot from the source `url` and ask the user what they want to know.
     - For selection-only captures, quote or summarize the selected fragment and mention the source `url`.
     - For URL-only captures (no files), report the `url` and ask the user what they want to know about it.
+
+5. After reporting output, **Launch the next iteration**:
+   Run `./scripts/watch-and-copy.sh` (again with no timeout) to start the next loop.
+
+This **repeats forever** until the watcher exits non-zero or the user otherwise tells you to stop.

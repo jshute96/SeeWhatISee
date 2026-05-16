@@ -38,8 +38,7 @@
 ### Gemini plugin
 * Background watching doesn't work because asynchronous background commands aren't supported, so we just have a foreground version of the watch command for now.
 * BUG: command doesn't work if multiple gemini's run in workspaces with the same name, because one of their tmp dirs has -1, and we don't know that. See copy-last-snapshot.sh.
-* Can we do permissions in the extension automatically?
-  - If I don't add them manually, I see Gemini decide it can't run the script, but can read it and will then act as its own interpreter. Crazy.
+* Fix general unreliability and permissions issues: https://github.com/jshute96/SeeWhatISee/issues/27.
 
 ### Integrating other tools to read captures
 * CLI skills that work for other tools
