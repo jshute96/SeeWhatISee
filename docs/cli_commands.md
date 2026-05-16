@@ -15,7 +15,6 @@ and Gemini CLI) read them via slash commands. This doc covers:
 | `/see-what-i-see`            | ✓           | ✓          | one-shot         |
 | `/see-what-i-see-watch`      | ✓ (async background) | ✓ (foreground loop) | loop |
 | `/see-what-i-see-stop`       | ✓           | —          | one-shot         |
-| `/see-what-i-see-help`       | ✓           | —          | one-shot         |
 
 Both CLIs' `/see-what-i-see` and `/see-what-i-see-watch` use the
 same JSON record schema, share the same canonical "process each
@@ -67,28 +66,31 @@ field on the record. See
   until they interrupt.
 - **When to use it.** You're iterating on a page and want each
   click to get a description without re-invoking the slash command.
-- **`--after` catch-up.** Both implementations avoid skipping
-  captures that arrived while the agent was processing the
-  previous one: each iteration passes the just-processed record's
-  `timestamp` as `--after <ts>` on the next invocation, which
-  checks `log.json` for unseen records before blocking.
+- **`--after` catch-up (Gemini only).** The Gemini foreground
+  loop avoids skipping captures that arrived while the agent was
+  processing the previous one: each iteration passes the
+  just-processed record's `timestamp` as `--after <ts>` on the next
+  invocation, which checks `log.json` for unseen records before
+  blocking. Claude's `Monitor`-backed watcher doesn't relaunch
+  per-event so it doesn't need `--after` — the underlying
+  `--loop` keeps streaming every new record without gaps.
 
-### Claude Code (asynchronous background)
+### Claude Code (Monitor + persistent loop)
 
 - Backed by `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`,
-  a thin wrapper that `exec`s `SeeWhatISee.sh --watch --pid-lockfile`.
-- Claude Code supports real background tasks. The skill starts
-  `watch.sh` with `run_in_background: true` and no timeout; the
-  script blocks on `log.json`'s mtime and exits after emitting one
-  record. When the task completes, the skill reads its captured
-  stdout, describes the record, and launches the next iteration
-  (with `--after <ts>`) — again as a background task.
+  a thin wrapper that `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile`.
+- Claude Code's `Monitor` tool runs a long-lived process and
+  delivers each stdout line as its own notification. The skill
+  launches `watch.sh` via `Monitor` with `persistent: true`; the
+  `--loop` flag keeps `SeeWhatISee.sh` emitting one JSON record
+  per capture without exiting, so the agent gets a notification
+  per capture without relaunching the watcher.
 - `--pid-lockfile` makes the watcher write `.watch.pid` so a second
   invocation auto-kills the first. `/see-what-i-see-stop` runs the
   dedicated `stop.sh` wrapper (sibling skill, which `exec`s
-  `SeeWhatISee.sh --stop`) to terminate.
-- Without `--catch-up-one`, the wrapper emits **all** records since
-  `--after` in one go (multi-record emit). Claude processes each.
+  `SeeWhatISee.sh --stop`) to terminate; the previous `Monitor`
+  observes the script exit and notifies the agent that the watcher
+  stopped.
 
 ### Gemini CLI (foreground loop)
 
@@ -108,19 +110,15 @@ field on the record. See
   The user interrupts Gemini (or tells the agent to stop) to end
   the loop.
 
-## `/see-what-i-see-stop` and `/see-what-i-see-help` (Claude only)
+## `/see-what-i-see-stop` (Claude only)
 
-- **`/see-what-i-see-stop`.** Calls
-  `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
+- Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
   a thin wrapper that `exec`s `SeeWhatISee.sh --stop`. The unified
   script resolves the watch directory the same way the watcher
   does, kills the PID stored in `$DIR/.watch.pid`, and removes the
   file. (`watch.sh --stop` reaches the same backend code path,
   since the watch wrapper forwards arbitrary flags through.)
   Gemini has no equivalent — its loop isn't a background process.
-- **`/see-what-i-see-help`.** Prints a static text summary of the
-  commands. Could be replicated on the Gemini side but is
-  low-value there (Gemini's `/help` already lists commands).
 
 ## Scripts
 
@@ -134,7 +132,7 @@ where needed, computes the Gemini target dir for `--copy-to-dir`.
 skills/claude-plugin/                ← Claude plugin install tree (mirrored into ../SeeWhatISee-claude/plugin/)
   skills/see-what-i-see/scripts/SeeWhatISee.sh            ← unified backend (verbatim copy of skills/SeeWhatISee.sh)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.sh --get-latest
-  skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch    → SeeWhatISee.sh --watch --pid-lockfile
+  skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch    → SeeWhatISee.sh --watch --loop --pid-lockfile
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.sh --stop
 skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
   skills/see-what-i-see/scripts/SeeWhatISee.sh            ← unified backend (verbatim copy of skills/SeeWhatISee.sh)
@@ -165,7 +163,7 @@ skill's `scripts/` dir for the backend via
 | Wrapper | Forwards to `SeeWhatISee.sh` flags | Source → Target | Emits |
 |---------|------------------------------------|------------------|-------|
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`        | `--get-latest`                                  | `$DIR` (in place) | last record |
-| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --pid-lockfile` (forwards `--loop`, `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | all new records since `--after`, then watches until killed |
+| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | one JSON record per capture, streaming until killed |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`         | `--stop`                                        | `$DIR` (in place) | none (just stops the watcher) |
 | `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`   | `--get-latest --copy-to-dir <tmp>`              | `$SRC_DIR` → `$TARGET_DIR` (copied) | last record |
 | `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | `--watch --catch-up-one --copy-to-dir <tmp>` (forwards `--after`) | `$SRC_DIR` → `$TARGET_DIR` (copied) | one new record per invocation |
@@ -176,10 +174,12 @@ Key differences come from the wrapper-supplied defaults:
   the unified script just rewrites paths in place. Gemini wrappers
   pass `--copy-to-dir <tmp>`, so it also copies referenced files
   into the workspace tmp dir (required by Gemini's sandbox).
-- **Multi-emit vs single-emit.** Claude `watch.sh` lets `--after`
-  emit all newer records (default). Gemini `watch-and-copy.sh`
-  passes `--catch-up-one`, capping `--after` at a single record —
-  the agent loops externally.
+- **Loop vs single-emit.** Claude `watch.sh` passes `--loop`, so
+  the script stays alive and streams every new record as a
+  separate JSON line until killed. Gemini `watch-and-copy.sh`
+  passes `--catch-up-one` instead (mutually exclusive with
+  `--loop`): each invocation emits at most one record and exits,
+  so the agent loops externally.
 - **Pidfile.** Only Claude `watch.sh` passes `--pid-lockfile`,
   because only Claude Code has async background tasks with a real
   OS process lifetime the script can manage. Same applies to
@@ -209,7 +209,6 @@ Several files drive the prompts:
 - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
 - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
 - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
-- `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
@@ -226,7 +225,8 @@ across all generated files.
 
 Platform-specific differences stay in the top-level templates:
 
-- Claude `watch.md` uses `run_in_background: true` + auto-kill-via-pidfile;
+- Claude `watch.md` uses the `Monitor` tool with `persistent: true` +
+  `--loop` (one notification per capture) + auto-kill-via-pidfile;
   Gemini `watch.md` is a blocking single-shot loop + `--after` re-run.
 - Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses
   `copy-last-snapshot.sh` via `!{...}`.

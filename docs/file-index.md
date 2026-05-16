@@ -25,7 +25,6 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/skills/see-what-i-see` | Symlink to `skills/claude-plugin/skills/see-what-i-see` |
 | `.claude/skills/see-what-i-see-watch` | Symlink to `skills/claude-plugin/skills/see-what-i-see-watch` |
 | `.claude/skills/see-what-i-see-stop` | Symlink to `skills/claude-plugin/skills/see-what-i-see-stop` |
-| `.claude/skills/see-what-i-see-help` | Symlink to `skills/claude-plugin/skills/see-what-i-see-help` |
 
 ## Claude Commands (`.claude/commands/`)
 
@@ -46,7 +45,6 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/claude.see.md` | Template for `skills/claude-plugin/skills/see-what-i-see/SKILL.md` |
 | `skills/claude.watch.md` | Template for `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/claude.stop.md` | Template for `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md` |
-| `skills/claude.help.md` | Template for `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md` |
 | `skills/gemini.see.md` | Template for `skills/dot-gemini/skills/see-what-i-see/SKILL.md` |
 | `skills/gemini.watch.md` | Template for `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
@@ -71,7 +69,7 @@ Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skill
 | `skills/claude-plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
 | `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.sh` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.sh --get-latest` |
-| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --pid-lockfile` (forwards `--loop`, `--after`, `--print_selection`, `--stop`) |
+| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`) |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --stop` |
 
 **NOTE: the skills below are generated from `skills/`, do not edit directly**
@@ -81,7 +79,6 @@ Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skill
 | `skills/claude-plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
 | `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
 | `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
-| `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md` | `/see-what-i-see-help` — summary of see-what-i-see commands |
 
 ## Gemini CLI Tree (`skills/dot-gemini/`)
 

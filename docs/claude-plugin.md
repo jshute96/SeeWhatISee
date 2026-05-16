@@ -39,10 +39,9 @@ SeeWhatISee-claude/                  # release repo
         ├── see-what-i-see-watch/
         │   ├── SKILL.md
         │   └── scripts/watch.sh      # wrapper → SeeWhatISee.sh --watch --pid-lockfile
-        ├── see-what-i-see-stop/
-        │   ├── SKILL.md
-        │   └── scripts/stop.sh       # wrapper → SeeWhatISee.sh --stop
-        └── see-what-i-see-help/SKILL.md  # no scripts; help text only
+        └── see-what-i-see-stop/
+            ├── SKILL.md
+            └── scripts/stop.sh       # wrapper → SeeWhatISee.sh --stop
 ```
 
 `SeeWhatISee.sh` is owned by the `see-what-i-see` skill; the
@@ -82,8 +81,7 @@ install path:
 └── skills/                       # local-dev: symlinks into skills/claude-plugin/skills/
     ├── see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
     ├── see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
-    ├── see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
-    └── see-what-i-see-help  -> ../../skills/claude-plugin/skills/see-what-i-see-help
+    └── see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
 ```
 
 
@@ -163,7 +161,7 @@ repo; `skills/claude-plugin/skills/<name>/` in this dev repo) containing a
 ---
 name: see-what-i-see-watch
 description: Start a background loop that watches for new captures ... Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
-allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read"
+allowed-tools: "Monitor,Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read(~/Downloads/SeeWhatISee/**)"
 ---
 ```
 
@@ -319,7 +317,6 @@ the installed plugin would use:
 .claude/skills/see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
 .claude/skills/see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
 .claude/skills/see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
-.claude/skills/see-what-i-see-help  -> ../../skills/claude-plugin/skills/see-what-i-see-help
 ```
 
 This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/claude-plugin` for
@@ -403,18 +400,23 @@ check — run it before committing any manifest changes.
 - **Relative-path sources only work over git.** If we ever distribute
   the marketplace as a direct URL to `marketplace.json`, we'd need to
   switch the plugin entry to a `github`/`url` source.
-- **Skill-frontmatter `allowed-tools` doesn't cover the `watch` skill's
-  Read calls reliably.**
-  - The `Read(~/Downloads/SeeWhatISee/**)` pattern in each skill's
-    frontmatter silences prompts for `see` and `stop`, but the `watch`
-    skill still prompts on re-runs after the background `watch.sh` task
-    completes.
-  - Working hypothesis: the skill's scoped permissions aren't in effect
-    when the model resumes on a new turn after a background task.
-  - Workaround (shipped in `README.md` and `see-what-i-see-help`): have
-    users add a `Read(~/Downloads/SeeWhatISee/**)` entry to their
-    user-level `$HOME/.claude/settings.json`, which applies across
-    turns regardless of skill scope.
+- **Skill-frontmatter `allowed-tools` didn't cover the `watch` skill's
+  Read calls reliably (resolved by switching to `Monitor`).**
+  - When the watch loop was built on `Bash(run_in_background)` and
+    re-launched per capture, the skill's `Read(~/Downloads/SeeWhatISee/**)`
+    pattern silenced prompts for `see` and `stop` but not `watch` — every
+    re-run after a background task completion re-prompted.
+  - Working hypothesis at the time: the skill's scoped permissions
+    weren't in effect when the model resumed on a new turn after a
+    background task.
+  - Old workaround: have users add the `Read(...)` and `Bash(...)`
+    entries to their user-level `$HOME/.claude/settings.json`.
+  - Current fix: the watch skill now uses the `Monitor` tool with
+    `persistent: true`, so the watcher launches once and streams each
+    capture as a notification instead of relaunching per event. The
+    permission-prompt problem goes away with the relaunches, so the
+    user-level workaround is no longer needed and was removed from
+    `README.md`.
   - Tracking: https://github.com/jshute96/SeeWhatISee/issues/2.
 - **Plugin-level `settings.json` permissions didn't gate anything.**
   The plugins reference says only `agent` settings are officially

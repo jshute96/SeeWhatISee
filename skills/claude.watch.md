@@ -1,7 +1,7 @@
 ---
 name: see-what-i-see-watch
 description: Start a background loop that watches for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
-allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read(~/Downloads/SeeWhatISee/**)"
+allowed-tools: "Monitor,Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read(~/Downloads/SeeWhatISee/**)"
 ---
 
 Start a background loop that watches for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
@@ -10,16 +10,16 @@ Start a background loop that watches for new captures from the SeeWhatISee Chrom
 
 ## Getting snapshots in a loop
 
-1. **Start the loop.** Run `${CLAUDE_SKILL_DIR}/scripts/watch.sh` via the Bash tool with `run_in_background: true` (no timeout — let it run indefinitely). This blocks until the next capture arrives. (`watch.sh` auto-kills any previous watcher via its `.watch.pid` file, so no manual guard is needed.)
+1. **Start the watcher.** Use the `Monitor` tool with:
+   - `command`: `${CLAUDE_SKILL_DIR}/scripts/watch.sh`
+   - `persistent`: `true`
+   - `description`: `see-what-i-see-watch`
 
-2. **On completion.** When the background task completes, check its exit code:
-  - **Non-zero exit (killed / error):** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
-  - **Exit 0 (success — a capture arrived):**
-    1. Read the task's captured stdout to get the JSON record(s). The JSON has absolute paths already filled in for `screenshot`, `contents`, and `selection`.
-    2. Process each record as described below.
-    3. Immediately launch the next iteration: run `${CLAUDE_SKILL_DIR}/scripts/watch.sh --after <timestamp>` again with `run_in_background: true` (no timeout), passing the most recently processed record's `timestamp` field. The `--after` flag ensures we don't miss any captures added before we restarted; if any captures are reported on the next run, process each the same way.
+   Each line of stdout from the script is one capture record, delivered as its own notification. (`watch.sh` auto-kills any previous watcher via its `.watch.pid` file, so no manual guard is needed.)
 
-3. **Repeat forever** until the watcher exits non-zero or the user otherwise tells you to stop.
+2. **Process each notification as it arrives.** Each notification carries one JSON record — process it as described in the section below.
+
+3. **When the monitor reports the script exited:** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
 
 ## Process each snapshot
 

@@ -104,7 +104,6 @@ do not edit the per-bundle copies.
   - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see-help/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`

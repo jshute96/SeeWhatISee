@@ -262,7 +262,6 @@ provided:
 - `/see-what-i-see-watch` — background loop that describes each
   new capture as it arrives
 - `/see-what-i-see-stop` — stop the watcher
-- `/see-what-i-see-help` — print a summary of the commands
 
 Layout:
 

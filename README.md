@@ -107,7 +107,6 @@ You can configure:
 - `/see-what-i-see` — read the latest snapshot and describe it
 - `/see-what-i-see-watch` — watch for new snapshots to appear in the background, and then look at them when they appear
 - `/see-what-i-see-stop` — stop a running watch loop
-- `/see-what-i-see-help` — print a summary of the commands
 
 If you've added a prompt with the snapshot, Claude will follow it.
 
@@ -147,24 +146,21 @@ Add the marketplace and install the plugin:
 
 This loads the released version of the Claude plugin from the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) GitHub repository.
 
-#### Avoiding permission prompts
+#### Avoiding permission prompts (Optional)
 
-`/see-what-i-see-watch` may trigger permission prompts when restarting to watch for the next screenshot.
+`/see-what-i-see-watch` triggers a permission prompt when it reads screenshot files after a background notification.
 
-To avoid this, add this to `$HOME/.claude/settings.json`, replacing `HOMEDIR` with your home directory (which is printed in the permission prompt):
+Add this to `$HOME/.claude/settings.json` to avoid those prompts.
 
-```
+```json
+{
   "permissions": {
     "allow": [
-      "Bash(HOMEDIR/.claude/plugins/cache/see-what-i-see-marketplace/**)",
       "Read(~/Downloads/SeeWhatISee/**)"
     ]
   }
+}
 ```
-
-`/see-what-i-see-help` also includes this suggestion.
-
-[Issue #2](https://github.com/jshute96/SeeWhatISee/issues/2) is about finding a better workaround to avoid permission prompts.
 
 ### Gemini CLI extension
 

@@ -32,8 +32,7 @@
 ## Skills and plugins
 
 ### Claude plugin
-* Permissions prompts on the re-run of watch skill - can we avoid them?
-  - This is https://github.com/jshute96/SeeWhatISee/issues/2.
+* Is there a way to give the `-watch` skill the Read permission it needs without editing `settings.json`?
 
 ### Gemini plugin
 * Background watching doesn't work because asynchronous background commands aren't supported, so we just have a foreground version of the watch command for now.

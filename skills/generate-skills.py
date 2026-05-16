@@ -40,7 +40,6 @@ PAIRS = [
     ("claude.see.md",    "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md",  "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
     ("claude.stop.md",   "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
-    ("claude.help.md",   "skills/claude-plugin/skills/see-what-i-see-help/SKILL.md"),
     ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md"),
     ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md"),
     ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md"),
