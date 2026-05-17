@@ -32,11 +32,22 @@ const FILE_TILE_SELECTOR = 'div[class*="group/file-tile"]';
 // Matches the per-chip remove button. ChatGPT's aria-label looks like
 // `Remove file 1: contents.html` — the leading number is positional
 // and re-renumbers as files are added/removed, so we anchor on the
-// `: <filename>` suffix instead. Using `*=` (substring) plus the
-// colon-space prefix avoids cross-chip collisions on partial filename
-// overlaps.
+// `: <filename>` suffix.
+//
+// ChatGPT also auto-renames duplicate uploads (when the same filename
+// has been uploaded before in this account) to `name(N).ext` — so
+// `first.png` re-uploaded ten times becomes `first(10).png`. The
+// regex allows an optional `(\d+)` between the base name and the
+// extension so the test still binds to "this is the chip for
+// first.png" without caring about the rename counter.
 function removeButton(page: Page, filename: string): Locator {
-  return page.locator(`button[aria-label*=": ${filename}"]`);
+  const dot = filename.lastIndexOf('.');
+  const base = dot >= 0 ? filename.slice(0, dot) : filename;
+  const ext = dot >= 0 ? filename.slice(dot) : '';
+  const escape = (s: string): string =>
+    s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`: ${escape(base)}(\\(\\d+\\))?${escape(ext)}$`);
+  return page.getByRole('button', { name: re });
 }
 
 const chatgpt: LiveProvider = {
@@ -44,6 +55,11 @@ const chatgpt: LiveProvider = {
   label: 'ChatGPT',
   newTabUrl: chatgptProvider.newTabUrl,
   selectors: SELECTORS,
+  // Mirror the production cap so the shared multi-file cases drop
+  // their third attachment (the SW refuses sends that exceed it).
+  // Reading from `chatgptProvider` keeps the live suite in sync if
+  // the production cap ever changes.
+  maxAttachmentCount: chatgptProvider.maxAttachmentCount,
 
   async waitForComposerReady(page: Page): Promise<void> {
     // ProseMirror appears once the composer JS hydrates. Without this

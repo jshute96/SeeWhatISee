@@ -350,7 +350,7 @@ Layout intent (full rationale in the `.controls` CSS comment in
 | `src/ask/providers.ts` | Provider registry types + `ASK_PROVIDERS` array. |
 | `src/ask/claude.ts` | Claude adapter — provider data only (label, URLs, ranked selectors). |
 | `src/ask/gemini.ts` | Gemini adapter — same shape as Claude's, plus a `preFileInputClicks` chain to surface Gemini's dynamic file input. |
-| `src/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, and the composer is ProseMirror so the typing path matches Claude's. |
+| `src/ask/chatgpt.ts` | ChatGPT adapter — provider data only; `#upload-files` is in the initial DOM so no `preFileInputClicks` is needed, the composer is ProseMirror so the typing path matches Claude's, and `maxAttachmentCount: 2` reflects the composer's per-turn cap. |
 | `src/ask/google.ts` | Google Search adapter — `newTabOnly`, image-only, types into a `<textarea>` instead of a contenteditable; submit posts the search form to `/search`. |
 | `src/ask-inject.ts` | Provider-agnostic runtime that runs in the AI tab's MAIN world. |
 | `src/ask-widget.ts` | In-page status / recovery widget that runs in the AI tab's ISOLATED world (see "Status widget" below). |
@@ -369,6 +369,7 @@ type AskProvider = {
   enabled: boolean;             // false = "coming soon" in the menu
   acceptedAttachmentKinds?: ('image' | 'text')[]; // provider-wide; omit = all
   urlVariants?: AskUrlVariant[];                  // per-URL overrides
+  maxAttachmentCount?: number;                    // per-turn cap; omit = no cap
   newTabOnly?: boolean;                           // skip pinning + existing-tab listing
   selectors: AskInjectSelectors;
 };
@@ -543,6 +544,40 @@ screen that can't accept the payload yet. The Ask menu only surfaces
 
 `ask-inject.ts` is unchanged by all of this — filtering happens in
 the SW so the runtime stays selector-driven and provider-agnostic.
+
+### `maxAttachmentCount` (ChatGPT)
+
+Some composers cap the number of attachments per turn even when
+the kinds are all accepted:
+
+- ChatGPT today rejects a third attachment outright — the upload
+  chip never renders, and the runtime's preview-count check fails
+  after the settle. The user sees "Sent" turn into a mid-walk
+  failure with no actionable hint.
+- `AskProvider.maxAttachmentCount?: number` declares the cap.
+  ChatGPT sets it to 2; other providers leave it unset.
+
+Plumbing mirrors `acceptedAttachmentKinds`:
+
+- `resolveMaxAttachmentCount(provider, url)` returns the cap (or
+  `null` for no cap). Provider-level today; the `url` argument is
+  ignored. The signature leaves room for a per-URL cap to slot in
+  later without touching call sites.
+- `listAskProviders` and `resolveAsk` populate
+  `newTabMaxAttachmentCount` / `maxAttachmentCount` /
+  `destinationMaxAttachmentCount` so the Capture page caches the
+  cap for each destination.
+- `sendToAi` refuses with `ok: false` when
+  `payload.attachments.length > maxAttachmentCount`. The error
+  reads "ChatGPT accepts at most 2 attachments per turn; you have
+  3. Uncheck a Save row."
+- `checkDestinationAttachmentCount` on the Capture page runs the
+  same check up front so the user sees the refusal without
+  paying the SW round-trip.
+
+Unlike the kinds path, we don't auto-drop attachments — there's no
+rule for picking which one to keep. The user makes the call by
+unchecking a Save row.
 
 ### `newTabOnly` (Google Search)
 

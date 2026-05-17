@@ -113,6 +113,8 @@ interface AskTabSummary {
   excluded?: boolean;
   /** URL-aware accepted-kinds list. `undefined` = no restriction. */
   acceptedAttachmentKinds?: ('image' | 'text')[];
+  /** Per-turn attachment cap. `undefined` = no cap. */
+  maxAttachmentCount?: number;
   /** Display name used in pre-send error text (variant label or the
    *  provider's own label). Always set by the SW. */
   destinationDisplayName: string;
@@ -130,6 +132,9 @@ interface AskProviderListing {
   iconFilename: string;
   existingTabs: AskTabSummary[];
   newTabAcceptedAttachmentKinds?: ('image' | 'text')[];
+  /** Provider-default attachment cap for the "New tab in <X>" row.
+   *  `undefined` = no cap. */
+  newTabMaxAttachmentCount?: number;
 }
 type AskDestination =
   | { kind: 'newTab'; provider: AskProviderId }
@@ -187,6 +192,7 @@ let askButtonRow: HTMLDivElement;
  * today is Claude on `/code`.
  */
 let currentDefaultAcceptedKinds: ('image' | 'text')[] | undefined;
+let currentDefaultMaxAttachmentCount: number | undefined;
 let currentDefaultDisplayName: string | undefined;
 
 // Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
@@ -235,6 +241,10 @@ async function fetchAskState(): Promise<{
    *  destination, or `undefined` for "no restriction." Used by plain
    *  Ask's pre-send check. */
   defaultAcceptedKinds: ('image' | 'text')[] | undefined;
+  /** Per-turn attachment cap at the resolved default destination, or
+   *  `undefined` for "no cap." Used by plain Ask's pre-send count
+   *  check (refuses sends that would exceed e.g. ChatGPT's max of 2). */
+  defaultMaxAttachmentCount: number | undefined;
   /** Display name (variant label or provider label) of the resolved
    *  default destination — used in the pre-send refusal message. */
   defaultDestinationDisplayName: string | undefined;
@@ -248,6 +258,7 @@ async function fetchAskState(): Promise<{
           defaultDestination: AskDestination | null;
           staleTabPin?: AskStatePin;
           defaultAcceptedAttachmentKinds?: ('image' | 'text')[];
+          defaultMaxAttachmentCount?: number;
           defaultDestinationDisplayName?: string;
         }
       | undefined;
@@ -256,6 +267,7 @@ async function fetchAskState(): Promise<{
       defaultDestination: response?.defaultDestination ?? null,
       staleTabPin: response?.staleTabPin ?? null,
       defaultAcceptedKinds: response?.defaultAcceptedAttachmentKinds,
+      defaultMaxAttachmentCount: response?.defaultMaxAttachmentCount,
       defaultDestinationDisplayName: response?.defaultDestinationDisplayName,
     };
   } catch {
@@ -264,6 +276,7 @@ async function fetchAskState(): Promise<{
       defaultDestination: null,
       staleTabPin: null,
       defaultAcceptedKinds: undefined,
+      defaultMaxAttachmentCount: undefined,
       defaultDestinationDisplayName: undefined,
     };
   }
@@ -279,9 +292,11 @@ async function refreshAskTargetLabel(): Promise<void> {
     providers,
     defaultDestination,
     defaultAcceptedKinds,
+    defaultMaxAttachmentCount,
     defaultDestinationDisplayName,
   } = await fetchAskState();
   currentDefaultAcceptedKinds = defaultAcceptedKinds;
+  currentDefaultMaxAttachmentCount = defaultMaxAttachmentCount;
   currentDefaultDisplayName = defaultDestinationDisplayName;
   // `listAskProviders` already filters out user-disabled providers,
   // so an empty (or all-statically-disabled) listing means the user
@@ -391,6 +406,7 @@ function renderAskProviderButtons(enabled: AskProviderListing[]): void {
       void runAskFor(
         dest,
         provider.newTabAcceptedAttachmentKinds,
+        provider.newTabMaxAttachmentCount,
         provider.label,
         ctx.closeAfterFromModifiers(e, false),
       );
@@ -882,6 +898,12 @@ async function runAskDefault(closeAfter: boolean): Promise<void> {
       currentDefaultDisplayName,
     )
   ) return;
+  if (
+    !checkDestinationAttachmentCount(
+      currentDefaultMaxAttachmentCount,
+      currentDefaultDisplayName,
+    )
+  ) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAiDefault', payload }, closeAfter);
@@ -897,10 +919,12 @@ async function runAskDefault(closeAfter: boolean): Promise<void> {
 async function runAskFor(
   destination: AskDestination,
   acceptedKinds: ('image' | 'text')[] | undefined,
+  maxAttachmentCount: number | undefined,
   displayName: string | undefined,
   closeAfter: boolean,
 ): Promise<void> {
   if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
+  if (!checkDestinationAttachmentCount(maxAttachmentCount, displayName)) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAi', destination, payload }, closeAfter);
@@ -961,6 +985,43 @@ function checkDestinationAcceptsCheckedBoxes(
   const name = displayName ?? 'Destination';
   ctx.setStatusMessage(
     `${name} only accepts ${kindList} attachments; uncheck ${list}.`,
+    'error',
+  );
+  return false;
+}
+
+/**
+ * Pre-send count guard: refuse when the user has checked more Save
+ * rows than the destination's composer accepts per turn (ChatGPT
+ * caps at 2). The SW runs the same check at send time, so reaching
+ * here only matters for the up-front UX win — the user sees a
+ * specific "uncheck a Save row" message before clicking through.
+ *
+ * Mirrors `buildAskAttachments`'s rules so the count matches what
+ * would actually be sent: each checked Save row produces exactly one
+ * attachment, and the selection row only counts when its captured
+ * body is non-empty (empty selection becomes a no-op attachment).
+ */
+function checkDestinationAttachmentCount(
+  max: number | undefined,
+  displayName: string | undefined,
+): boolean {
+  if (max === undefined) return true;
+  let count = 0;
+  if (ctx.screenshotBox.checked && !ctx.screenshotBox.disabled) count += 1;
+  if (ctx.htmlBox.checked && !ctx.htmlBox.disabled && ctx.captured.html) {
+    count += 1;
+  }
+  const fmt = ctx.selectedSelectionFormat();
+  if (fmt) {
+    const body = ctx.captured[ctx.selectionWireKind[fmt]];
+    if (body && body.trim().length > 0) count += 1;
+  }
+  if (count <= max) return true;
+  const name = displayName ?? 'Destination';
+  ctx.setStatusMessage(
+    `${name} accepts at most ${max} attachment${max === 1 ? '' : 's'} `
+      + `per turn; you have ${count}. Uncheck a Save row.`,
     'error',
   );
   return false;

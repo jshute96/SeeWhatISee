@@ -4,14 +4,16 @@
 //     `urlVariants` in declaration order; falls back to the provider-
 //     level `acceptedAttachmentKinds`; finally returns `null` ("no
 //     restriction").
+//   - `resolveMaxAttachmentCount(provider, url)` — provider-level
+//     today; returns `null` when no cap is declared.
 //   - `resolveDestinationLabel(provider, url)` — same walk, returns
 //     the matching variant's `label` if set, otherwise the provider's
 //     own `label`.
 //   - `formatKindList(kinds)` — friendly join used in the SW's
 //     pre-send refusal error message.
 //
-// All three are pure functions — no chrome.* APIs touched — so they
-// exercise cleanly under `node --test`.
+// All pure functions — no chrome.* APIs touched — so they exercise
+// cleanly under `node --test`.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +22,7 @@ import {
   formatKindList,
   resolveAcceptedKinds,
   resolveDestinationLabel,
+  resolveMaxAttachmentCount,
 } from '../../dist/ask/index.js';
 
 const baseProvider = {
@@ -158,5 +161,31 @@ test('formatKindList: three+ kinds use Oxford comma', () => {
   assert.equal(
     formatKindList(['image', 'text', 'audio']),
     'image, text, and audio',
+  );
+});
+
+test('resolveMaxAttachmentCount: no cap declared → null', () => {
+  assert.equal(
+    resolveMaxAttachmentCount(baseProvider, 'https://claude.ai/new'),
+    null,
+  );
+});
+
+test('resolveMaxAttachmentCount: provider-level cap returned', () => {
+  const provider = { ...baseProvider, maxAttachmentCount: 2 };
+  assert.equal(
+    resolveMaxAttachmentCount(provider, 'https://claude.ai/new'),
+    2,
+  );
+});
+
+test('resolveMaxAttachmentCount: URL does not influence the result today', () => {
+  // Cap is currently provider-level only — variants don't override.
+  // Pin the contract so a future per-URL cap addition can't silently
+  // drop the provider-level fallback.
+  const provider = { ...baseProvider, maxAttachmentCount: 3 };
+  assert.equal(
+    resolveMaxAttachmentCount(provider, 'https://claude.ai/code/sess_abc'),
+    3,
   );
 });

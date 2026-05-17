@@ -41,6 +41,20 @@ export interface LiveProvider {
   acceptedAttachmentKinds?: AskAttachmentKind[];
 
   /**
+   * Maximum number of attachments the composer accepts in a single
+   * conversation turn. The shared multi-file cases want to dispatch
+   * image + html + selection (3 attachments); when this cap is below
+   * 3 they drop the trailing `selection.md` so the test still
+   * exercises multi-file dispatch on capped providers (ChatGPT, 2)
+   * rather than skipping outright. Test titles shift to reflect the
+   * actual payload. Omit (or leave undefined) for providers with no
+   * practical cap. Typically mirrored from the production
+   * `AskProvider.maxAttachmentCount` so the live suite stays in sync
+   * with what the SW will actually accept.
+   */
+  maxAttachmentCount?: number;
+
+  /**
    * Wait for the composer to be ready to accept input. Lets the
    * suite race-proof the first interaction without hard sleeps.
    * Implementations typically `expect(...textInput).toBeVisible()`

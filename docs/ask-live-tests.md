@@ -252,6 +252,19 @@ image so each test still exercises multi-file dispatch. The titles
 shift accordingly (e.g. "image + html + selection attach, no submit"
 becomes "two images attach, no submit").
 
+Providers can also declare a per-turn attachment cap via
+`LiveProvider.maxAttachmentCount` — typically mirrored from the
+production `AskProvider`:
+
+- ChatGPT sets this to 2; its composer rejects a third file.
+- When the cap is below 3, the two multi-file cases drop their
+  `selection.md` attachment and run as image + html, so the submit
+  pipeline still exercises end-to-end on capped providers.
+- Titles shift to reflect the actual payload (e.g. "image + html
+  attach, no submit").
+- Other providers leave the cap unset and exercise all three
+  attachments.
+
 A provider can also supply a `resetPage` hook that runs after the
 goto + composer-ready wait. Used by Claude Code, where the goto
 redirects to the last session and preserves any queued prompt /

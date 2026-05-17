@@ -59,6 +59,23 @@ export function resolveAcceptedKinds(
 }
 
 /**
+ * Effective per-turn attachment cap for a destination. Currently
+ * provider-level only (no URL variants need a different cap today —
+ * ChatGPT caps at 2 across the whole domain), but the helper is
+ * defined alongside `resolveAcceptedKinds` so a future variant cap
+ * can slot in here without touching call sites.
+ *
+ * Returns `null` when the provider declares no cap, which downstream
+ * (`sendToAi`, the page-side check) reads as "no count restriction."
+ */
+export function resolveMaxAttachmentCount(
+  provider: AskProvider,
+  _url: string,
+): number | null {
+  return provider.maxAttachmentCount ?? null;
+}
+
+/**
  * User-facing destination name. Returns the matching variant's
  * `label` when one applies (e.g. "Claude Code" on `claude.ai/code`),
  * otherwise the provider's own `label`. Used in pre-send error text
@@ -140,6 +157,17 @@ export interface AskTabSummary {
    */
   acceptedAttachmentKinds?: AskAttachmentKind[];
   /**
+   * Per-turn attachment cap for this destination, or `undefined` for
+   * "no cap" (the common case — only ChatGPT sets one today).
+   * Provider-level only at the moment, so every tab on a given
+   * provider sees the same value; the field hangs off the per-tab
+   * summary so a future per-URL cap can be added without reshaping
+   * the message. The Capture page uses this to pre-validate the
+   * user's checkbox state before the SW round-trip, mirroring the
+   * kinds pre-validate.
+   */
+  maxAttachmentCount?: number;
+  /**
    * Display name for this tab in pre-send error text — variant label
    * when one applies (e.g. "Claude Code"), provider label otherwise.
    * The Capture page uses this so the refusal reads "Claude Code only
@@ -168,6 +196,13 @@ export interface AskProviderListing {
    * shape regardless of menu row type.
    */
   newTabAcceptedAttachmentKinds?: AskAttachmentKind[];
+  /**
+   * Provider-default attachment cap for "New tab in <X>" rows.
+   * `undefined` means "no cap." Mirrors the per-tab `maxAttachmentCount`
+   * so the page-side check has the same shape regardless of menu row
+   * type.
+   */
+  newTabMaxAttachmentCount?: number;
   /** Empty when no tabs match the provider's URL patterns. */
   existingTabs: AskTabSummary[];
 }
@@ -368,6 +403,13 @@ export interface AskResolution {
    * has HTML / selection checked.
    */
   destinationAcceptedAttachmentKinds?: AskAttachmentKind[];
+  /**
+   * Per-turn attachment cap at the resolved destination. `undefined`
+   * means "no cap." Used by the Capture page's plain-Ask pre-send
+   * check so a "ChatGPT caps at 2" refusal fires up front instead of
+   * after a failed injection walk.
+   */
+  destinationMaxAttachmentCount?: number;
   /** Display name (variant label or provider label) for the resolved
    *  default destination. Set whenever `destination` is non-null. */
   destinationDisplayName?: string;
@@ -424,6 +466,10 @@ export async function resolveAsk(): Promise<AskResolution> {
       : null,
     destinationAcceptedAttachmentKinds: fallbackProvider
       ? resolveAcceptedKinds(fallbackProvider, fallbackProvider.newTabUrl)
+        ?? undefined
+      : undefined,
+    destinationMaxAttachmentCount: fallbackProvider
+      ? resolveMaxAttachmentCount(fallbackProvider, fallbackProvider.newTabUrl)
         ?? undefined
       : undefined,
     destinationDisplayName: fallbackProvider
@@ -491,6 +537,8 @@ export async function resolveAsk(): Promise<AskResolution> {
     destination: { kind: 'existingTab', provider: pin.provider, tabId: pin.tabId },
     destinationAcceptedAttachmentKinds:
       resolveAcceptedKinds(provider, tab.url) ?? undefined,
+    destinationMaxAttachmentCount:
+      resolveMaxAttachmentCount(provider, tab.url) ?? undefined,
     destinationDisplayName: resolveDestinationLabel(provider, tab.url),
   };
 }
@@ -520,17 +568,21 @@ export async function listAskProviders(): Promise<AskProviderListing[]> {
       iconFilename: provider.iconFilename,
       newTabAcceptedAttachmentKinds:
         resolveAcceptedKinds(provider, provider.newTabUrl) ?? undefined,
+      newTabMaxAttachmentCount:
+        resolveMaxAttachmentCount(provider, provider.newTabUrl) ?? undefined,
       existingTabs: tabs
         .filter((t): t is chrome.tabs.Tab & { id: number } => t.id !== undefined)
         .map((t) => {
           const url = t.url ?? '';
           const kinds = resolveAcceptedKinds(provider, url);
+          const max = resolveMaxAttachmentCount(provider, url);
           return {
             tabId: t.id,
             title: t.title ?? url ?? `Tab ${t.id}`,
             url,
             excluded: matchesAny(url, excludes),
             acceptedAttachmentKinds: kinds ?? undefined,
+            maxAttachmentCount: max ?? undefined,
             destinationDisplayName: resolveDestinationLabel(provider, url),
           };
         }),
@@ -637,6 +689,7 @@ export async function sendToAi(
     destinationUrl = url || provider.newTabUrl;
   }
   const acceptedKinds = resolveAcceptedKinds(provider, destinationUrl);
+  const maxAttachmentCount = resolveMaxAttachmentCount(provider, destinationUrl);
   const destinationLabel = resolveDestinationLabel(provider, destinationUrl);
 
   // Refuse outright if any attachment doesn't match the destination's
@@ -654,6 +707,25 @@ export async function sendToAi(
       ok: false,
       error: `${destinationLabel} only accepts ${formatKindList(acceptedKinds)} attachments; uncheck other items`,
       skipped: filtered.skipped.map((a) => a.filename),
+    };
+  }
+
+  // Refuse outright when the payload would exceed the destination's
+  // per-turn cap. ChatGPT silently rejects the third attachment, so
+  // detecting it here lets us name the issue ("at most 2 attachments
+  // per turn") instead of failing mid-walk with the runtime's
+  // preview-count check. Unlike the kinds path we can't auto-pick
+  // which to drop — the user makes the call by unchecking a Save row.
+  if (
+    maxAttachmentCount !== null
+    && payload.attachments.length > maxAttachmentCount
+  ) {
+    return {
+      ok: false,
+      error:
+        `${destinationLabel} accepts at most ${maxAttachmentCount} `
+        + `attachment${maxAttachmentCount === 1 ? '' : 's'} per turn; `
+        + `you have ${payload.attachments.length}. Uncheck a Save row.`,
     };
   }
 
@@ -1518,6 +1590,8 @@ export function installAskMessageHandler(): void {
               staleTabPin: resolution.staleTabPin,
               defaultAcceptedAttachmentKinds:
                 resolution.destinationAcceptedAttachmentKinds,
+              defaultMaxAttachmentCount:
+                resolution.destinationMaxAttachmentCount,
               defaultDestinationDisplayName: resolution.destinationDisplayName,
             }),
         );

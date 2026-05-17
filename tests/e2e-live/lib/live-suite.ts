@@ -188,6 +188,17 @@ export function runLiveSuite(provider: LiveProvider): void {
   }
 
   async function loadAskRuntime(page: Page): Promise<void> {
+    // Shrink the runtime's preview-confirm window via the test-only
+    // tuning hook so a silent destination-side reject (e.g. ChatGPT
+    // rate-limiting a particular file kind) fails the live test in
+    // ~3 s instead of the production 8 s. Production never sets the
+    // global; this affects only the live suite's iteration speed. See
+    // `tuning()` in `src/ask-inject.ts` for the supported keys.
+    await page.evaluate(() => {
+      (window as unknown as {
+        __seeWhatISeeAskTuning?: { previewConfirmTimeoutMs?: number };
+      }).__seeWhatISeeAskTuning = { previewConfirmTimeoutMs: 3000 };
+    });
     // The compiled bundle is a self-contained IIFE — evaluate runs it
     // and the IIFE installs the postMessage bridge listener (same one
     // the widget drives in production). No exports, no module wrapper
@@ -259,13 +270,21 @@ export function runLiveSuite(provider: LiveProvider): void {
 
   // ─── No-submit multi-file attach ───────────────────────────────
 
-  // For text-rejecting providers we drop the text attachments and
-  // run the test as "two images attach, no submit" — still verifies
-  // multi-file dispatch in one runtime call, which is the test's
-  // primary purpose. The "image + html + selection" name stays so
-  // the description reads consistently across providers.
+  // For text-rejecting providers we drop the text attachments and run
+  // as "two images attach, no submit" — multi-file dispatch is the
+  // test's primary purpose. For text-accepting providers the default
+  // payload is image + html + selection (3 files), but when the
+  // provider caps attachments below 3 we drop `selection.md` so the
+  // case still runs end-to-end (ChatGPT: max 2 → image + html). Title
+  // shifts to reflect the actual payload.
+  const wantsSelectionAttachment =
+    accepts(provider, 'text')
+      && (provider.maxAttachmentCount === undefined
+        || provider.maxAttachmentCount >= 3);
   const noSubmitTitle = accepts(provider, 'text')
-    ? `${provider.label}: image + html + selection attach, no submit`
+    ? wantsSelectionAttachment
+      ? `${provider.label}: image + html + selection attach, no submit`
+      : `${provider.label}: image + html attach, no submit`
     : `${provider.label}: two images attach, no submit`;
   test(noSubmitTitle, async () => {
     const page = await openFreshProviderPage();
@@ -279,20 +298,20 @@ export function runLiveSuite(provider: LiveProvider): void {
       },
     ];
     if (accepts(provider, 'text')) {
-      attachments.push(
-        {
-          data: '<html><body><p>fixture html for live test</p></body></html>',
-          kind: 'text',
-          mimeType: 'text/html',
-          filename: 'contents.html',
-        },
-        {
+      attachments.push({
+        data: '<html><body><p>fixture html for live test</p></body></html>',
+        kind: 'text',
+        mimeType: 'text/html',
+        filename: 'contents.html',
+      });
+      if (wantsSelectionAttachment) {
+        attachments.push({
           data: '## live test selection\n\nhello world',
           kind: 'text',
           mimeType: 'text/markdown',
           filename: 'selection.md',
-        },
-      );
+        });
+      }
     } else {
       attachments.push({
         data: TINY_PNG_DATA_URL,
@@ -315,9 +334,11 @@ export function runLiveSuite(provider: LiveProvider): void {
       await expect(
         provider.fileAttachmentLocator!(page, 'contents.html'),
       ).toBeVisible({ timeout: 10_000 });
-      await expect(
-        provider.fileAttachmentLocator!(page, 'selection.md'),
-      ).toBeVisible({ timeout: 10_000 });
+      if (wantsSelectionAttachment) {
+        await expect(
+          provider.fileAttachmentLocator!(page, 'selection.md'),
+        ).toBeVisible({ timeout: 10_000 });
+      }
     } else {
       await expect(
         provider.imageAttachmentLocator(page, 'extra.png'),
@@ -408,7 +429,11 @@ export function runLiveSuite(provider: LiveProvider): void {
     const r2 = await callAskRuntime(page, [secondAttachment], '', false);
     expect(r2.ok, r2.error).toBe(true);
 
-    await expect(provider.imageAttachmentLocator(page, 'first.png')).toBeVisible();
+    // Match the 10 s budget the rest of this file uses; the chip
+    // re-renders briefly when the second attachment lands.
+    await expect(provider.imageAttachmentLocator(page, 'first.png')).toBeVisible({
+      timeout: 10_000,
+    });
     if (accepts(provider, 'text')) {
       await expect(provider.fileAttachmentLocator!(page, 'second.md')).toBeVisible({
         timeout: 10_000,
@@ -427,13 +452,15 @@ export function runLiveSuite(provider: LiveProvider): void {
   //
   // Sends a tagged message verifying the full submit pipeline
   // (file pipe → typing → Send click → conversation update). For
-  // text-accepting providers the payload is image + html + selection;
-  // image-only destinations get just the image (HTML / selection
-  // would be refused by the SW filter the suite mirrors here).
-  // Title and payload shift accordingly. Keep the prompt short so
-  // the response is small — token-consuming run.
+  // text-accepting providers the payload is image + html + selection
+  // (or image + html on capped providers like ChatGPT, max 2);
+  // image-only destinations get just the image. Title and payload
+  // shift accordingly. Keep the prompt short so the response is
+  // small — token-consuming run.
   const submitTitle = accepts(provider, 'text')
-    ? `${provider.label}: image + html + selection + prompt → message submitted`
+    ? wantsSelectionAttachment
+      ? `${provider.label}: image + html + selection + prompt → message submitted`
+      : `${provider.label}: image + html + prompt → message submitted`
     : `${provider.label}: image + prompt → message submitted`;
   test(submitTitle, async () => {
     const page = await openFreshProviderPage();
@@ -448,20 +475,20 @@ export function runLiveSuite(provider: LiveProvider): void {
       },
     ];
     if (accepts(provider, 'text')) {
-      submitAttachments.push(
-        {
-          data: '<html><body><p>fixture html for live test</p></body></html>',
-          kind: 'text',
-          mimeType: 'text/html',
-          filename: 'contents.html',
-        },
-        {
+      submitAttachments.push({
+        data: '<html><body><p>fixture html for live test</p></body></html>',
+        kind: 'text',
+        mimeType: 'text/html',
+        filename: 'contents.html',
+      });
+      if (wantsSelectionAttachment) {
+        submitAttachments.push({
           data: '## live test selection\n\nhello world',
           kind: 'text',
           mimeType: 'text/markdown',
           filename: 'selection.md',
-        },
-      );
+        });
+      }
     }
     const result = await callAskRuntime(
       page,

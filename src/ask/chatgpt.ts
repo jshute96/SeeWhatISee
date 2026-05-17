@@ -34,6 +34,12 @@ export const chatgptProvider: AskProvider = {
   newTabUrl: 'https://chatgpt.com/',
   iconFilename: 'chatgpt.ico',
   enabled: true,
+  // ChatGPT's composer rejects a third attachment outright (the
+  // upload chip never appears and the runtime's preview-count
+  // verification fails after the settle). Surfacing this as a
+  // pre-send refusal lets the user uncheck a Save row up front
+  // instead of seeing the injection fail mid-walk.
+  maxAttachmentCount: 2,
   // ChatGPT re-injects unsent drafts from React state for some time
   // after the page is "ready" (logged-out test: ~3 s past
   // window.load; logged-in path appears to keep re-rendering longer).

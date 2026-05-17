@@ -189,6 +189,15 @@ export interface AskProvider {
    */
   acceptedAttachmentKinds?: AskAttachmentKind[];
   /**
+   * Maximum number of attachments the provider's composer accepts in
+   * a single conversation turn. The SW refuses sends that exceed this
+   * with a clear "X accepts at most N attachments per turn" error so
+   * the user can uncheck a Save row before the injection runs.
+   * Omit (or leave undefined) for providers with no practical cap
+   * (Claude, Gemini, Google). ChatGPT today caps at 2.
+   */
+  maxAttachmentCount?: number;
+  /**
    * URL-keyed overrides of `acceptedAttachmentKinds` for sub-pages
    * whose composer behaves differently. Used today for Claude's
    * `/code` (Claude Code) — same provider, image-only composer.
