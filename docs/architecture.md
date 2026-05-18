@@ -68,6 +68,10 @@ listeners. The substantive logic lives in `src/background/`:
   `ensure*Downloaded` cache, multi-capture filename bump (locks
   files referenced by a `recordDetailedCapture` and writes
   `<base>-N.<ext>` on later edits).
+- `last-capture.ts` — single-slot `lastCapture` session-storage:
+  promote-on-close, restore-on-menu-click, low-priority quota
+  relief. See [`capture-page.md` → Restore last
+  capture](capture-page.md#restore-last-capture).
 - `capture-page-defaults.ts` — stored Capture-page Save defaults
   (`capturePageDefaults`).
 - `options.ts` — Options-page SW wire (`getOptionsData` /

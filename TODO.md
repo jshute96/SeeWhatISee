@@ -73,6 +73,7 @@
 * JPG images stay as JPG, event after drawing on them (previous conversion to PNG causes size blowup)
 * HTML is omitted on the capture page (with an error) if >2MB
 * When capturing an image directly (e.g. from a file: or http: URL ending in .jpg or .png), we just take the image, not a screenshot
+* Restore last capture - More-menu entry that re-opens the most recently closed Capture page.
 
 ### Draft: user-facing explanation of the new drawing behavior
 

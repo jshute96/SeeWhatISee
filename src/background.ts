@@ -54,6 +54,7 @@ import {
   IMAGE_CAPTURE_MENU_ID,
   IMAGE_SAVE_SCREENSHOT_MENU_ID,
   PIN_ASK_TARGET_MENU_ID,
+  RESTORE_LAST_CAPTURE_MENU_ID,
   SHORTCUT_SUFFIX,
   SNAPSHOTS_DIR_MENU_ID,
   UPLOAD_IMAGE_MENU_ID,
@@ -67,6 +68,7 @@ import {
   refreshCopyMenuState,
   refreshMenusIfHotkeysChanged,
   refreshPinAskTargetMenu,
+  refreshRestoreLastCaptureMenuState,
 } from './background/context-menu.js';
 import {
   _setHtmlSizeCapForTest,
@@ -74,9 +76,11 @@ import {
   ensureScreenshotDownloaded,
   ensureSelectionDownloaded,
   installDetailsMessageHandlers,
+  restoreLastCapture,
   startCaptureWithDetails,
   startCaptureWithDetailsFromImage,
 } from './background/capture-details.js';
+import { LAST_CAPTURE_STORAGE_KEY } from './background/last-capture.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import {
   findProviderForTab,
@@ -192,6 +196,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'session' && changes['askPin']) {
     void refreshPinAskTargetMenu();
   }
+  // Restore-last-capture entry's enabled state depends on the
+  // single-slot `lastCapture` session-storage key. Promote/clear
+  // happens from several paths (Capture-page close, new-capture
+  // start, restore, Ask quota relief), so we listen for the key
+  // rather than threading refresh calls through each writer.
+  if (area === 'session' && changes[LAST_CAPTURE_STORAGE_KEY]) {
+    void refreshRestoreLastCaptureMenuState();
+  }
   // User toggled an Ask provider's enabled state on the Options page:
   // the toolbar Set/Unset entry's eligibility on the active tab may
   // have flipped (a provider just became disabled or re-enabled).
@@ -303,6 +315,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
+  // Restore the most recently closed Capture page's in-flight state
+  // (prompt, save checkboxes, drawing edits + undo stack, selected
+  // tool). The menu entry is greyed when no `lastCapture` slot exists;
+  // the restore helper drops the slot as part of opening the new tab
+  // so the bytes don't sit duplicated in session storage.
+  if (id === RESTORE_LAST_CAPTURE_MENU_ID) {
+    await runWithErrorReporting(() => restoreLastCapture(tab));
+    return;
+  }
+
   // Open the on-disk capture directory in a new tab. Same
   // error-reporting rationale as the Clear log path: the
   // "no captures yet" failure surfaces via the icon swap +
@@ -404,6 +426,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   ensureSelectionDownloaded,
   startCaptureWithDetails,
   startCaptureWithDetailsFromImage,
+  restoreLastCapture,
   captureImageAsScreenshot,
   captureImageToMemory,
   clearCaptureLog,

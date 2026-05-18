@@ -142,6 +142,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `src/background/menu-hint.ts` | Pure menu-hint composition — `rowScope`, `buildRowGroup`, `buildMenuHint`; extracted for unit-testability without the chrome.* import chain |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, HTML byte-size cap, `runtime.onMessage` handlers |
+| `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
@@ -252,6 +253,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
 | `tests/e2e/options-refresh.spec.ts` | E2E test for the Options-page hotkey-refresh hook — opening Options resyncs the toolbar tooltip when shortcut bindings have changed |
+| `tests/e2e/restore-last-capture.spec.ts` | E2E for "Restore last capture" — slot lifecycle, prompt restore, bump round-trip (reused filenames with no edits, `-N` suffix after edits) |
 | `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime, Alt+A keyboard binding |
 | `tests/e2e/ask-pinned-tabs.spec.ts` | E2E tests for target-window pinning — pin lifecycle, dead/navigated/disabled-provider invalidation, plain-Ask reuse |
 | `tests/e2e/ask-toolbar-pin.spec.ts` | E2E tests for the toolbar context-menu Set/Unset entry — eligibility, "Set"/"Unset" title flip, toggle behavior |
@@ -283,6 +285,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
 | `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
+| `tests/unit/last-capture.test.mjs` | Unit tests for `src/background/last-capture.ts` — denylist contents, round-trip, `bases` regression, auto-carry of future fields, quota-swallow |
 
 ## Design Docs (`docs/`)
 

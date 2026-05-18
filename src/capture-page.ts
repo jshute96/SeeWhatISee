@@ -66,6 +66,9 @@ import {
   endPolylineChain,
   isPolylineActive,
   rescaleAfterImageResize,
+  getDrawingSnapshot,
+  restoreDrawingSnapshot,
+  type Tool,
 } from './capture-page/drawing.js';
 
 /**
@@ -168,6 +171,30 @@ interface DetailsData {
      *  default button, 'newline' inserts a newline. Shift+Enter is
      *  always newline; Ctrl+Enter is always send. */
     promptEnter: 'send' | 'newline';
+  };
+  /**
+   * Restored UI state from a previous Capture-page session (saved by
+   * the Restore last capture flow). Absent on a normal capture-page
+   * open. When present, `loadData()` applies these on top of the
+   * defaults — same checkboxes, same prompt text, same drawing
+   * edits + undo stack, same selected tool. Zoom is deliberately
+   * not carried; restore reverts to the page-init default (Fit).
+   * Every field is optional so a partial push (e.g. close raced the
+   * page's very first push) still restores what it can.
+   */
+  restoreUiState?: {
+    prompt?: string;
+    saveCheckboxes?: {
+      screenshot: boolean;
+      html: boolean;
+      selection: boolean;
+      format: SelectionFormat | null;
+    };
+    edits?: unknown[];
+    editHistory?: unknown[];
+    nextEditId?: number;
+    editVersion?: number;
+    selectedTool?: string;
   };
 }
 
@@ -922,6 +949,17 @@ async function loadData(): Promise<void> {
     // the listeners installed in `wireSelectionControls`.
     updateSelectionSizeBadge();
 
+    // Restore-last-capture: if the SW forwarded a UI snapshot from
+    // a previous Capture-page session, overlay it on top of the
+    // defaults we just applied. The defaults are the *baseline*
+    // (so a checkbox the user toggled off in the previous session
+    // overrides the default-on stored preference); the snapshot wins
+    // wherever both speak. Pulled into `applyRestoredUiState` so
+    // the per-field branches don't clutter `loadData`.
+    if (response.restoreUiState) {
+      applyRestoredUiState(response.restoreUiState);
+    }
+
     // Wait for the preview image to decode before revealing, so the
     // page comes in with the screenshot already visible (not
     // popping in a frame later). `complete` is false for a freshly-
@@ -1138,6 +1176,12 @@ captureBtn.addEventListener('click', (e) => {
 
     setStatusMessage('Saving…', 'info');
     void (async () => {
+      // Flush any pending debounced last-capture push and wait for
+      // the SW to merge it in. This is what guarantees the close-
+      // path promote sees the freshest prompt / drawing state — a
+      // bare fire-and-forget push would otherwise race the
+      // saveDetails handler's promote step.
+      await pushUiStateNow();
       let response: { ok?: boolean; error?: string } | undefined;
       try {
         response = (await chrome.runtime.sendMessage({
@@ -1240,6 +1284,12 @@ initDrawing({
   toolButtons,
   updateImageSizeBadge,
   composeImageBadgeText,
+  // Restorable state-changed: route through the debounced push so a
+  // rapid undo / polyline burst still collapses to a single SW
+  // write. Tool-button clicks aren't routed through this callback
+  // (they don't bump `editVersion`); the `pagehide` flush picks up
+  // a tool-only change on close.
+  onEditCommit: pushUiStateDebounced,
 });
 
 initZoom({
@@ -1275,6 +1325,7 @@ initAsk({
   applyDefaultButtonHighlight,
   setPromptEnter: (v) => { currentPromptEnter = v; },
   selectionWireKind: SELECTION_WIRE_KIND,
+  flushLastCapturePush: pushUiStateNow,
 });
 
 initSaveAs({
@@ -1305,6 +1356,202 @@ initEditDialogs({
   formatBytes,
   downloadEditableAs,
 });
+
+// ─── Last-capture push ────────────────────────────────────────────
+//
+// Best-effort: any time the user touches a piece of restorable state
+// (prompt, save checkboxes / format radio, drawing edits, selected
+// tool), push the current snapshot to the SW. The SW
+// stores it on the per-tab Capture-page session, and the next close
+// path (Capture button, Ask ctrl-click, manual tab close) promotes
+// it to the `lastCapture` session-storage slot. The
+// Restore last capture menu entry then rehydrates from that slot.
+//
+// Pushes are debounced (~350ms) so a rapid keystroke / drag burst
+// only generates one SW write; a synchronous flush on `pagehide`
+// covers the final close gap. `pushingDisabled` guards the
+// debounce + pagehide handlers against firing during the restore
+// phase (otherwise applying a restored snapshot would bounce the
+// same values right back to the SW and clobber any in-flight
+// state).
+
+const PUSH_DEBOUNCE_MS = 350;
+let pushDebounceTimer: number | null = null;
+let pushingDisabled = false;
+
+function captureUiStateSnapshot(): {
+  prompt: string;
+  saveCheckboxes: {
+    screenshot: boolean;
+    html: boolean;
+    selection: boolean;
+    format: SelectionFormat | null;
+  };
+  edits: unknown[];
+  editHistory: unknown[];
+  nextEditId: number;
+  editVersion: number;
+  selectedTool: string;
+} {
+  const drawing = getDrawingSnapshot();
+  return {
+    prompt: promptInput.value,
+    saveCheckboxes: {
+      screenshot: screenshotBox.checked,
+      html: htmlBox.checked,
+      selection: selectionBox.checked,
+      format: selectedSelectionFormat(),
+    },
+    edits: drawing.edits,
+    editHistory: drawing.editHistory,
+    nextEditId: drawing.nextEditId,
+    editVersion: drawing.editVersion,
+    selectedTool: drawing.selectedTool,
+  };
+}
+
+async function pushUiStateNow(): Promise<void> {
+  if (pushingDisabled) return;
+  // The SW's `pushUiState` handler responds once it has persisted
+  // the merged state. Awaiting that response is what lets the
+  // Capture / Ask pre-send flush guarantee the close-time promote
+  // sees the freshest state — without the await, the two SW
+  // handlers race. A SW-down / tab-closing rejection is benign;
+  // swallowed so callers don't have to.
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'pushUiState',
+      ui: captureUiStateSnapshot(),
+    });
+  } catch {
+    // page closing / SW down — best-effort
+  }
+}
+
+function pushUiStateDebounced(): void {
+  if (pushingDisabled) return;
+  if (pushDebounceTimer !== null) window.clearTimeout(pushDebounceTimer);
+  pushDebounceTimer = window.setTimeout(() => {
+    pushDebounceTimer = null;
+    void pushUiStateNow();
+  }, PUSH_DEBOUNCE_MS);
+}
+
+// Wire push triggers:
+//   - Prompt typing: debounced so a multi-keystroke burst collapses
+//     to one push.
+//   - Save-checkbox / format-radio toggles: immediate — they're
+//     discrete user gestures, no benefit to coalescing.
+//   - Drawing edits, undo / clear / shrink, edge-handle resize, tool
+//     button click: routed through the drawing module's
+//     `onEditCommit` callback (see initDrawing wiring below). Debounced
+//     because rapid undo presses or a long polyline chain could
+//     otherwise flood the SW.
+//   - Page hide: synchronous flush so the final close picks up any
+//     state still inside the debounce window.
+promptInput.addEventListener('input', pushUiStateDebounced);
+screenshotBox.addEventListener('change', () => { void pushUiStateNow(); });
+htmlBox.addEventListener('change', () => { void pushUiStateNow(); });
+selectionBox.addEventListener('change', () => { void pushUiStateNow(); });
+for (const format of SELECTION_FORMATS) {
+  selectionRows[format].radio.addEventListener('change', () => { void pushUiStateNow(); });
+}
+// `pagehide` fires on tab close, navigation, and reload alike.
+// The push is fire-and-forget here — the SW may or may not finish
+// processing before the tab vanishes. `tabs.onRemoved` promotes
+// from whatever session state did land, as a safety net.
+window.addEventListener('pagehide', () => { void pushUiStateNow(); });
+
+/**
+ * Apply a previously-pushed UI snapshot to the live page. Wires
+ * the prompt, save-checkbox + format-radio state, and the drawing
+ * edit stack + undo history + selected tool. Zoom is deliberately
+ * not restored — see the inline comment in the body. Guards
+ * `pushingDisabled` so the per-checkbox / radio listeners above
+ * don't fire pushes that would bounce the same values right back
+ * to the SW while we're still painting.
+ *
+ * Best-effort field-by-field: each branch checks for presence so
+ * an older / partial push (closed before the page sent everything)
+ * restores whatever it can without throwing.
+ */
+function applyRestoredUiState(
+  state: NonNullable<DetailsData['restoreUiState']>,
+): void {
+  // Suppress pushes while we paint, and drop any pending debounce
+  // so a previously-scheduled push (impossible today since restore
+  // runs inside loadData's first paint, but cheap belt-and-suspenders)
+  // can't fire between the body of this function and `finally`.
+  pushingDisabled = true;
+  if (pushDebounceTimer !== null) {
+    window.clearTimeout(pushDebounceTimer);
+    pushDebounceTimer = null;
+  }
+  try {
+    if (typeof state.prompt === 'string') {
+      promptInput.value = state.prompt;
+      autoGrowPrompt();
+    }
+    if (state.saveCheckboxes) {
+      const cb = state.saveCheckboxes;
+      if (!screenshotBox.disabled) screenshotBox.checked = cb.screenshot;
+      if (!htmlBox.disabled) htmlBox.checked = cb.html;
+      if (!selectionBox.disabled) {
+        selectionBox.checked = cb.selection;
+        // Apply format radio when the master is on and the saved
+        // format is still saveable on this capture. Two skip
+        // branches both land on the default-set radio above (lines
+        // 906-911) being the user's effective format:
+        //   - `cb.selection && cb.format` but `row.radio.disabled`
+        //     — the saved format isn't available on this restored
+        //     body (e.g. text format was empty so its row is off).
+        //   - `cb.selection && !cb.format` — master was on but no
+        //     format pinned (shouldn't happen today; defensive).
+        // The `!cb.selection` branch clears every radio to match
+        // a master-off close.
+        if (cb.selection && cb.format) {
+          const row = selectionRows[cb.format];
+          if (!row.radio.disabled) {
+            for (const f of SELECTION_FORMATS) {
+              selectionRows[f].radio.checked = f === cb.format;
+            }
+            defaultSelectionFormat = cb.format;
+          }
+        } else if (!cb.selection) {
+          for (const f of SELECTION_FORMATS) {
+            selectionRows[f].radio.checked = false;
+          }
+        }
+      }
+    }
+    // The page always pushes a full drawing snapshot, so we just
+    // forward the fields verbatim — `restoreDrawingSnapshot` skips
+    // each absent one. The `as never` casts trust the SW-stored
+    // shape (structured-clone preserves it across the
+    // `chrome.storage.session` round-trip); a hand-crafted
+    // malformed value would land garbage on the edit stack, but
+    // there's no path that produces one today.
+    restoreDrawingSnapshot({
+      edits: state.edits as never,
+      editHistory: state.editHistory as never,
+      nextEditId: state.nextEditId,
+      editVersion: state.editVersion,
+      selectedTool: state.selectedTool as Tool | undefined,
+    });
+    // Zoom mode is deliberately not restored — viewport size and
+    // scroll position aren't snapshotted either, so reapplying a
+    // saved zoom against a possibly-different window would land at
+    // an arbitrary sizing. Fit (the page-init default) is the only
+    // value that's guaranteed sensible regardless of context.
+
+    // Refresh the Selection-size badge after restoring the checkbox /
+    // radio state; programmatic `.checked` assignments don't fire
+    // `change`.
+    updateSelectionSizeBadge();
+  } finally {
+    pushingDisabled = false;
+  }
+}
 
 // Initial sizing: autoGrowPrompt sizes the textarea and then
 // internally calls fitImage → applyZoom. That first applyZoom runs

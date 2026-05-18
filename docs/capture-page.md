@@ -1337,6 +1337,151 @@ re-activation is required:
   page flow, `chrome.tabs.update` rejects; we log and proceed
   with the close.
 
+## Restore last capture
+
+Lets the user re-open a Capture-page tab they closed by mistake —
+typically after hitting **Capture** or **Ask** while a drawing
+or prompt was still in flight. Lives in `last-capture.ts`.
+
+### Storage
+
+- Single slot: `chrome.storage.session` key `lastCapture`.
+- Shape: `LastCaptureRecord = Omit<DetailsSession,
+  typeof LAST_CAPTURE_EXCLUDED_KEYS[number]>` — everything on a
+  `DetailsSession` *except* the keys the denylist names. Today that's
+  `openerTabId` (the restore handler picks a fresh one from the
+  active tab) and `downloads` (per-artifact `{ downloadId, path,
+  editVersion }` entries the new session can't own). Deriving the
+  type from `DetailsSession` rather than hand-listing fields means a
+  new field added to `DetailsSession` auto-rides through the
+  round-trip; opt-out by adding its key to the denylist.
+- `uiState` is what the page pushes via `pushUiState`: prompt
+  text, save-checkbox + format-radio state, drawing edits + undo
+  history + `nextEditId` + `editVersion`, selected tool. Zoom is
+  deliberately *not* carried — viewport size, scroll position, and
+  DPR are page-local and aren't snapshotted, so reapplying a saved
+  zoom against a possibly-different window would land at arbitrary
+  sizing. Restore reverts to the page-init default (Fit).
+- Low-priority single-slot — every fresh capture / ask freely
+  drops it for quota relief.
+
+### Save (promote-on-close)
+
+Three close paths each call `promoteSessionToLastCapture(tabId)`
+just before they drop the per-tab session:
+
+- `saveDetails` happy path (closeAfter true) — Capture button
+  closed the tab after a successful save.
+- `closeCapturePage` SW handler — Ask ctrl-click closed the tab.
+- `tabs.onRemoved` listener — manual close (X on the tab, window
+  close, browser shutdown).
+
+Promote reads the live `DetailsSession`, copies it, strips the keys
+named by `LAST_CAPTURE_EXCLUDED_KEYS`, and writes the result under
+`lastCapture`. The notable fields the copy preserves:
+
+- `saved` + `revisions` ride along so a "Capture-save → restore →
+  Capture again" round-trip honours the original filename-bump
+  lock (otherwise the second save would overwrite the first
+  on-disk file).
+- `bases` rides along because `capture.<x>Filename` has been
+  bump-mutated by every prior save (e.g. `…-3.png`). Without the
+  original un-bumped names, the restored session would feed an
+  already-bumped stem back into `bumpedFilename` and produce
+  `…-3-4.png` on the next save instead of `…-4.png`.
+- Download caches don't carry over — they point at on-disk files
+  the new session doesn't own.
+- `openerTabId` doesn't carry over — the restore handler picks a
+  fresh opener from the currently active tab.
+
+Last-closed wins, unconditionally. The screenshot + HTML are the
+largest and least-reproducible part of the slot; any annotation
+state (prompt, drawings) is recoverable in seconds. So promote
+doesn't try to second-guess whether a close was "accidental" —
+every close overwrites the prior slot. The one case that would
+clobber with no recoverable bytes — a total capture failure —
+never reaches promote because `openCapturePageWithSession`
+early-returns before storing a session for that tab.
+
+Failure handling: a `chrome.storage.session.set` quota rejection
+is swallowed. Restore is a bonus; the user's real save already
+landed on disk and a quota miss surfacing as "save failed" would
+mislead.
+
+### UI-state push from the page
+
+The page debounces a `pushUiState` message (~350 ms) on:
+
+- prompt textarea input,
+- Save / format checkbox + radio change,
+- drawing module's `onEditCommit` callback (fires on every edit-
+  stack mutation that bumped `editVersion` — commit, undo, clear,
+  shrink, edge resize).
+
+Synchronous flushes elsewhere catch what the debounce window
+would otherwise eat:
+
+- `pagehide` — final flush on tab close / navigate / reload.
+- Capture / Ask button — `await pushUiStateNow()` before sending
+  the round-trip message, so the SW's promote step sees the
+  freshest state instead of racing the debounce.
+
+Tool-button changes ride on the `pagehide` flush only — no
+per-change push (acceptable per "not that important if easy").
+
+SW side: the `pushUiState` handler merges into `session.uiState`
+and responds once persisted, so the page's `await` is meaningful.
+
+### Restore (menu click)
+
+- Menu entry **Restore last capture** lives under the More
+  submenu, near Upload (and the Snapshots / Clear log items).
+- Greyed when no `lastCapture` slot exists.
+  `refreshRestoreLastCaptureMenuState` toggles `enabled` based on
+  `getLastCapture()`, driven by a `chrome.storage.onChanged`
+  listener on the `lastCapture` session-storage key.
+- Click handler → `restoreLastCapture(opener)` in
+  `capture-details.ts`: reads the record and hands the
+  `{...record, capture omitted}` half to
+  `openCapturePageWithSession`, which spreads it into the prospective
+  `DetailsSession`. `LAST_CAPTURE_EXCLUDED_KEYS` is the single source
+  of truth for what was *not* carried (currently `openerTabId` and
+  `downloads`), so any new `DetailsSession` field rides through the
+  round-trip automatically.
+- `openCapturePageWithSession` drops the `lastCapture` slot
+  *before* its quota probe (low-priority single slot — same
+  policy every fresh capture follows), so the restored session
+  doesn't end up holding the same large bytes twice.
+- `getDetailsData` forwards `session.uiState` as the response's
+  `restoreUiState`. The page's `applyRestoredUiState` overlays it
+  on top of the freshly-applied stored defaults: prompt, save
+  checkboxes, format radio, drawing snapshot via
+  `restoreDrawingSnapshot`. A `pushingDisabled` flag wraps the
+  apply so the per-control change listeners don't bounce the same
+  values straight back to the SW.
+
+### Quota relief
+
+`lastCapture` is the first thing dropped when session storage
+gets tight:
+
+- **Capture path** —
+  `openCapturePageWithSession` and `initializeUploadSession` call
+  `clearLastCapture()` before their quota probes. A fresh capture
+  is high-priority; a stale snapshot the user may never restore is
+  not worth keeping around.
+- **Ask path** — `sendToAi`'s quota probe retries after a
+  `clearLastCaptureForQuota()` if its first attempt failed. The
+  Capture-page session and the Ask widget record are both still
+  paid for; only the optional restore-snapshot pays the price.
+
+### Test seam
+
+`restoreLastCapture` is exposed on `self.SeeWhatISee` for e2e
+tests so a spec can drive the restore flow without going through
+`chrome.contextMenus.onClicked` (which Chrome doesn't expose a
+programmatic dispatch for).
+
 ## Image fit-to-viewport + Zoom
 
 - Zoom modes: Fit (default), 1×, 2×, 4×, 8×.
