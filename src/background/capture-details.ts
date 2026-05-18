@@ -31,6 +31,7 @@ import {
 } from './session-quota.js';
 import {
   type CapturePageUiState,
+  type LastCaptureRecord,
   clearLastCapture,
   getLastCapture,
   promoteSessionToLastCapture,
@@ -434,14 +435,12 @@ export async function restoreLastCapture(
 ): Promise<void> {
   const record = await getLastCapture();
   if (!record) return;
-  await openCapturePageWithSession(record.capture, opener, {
-    htmlEdited: record.htmlEdited,
-    selectionEdited: record.selectionEdited,
-    saved: record.saved,
-    revisions: record.revisions,
-    bases: record.bases,
-    uiState: record.uiState,
-  });
+  // Pass the whole record minus `capture` (already the `data` arg)
+  // straight through — `openCapturePageWithSession` spreads it into
+  // the new session, so any field that was carried by promote rides
+  // back out of restore automatically.
+  const { capture, ...restored } = record;
+  await openCapturePageWithSession(capture, opener, restored);
 }
 
 /**
@@ -500,25 +499,16 @@ function getCombinedCaptureError(data: InMemoryCapture): string {
 async function openCapturePageWithSession(
   data: InMemoryCapture,
   opener: chrome.tabs.Tab | undefined,
-  restored?: {
-    htmlEdited?: boolean;
-    selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
-    /** Filename-bump lock from a previous save — forwarded so a
-     *  Restore-after-Capture-save round-trip keeps writing under the
-     *  bumped `-N` filename rather than overwriting the locked
-     *  on-disk file with a fresh base. */
-    saved?: DetailsSession['saved'];
-    /** Per-artifact edit revisions, paired with `saved` for the
-     *  multi-capture bump check. */
-    revisions?: DetailsSession['revisions'];
-    /** Original un-bumped artifact filenames pinned at the *previous*
-     *  session's creation. Must be forwarded — `data.<x>Filename` on
-     *  a restored capture is already the most recent bumped name, so
-     *  rebuilding `bases` from it would feed an already-bumped stem
-     *  back into `bumpedFilename` and produce names like `…-3-4.png`. */
-    bases?: DetailsSession['bases'];
-    uiState?: CapturePageUiState;
-  },
+  // Carried fields from a Restore. Derived from `LastCaptureRecord`
+  // (which is itself derived from `DetailsSession` via the
+  // denylist), so any new `DetailsSession` field that survives
+  // promote also reaches `buildSession` here automatically. Note
+  // `bases` in particular is included: `data.<x>Filename` on a
+  // restored capture is already the most recent bumped name, so
+  // rebuilding `bases` from it would feed an already-bumped stem
+  // back into `bumpedFilename` and produce names like `…-3-4.png`
+  // instead of `…-4.png` on the next save.
+  restored?: Omit<LastCaptureRecord, 'capture'>,
 ): Promise<void> {
   const createProps: chrome.tabs.CreateProperties = {
     url: chrome.runtime.getURL('capture.html'),
@@ -552,19 +542,17 @@ async function openCapturePageWithSession(
 
   // Build the prospective session up-front so the pre-flight quota
   // check (and the per-tab `set` below) operate on the same value.
+  //
+  // Spread `restored` first so it brings every carried field (sticky
+  // edited flags, the multi-capture filename-bump lock, page-side
+  // `uiState`, plus anything added later to `DetailsSession`). The
+  // explicit fields below override: `capture` / `openerTabId` are
+  // derived fresh, and `bases` falls back to the un-bumped names
+  // from the new capture only when no record forwarded them.
   const buildSession = (): DetailsSession => ({
+    ...restored,
     capture: data,
     openerTabId: opener?.id,
-    // Snapshot the original (un-bumped) artifact filenames so the
-    // multi-capture filename strategy can produce stable
-    // `<base>-1.<ext>` names even after `capture.<x>Filename` gets
-    // mutated by the bump. Pinned here once at session creation
-    // and never touched again — `saved.<x>.bumpIndex` is the
-    // counter; the base supplies the stem + extension.
-    //
-    // On the Restore path, `data.<x>Filename` is already the most
-    // recent bumped name from the previous session, so reuse the
-    // previous session's `bases` if the caller forwarded them.
     bases: restored?.bases ?? {
       screenshot: data.screenshotFilename,
       contents: data.contentsFilename,
@@ -572,17 +560,6 @@ async function openCapturePageWithSession(
         ? { ...data.selectionFilenames }
         : undefined,
     },
-    // Restore-last-capture: replay the sticky edited flags, the
-    // multi-capture filename-bump lock, and the page-side UI state
-    // so the new tab paints with the same prompt / checkbox / drawing
-    // state the user closed against, and a follow-up Capture writes
-    // to a fresh `-N` filename instead of clobbering the previous
-    // on-disk file.
-    htmlEdited: restored?.htmlEdited,
-    selectionEdited: restored?.selectionEdited,
-    saved: restored?.saved,
-    revisions: restored?.revisions,
-    uiState: restored?.uiState,
   });
 
   // Pre-flight quota check. The session-storage cap is shared with

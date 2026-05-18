@@ -17,7 +17,7 @@
 // 10 MiB quota and lifetime: gone on browser restart, just like a
 // real Capture-page session would be.
 
-import type { SelectionFormat, InMemoryCapture } from '../capture/types.js';
+import type { SelectionFormat } from '../capture/types.js';
 import {
   type DetailsSession,
   detailsStorageKey,
@@ -64,31 +64,45 @@ export interface CapturePageUiState {
 }
 
 /**
- * On-disk shape of the `lastCapture` session-storage record. The
- * `capture` half is everything the SW needs to rebuild a
- * `DetailsSession` on restore (minus the download caches, which
- * point at on-disk files this session no longer owns).
+ * `DetailsSession` keys that must NOT survive into `lastCapture` —
+ * the denylist that drives both the on-disk record type and the
+ * runtime promote/restore plumbing. Add a key here when a new
+ * `DetailsSession` field shouldn't carry across a Restore; leave it
+ * off the list and the field flows through automatically.
  *
- *   - `htmlEdited` / `selectionEdited` ride along because they're
- *     sticky flags the user set via the Edit dialogs.
- *   - `saved` / `revisions` / `bases` ride along so a "Capture-button
- *     close → restore → Capture again" round-trip honours the
- *     original multi-capture filename bump. `bases` is the
- *     un-bumped name pinned at original session creation; without
- *     it the new session would treat the already-bumped
- *     `capture.<x>Filename` as its base and produce names like
- *     `…-3-4.png` instead of `…-4.png`.
- *   - `uiState` is the page-side state pushed via `pushUiState`.
+ *   - `openerTabId` — the originating tab id. The restored capture
+ *     finds a fresh opener from the currently active tab; carrying
+ *     the old one would re-focus a tab that may be long gone.
+ *   - `downloads` — per-artifact download-cache entries
+ *     (`{ downloadId, path, editVersion }`). Those `downloadId`s
+ *     belong to the original SW lifetime and the cached on-disk
+ *     paths may have been moved or deleted; the new session has to
+ *     re-materialize files itself.
  */
-export interface LastCaptureRecord {
-  capture: InMemoryCapture;
-  htmlEdited?: boolean;
-  selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
-  saved?: DetailsSession['saved'];
-  revisions?: DetailsSession['revisions'];
-  bases?: DetailsSession['bases'];
-  uiState?: CapturePageUiState;
-}
+export const LAST_CAPTURE_EXCLUDED_KEYS = [
+  'openerTabId',
+  'downloads',
+] as const satisfies readonly (keyof DetailsSession)[];
+
+type LastCaptureExcludedKey = typeof LAST_CAPTURE_EXCLUDED_KEYS[number];
+
+/**
+ * On-disk shape of the `lastCapture` session-storage record:
+ * everything on a `DetailsSession` except `LAST_CAPTURE_EXCLUDED_KEYS`.
+ *
+ * Derived rather than hand-written so new `DetailsSession` fields
+ * default to carrying across a Restore — the failure mode before
+ * the denylist refactor was that adding a field to one of three
+ * parallel hand-curated lists (`DetailsSession`, `LastCaptureRecord`,
+ * `openCapturePageWithSession`'s `restored` arg, `promoteSession…`'s
+ * copy loop, `buildSession`'s read) but forgetting another silently
+ * dropped the field from the round-trip. The poster child was
+ * `bases`: present everywhere except `LastCaptureRecord`, which made
+ * post-save Restores write to `…-3-4.png` instead of `…-4.png`
+ * because the new session rebuilt `bases` from the already-bumped
+ * `capture.<x>Filename`.
+ */
+export type LastCaptureRecord = Omit<DetailsSession, LastCaptureExcludedKey>;
 
 /** Read the saved last-capture record, or `undefined` when none. */
 export async function getLastCapture(): Promise<LastCaptureRecord | undefined> {
@@ -146,23 +160,15 @@ export async function promoteSessionToLastCapture(tabId: number): Promise<void> 
   const stored = await chrome.storage.session.get(key);
   const session = stored[key] as DetailsSession | undefined;
   if (!session) return;
-  const record: LastCaptureRecord = {
-    capture: session.capture,
-  };
-  if (session.htmlEdited) record.htmlEdited = true;
-  if (session.selectionEdited) record.selectionEdited = session.selectionEdited;
-  if (session.saved) record.saved = session.saved;
-  if (session.revisions) record.revisions = session.revisions;
-  // Pin the original un-bumped artifact filenames forward: after a
-  // save, `capture.<x>Filename` holds the most recent bumped name
-  // (e.g. `…-3.png`), and rebuilding `bases` from it on restore
-  // would treat that bumped name as the new base — producing
-  // `…-3-4.png` on the next save. Carrying `bases` keeps the
-  // bump chain rooted in the original session's stem.
-  if (session.bases) record.bases = session.bases;
-  if (session.uiState) record.uiState = session.uiState;
+  // Spread the whole session, drop the denylisted keys. Anything
+  // not on `LAST_CAPTURE_EXCLUDED_KEYS` flows through automatically,
+  // so a new `DetailsSession` field gets carried across Restore by
+  // default — you only need to touch this file again if the new
+  // field shouldn't be carried.
+  const record = { ...session } as Record<string, unknown>;
+  for (const k of LAST_CAPTURE_EXCLUDED_KEYS) delete record[k];
   try {
-    await setLastCapture(record);
+    await setLastCapture(record as unknown as LastCaptureRecord);
   } catch {
     // Quota race — expected best-effort failure; the real save
     // already landed on disk so there's nothing to surface.
