@@ -156,17 +156,10 @@ let editVersion = 0;
  * that previously wrote `editVersion++` should go through this
  * helper so the last-capture push picks up every commit kind (drag,
  * undo, clear, shrink, edge-handle resize, test-only setter).
- *
- * `onEditCommit` is fire-and-forget; failures shouldn't break the
- * edit pipeline, so we swallow them.
  */
 function commitEdit(): void {
   editVersion++;
-  try {
-    ctx?.onEditCommit?.();
-  } catch (err) {
-    console.warn('[SeeWhatISee] onEditCommit threw:', err);
-  }
+  ctx?.onEditCommit?.();
 }
 
 // ─── Polyline (multi-line / multi-arrow) state ────────────────────

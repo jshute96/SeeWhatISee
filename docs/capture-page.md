@@ -1368,11 +1368,26 @@ just before they drop the per-tab session:
 - `tabs.onRemoved` listener — manual close (X on the tab, window
   close, browser shutdown).
 
-The promote helper reads the live `DetailsSession`, copies the
-capture body + sticky-edited flags + `uiState`, and writes the
-result under `lastCapture`. Quota-rejection on the write is
-swallowed — restore is a bonus, the user's real save (when the
-close came from the Capture button) already landed on disk.
+Promote reads the live `DetailsSession` and writes
+`{capture, htmlEdited?, selectionEdited?, saved?, revisions?, uiState?}`
+under `lastCapture`:
+
+- `saved` + `revisions` ride along so a "Capture-save → restore →
+  Capture again" round-trip honours the original filename-bump
+  lock (otherwise the second save would overwrite the first
+  on-disk file).
+- Download caches don't carry over — they point at on-disk files
+  the new session doesn't own.
+
+Guard: promote skips when the session has nothing "worth
+restoring" — empty prompt, no drawings, no `htmlEdited` /
+`selectionEdited` — so opening a Capture page by accident and
+immediately closing it doesn't clobber a useful prior slot.
+
+Failure handling: a `chrome.storage.session.set` quota rejection
+is swallowed. Restore is a bonus; the user's real save already
+landed on disk and a quota miss surfacing as "save failed" would
+mislead.
 
 ### UI-state push from the page
 
@@ -1382,19 +1397,21 @@ The page debounces a `pushUiState` message (~350 ms) on:
 - Save / format checkbox + radio change,
 - drawing module's `onEditCommit` callback (fires on every edit-
   stack mutation that bumped `editVersion` — commit, undo, clear,
-  shrink, edge resize),
+  shrink, edge resize).
 
-…and flushes synchronously on `pagehide` so the final close picks
-up any state still inside the debounce window. Tool-button and
-zoom changes ride on the `pagehide` flush — they don't have
-per-change pushes (the user said "not that important if easy"
-and the flush covers them well enough).
+Synchronous flushes elsewhere catch what the debounce window
+would otherwise eat:
 
-The SW's `pushUiState` handler merges into `session.uiState`. The
-session's promote path reads that field; absent on the very first
-push race (page closed before its first push landed) is fine — the
-promoted record just has no `uiState` and the next restore paints
-without any drawing / prompt content.
+- `pagehide` — final flush on tab close / navigate / reload.
+- Capture / Ask button — `await pushUiStateNow()` before sending
+  the round-trip message, so the SW's promote step sees the
+  freshest state instead of racing the debounce.
+
+Tool-button and zoom changes ride on the `pagehide` flush only —
+no per-change push (acceptable per "not that important if easy").
+
+SW side: the `pushUiState` handler merges into `session.uiState`
+and responds once persisted, so the page's `await` is meaningful.
 
 ### Restore (menu click)
 

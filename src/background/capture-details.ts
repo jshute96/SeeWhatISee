@@ -437,6 +437,8 @@ export async function restoreLastCapture(
   await openCapturePageWithSession(record.capture, opener, {
     htmlEdited: record.htmlEdited,
     selectionEdited: record.selectionEdited,
+    saved: record.saved,
+    revisions: record.revisions,
     uiState: record.uiState,
   });
 }
@@ -500,6 +502,14 @@ async function openCapturePageWithSession(
   restored?: {
     htmlEdited?: boolean;
     selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
+    /** Filename-bump lock from a previous save — forwarded so a
+     *  Restore-after-Capture-save round-trip keeps writing under the
+     *  bumped `-N` filename rather than overwriting the locked
+     *  on-disk file with a fresh base. */
+    saved?: DetailsSession['saved'];
+    /** Per-artifact edit revisions, paired with `saved` for the
+     *  multi-capture bump check. */
+    revisions?: DetailsSession['revisions'];
     uiState?: CapturePageUiState;
   },
 ): Promise<void> {
@@ -551,11 +561,16 @@ async function openCapturePageWithSession(
         ? { ...data.selectionFilenames }
         : undefined,
     },
-    // Restore-last-capture: replay the sticky edited flags + the
-    // page-side UI state so the new tab paints with the same prompt /
-    // checkbox / drawing state the user closed against.
+    // Restore-last-capture: replay the sticky edited flags, the
+    // multi-capture filename-bump lock, and the page-side UI state
+    // so the new tab paints with the same prompt / checkbox / drawing
+    // state the user closed against, and a follow-up Capture writes
+    // to a fresh `-N` filename instead of clobbering the previous
+    // on-disk file.
     htmlEdited: restored?.htmlEdited,
     selectionEdited: restored?.selectionEdited,
+    saved: restored?.saved,
+    revisions: restored?.revisions,
     uiState: restored?.uiState,
   });
 
@@ -1652,10 +1667,10 @@ export function installDetailsMessageHandlers(): void {
             // Closing path: promote the session to `lastCapture` so
             // the user can restore from the More-submenu entry, then
             // drop the per-tab session storage. The `tabs.onRemoved`
-            // listener would also promote on the natural close, but
-            // doing it here too means the new `lastCapture` is in
-            // place before the tab vanishes and the close-time
-            // animation doesn't race the storage update.
+            // safety-net listener fires too, but by then the session
+            // is gone so its promote is a no-op — we do the work here
+            // so the promote runs against the freshest session
+            // (including any `saved.*` bump locks just written above).
             await promoteSessionToLastCapture(tabId);
             await chrome.storage.session.remove(detailsStorageKey(tabId));
             await closeCapturePageTab(tabId, session.openerTabId, true);
@@ -1782,25 +1797,28 @@ export function installDetailsMessageHandlers(): void {
 
     if (msg.action === 'pushUiState') {
       void (async () => {
-        // Best-effort merge of the page's UI state into the per-tab
-        // session, so any later close path (tab removed,
-        // `closeCapturePage`, `saveDetails` happy path) can promote
-        // the latest values to `lastCapture`. Missing session is a
-        // benign race (page closed mid-push) — drop silently.
+        // Merge the page's UI state into the per-tab session so any
+        // later close path can promote the latest values to
+        // `lastCapture`. Missing session is a benign race (page
+        // closed mid-push) — drop silently.
         const session = await loadDetailsSession(tabId);
-        if (!session) return;
-        session.uiState = { ...(session.uiState ?? {}), ...msg.ui };
-        try {
-          await saveDetailsSession(tabId, session);
-        } catch (err) {
-          // Quota-race on push isn't actionable from the page side
-          // (nothing the user is doing on the Capture page should be
-          // refused just because the UI state grew slightly). Log and
-          // move on; the next push will retry the merge.
-          console.warn('[SeeWhatISee] failed to persist UI state push:', err);
+        if (session) {
+          session.uiState = { ...(session.uiState ?? {}), ...msg.ui };
+          try {
+            await saveDetailsSession(tabId, session);
+          } catch {
+            // Quota race on push — expected; the next push retries
+            // the merge. Not worth a warn (would pollute
+            // chrome://extensions for normal behaviour).
+          }
         }
+        // Always respond so the page can `await` this push and know
+        // the SW finished before sending the follow-up message
+        // (`saveDetails` / `askAi`) — otherwise the two SW handlers
+        // race and the close path might promote pre-push state.
+        sendResponse({});
       })();
-      return false;
+      return true;
     }
 
     if (msg.action === 'closeCapturePage') {

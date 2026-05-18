@@ -66,20 +66,24 @@ export interface CapturePageUiState {
 /**
  * On-disk shape of the `lastCapture` session-storage record. The
  * `capture` half is everything the SW needs to rebuild a
- * `DetailsSession` on restore (minus download caches and multi-
- * capture bump state, which don't carry over).
+ * `DetailsSession` on restore (minus the download caches, which
+ * point at on-disk files this session no longer owns).
  *
  *   - `htmlEdited` / `selectionEdited` ride along because they're
- *     sticky flags the user set via the Edit dialogs; they belong
- *     to the *body* state, not the download cache.
+ *     sticky flags the user set via the Edit dialogs.
+ *   - `saved` / `revisions` ride along so a "Capture-button close
+ *     → restore → Capture again" round-trip honours the original
+ *     multi-capture filename bump (otherwise the restored session
+ *     would write under the same base filename as the original
+ *     save and overwrite the on-disk file).
  *   - `uiState` is the page-side state pushed via `pushUiState`.
- *     Absent on the very first close, before the page has had a
- *     chance to push anything.
  */
 export interface LastCaptureRecord {
   capture: InMemoryCapture;
   htmlEdited?: boolean;
   selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
+  saved?: DetailsSession['saved'];
+  revisions?: DetailsSession['revisions'];
   uiState?: CapturePageUiState;
 }
 
@@ -114,37 +118,73 @@ export async function clearLastCaptureForQuota(): Promise<boolean> {
 }
 
 /**
- * Read the per-tab `DetailsSession` at `tabId` and promote it to
- * the `lastCapture` slot, preserving the page-side UI state pushed
- * via `pushUiState`. Called from every Capture-page close path
- * (`saveDetails` happy path, the Ask ctrl-click `closeCapturePage`
- * handler, and the `tabs.onRemoved` listener for manual closes).
+ * Decide whether `session` carries anything worth promoting to
+ * `lastCapture`. Returns false for a session whose user state is
+ * indistinguishable from "fresh capture with stored defaults" — so
+ * opening a Capture page by accident and closing it immediately
+ * doesn't clobber a previously-useful slot.
  *
- * No-op when no session exists at `tabId` — the user closed a tab
- * the SW never seeded (bookmark / direct load) or the storage was
- * already dropped by a previous close path.
+ * "Worth restoring" means at least one of:
+ *   - A non-empty prompt.
+ *   - At least one drawing edit committed (boxes / lines /
+ *     redactions / crops).
+ *   - A sticky Edit-dialog flag (`htmlEdited`, `selectionEdited`).
+ *
+ * Save-checkbox state alone doesn't qualify — the stored defaults
+ * restore that on the next capture, and treating a default-checked
+ * box as "worth saving" would erase a real prior slot every time
+ * the user pops a Capture page open and shut.
+ */
+function isWorthPromoting(session: DetailsSession): boolean {
+  if (session.htmlEdited) return true;
+  if (session.selectionEdited) {
+    for (const fmt of Object.keys(session.selectionEdited) as Array<keyof typeof session.selectionEdited>) {
+      if (session.selectionEdited[fmt]) return true;
+    }
+  }
+  const ui = session.uiState;
+  if (!ui) return false;
+  if (ui.prompt && ui.prompt.length > 0) return true;
+  if (ui.edits && ui.edits.length > 0) return true;
+  return false;
+}
+
+/**
+ * Read the per-tab `DetailsSession` at `tabId` and, if it carries
+ * anything restore-worthy, promote it to the `lastCapture` slot.
+ * Called from every Capture-page close path (`saveDetails` happy
+ * path, the Ask ctrl-click `closeCapturePage` handler, and the
+ * `tabs.onRemoved` listener for manual closes).
+ *
+ * Skips silently when no session exists (closed a tab the SW never
+ * seeded) or when the session has no user state worth restoring
+ * (see `isWorthPromoting`) — in both cases an existing slot is
+ * preserved rather than overwritten with empty content.
  *
  * `chrome.storage.session.set` may reject for quota; on failure we
- * swallow the error rather than re-throwing. Restoring the last
- * capture is a *bonus* — the user's real save (when the close came
- * from the Capture button) already landed on disk. Letting a quota
- * miss bubble would surface a confusing "save failed" tooltip on a
- * save that actually succeeded.
+ * swallow rather than re-throwing. Restoring is a *bonus* — the
+ * user's real save (when the close came from the Capture button)
+ * already landed on disk. Letting a quota miss bubble would surface
+ * a confusing "save failed" tooltip on a save that actually succeeded.
  */
 export async function promoteSessionToLastCapture(tabId: number): Promise<void> {
   const key = detailsStorageKey(tabId);
   const stored = await chrome.storage.session.get(key);
   const session = stored[key] as DetailsSession | undefined;
   if (!session) return;
+  if (!isWorthPromoting(session)) return;
   const record: LastCaptureRecord = {
     capture: session.capture,
   };
   if (session.htmlEdited) record.htmlEdited = true;
   if (session.selectionEdited) record.selectionEdited = session.selectionEdited;
+  if (session.saved) record.saved = session.saved;
+  if (session.revisions) record.revisions = session.revisions;
   if (session.uiState) record.uiState = session.uiState;
   try {
     await setLastCapture(record);
-  } catch (err) {
-    console.warn('[SeeWhatISee] failed to save last capture:', err);
+  } catch {
+    // Quota race — expected best-effort failure; the real save
+    // already landed on disk so there's nothing to surface.
   }
 }

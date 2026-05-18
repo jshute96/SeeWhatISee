@@ -1148,12 +1148,6 @@ captureBtn.addEventListener('click', (e) => {
   // close-after-save; on a failure it leaves the tab open so the
   // user can read the error and recover from the same preview.
   captureBtn.disabled = true;
-  // Flush any pending debounced last-capture push so the SW promotes
-  // the freshest UI state when the Capture-button close path runs.
-  // Without this, a user who hit Enter ~immediately after a
-  // keystroke could lose up to one debounce-window of prompt /
-  // drawing edits from the saved `lastCapture` slot.
-  pushUiStateNow();
   // Modifier semantics — same on both Capture and Ask buttons:
   //   - shift-click: do the action, keep the page open.
   //   - ctrl-click:  do the action, close the page after.
@@ -1183,6 +1177,12 @@ captureBtn.addEventListener('click', (e) => {
 
     setStatusMessage('Saving…', 'info');
     void (async () => {
+      // Flush any pending debounced last-capture push and wait for
+      // the SW to merge it in. This is what guarantees the close-
+      // path promote sees the freshest prompt / drawing state — a
+      // bare fire-and-forget push would otherwise race the
+      // saveDetails handler's promote step.
+      await pushUiStateNow();
       let response: { ok?: boolean; error?: string } | undefined;
       try {
         response = (await chrome.runtime.sendMessage({
@@ -1413,16 +1413,22 @@ function captureUiStateSnapshot(): {
   };
 }
 
-function pushUiStateNow(): void {
+async function pushUiStateNow(): Promise<void> {
   if (pushingDisabled) return;
-  // Fire-and-forget. `chrome.runtime.sendMessage` resolves once the
-  // SW handler returns; we don't need the result and a SW-down /
-  // tab-closing rejection is benign (the push is best-effort).
-  void chrome.runtime
-    .sendMessage({ action: 'pushUiState', ui: captureUiStateSnapshot() })
-    .catch(() => {
-      /* swallow — push is best-effort */
+  // The SW's `pushUiState` handler responds once it has persisted
+  // the merged state. Awaiting that response is what lets the
+  // Capture / Ask pre-send flush guarantee the close-time promote
+  // sees the freshest state — without the await, the two SW
+  // handlers race. A SW-down / tab-closing rejection is benign;
+  // swallowed so callers don't have to.
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'pushUiState',
+      ui: captureUiStateSnapshot(),
     });
+  } catch {
+    // page closing / SW down — best-effort
+  }
 }
 
 function pushUiStateDebounced(): void {
@@ -1430,7 +1436,7 @@ function pushUiStateDebounced(): void {
   if (pushDebounceTimer !== null) window.clearTimeout(pushDebounceTimer);
   pushDebounceTimer = window.setTimeout(() => {
     pushDebounceTimer = null;
-    pushUiStateNow();
+    void pushUiStateNow();
   }, PUSH_DEBOUNCE_MS);
 }
 
@@ -1447,17 +1453,17 @@ function pushUiStateDebounced(): void {
 //   - Page hide: synchronous flush so the final close picks up any
 //     state still inside the debounce window.
 promptInput.addEventListener('input', pushUiStateDebounced);
-screenshotBox.addEventListener('change', pushUiStateNow);
-htmlBox.addEventListener('change', pushUiStateNow);
-selectionBox.addEventListener('change', pushUiStateNow);
+screenshotBox.addEventListener('change', () => { void pushUiStateNow(); });
+htmlBox.addEventListener('change', () => { void pushUiStateNow(); });
+selectionBox.addEventListener('change', () => { void pushUiStateNow(); });
 for (const format of SELECTION_FORMATS) {
-  selectionRows[format].radio.addEventListener('change', pushUiStateNow);
+  selectionRows[format].radio.addEventListener('change', () => { void pushUiStateNow(); });
 }
-// `pagehide` fires on tab close, navigation, and reload alike. The
-// SW's sendMessage handler may or may not finish processing before
-// the tab vanishes — best-effort by design. `tabs.onRemoved` also
-// promotes from the existing session state as a safety net.
-window.addEventListener('pagehide', pushUiStateNow);
+// `pagehide` fires on tab close, navigation, and reload alike.
+// The push is fire-and-forget here — the SW may or may not finish
+// processing before the tab vanishes. `tabs.onRemoved` promotes
+// from whatever session state did land, as a safety net.
+window.addEventListener('pagehide', () => { void pushUiStateNow(); });
 
 /**
  * Apply a previously-pushed UI snapshot to the live page. Wires
@@ -1474,7 +1480,15 @@ window.addEventListener('pagehide', pushUiStateNow);
 function applyRestoredUiState(
   state: NonNullable<DetailsData['restoreUiState']>,
 ): void {
+  // Suppress pushes while we paint, and drop any pending debounce
+  // so a previously-scheduled push (impossible today since restore
+  // runs inside loadData's first paint, but cheap belt-and-suspenders)
+  // can't fire between the body of this function and `finally`.
   pushingDisabled = true;
+  if (pushDebounceTimer !== null) {
+    window.clearTimeout(pushDebounceTimer);
+    pushDebounceTimer = null;
+  }
   try {
     if (typeof state.prompt === 'string') {
       promptInput.value = state.prompt;
@@ -1486,15 +1500,17 @@ function applyRestoredUiState(
       if (!htmlBox.disabled) htmlBox.checked = cb.html;
       if (!selectionBox.disabled) {
         selectionBox.checked = cb.selection;
-        // Apply format radio when the master is on and the format
-        // is still saveable on this capture. If the saved format
-        // is empty on this restored body (e.g. the user edited it
-        // to empty), the master is left checked but the radios
-        // stay in whatever state `wireSelectionControls` left them
-        // — the format-fallback already happened above. We also
-        // skip applying a `null` format (master was unchecked at
-        // close time) since the per-format radios are already
-        // unchecked in that case.
+        // Apply format radio when the master is on and the saved
+        // format is still saveable on this capture. Two skip
+        // branches both land on the default-set radio above (lines
+        // 906-911) being the user's effective format:
+        //   - `cb.selection && cb.format` but `row.radio.disabled`
+        //     — the saved format isn't available on this restored
+        //     body (e.g. text format was empty so its row is off).
+        //   - `cb.selection && !cb.format` — master was on but no
+        //     format pinned (shouldn't happen today; defensive).
+        // The `!cb.selection` branch clears every radio to match
+        // a master-off close.
         if (cb.selection && cb.format) {
           const row = selectionRows[cb.format];
           if (!row.radio.disabled) {
@@ -1510,21 +1526,20 @@ function applyRestoredUiState(
         }
       }
     }
-    if (
-      state.edits ||
-      state.editHistory ||
-      typeof state.nextEditId === 'number' ||
-      typeof state.editVersion === 'number' ||
-      state.selectedTool
-    ) {
-      restoreDrawingSnapshot({
-        edits: state.edits as never,
-        editHistory: state.editHistory as never,
-        nextEditId: state.nextEditId,
-        editVersion: state.editVersion,
-        selectedTool: state.selectedTool as Tool | undefined,
-      });
-    }
+    // The page always pushes a full drawing snapshot, so we just
+    // forward the fields verbatim — `restoreDrawingSnapshot` skips
+    // each absent one. The `as never` casts trust the SW-stored
+    // shape (structured-clone preserves it across the
+    // `chrome.storage.session` round-trip); a hand-crafted
+    // malformed value would land garbage on the edit stack, but
+    // there's no path that produces one today.
+    restoreDrawingSnapshot({
+      edits: state.edits as never,
+      editHistory: state.editHistory as never,
+      nextEditId: state.nextEditId,
+      editVersion: state.editVersion,
+      selectedTool: state.selectedTool as Tool | undefined,
+    });
     if (state.zoomMode) {
       // Zoom mode arrives as a string ("fit" / "1" / "2" / …); the
       // setter expects 'fit' or the numeric union. Cast through
