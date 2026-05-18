@@ -317,9 +317,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   // Restore the most recently closed Capture page's in-flight state
   // (prompt, save checkboxes, drawing edits + undo stack, selected
-  // tool, zoom). The menu entry is greyed when no `lastCapture` slot
-  // exists; the restore helper drops the slot as part of opening the
-  // new tab so the bytes don't sit duplicated in session storage.
+  // tool). The menu entry is greyed when no `lastCapture` slot exists;
+  // the restore helper drops the slot as part of opening the new tab
+  // so the bytes don't sit duplicated in session storage.
   if (id === RESTORE_LAST_CAPTURE_MENU_ID) {
     await runWithErrorReporting(() => restoreLastCapture(tab));
     return;

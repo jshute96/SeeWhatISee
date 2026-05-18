@@ -5,8 +5,9 @@
 // `lastCapture`. The toolbar's More submenu surfaces a
 // `Restore last capture` entry that re-opens a Capture page seeded
 // from that snapshot — including the in-flight drawing edits + undo
-// stack, the prompt text, the Save-checkbox state, the selected
-// drawing tool, and the zoom mode.
+// stack, the prompt text, the Save-checkbox state, and the selected
+// drawing tool. Zoom is deliberately not carried; see
+// `CapturePageUiState` below.
 //
 // One slot only. New captures (and quota relief on Capture / Ask)
 // freely clear `lastCapture` — the snapshot is best-effort, not

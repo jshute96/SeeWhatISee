@@ -58,8 +58,8 @@ export const UPLOAD_IMAGE_MENU_ID = 'upload-image-to-capture';
 // Id used by the "Restore last capture" entry under the More submenu.
 // Re-opens a Capture page seeded from the saved `lastCapture` slot —
 // preserving prompt / save checkbox state / drawing edits + undo
-// stack / selected tool / zoom from the most recently closed Capture
-// page. Enabled state mirrors whether a `lastCapture` record exists;
+// stack / selected tool from the most recently closed Capture page.
+// Enabled state mirrors whether a `lastCapture` record exists;
 // see `refreshRestoreLastCaptureMenuState`.
 export const RESTORE_LAST_CAPTURE_MENU_ID = 'restore-last-capture';
 // Ids for the "Copy last …" entries at the top of the More submenu.

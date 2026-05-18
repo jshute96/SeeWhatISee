@@ -177,9 +177,10 @@ interface DetailsData {
    * the Restore last capture flow). Absent on a normal capture-page
    * open. When present, `loadData()` applies these on top of the
    * defaults — same checkboxes, same prompt text, same drawing
-   * edits + undo stack, same selected tool, same zoom mode. Every
-   * field is optional so a partial push (e.g. close raced the page's
-   * very first push) still restores what it can.
+   * edits + undo stack, same selected tool. Zoom is deliberately
+   * not carried; restore reverts to the page-init default (Fit).
+   * Every field is optional so a partial push (e.g. close raced the
+   * page's very first push) still restores what it can.
    */
   restoreUiState?: {
     prompt?: string;
@@ -1360,7 +1361,7 @@ initEditDialogs({
 //
 // Best-effort: any time the user touches a piece of restorable state
 // (prompt, save checkboxes / format radio, drawing edits, selected
-// tool, zoom mode), push the current snapshot to the SW. The SW
+// tool), push the current snapshot to the SW. The SW
 // stores it on the per-tab Capture-page session, and the next close
 // path (Capture button, Ask ctrl-click, manual tab close) promotes
 // it to the `lastCapture` session-storage slot. The
@@ -1463,8 +1464,9 @@ window.addEventListener('pagehide', () => { void pushUiStateNow(); });
 
 /**
  * Apply a previously-pushed UI snapshot to the live page. Wires
- * the prompt, save-checkbox + format-radio state, the drawing edit
- * stack + undo history + selected tool, and the zoom mode. Guards
+ * the prompt, save-checkbox + format-radio state, and the drawing
+ * edit stack + undo history + selected tool. Zoom is deliberately
+ * not restored — see the inline comment in the body. Guards
  * `pushingDisabled` so the per-checkbox / radio listeners above
  * don't fire pushes that would bounce the same values right back
  * to the SW while we're still painting.

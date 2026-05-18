@@ -752,7 +752,7 @@ interface PushUiStateMessage {
   /**
    * Best-effort page → SW push of the Capture page's UI state
    * (prompt, save checkboxes, drawing edits + undo stack, selected
-   * tool, zoom mode). The handler merges the incoming partial into
+   * tool). The handler merges the incoming partial into
    * `session.uiState`. The promoted `lastCapture` record reads this
    * field, so subsequent Restore-last-capture clicks rehydrate the
    * same page state.

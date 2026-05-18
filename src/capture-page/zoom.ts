@@ -261,13 +261,6 @@ export function currentDisplayScale(): number {
   return ctx.imgRect().width / target.w;
 }
 
-/** Current zoom mode — `'fit'` or one of the discrete Nx steps.
- *  Read by the last-capture push so a restore lands the page back
- *  on whatever zoom the user closed with. */
-export function getZoomMode(): ZoomMode {
-  return zoomMode;
-}
-
 // Has Fit-mode's rendering already reached the editor's 1× display
 // size? Used by the wheel handler to skip the redundant fit ↔ 1×
 // hop when the image already fills fit-mode at the 1× target size
