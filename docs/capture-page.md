@@ -1347,9 +1347,9 @@ or prompt was still in flight. Lives in `last-capture.ts`.
 
 - Single slot: `chrome.storage.session` key `lastCapture`.
 - Shape: `{ capture: InMemoryCapture, htmlEdited?, selectionEdited?,
-  uiState? }` — everything the SW needs to rebuild a
-  `DetailsSession`, minus the download cache and multi-capture
-  bump state (those don't carry over).
+  saved?, revisions?, bases?, uiState? }` — everything the SW needs
+  to rebuild a `DetailsSession`, minus the download cache and the
+  opener tab id (those don't carry over).
 - `uiState` is what the page pushes via `pushUiState`: prompt
   text, save-checkbox + format-radio state, drawing edits + undo
   history + `nextEditId` + `editVersion`, selected tool, zoom
@@ -1369,20 +1369,31 @@ just before they drop the per-tab session:
   close, browser shutdown).
 
 Promote reads the live `DetailsSession` and writes
-`{capture, htmlEdited?, selectionEdited?, saved?, revisions?, uiState?}`
+`{capture, htmlEdited?, selectionEdited?, saved?, revisions?, bases?, uiState?}`
 under `lastCapture`:
 
 - `saved` + `revisions` ride along so a "Capture-save → restore →
   Capture again" round-trip honours the original filename-bump
   lock (otherwise the second save would overwrite the first
   on-disk file).
+- `bases` rides along because `capture.<x>Filename` has been
+  bump-mutated by every prior save (e.g. `…-3.png`). Without the
+  original un-bumped names, the restored session would feed an
+  already-bumped stem back into `bumpedFilename` and produce
+  `…-3-4.png` on the next save instead of `…-4.png`.
 - Download caches don't carry over — they point at on-disk files
   the new session doesn't own.
+- `openerTabId` doesn't carry over — the restore handler picks a
+  fresh opener from the currently active tab.
 
-Guard: promote skips when the session has nothing "worth
-restoring" — empty prompt, no drawings, no `htmlEdited` /
-`selectionEdited` — so opening a Capture page by accident and
-immediately closing it doesn't clobber a useful prior slot.
+Last-closed wins, unconditionally. The screenshot + HTML are the
+largest and least-reproducible part of the slot; any annotation
+state (prompt, drawings) is recoverable in seconds. So promote
+doesn't try to second-guess whether a close was "accidental" —
+every close overwrites the prior slot. The one case that would
+clobber with no recoverable bytes — a total capture failure —
+never reaches promote because `openCapturePageWithSession`
+early-returns before storing a session for that tab.
 
 Failure handling: a `chrome.storage.session.set` quota rejection
 is swallowed. Restore is a bonus; the user's real save already

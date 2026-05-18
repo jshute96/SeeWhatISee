@@ -71,11 +71,13 @@ export interface CapturePageUiState {
  *
  *   - `htmlEdited` / `selectionEdited` ride along because they're
  *     sticky flags the user set via the Edit dialogs.
- *   - `saved` / `revisions` ride along so a "Capture-button close
- *     → restore → Capture again" round-trip honours the original
- *     multi-capture filename bump (otherwise the restored session
- *     would write under the same base filename as the original
- *     save and overwrite the on-disk file).
+ *   - `saved` / `revisions` / `bases` ride along so a "Capture-button
+ *     close → restore → Capture again" round-trip honours the
+ *     original multi-capture filename bump. `bases` is the
+ *     un-bumped name pinned at original session creation; without
+ *     it the new session would treat the already-bumped
+ *     `capture.<x>Filename` as its base and produce names like
+ *     `…-3-4.png` instead of `…-4.png`.
  *   - `uiState` is the page-side state pushed via `pushUiState`.
  */
 export interface LastCaptureRecord {
@@ -84,6 +86,7 @@ export interface LastCaptureRecord {
   selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
   saved?: DetailsSession['saved'];
   revisions?: DetailsSession['revisions'];
+  bases?: DetailsSession['bases'];
   uiState?: CapturePageUiState;
 }
 
@@ -118,48 +121,19 @@ export async function clearLastCaptureForQuota(): Promise<boolean> {
 }
 
 /**
- * Decide whether `session` carries anything worth promoting to
- * `lastCapture`. Returns false for a session whose user state is
- * indistinguishable from "fresh capture with stored defaults" — so
- * opening a Capture page by accident and closing it immediately
- * doesn't clobber a previously-useful slot.
+ * Read the per-tab `DetailsSession` at `tabId` and promote it to
+ * the `lastCapture` slot. Called from every Capture-page close path
+ * (`saveDetails` happy path, the Ask ctrl-click `closeCapturePage`
+ * handler, and the `tabs.onRemoved` listener for manual closes).
  *
- * "Worth restoring" means at least one of:
- *   - A non-empty prompt.
- *   - At least one drawing edit committed (boxes / lines /
- *     redactions / crops).
- *   - A sticky Edit-dialog flag (`htmlEdited`, `selectionEdited`).
- *
- * Save-checkbox state alone doesn't qualify — the stored defaults
- * restore that on the next capture, and treating a default-checked
- * box as "worth saving" would erase a real prior slot every time
- * the user pops a Capture page open and shut.
- */
-function isWorthPromoting(session: DetailsSession): boolean {
-  if (session.htmlEdited) return true;
-  if (session.selectionEdited) {
-    for (const fmt of Object.keys(session.selectionEdited) as Array<keyof typeof session.selectionEdited>) {
-      if (session.selectionEdited[fmt]) return true;
-    }
-  }
-  const ui = session.uiState;
-  if (!ui) return false;
-  if (ui.prompt && ui.prompt.length > 0) return true;
-  if (ui.edits && ui.edits.length > 0) return true;
-  return false;
-}
-
-/**
- * Read the per-tab `DetailsSession` at `tabId` and, if it carries
- * anything restore-worthy, promote it to the `lastCapture` slot.
- * Called from every Capture-page close path (`saveDetails` happy
- * path, the Ask ctrl-click `closeCapturePage` handler, and the
- * `tabs.onRemoved` listener for manual closes).
- *
- * Skips silently when no session exists (closed a tab the SW never
- * seeded) or when the session has no user state worth restoring
- * (see `isWorthPromoting`) — in both cases an existing slot is
- * preserved rather than overwritten with empty content.
+ * Last-closed wins, unconditionally: the captured screenshot + HTML
+ * are the largest, least-reproducible part of the slot, and the
+ * user's annotations (prompt, drawings) are recoverable in seconds
+ * anyway. So we don't try to second-guess whether a close was
+ * "accidental" — any close overwrites the prior slot. Total-capture-
+ * failure tabs never get a stored session in the first place
+ * (`openCapturePageWithSession` early-returns before `saveDetails`),
+ * so the `!session` guard already filters them out.
  *
  * `chrome.storage.session.set` may reject for quota; on failure we
  * swallow rather than re-throwing. Restoring is a *bonus* — the
@@ -172,7 +146,6 @@ export async function promoteSessionToLastCapture(tabId: number): Promise<void> 
   const stored = await chrome.storage.session.get(key);
   const session = stored[key] as DetailsSession | undefined;
   if (!session) return;
-  if (!isWorthPromoting(session)) return;
   const record: LastCaptureRecord = {
     capture: session.capture,
   };
@@ -180,6 +153,13 @@ export async function promoteSessionToLastCapture(tabId: number): Promise<void> 
   if (session.selectionEdited) record.selectionEdited = session.selectionEdited;
   if (session.saved) record.saved = session.saved;
   if (session.revisions) record.revisions = session.revisions;
+  // Pin the original un-bumped artifact filenames forward: after a
+  // save, `capture.<x>Filename` holds the most recent bumped name
+  // (e.g. `…-3.png`), and rebuilding `bases` from it on restore
+  // would treat that bumped name as the new base — producing
+  // `…-3-4.png` on the next save. Carrying `bases` keeps the
+  // bump chain rooted in the original session's stem.
+  if (session.bases) record.bases = session.bases;
   if (session.uiState) record.uiState = session.uiState;
   try {
     await setLastCapture(record);

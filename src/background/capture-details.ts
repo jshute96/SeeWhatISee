@@ -439,6 +439,7 @@ export async function restoreLastCapture(
     selectionEdited: record.selectionEdited,
     saved: record.saved,
     revisions: record.revisions,
+    bases: record.bases,
     uiState: record.uiState,
   });
 }
@@ -510,6 +511,12 @@ async function openCapturePageWithSession(
     /** Per-artifact edit revisions, paired with `saved` for the
      *  multi-capture bump check. */
     revisions?: DetailsSession['revisions'];
+    /** Original un-bumped artifact filenames pinned at the *previous*
+     *  session's creation. Must be forwarded — `data.<x>Filename` on
+     *  a restored capture is already the most recent bumped name, so
+     *  rebuilding `bases` from it would feed an already-bumped stem
+     *  back into `bumpedFilename` and produce names like `…-3-4.png`. */
+    bases?: DetailsSession['bases'];
     uiState?: CapturePageUiState;
   },
 ): Promise<void> {
@@ -554,7 +561,11 @@ async function openCapturePageWithSession(
     // mutated by the bump. Pinned here once at session creation
     // and never touched again — `saved.<x>.bumpIndex` is the
     // counter; the base supplies the stem + extension.
-    bases: {
+    //
+    // On the Restore path, `data.<x>Filename` is already the most
+    // recent bumped name from the previous session, so reuse the
+    // previous session's `bases` if the caller forwarded them.
+    bases: restored?.bases ?? {
       screenshot: data.screenshotFilename,
       contents: data.contentsFilename,
       selections: data.selectionFilenames
