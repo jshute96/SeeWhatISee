@@ -37,6 +37,7 @@ import {
   checkSessionStorageRoom,
   formatQuotaError,
 } from '../background/session-quota.js';
+import { clearLastCaptureForQuota } from '../background/last-capture.js';
 
 /**
  * Effective accepted attachment kinds for a destination (provider +
@@ -801,9 +802,17 @@ export async function sendToAi(
     runId: 0,
     updatedAt: 0,
   };
-  const room = await checkSessionStorageRoom(probeKey, probeRecord);
+  let room = await checkSessionStorageRoom(probeKey, probeRecord);
   if (!room.ok) {
-    return { ok: false, error: formatQuotaError('ask', room) };
+    // Last-capture is a low-priority single-slot snapshot — if dropping
+    // it frees enough room for this Ask, do that and retry the probe
+    // rather than surfacing a "too large" error the user has no
+    // direct way to fix. The Capture-page session itself is the high-
+    // priority occupant; we only touch `lastCapture` here.
+    if (await clearLastCaptureForQuota()) {
+      room = await checkSessionStorageRoom(probeKey, probeRecord);
+    }
+    if (!room.ok) return { ok: false, error: formatQuotaError('ask', room) };
   }
 
   let tabId: number;

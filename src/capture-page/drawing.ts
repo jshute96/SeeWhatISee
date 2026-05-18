@@ -150,6 +150,25 @@ let selectedTool: Tool = 'rect';
  */
 let editVersion = 0;
 
+/**
+ * Bump `editVersion` and notify the main page (via the optional
+ * `onEditCommit` callback) that the edit stack changed. Every place
+ * that previously wrote `editVersion++` should go through this
+ * helper so the last-capture push picks up every commit kind (drag,
+ * undo, clear, shrink, edge-handle resize, test-only setter).
+ *
+ * `onEditCommit` is fire-and-forget; failures shouldn't break the
+ * edit pipeline, so we swallow them.
+ */
+function commitEdit(): void {
+  editVersion++;
+  try {
+    ctx?.onEditCommit?.();
+  } catch (err) {
+    console.warn('[SeeWhatISee] onEditCommit threw:', err);
+  }
+}
+
 // ─── Polyline (multi-line / multi-arrow) state ────────────────────
 //
 // Set when the user holds Ctrl (Cmd on macOS) while drawing with
@@ -343,6 +362,16 @@ export interface DrawingContext {
    *  crop-drag mousemove refreshes the displayed size in real
    *  time without re-baking. */
   composeImageBadgeText(): void;
+  /**
+   * Fired after any edit-stack mutation that bumped `editVersion`
+   * (committed drag, undo, clear, shrink, edge-handle resize,
+   * test-only setter). Optional — used by the page's last-capture
+   * push to flush drawing state to the SW. The callback runs after
+   * `render()` so the latest geometry is on screen by the time
+   * push fires. Intentionally not invoked from mid-drag mousemove —
+   * pushing the live preview would be expensive and pointless.
+   */
+  onEditCommit?(): void;
 }
 
 let ctx: DrawingContext;
@@ -1719,6 +1748,62 @@ export function getEditVersion(): number {
   return editVersion;
 }
 
+/**
+ * Drawing-module snapshot the last-capture push needs to rehydrate
+ * the edit stack on restore. `edits` + `editHistory` are returned as
+ * defensive copies — callers serialize them to JSON and forward to
+ * the SW, and a mutable reference would otherwise let an unrelated
+ * push mutation leak into the in-flight `chrome.runtime.sendMessage`.
+ *
+ * `editVersion` is included so the SW + restored page can keep the
+ * counter monotonic (matters for the screenshot download cache: a
+ * restored session resumes at the same version the previous one
+ * left off at, so a fresh save against unchanged edits hits the
+ * cache rather than re-baking).
+ */
+export interface DrawingSnapshot {
+  edits: Edit[];
+  editHistory: HistoryOp[];
+  nextEditId: number;
+  editVersion: number;
+  selectedTool: Tool;
+}
+export function getDrawingSnapshot(): DrawingSnapshot {
+  return {
+    edits: edits.map((e) => ({ ...e })),
+    editHistory: editHistory.map((h) => ({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) })),
+    nextEditId,
+    editVersion,
+    selectedTool,
+  };
+}
+
+/**
+ * Replace the drawing module's edit state with a previously-taken
+ * snapshot. Used by the restore-last-capture flow on `loadData()`
+ * to rehydrate the edit stack + undo history + version counter + tool
+ * choice. Re-renders so the SVG overlay paints the restored geometry
+ * immediately. Does NOT fire `onEditCommit` — restore is a one-shot
+ * "set to this state" operation, not an edit the user just made, so
+ * we don't want to bounce the same state straight back to the SW.
+ */
+export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void {
+  if (snapshot.edits) {
+    edits.length = 0;
+    for (const e of snapshot.edits) edits.push({ ...e });
+  }
+  if (snapshot.editHistory) {
+    editHistory.length = 0;
+    for (const h of snapshot.editHistory) {
+      editHistory.push({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) });
+    }
+  }
+  if (typeof snapshot.nextEditId === 'number') nextEditId = snapshot.nextEditId;
+  if (typeof snapshot.editVersion === 'number') editVersion = snapshot.editVersion;
+  if (snapshot.selectedTool) setSelectedTool(snapshot.selectedTool);
+  render();
+}
+
 /** Currently-selected drawing tool. Read by main's
  *  `liveCropDimensions` to detect a Crop-tool drag in flight. */
 export function getSelectedTool(): Tool {
@@ -1825,7 +1910,7 @@ export function getTestHooks(): DrawingTestHooks {
           e.y = bounds.y;
           e.w = bounds.w;
           e.h = bounds.h;
-          editVersion++;
+          commitEdit();
           render();
           return true;
         }
@@ -2067,7 +2152,7 @@ export function initDrawing(context: DrawingContext): void {
           const id = nextEditId++;
           edits.push({ id, kind: 'crop', ...next });
           editHistory.push({ id });
-          editVersion++;
+          commitEdit();
         } else {
           // Resize an existing edit in place. Mutate the bounds and
           // record a Shrink-style `prev` history op so Undo restores
@@ -2084,7 +2169,7 @@ export function initDrawing(context: DrawingContext): void {
               target.w = next.w;
               target.h = next.h;
               editHistory.push({ id: target.id, prev });
-              editVersion++;
+              commitEdit();
             }
           }
         }
@@ -2171,7 +2256,7 @@ export function initDrawing(context: DrawingContext): void {
       edits.push(pending);
       editHistory.push({ id: pending.id });
       nextEditId++;
-      editVersion++;
+      commitEdit();
     }
     // Polyline continuation: tool-entered and Ctrl-promoted both end
     // up in the same state machine.
@@ -2511,14 +2596,14 @@ export function initDrawing(context: DrawingContext): void {
         edits.splice(idx, 1);
       }
     }
-    editVersion++;
+    commitEdit();
     render();
   });
 
   ctx.clearBtn.addEventListener('click', () => {
     edits.length = 0;
     editHistory.length = 0;
-    editVersion++;
+    commitEdit();
     render();
   });
 
@@ -2660,7 +2745,7 @@ export function initDrawing(context: DrawingContext): void {
       edits.push({ id, kind: 'crop', ...finalPct });
       editHistory.push({ id });
     }
-    editVersion++;
+    commitEdit();
     render();
   });
 

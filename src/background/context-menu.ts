@@ -13,6 +13,7 @@ import {
 import { type CaptureRecord } from '../capture/types.js';
 import { DOWNLOAD_SUBDIR } from '../capture/downloads.js';
 import { LOG_STORAGE_KEY } from '../capture/log-store.js';
+import { getLastCapture } from './last-capture.js';
 import {
   CAPTURE_ACTIONS,
   captureActionsWithDelay,
@@ -54,6 +55,13 @@ export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
 // image — opens `capture.html?upload=true` so the page shows an
 // upload-landing card before falling into the normal flow.
 export const UPLOAD_IMAGE_MENU_ID = 'upload-image-to-capture';
+// Id used by the "Restore last capture" entry under the More submenu.
+// Re-opens a Capture page seeded from the saved `lastCapture` slot —
+// preserving prompt / save checkbox state / drawing edits + undo
+// stack / selected tool / zoom from the most recently closed Capture
+// page. Enabled state mirrors whether a `lastCapture` record exists;
+// see `refreshRestoreLastCaptureMenuState`.
+export const RESTORE_LAST_CAPTURE_MENU_ID = 'restore-last-capture';
 // Ids for the "Copy last …" entries at the top of the More submenu.
 // Their enabled state mirrors whether the most recent capture record
 // carries the matching field (`screenshot` / `contents` / `selection`);
@@ -432,6 +440,24 @@ export async function refreshCopyMenuState(): Promise<void> {
   }
 }
 
+/**
+ * Toggle `enabled` on the Restore-last-capture entry to match
+ * whether a `lastCapture` slot exists. Driven by
+ * `chrome.storage.onChanged` so every promote (capture-page close)
+ * or clear (new capture, restore, quota relief) refreshes the
+ * state without explicit plumbing.
+ */
+export async function refreshRestoreLastCaptureMenuState(): Promise<void> {
+  const record = await getLastCapture();
+  try {
+    await chrome.contextMenus.update(RESTORE_LAST_CAPTURE_MENU_ID, {
+      enabled: !!record,
+    });
+  } catch {
+    /* menu not installed yet */
+  }
+}
+
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 
 /**
@@ -633,6 +659,8 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //       • Copy last HTML filename         (greyed unless latest record has HTML)
 //       • Copy last selection filename    (greyed unless latest record has a selection)
 //       ─────────
+//       • Upload image to Capture...
+//       • Restore last capture            (greyed unless a closed Capture page state is saved)
 //       • Snapshots directory
 //       ─────────
 //       • Clear log history
@@ -872,6 +900,17 @@ export async function installContextMenu(): Promise<void> {
     title: 'Upload image to Capture...',
     contexts: ['action'],
   });
+  // Re-open the last Capture page's in-flight state. Created
+  // `enabled: false` and flipped on by `refreshRestoreLastCaptureMenuState`
+  // when a `lastCapture` slot exists — same first-paint policy as
+  // the Copy-last-… entries.
+  chrome.contextMenus.create({
+    id: RESTORE_LAST_CAPTURE_MENU_ID,
+    parentId: MORE_PARENT_ID,
+    title: 'Restore last capture',
+    enabled: false,
+    contexts: ['action'],
+  });
   chrome.contextMenus.create({
     id: SNAPSHOTS_DIR_MENU_ID,
     parentId: MORE_PARENT_ID,
@@ -926,6 +965,10 @@ export async function installContextMenu(): Promise<void> {
   // After all entries exist, sync the Copy-last-… enable state to
   // whatever the most recent capture record looks like.
   await refreshCopyMenuState();
+  // Restore-last-capture state — same first-paint sync as the
+  // Copy-last entries; toggled live thereafter by the
+  // `lastCapture`-keyed storage listener.
+  await refreshRestoreLastCaptureMenuState();
   // Same for the Pin Ask target entry's title + enabled state —
   // there's no point waiting for a tab event to arrive before the
   // menu reflects the current page.

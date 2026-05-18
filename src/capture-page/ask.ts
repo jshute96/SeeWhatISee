@@ -101,6 +101,15 @@ export interface AskContext {
   /** Map from `SelectionFormat` to its wire kind. Const reference,
    *  passed once. */
   selectionWireKind: Record<SelectionFormat, EditableArtifactKind>;
+
+  /** Flush any pending debounced last-capture `pushUiState` so the
+   *  SW promotes the freshest UI state when the Ask close path
+   *  fires. Called right before the askAi `sendMessage` so the
+   *  promote inside `closeCapturePage` (ctrl-click only) carries
+   *  the same prompt / drawing the user just sent. Plain Ask
+   *  (stay-open) doesn't strictly need this but the call is cheap
+   *  enough that both paths share one branch. */
+  flushLastCapturePush(): void;
 }
 
 interface AskTabSummary {
@@ -828,6 +837,11 @@ async function runAskWithMessage(
   askMenuBtn.disabled = true;
   setAskProviderButtonsDisabled(true);
   ctx.setStatusMessage('Sending…', 'info');
+  // Push the freshest UI state to the SW before the round-trip so a
+  // ctrl-click close — which fires `closeCapturePage` and promotes
+  // the session to `lastCapture` — picks up the latest prompt /
+  // drawing without waiting for the page-side debounce to flush.
+  ctx.flushLastCapturePush();
   try {
     const response = (await chrome.runtime.sendMessage(message)) as
       | { ok: boolean; error?: string; skipped?: string[] }

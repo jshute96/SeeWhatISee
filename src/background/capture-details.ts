@@ -29,6 +29,12 @@ import {
   formatQuotaError,
   type QuotaBreakdownPart,
 } from './session-quota.js';
+import {
+  type CapturePageUiState,
+  clearLastCapture,
+  getLastCapture,
+  promoteSessionToLastCapture,
+} from './last-capture.js';
 
 /**
  * Hard cap on HTML byte size. Heavy SPAs frequently inline
@@ -280,6 +286,19 @@ export interface DetailsSession {
     contents?: string;
     selections?: Partial<Record<SelectionFormat, string>>;
   };
+  /**
+   * Last-known page-side UI state, pushed by the Capture page via
+   * the `pushUiState` message. Promoted to the `lastCapture`
+   * session-storage slot on every Capture-page close path so a
+   * subsequent Restore-last-capture click can rehydrate the page
+   * with the same prompt / save-checkbox / drawing state.
+   *
+   * Optional because the page only starts pushing after
+   * `loadData()` resolves; closes that race ahead of the first
+   * push (e.g. user opens then immediately closes the tab) just
+   * promote the bare `capture` half with no UI to restore.
+   */
+  uiState?: CapturePageUiState;
 }
 
 export function detailsStorageKey(tabId: number): string {
@@ -398,6 +417,31 @@ export async function startCaptureWithDetailsFromImage(
 }
 
 /**
+ * Re-open a Capture page tab seeded from the saved `lastCapture`
+ * record. Wired to the More-submenu "Restore last capture" entry,
+ * which the menu refresh leaves disabled when no record exists, so
+ * the no-record branch here is a defensive no-op.
+ *
+ * Drops the `lastCapture` slot eagerly inside
+ * `openCapturePageWithSession` (the same quota-relief clear every
+ * fresh capture does) so the restored session doesn't end up
+ * holding the same large bytes in two slots at once. If the user
+ * closes the restored tab without saving, the new session gets
+ * re-promoted to `lastCapture` from scratch.
+ */
+export async function restoreLastCapture(
+  opener: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  const record = await getLastCapture();
+  if (!record) return;
+  await openCapturePageWithSession(record.capture, opener, {
+    htmlEdited: record.htmlEdited,
+    selectionEdited: record.selectionEdited,
+    uiState: record.uiState,
+  });
+}
+
+/**
  * True only when *both* the screenshot and the HTML capture produced
  * actual error strings — i.e. there is nothing useful to render on the
  * Capture page. We deliberately do NOT treat `htmlUnavailable` as a
@@ -453,6 +497,11 @@ function getCombinedCaptureError(data: InMemoryCapture): string {
 async function openCapturePageWithSession(
   data: InMemoryCapture,
   opener: chrome.tabs.Tab | undefined,
+  restored?: {
+    htmlEdited?: boolean;
+    selectionEdited?: Partial<Record<SelectionFormat, boolean>>;
+    uiState?: CapturePageUiState;
+  },
 ): Promise<void> {
   const createProps: chrome.tabs.CreateProperties = {
     url: chrome.runtime.getURL('capture.html'),
@@ -468,6 +517,16 @@ async function openCapturePageWithSession(
     });
     return;
   }
+
+  // A new Capture-page session is about to claim a large chunk of
+  // session storage; drop the saved last-capture (low-priority,
+  // single-slot) so its bytes don't compete with the fresh capture's
+  // quota probe. This runs even on the restore path — the caller
+  // will have already saved a local copy of the record to repopulate
+  // the new session with — so a Restore that ultimately fails the
+  // probe doesn't leave a stale duplicate behind. See
+  // `docs/capture-page.md` "Restore last capture".
+  await clearLastCapture();
 
   // Drop over-cap HTML before it can blow the session-storage quota.
   // The Capture page's existing `htmlError` path takes over from here
@@ -492,6 +551,12 @@ async function openCapturePageWithSession(
         ? { ...data.selectionFilenames }
         : undefined,
     },
+    // Restore-last-capture: replay the sticky edited flags + the
+    // page-side UI state so the new tab paints with the same prompt /
+    // checkbox / drawing state the user closed against.
+    htmlEdited: restored?.htmlEdited,
+    selectionEdited: restored?.selectionEdited,
+    uiState: restored?.uiState,
   });
 
   // Pre-flight quota check. The session-storage cap is shared with
@@ -680,6 +745,22 @@ interface CloseCapturePageMessage {
    */
   action: 'closeCapturePage';
 }
+interface PushUiStateMessage {
+  /**
+   * Best-effort page → SW push of the Capture page's UI state
+   * (prompt, save checkboxes, drawing edits + undo stack, selected
+   * tool, zoom mode). The handler merges the incoming partial into
+   * `session.uiState`. The promoted `lastCapture` record reads this
+   * field, so subsequent Restore-last-capture clicks rehydrate the
+   * same page state.
+   *
+   * Page debounces drawing / prompt pushes (small handful of changes
+   * per second at most) and flushes synchronously on `pagehide`, so
+   * the SW only ever sees this at human-input cadence.
+   */
+  action: 'pushUiState';
+  ui: CapturePageUiState;
+}
 interface InitializeUploadSessionMessage {
   /**
    * Sent by the Capture page when it loads with `?upload=true` and
@@ -702,6 +783,7 @@ type DetailsMessage =
   | UpdateArtifactMessage
   | SaveDetailsMessage
   | CloseCapturePageMessage
+  | PushUiStateMessage
   | InitializeUploadSessionMessage;
 
 /**
@@ -1393,6 +1475,12 @@ export function installDetailsMessageHandlers(): void {
           htmlUnavailable: session.capture.htmlUnavailable,
           imageUrl: session.capture.imageUrl,
           capturePageDefaults,
+          // Restore-last-capture: forward the UI state pushed by the
+          // previous tab so the new page can rehydrate prompt /
+          // checkbox / drawing state on top of the defaults. Absent
+          // on a normal capture-page open — only the restore path
+          // builds a session with this field set.
+          restoreUiState: session.uiState,
         });
       })();
       return true;
@@ -1561,9 +1649,14 @@ export function installDetailsMessageHandlers(): void {
           await saveDetailsSession(tabId, postSave);
           sendResponse({ ok: true });
           if (msg.closeAfter !== false) {
-            // Closing path: drop the session storage along the way.
-            // The `tabs.onRemoved` listener would do this anyway —
-            // we just don't have to wait for it.
+            // Closing path: promote the session to `lastCapture` so
+            // the user can restore from the More-submenu entry, then
+            // drop the per-tab session storage. The `tabs.onRemoved`
+            // listener would also promote on the natural close, but
+            // doing it here too means the new `lastCapture` is in
+            // place before the tab vanishes and the close-time
+            // animation doesn't race the storage update.
+            await promoteSessionToLastCapture(tabId);
             await chrome.storage.session.remove(detailsStorageKey(tabId));
             await closeCapturePageTab(tabId, session.openerTabId, true);
           }
@@ -1650,6 +1743,10 @@ export function installDetailsMessageHandlers(): void {
               contents: capture.contentsFilename,
             },
           };
+          // A new Capture-page session is about to land. Drop any
+          // saved last-capture for quota relief (single slot,
+          // low-priority) — same policy as `openCapturePageWithSession`.
+          await clearLastCapture();
           // Pre-flight quota check before the actual `set`. Large
           // user uploads (full-resolution photos) can exceed the
           // 10 MiB session-storage cap by themselves. A pre-check
@@ -1683,12 +1780,37 @@ export function installDetailsMessageHandlers(): void {
       return true;
     }
 
+    if (msg.action === 'pushUiState') {
+      void (async () => {
+        // Best-effort merge of the page's UI state into the per-tab
+        // session, so any later close path (tab removed,
+        // `closeCapturePage`, `saveDetails` happy path) can promote
+        // the latest values to `lastCapture`. Missing session is a
+        // benign race (page closed mid-push) — drop silently.
+        const session = await loadDetailsSession(tabId);
+        if (!session) return;
+        session.uiState = { ...(session.uiState ?? {}), ...msg.ui };
+        try {
+          await saveDetailsSession(tabId, session);
+        } catch (err) {
+          // Quota-race on push isn't actionable from the page side
+          // (nothing the user is doing on the Capture page should be
+          // refused just because the UI state grew slightly). Log and
+          // move on; the next push will retry the merge.
+          console.warn('[SeeWhatISee] failed to persist UI state push:', err);
+        }
+      })();
+      return false;
+    }
+
     if (msg.action === 'closeCapturePage') {
       void (async () => {
         const key = detailsStorageKey(tabId);
-        // Drop the stashed capture before we close — same lifecycle
-        // as the saveDetails path. Skipped silently if the entry's
+        // Promote the session to `lastCapture` for restore, then drop
+        // the per-tab session storage — same lifecycle as the
+        // saveDetails close path. Skipped silently if the entry's
         // already gone.
+        await promoteSessionToLastCapture(tabId);
         await chrome.storage.session.remove(key);
         // `focusOpener: false` — this path fires only after Ask
         // ctrl-click, by which point `sendToAi` has already focused
@@ -1707,9 +1829,15 @@ export function installDetailsMessageHandlers(): void {
   });
 
   // If the user closes a Capture page tab manually (without clicking
-  // Capture), drop its stashed data so session storage doesn't grow
-  // until the browser restarts.
+  // Capture), promote the session to `lastCapture` for restore, then
+  // drop its stashed data so session storage doesn't grow until the
+  // browser restarts. The Capture / Ask close paths above already
+  // promote + remove explicitly so they don't depend on this
+  // listener — it's the safety net for manual-close cases.
   chrome.tabs.onRemoved.addListener((tabId) => {
-    void chrome.storage.session.remove(detailsStorageKey(tabId));
+    void (async () => {
+      await promoteSessionToLastCapture(tabId);
+      await chrome.storage.session.remove(detailsStorageKey(tabId));
+    })();
   });
 }
