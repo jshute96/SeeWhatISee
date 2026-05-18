@@ -35,11 +35,16 @@ export const LAST_CAPTURE_STORAGE_KEY = 'lastCapture';
  *   - `edits` / `editHistory` / `nextEditId` / `editVersion`
  *     mirror the drawing module's module-scope state.
  *   - `selectedTool` is the palette button's tool id.
- *   - `zoomMode` is the zoom dropdown's current value.
  *   - `prompt` is the literal textarea value (untrimmed — the user
  *     may want to keep trailing whitespace they were about to edit).
  *   - `saveCheckboxes` snapshot the three toggles + the chosen
  *     selection format radio.
+ *
+ * Zoom mode is deliberately NOT carried — viewport size, scroll
+ * position, and DPR are page-local and not snapshotted, so a
+ * restored page that picked an explicit zoom is just as likely to
+ * land at "wrong" sizing as a fresh Fit. Defaulting to Fit on
+ * restore matches the rest of the unsaved page-local state.
  */
 export interface CapturePageUiState {
   prompt?: string;
@@ -60,7 +65,6 @@ export interface CapturePageUiState {
   nextEditId?: number;
   editVersion?: number;
   selectedTool?: string;
-  zoomMode?: string;
 }
 
 /**

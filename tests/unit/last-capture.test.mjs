@@ -99,7 +99,6 @@ function mockSession() {
       nextEditId: 2,
       editVersion: 3,
       selectedTool: 'box',
-      zoomMode: 'fit',
     },
   };
 }

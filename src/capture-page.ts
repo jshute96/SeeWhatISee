@@ -42,7 +42,6 @@ import {
   currentDisplayScale,
   targetCssSize,
   wasMiddleDownRecently,
-  getZoomMode,
   type ZoomMode,
 } from './capture-page/zoom.js';
 import {
@@ -195,7 +194,6 @@ interface DetailsData {
     nextEditId?: number;
     editVersion?: number;
     selectedTool?: string;
-    zoomMode?: string;
   };
 }
 
@@ -1393,7 +1391,6 @@ function captureUiStateSnapshot(): {
   nextEditId: number;
   editVersion: number;
   selectedTool: string;
-  zoomMode: string;
 } {
   const drawing = getDrawingSnapshot();
   return {
@@ -1409,7 +1406,6 @@ function captureUiStateSnapshot(): {
     nextEditId: drawing.nextEditId,
     editVersion: drawing.editVersion,
     selectedTool: drawing.selectedTool,
-    zoomMode: String(getZoomMode()),
   };
 }
 
@@ -1540,20 +1536,12 @@ function applyRestoredUiState(
       editVersion: state.editVersion,
       selectedTool: state.selectedTool as Tool | undefined,
     });
-    if (state.zoomMode) {
-      // Zoom mode arrives as a string ("fit" / "1" / "2" / …); the
-      // setter expects 'fit' or the numeric union. Cast through
-      // Number() for the digit case and fall back to 'fit' for any
-      // unknown string so a future enum addition doesn't strand the
-      // page on an unrelated mode.
-      const z =
-        state.zoomMode === 'fit'
-          ? ('fit' as const)
-          : (Number(state.zoomMode) as ZoomMode);
-      if (z === 'fit' || z === 1 || z === 2 || z === 4 || z === 8) {
-        setZoom(z);
-      }
-    }
+    // Zoom mode is deliberately not restored — viewport size and
+    // scroll position aren't snapshotted either, so reapplying a
+    // saved zoom against a possibly-different window would land at
+    // an arbitrary sizing. Fit (the page-init default) is the only
+    // value that's guaranteed sensible regardless of context.
+
     // Refresh the Selection-size badge after restoring the checkbox /
     // radio state; programmatic `.checked` assignments don't fire
     // `change`.

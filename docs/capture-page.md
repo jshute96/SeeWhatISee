@@ -1346,14 +1346,22 @@ or prompt was still in flight. Lives in `last-capture.ts`.
 ### Storage
 
 - Single slot: `chrome.storage.session` key `lastCapture`.
-- Shape: `{ capture: InMemoryCapture, htmlEdited?, selectionEdited?,
-  saved?, revisions?, bases?, uiState? }` — everything the SW needs
-  to rebuild a `DetailsSession`, minus the download cache and the
-  opener tab id (those don't carry over).
+- Shape: `LastCaptureRecord = Omit<DetailsSession,
+  typeof LAST_CAPTURE_EXCLUDED_KEYS[number]>` — everything on a
+  `DetailsSession` *except* the keys the denylist names. Today that's
+  `openerTabId` (the restore handler picks a fresh one from the
+  active tab) and `downloads` (per-artifact `{ downloadId, path,
+  editVersion }` entries the new session can't own). Deriving the
+  type from `DetailsSession` rather than hand-listing fields means a
+  new field added to `DetailsSession` auto-rides through the
+  round-trip; opt-out by adding its key to the denylist.
 - `uiState` is what the page pushes via `pushUiState`: prompt
   text, save-checkbox + format-radio state, drawing edits + undo
-  history + `nextEditId` + `editVersion`, selected tool, zoom
-  mode.
+  history + `nextEditId` + `editVersion`, selected tool. Zoom is
+  deliberately *not* carried — viewport size, scroll position, and
+  DPR are page-local and aren't snapshotted, so reapplying a saved
+  zoom against a possibly-different window would land at arbitrary
+  sizing. Restore reverts to the page-init default (Fit).
 - Low-priority single-slot — every fresh capture / ask freely
   drops it for quota relief.
 
@@ -1368,9 +1376,9 @@ just before they drop the per-tab session:
 - `tabs.onRemoved` listener — manual close (X on the tab, window
   close, browser shutdown).
 
-Promote reads the live `DetailsSession` and writes
-`{capture, htmlEdited?, selectionEdited?, saved?, revisions?, bases?, uiState?}`
-under `lastCapture`:
+Promote reads the live `DetailsSession`, copies it, strips the keys
+named by `LAST_CAPTURE_EXCLUDED_KEYS`, and writes the result under
+`lastCapture`. The notable fields the copy preserves:
 
 - `saved` + `revisions` ride along so a "Capture-save → restore →
   Capture again" round-trip honours the original filename-bump
@@ -1418,8 +1426,8 @@ would otherwise eat:
   the round-trip message, so the SW's promote step sees the
   freshest state instead of racing the debounce.
 
-Tool-button and zoom changes ride on the `pagehide` flush only —
-no per-change push (acceptable per "not that important if easy").
+Tool-button changes ride on the `pagehide` flush only — no
+per-change push (acceptable per "not that important if easy").
 
 SW side: the `pushUiState` handler merges into `session.uiState`
 and responds once persisted, so the page's `await` is meaningful.
@@ -1433,10 +1441,13 @@ and responds once persisted, so the page's `await` is meaningful.
   `getLastCapture()`, driven by a `chrome.storage.onChanged`
   listener on the `lastCapture` session-storage key.
 - Click handler → `restoreLastCapture(opener)` in
-  `capture-details.ts`: reads the record, hands it to
-  `openCapturePageWithSession` with a `restored` argument that
-  seeds `htmlEdited` / `selectionEdited` / `uiState` on the new
-  session.
+  `capture-details.ts`: reads the record and hands the
+  `{...record, capture omitted}` half to
+  `openCapturePageWithSession`, which spreads it into the prospective
+  `DetailsSession`. `LAST_CAPTURE_EXCLUDED_KEYS` is the single source
+  of truth for what was *not* carried (currently `openerTabId` and
+  `downloads`), so any new `DetailsSession` field rides through the
+  round-trip automatically.
 - `openCapturePageWithSession` drops the `lastCapture` slot
   *before* its quota probe (low-priority single slot — same
   policy every fresh capture follows), so the restored session
@@ -1445,9 +1456,9 @@ and responds once persisted, so the page's `await` is meaningful.
   `restoreUiState`. The page's `applyRestoredUiState` overlays it
   on top of the freshly-applied stored defaults: prompt, save
   checkboxes, format radio, drawing snapshot via
-  `restoreDrawingSnapshot`, zoom via `setZoom`. A `pushingDisabled`
-  flag wraps the apply so the per-control change listeners don't
-  bounce the same values straight back to the SW.
+  `restoreDrawingSnapshot`. A `pushingDisabled` flag wraps the
+  apply so the per-control change listeners don't bounce the same
+  values straight back to the SW.
 
 ### Quota relief
 
