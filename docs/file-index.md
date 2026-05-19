@@ -259,7 +259,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `tests/e2e/ask-toolbar-pin.spec.ts` | E2E tests for the toolbar context-menu Set/Unset entry — eligibility, "Set"/"Unset" title flip, toggle behavior |
 | `tests/e2e/ask-url-variants.spec.ts` | E2E tests for `urlVariants` — pre-send guard refuses unsupported kinds; Claude Code happy path (image + prompt) sends end-to-end |
 | `tests/unit/ask-resolvers.test.mjs` | Unit tests for `resolveAcceptedKinds`, `resolveMaxAttachmentCount`, `resolveDestinationLabel`, `formatKindList` — pure helpers used by the URL-variant resolver |
-| `tests/e2e/ask-helpers.ts` | Shared scaffolding for the Ask specs — fake-Claude state reader, provider-override seam, per-test hooks (snapshot/restore + pin reset) |
+| `tests/e2e/ask-helpers.ts` | Shared scaffolding for the Ask specs — fake-Claude state reader, provider-override seam, per-test hooks (snapshot/restore + pin reset), SW tab-URL observation wait |
 | `tests/fixtures/pages/fake-claude.html` | Fake claude.ai composer (file input + ProseMirror-class contenteditable + Send button) used by the Ask specs so tests don't talk to the real claude.ai |
 | `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin contract for the live test suite — selectors plus per-provider DOM-verification helpers |
 | `tests/e2e-live/lib/bridge.ts` | Shared postMessage-bridge driver (`callBridge`, `driveBridge`) that mirrors the widget's `callMain` so live specs exercise the same code path |

@@ -22,6 +22,7 @@ import {
   openFakeClaudeTab,
   overrideAskProviders,
   waitForAskMenuReady,
+  waitForSwToObservePageUrl,
 } from './ask-helpers';
 
 installAskTestHooks();
@@ -276,8 +277,11 @@ test('pin: tab navigated away from the provider invalidates the pin', async ({
 
   // Move the pinned tab off the provider URL. The pin's tabId is
   // still alive, but its URL no longer matches `urlPatterns`, so
-  // resolveAsk should drop the pin and fall back.
+  // resolveAsk should drop the pin and fall back. The
+  // wait-for-SW-observation closes the renderer → browser-process
+  // tab-state propagation race — see `waitForSwToObservePageUrl`.
   await claudePage.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await waitForSwToObservePageUrl(sw, claudePage);
 
   await configureCapture(capturePage, {
     saveScreenshot: true,
@@ -337,8 +341,11 @@ test('pin: tab navigated to an excluded URL invalidates the pin', async ({
   // string that flips it into the exclude bucket. The tab still
   // matches `urlPatterns` (so it's still listed as a Claude tab),
   // but resolveAsk must reject it because it now
-  // matches `excludeUrlPatterns`.
+  // matches `excludeUrlPatterns`. The wait-for-SW-observation closes
+  // the renderer → browser-process tab-state propagation race —
+  // see `waitForSwToObservePageUrl`.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+  await waitForSwToObservePageUrl(sw, claudePage);
 
   await configureCapture(capturePage, {
     saveScreenshot: true,

@@ -211,4 +211,25 @@ test.beforeEach(async ({ getServiceWorker }) => {
   await waitForCaptureQuota(sw);
 });
 
+// Safety-net cleanup: close any pages a test left behind. Tests
+// generally close their own opens, but cleanup is best-effort and
+// failure paths can skip it. Stragglers accumulate over the worker's
+// lifetime and slow down `tracing.startChunk` (which snapshots every
+// attached page at the start of each test) — past a few dozen pages
+// the CDP roundtrip can stall long enough to blow the test timeout
+// during fixture setup. Closing here keeps the page list bounded.
+//
+// We leave `about:blank` pages alone (Chrome's initial tab counts)
+// and swallow errors from pages the test already closed.
+test.afterEach(async ({ extensionContext }) => {
+  for (const page of extensionContext.pages()) {
+    try {
+      if (page.url() === 'about:blank') continue;
+      await page.close();
+    } catch {
+      // page already closed, or context tearing down — ignore.
+    }
+  }
+});
+
 export const expect = test.expect;

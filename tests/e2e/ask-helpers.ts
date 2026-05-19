@@ -263,6 +263,41 @@ export async function clickNewClaudeItem(capturePage: Page): Promise<void> {
   await capturePage.locator('#ask-btn').click();
 }
 
+/**
+ * Wait for the SW's `chrome.tabs` view of `page` to reflect its
+ * current renderer URL. Playwright's `page.goto()` returns when the
+ * renderer fires its load event, but Chrome's browser-process tab
+ * metadata — the surface the extension's `chrome.tabs.query` /
+ * `chrome.tabs.get` consult — updates asynchronously. Tests that
+ * navigate a pinned tab off-provider and then immediately click Ask
+ * can race that propagation and trick `resolveAsk` into the existingTab
+ * path on a now-wrong page; the widget walk then hangs on missing
+ * selectors and the test times out at 30 s with "Sending…" stuck.
+ *
+ * Polls every 50 ms up to `timeoutMs` (default 5 s). Surfaces a clear
+ * error if the SW never observes the URL — that means the navigation
+ * itself never propagated, which is a real bug worth seeing.
+ */
+export async function waitForSwToObservePageUrl(
+  sw: Worker,
+  page: Page,
+  timeoutMs: number = 5000,
+): Promise<void> {
+  const url = page.url();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const observed = await sw.evaluate(async (target) => {
+      const tabs = await chrome.tabs.query({});
+      return tabs.some((t) => t.url === target);
+    }, url);
+    if (observed) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `SW did not observe page URL ${url} within ${timeoutMs} ms`,
+  );
+}
+
 /** Open a fake-Claude tab and wait for its `__seeFakeClaude` global. */
 export async function openFakeClaudeTab(
   ctx: BrowserContext,

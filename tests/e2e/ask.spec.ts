@@ -45,6 +45,7 @@ import {
   openFakeClaudeTab,
   overrideAskProviders,
   waitForAskMenuReady,
+  waitForSwToObservePageUrl,
 } from './ask-helpers';
 
 installAskTestHooks();
@@ -906,8 +907,12 @@ test('pin: existing-tab pick falls back when the pinned tab navigates off the pr
   await expect(capturePage.locator('#ask-btn')).toBeEnabled();
   // Navigate the pinned tab off the provider's host before sending.
   // resolveAsk's stillProvider check should drop the pin and the
-  // fallback should open a fresh fake-Claude tab.
+  // fallback should open a fresh fake-Claude tab. The explicit
+  // wait-for-SW-observation closes the race where Playwright's goto
+  // returns on renderer load before the extension's `chrome.tabs`
+  // view of the URL updates — see `waitForSwToObservePageUrl`.
   await claudePage.goto(`${fixtureServer.baseUrl}/green.html`);
+  await waitForSwToObservePageUrl(sw, claudePage);
 
   await capturePage.locator('#ask-btn').click();
 
@@ -960,8 +965,11 @@ test('pin: existing-tab pick falls back when the pinned tab navigates to an excl
   await expect(capturePage.locator('#ask-btn')).toBeEnabled();
   // Same host, wrong page. The pin is kept (so a navigation back
   // restores it) but resolveAsk's `excluded` branch routes the
-  // resolution to the new-tab fallback for *this* send.
+  // resolution to the new-tab fallback for *this* send. The
+  // wait-for-SW-observation closes a propagation race — see
+  // `waitForSwToObservePageUrl`.
   await claudePage.goto(`${fixtureServer.baseUrl}/fake-claude.html?excluded=1`);
+  await waitForSwToObservePageUrl(sw, claudePage);
 
   await capturePage.locator('#ask-btn').click();
 
