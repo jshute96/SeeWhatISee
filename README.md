@@ -14,7 +14,7 @@ or add a prompt, and ship it to a web chatbot or a CLI agent.
 - **Configurable** — hotkeys, default click and double-click actions,
   default items to save, which web agents to use.
 
-See [Usage](#usage) for the full feature tour, or jump to [Installation](#installation).
+See [Usage](#usage) for the full feature tour, CLI [Skills](#claude-code-skills), or [Installation](#installation).
 
 The *Capture* page:
 
@@ -31,6 +31,10 @@ The *Capture* page:
 - Double-click to save a screenshot (or selected text) immediately.
   - Default hotkey: `Ctrl+Shift+E` (`⌘+Shift+E` on Mac)
 - Right-click for more options.
+  - Capture after a 3-second delay (e.g. to activate hover states).
+  - Save capturable elements directly.
+  - Upload an image directly to the *Capture* page.
+  - Reopen the last *Capture* page after closing it.
 - Right-clicking on an image lets you capture that image directly.
 
 #### Capturing selected text
@@ -61,10 +65,11 @@ On this page, you can:
 
 - Annotate the screenshot with **drawing tools**:
   - Draw **boxes**, **lines** or **arrows**.
-  - Use **Redact** to hide parts of image with black boxes.
+  - Use the **black box** to redact and hide parts of the image.
+  - Drag box edges to resize them.
   - **Crop** the image by drawing a rectangle, or dragging borders.
   - Use **Shrink** to tighten the most recent box or redaction, or the crop region, around its content. This strips whitespace or borders around the outer edges.
-  - **Zoom** in or out using the button or mouse wheel.
+  - **Zoom** in or out. (Also with `Ctrl+mouse wheel` or `Alt +/-`.)
   - **Undo** or **Clear** to revert edits.
   - **Copy** to clipboard.
   - **Save** to a file.
@@ -88,6 +93,44 @@ While viewing a chatbot page, the toolbar context menu lets you **Set this tab a
 
 > [!TIP]
 > Some chatbot providers require an account and that you are logged in. You can change the default and remove unsupported providers on the *Options* page.
+
+#### Keyboard and mouse shortcuts
+
+(`⌘` is the `Ctrl` equivalent on Mac for all shortcuts.)
+
+##### Activating SeeWhatISee
+
+- `Ctrl+Shift+X` — open the *Capture* page.
+- `Ctrl+Shift+E` — save a screenshot (or selected text) immediately.
+
+> [!TIP]
+> These are suggested defaults. Chrome might not apply them if it thinks something else uses those keys.
+
+> [!TIP]
+> You can change these hotkeys, and add hotkeys for other *Save* actions, from `chrome://extensions/shortcuts` (which is linked on the *Options* page).
+
+##### *Prompt* field
+
+- `Enter` — submit.
+- `Shift+Enter` or `\ Enter` — insert a newline.
+- `Ctrl+V` — *Paste as markdown* (if selection content is HTML, it's converted to markdown).
+- `Ctrl+Shift+V` — *Paste as plain text*.
+
+##### *Capture* and *Ask* buttons
+
+- `Shift+click` - Do the action without closing the *Capture* tab.
+- `Ctrl+click` - Do the action and close the *Capture* tab.
+
+##### Zoom and pan
+
+- `Alt +` / `Alt −` (or `Ctrl+mouse-wheel`) — zoom in / out.
+- `Ctrl+drag` (or middle-click drag) — pan.
+
+##### Drawing
+
+- `Shift+drag` — draw without snap and without grabbing resize handles.
+- `Ctrl+Shift+drag` — draw without grabbing resize handles, with snap still on.
+- Arrow keys while dragging — nudge the drag point by one output pixel.
 
 #### Options
 

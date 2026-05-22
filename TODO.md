@@ -49,83 +49,24 @@
 
 ## Documentation
 
-### Pending docs for features not released yet (1.0.1)
-* Help buttons
-* Zoom changes, plus keyboard zoom controls.
-  - Ctrl-mousewheel to zoom, or Alt-plus/minus.
-  - Ctrl-drag to scroll the image.
-* Resizable boxes/redactions by dragging edges
-  - Shift to draw without activating drag
-* Arrow keys to move box selections (and line endpoints) during drag.
-  - Moves by one pixel in the output, regardless of the zoom level.
-* Draw polylines or polyarrows via dedicated tool buttons (N-Line, N-Arrow).
-  - Finish with Esc, click on the chain head, double-click, or switch tools.
-  - Holding Ctrl at mouseup of a plain Line/Arrow draw also promotes to a chain (legacy shortcut; releasing Ctrl ends it).
-* Snap-to endpoints/corners/lines.
-  - Shift to draw without snap and without grabbing existing edges
-  - Ctrl+Shift to draw without grabbing existing edges, snap stays on
-  - Ctrl+drag still pans the image
-* Upload image from file (on context menu)
+### Pending docs for features not released yet (1.0.3)
 
-### Pending docs for features not released yet (1.0.2)
-* Better error handling when Ask script injection is blocked by site policy
+* None yet
+
+### Not documented
+
+* Help buttons
+* Polylines (not mentioned)
+* Snap-to behavior (snap-to points and edges, snap lines to horizontal / vertical)
+
+#### Large objects
+
 * Screenshots that are >2MB auto-recompress to JPEG if JPEG is ≥10% smaller
 * JPG images stay as JPG, event after drawing on them (previous conversion to PNG causes size blowup)
 * HTML is omitted on the capture page (with an error) if >2MB
 * When capturing an image directly (e.g. from a file: or http: URL ending in .jpg or .png), we just take the image, not a screenshot
-* Restore last capture - More-menu entry that re-opens the most recently closed Capture page.
 
-### Draft: user-facing explanation of the new drawing behavior
+#### Keyboard shortcuts
 
-Stitched together from the bullets above. The goal here is to write
-this in user-facing language so it can drop into README / a help
-popover / a tutorial — concise, no internal jargon, no implementation
-details. Refine before shipping.
-
-**Drawing tools (palette)**
-
-* **Box** — drag to draw a red rectangle.
-* **Line** — drag to draw a red line.
-* **Arrow** — drag to draw a red arrow (head at the release point).
-* **N-Line / N-Arrow (polyline)** — multi-segment line / arrow. Each
-  click or drag adds another segment from where the previous one
-  ended. Finish the chain by pressing **Esc**, **double-clicking**,
-  clicking back on the **last point**, clicking back on the
-  **starting point** (closes the polygon), or switching tools.
-* **Redact** — drag to paint a solid black rectangle over content
-  you want to hide.
-* **Crop** — drag to crop the image to a region. Drag the edges of
-  an existing crop to adjust it; drag past the image edge to remove
-  the crop.
-
-**Tip: quick polyline from a regular Line / Arrow draw** — if
-mid-draw you decide you want to keep going, hold **Ctrl** (or **⌘**
-on Mac) when you release the mouse. That promotes the line to a
-multi-segment chain. Releasing Ctrl ends the chain.
-
-**Snap-to** — while drawing or resizing, the cursor pulls onto
-nearby:
-
-* line / arrow endpoints (highest priority),
-* box corners and the image's corners,
-* box edges and existing diagonal lines (closest point along them).
-
-Snap distance is a few pixels. Hold **Shift** to draw without
-snapping (and without grabbing edges of existing shapes).
-
-**Lines snap to horizontal / vertical** — while drawing a line or
-arrow, if the segment is nearly horizontal or vertical (within a
-few pixels), it snaps to exactly horizontal / vertical. Hold
-**Shift** to keep the literal angle.
-
-**Modifier cheat sheet**
-
-| You want to… | Press |
-|---|---|
-| Pan the image | **Ctrl + drag** (or middle-click drag) |
-| Zoom the image | **Ctrl + mouse-wheel**, or **Alt + +/−** |
-| Draw a new shape over an existing edge, ignoring snap | **Shift + drag** |
-| Draw a new shape over an existing edge, with snap on | **Ctrl + Shift + drag** |
-| Nudge a drag by one pixel | **Arrow keys** while dragging |
-| End a polyline chain | **Esc**, double-click, click the chain start / head, or close the polygon |
-| Make a regular Line into a polyline | Hold **Ctrl** when you release the mouse |
+* Hold `Ctrl` when releasing a Line or Arrow — promote it to a multi-segment polyline. Release `Ctrl` to end the chain.
+* `Ctrl+Enter` to submit (if `Enter` is set as newline).
