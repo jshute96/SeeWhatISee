@@ -4,15 +4,14 @@
 
 Click the toolbar icon to open the *Capture* page. Pick what to send
 (screenshot, page HTML, selected text, or just the URL), mark it up
-or add a prompt, and ship it to a web chatbot or a CLI agent.
+or add a prompt, and ship it to a web chatbot, a CLI agent, or other
+tools using the MCP server.
 
 - **Web targets** — *Claude*, *ChatGPT*, *Gemini*, *Google*.
 - **CLI targets** — *Claude Code* and *Gemini CLI*, via bundled
   `/see-what-i-see` skills that read captures saved to
   `~/Downloads/SeeWhatISee/`.
-- **Markup** — highlight, redact or crop the images.
-- **Configurable** — hotkeys, default click and double-click actions,
-  default items to save, which web agents to use.
+- **MCP targets** (*Experimental*) — Claude Desktop, Cursor, Zed, Continue, etc.
 
 See [Usage](#usage) for the full feature tour, CLI [Skills](#claude-code-skills), or [Installation](#installation).
 
@@ -169,6 +168,19 @@ on each snapshot. For example,
   - Stop it by pressing *Escape*.
 - `/see-what-i-see-xtract` `[prompt]` — alias for `/see-what-i-see`. Useful because Gemini shows auto-completes in reverse alphabetical order, so this name surfaces first.
 
+### MCP server (*Experimental*)
+
+The MCP server [`@see-what-i-see/mcp-server`](https://www.npmjs.com/package/@see-what-i-see/mcp-server) exposes the same operations as the skills above, so they work in any MCP-aware client (Claude Desktop, Cursor, Zed, Continue, etc.) — not just Claude Code and Gemini CLI.
+
+Same two prompts:
+
+- `see-what-i-see` — read the latest capture
+- `see-what-i-see-watch` — watch for new captures and describe each one
+
+How the prompts surface depends on the client. Claude Code exposes them as `/mcp__see-what-i-see__see-what-i-see` and `/mcp__see-what-i-see__see-what-i-see-watch`; most other clients show MCP prompts in a picker UI.
+
+See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for details.
+
 ## Installation
 
 ### Chrome web store
@@ -235,6 +247,29 @@ If `gemini extensions install` directly from GitHub doesn't work, clone the rele
 git clone https://github.com/jshute96/SeeWhatISee-gemini.git
 gemini extension install SeeWhatISee-gemini
 ```
+
+### MCP server (*Experimental*)
+
+Add this to your MCP client's config. The JSON shape is the same across most MCP-aware clients (only the config-file location varies):
+
+```json
+{
+  "mcpServers": {
+    "see-what-i-see": {
+      "command": "npx",
+      "args": ["-y", "@see-what-i-see/mcp-server"]
+    }
+  }
+}
+```
+
+For Claude Code, this CLI command works (but the [plugin](#claude-code-plugin) is preferred):
+
+```bash
+claude mcp add see-what-i-see -- npx -y @see-what-i-see/mcp-server
+```
+
+See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for per-client config-file paths and other details.
 
 ### Skills for other coding agents
 

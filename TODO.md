@@ -40,8 +40,9 @@
 * Fix general unreliability and permissions issues: https://github.com/jshute96/SeeWhatISee/issues/27.
 
 ### MCP server
-* MCP server is experimental - see if it actually works
-* Add instructions for how to use it in various tools.
+* MCP server is experimental. Test it more fully.
+* Add more instructions on how to install and use it in various tools.
+* Find somewhere to test using the streaming resource for `watch`.
 
 ### Integrating other tools to read captures
 * CLI skills that work for other tools

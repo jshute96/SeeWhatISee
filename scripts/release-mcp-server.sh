@@ -155,9 +155,11 @@ if ! $SKIP_GH_RELEASE; then
   trap "rm -f '$NOTES_FILE' '$RELEASE_BIN'" EXIT
 
   release_compose_notes "$TAG" "mcp-server-v" "\
-**Install:** \`npx -y @see-what-i-see/mcp-server\` ([package page on npm](https://www.npmjs.com/package/@see-what-i-see/mcp-server))
+**Release pushed to npm**. See [package page on npm](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for setup instructions.
 
-The single-file bundle is also attached below as \`$(basename "$RELEASE_BIN")\` for direct download / vendoring (requires Node 22+ to run)." \
+**Run the MCP server** with: \`npx -y @see-what-i-see/mcp-server\`
+
+The server is also attached below as \`$(basename "$RELEASE_BIN")\` for direct download (requires Node 22+ to run)." \
     > "$NOTES_FILE"
 
   gh release create "$TAG" "$RELEASE_BIN" \
