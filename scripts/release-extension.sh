@@ -91,13 +91,28 @@ git tag -a "$TAG" -m "Release $TAG"
 git push origin "$TAG"
 release_install_orphaned_tag_trap "$TAG"
 
-# 6. Create the GitHub release.
+# 6. Create the GitHub release with the Chrome Web Store link prefixed
+#    onto the auto-generated notes.
+NOTES_FILE=$(mktemp)
+# shellcheck disable=SC2064  # expand $NOTES_FILE now, not at trap time
+trap "rm -f '$NOTES_FILE'" EXIT
+
+release_compose_notes "$TAG" "extension-v" "\
+**Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/seewhatisee/mdfeigicgahogllcdiibkeidfllhddae)** (pending update — store review typically takes a few days).
+
+The unpacked extension is also attached below as \`$(basename "$ZIP")\` for sideloading." \
+  > "$NOTES_FILE"
+
 gh release create "$TAG" "$ZIP" \
   --title "$TAG" \
-  --generate-notes \
+  --notes-file "$NOTES_FILE" \
   $DRAFT_FLAG
 
 trap - ERR
+
+# Clean up the GitHub source-code archive directory if anything
+# extracted one alongside the release. No-op when not present.
+release_cleanup_extracted_archive "$TAG"
 
 echo
 if [[ -n "$DRAFT_FLAG" ]]; then

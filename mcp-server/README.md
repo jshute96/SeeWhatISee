@@ -13,7 +13,7 @@ Add the server to your MCP client's config. The package ships as a single bundle
 ```json
 {
   "mcpServers": {
-    "seewhatisee": {
+    "see-what-i-see": {
       "command": "npx",
       "args": ["-y", "@see-what-i-see/mcp-server"]
     }
@@ -28,7 +28,7 @@ Claude Desktop's config lives at:
 ### Claude Code
 
 ```bash
-claude mcp add seewhatisee npx -y @see-what-i-see/mcp-server
+claude mcp add see-what-i-see -- npx -y @see-what-i-see/mcp-server
 ```
 
 ## What it exposes

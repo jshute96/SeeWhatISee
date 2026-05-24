@@ -143,14 +143,32 @@ git tag -a "$TAG" -m "Release $TAG"
 #    pushed commits, which matches what we just made.
 git push --follow-tags
 
-# 10. GitHub release with auto-generated notes from commits since the
-#     previous mcp-server-* tag (if any).
+# 10. GitHub release with the bundled binary attached and auto-generated
+#     notes prefixed with the npm install URL.
 if ! $SKIP_GH_RELEASE; then
-  gh release create "$TAG" \
+  # Stage a versioned copy of the bundle so the asset name on the
+  # release page reads as a real version, not a generic name.
+  RELEASE_BIN="/tmp/seewhatisee-mcp-v${NEW}.js"
+  cp mcp-server/dist/seewhatisee-mcp.js "$RELEASE_BIN"
+
+  NOTES_FILE=$(mktemp)
+  trap "rm -f '$NOTES_FILE' '$RELEASE_BIN'" EXIT
+
+  release_compose_notes "$TAG" "mcp-server-v" "\
+**Install:** \`npx -y @see-what-i-see/mcp-server\` ([package page on npm](https://www.npmjs.com/package/@see-what-i-see/mcp-server))
+
+The single-file bundle is also attached below as \`$(basename "$RELEASE_BIN")\` for direct download / vendoring (requires Node 22+ to run)." \
+    > "$NOTES_FILE"
+
+  gh release create "$TAG" "$RELEASE_BIN" \
     --title "$TAG" \
-    --generate-notes \
+    --notes-file "$NOTES_FILE" \
     $DRAFT_FLAG
 fi
+
+# 11. Clean up the GitHub source-code archive directory if anything
+#     extracted one alongside the release. No-op when not present.
+release_cleanup_extracted_archive "$TAG"
 
 echo
 echo "Released $TAG → https://www.npmjs.com/package/@see-what-i-see/mcp-server/v/$NEW"

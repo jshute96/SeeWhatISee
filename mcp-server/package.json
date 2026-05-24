@@ -35,7 +35,7 @@
   },
   "scripts": {
     "prompts": "node build-prompts.mjs",
-    "postinstall": "node build-prompts.mjs && tsc",
+    "prepare": "node build-prompts.mjs && tsc",
     "build": "npm run prompts && tsc && node bundle.mjs",
     "pretest": "npm run prompts && tsc",
     "test": "node --test 'tests/*.test.mjs'",

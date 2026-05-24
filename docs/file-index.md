@@ -217,7 +217,7 @@ Own `package.json` (npm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies vendor scripts + theme, classic-wraps codejar, then runs `tsc` |
-| `scripts/_release-common.sh` | Sourced helpers for release scripts (gh check, clean-main check, tag-unused check, orphaned-tag trap) |
+| `scripts/_release-common.sh` | Sourced helpers for release scripts — preflight checks, notes composition, leftover-archive cleanup |
 | `scripts/release-extension.sh` | Cuts a GitHub release for the Chrome extension (tag `extension-vX.Y.Z`); builds the zip and runs `gh release create` (draft by default) |
 | `scripts/release-mcp-server.sh` | Cuts an `@see-what-i-see/mcp-server` npm release (tag `mcp-server-vX.Y.Z`); drafts a matching GH release |
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |

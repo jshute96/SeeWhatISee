@@ -419,7 +419,7 @@ npx @modelcontextprotocol/inspector node mcp-server/dist/seewhatisee-mcp.js
 Register the bundled server with Claude Code (absolute path required):
 
 ```bash
-claude mcp add see-what-i-see node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
+claude mcp add see-what-i-see -- node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
 Inside any Claude Code session after that, the `get_latest` / `watch` / `read_file` / `get_file_info` tools are callable directly, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
