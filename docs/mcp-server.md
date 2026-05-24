@@ -199,14 +199,35 @@ subscription's lifecycle and tears it down on its own.
 
 ## Sharing the prompt body with the SKILL.md templates
 
-- `skills/json-record.template.md` and `skills/process.template.md` are
-  the canonical descriptions of the record shape and the per-capture
-  processing rules. Both already get inlined into the SKILL.md
-  templates by `skills/generate-skills.py`.
-- The MCP server's prompt bodies should be **generated from the same
-  templates** by the same generator, so the prompt text stays in sync
-  with the skill text by construction. Add MCP-prompt targets to
-  `skills/generate-skills.py` when implementing.
+The MCP prompt bodies share the same `[[json-record.template.md]]` and
+`[[process.template.md]]` blocks as the SKILL.md files, generated through
+the same pipeline so wording can't drift.
+
+Pipeline (edit the leftmost; everything to the right regenerates):
+
+```
+skills/mcp-server.{see,watch}.md         (templates, edit these)
+        │  skills/generate-skills.py
+        ▼
+mcp-server/prompts/{see-what-i-see,see-what-i-see-watch}.md  (committed)
+        │  mcp-server/build-prompts.mjs
+        ▼
+mcp-server/src/prompts.generated.ts      (gitignored — TS strings)
+        │  tsc + esbuild
+        ▼
+mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
+```
+
+- The `.md` templates carry YAML frontmatter (`name`, `description`)
+  alongside the body, so both the `prompts/list` description and the
+  `prompts/get` body come from the same source.
+- `skills/generate-skills.py` validates `mcp-server/prompts/*.md` against
+  the templates as part of `npm run test:skills` (root-level script,
+  wired into `npm test`); drift fails the check.
+- `mcp-server/build-prompts.mjs` runs from `postinstall` (which also
+  runs `tsc`), so a fresh `npm install` leaves `dist/` ready for a
+  direct `node --test tests/<file>.mjs` invocation. `pretest` and
+  `build` also re-run it on every test / build.
 
 ## Differences from `SeeWhatISee.sh`
 

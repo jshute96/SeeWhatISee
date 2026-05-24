@@ -3,6 +3,9 @@
 # dependencies
 node_modules/
 
+# generated source files (rebuilt before each tsc / bundle run)
+/mcp-server/src/prompts.generated.ts
+
 /tmp/
 
 # claude scratch files

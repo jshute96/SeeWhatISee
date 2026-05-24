@@ -43,6 +43,12 @@ PAIRS = [
     ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md"),
     ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md"),
     ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md"),
+    # MCP-server prompt bodies. Output is plain markdown (no SKILL.md
+    # frontmatter shape required by the host); see
+    # `mcp-server/build-prompts.mjs` for how these files become the
+    # prompt strings the server returns from `prompts/get`.
+    ("mcp-server.see.md",   "mcp-server/prompts/see-what-i-see.md"),
+    ("mcp-server.watch.md", "mcp-server/prompts/see-what-i-see-watch.md"),
     ("SeeWhatISee.sh",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh", "verbatim"),
     ("SeeWhatISee.sh",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh",    "verbatim"),
 ]

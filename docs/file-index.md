@@ -48,6 +48,8 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/gemini.see.md` | Template for `skills/dot-gemini/skills/see-what-i-see/SKILL.md` |
 | `skills/gemini.watch.md` | Template for `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
+| `skills/mcp-server.see.md` | Template for `mcp-server/prompts/see-what-i-see.md` (MCP prompt body + frontmatter metadata) |
+| `skills/mcp-server.watch.md` | Template for `mcp-server/prompts/see-what-i-see-watch.md` (MCP prompt body + frontmatter metadata) |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
 | `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
@@ -112,7 +114,10 @@ Own `package.json` (npm workspace), bundled to a single
 | `mcp-server/package.json` | Package manifest — `@seewhatisee/mcp-server`, `bin: seewhatisee-mcp`, MCP SDK dep, build / test scripts |
 | `mcp-server/tsconfig.json` | TypeScript config for the server (ES2022, strict, output to `dist/`) |
 | `mcp-server/bundle.mjs` | esbuild step that bundles `src/cli.ts` + deps into `dist/seewhatisee-mcp.js` with a node shebang |
-| `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter, tool / resource / prompt handlers, prompt body strings |
+| `mcp-server/build-prompts.mjs` | Reads `prompts/*.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
+| `mcp-server/prompts/see-what-i-see.md` | Generated from `skills/mcp-server.see.md` — prompt body inlined into the bundle |
+| `mcp-server/prompts/see-what-i-see-watch.md` | Generated from `skills/mcp-server.watch.md` — prompt body inlined into the bundle |
+| `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter, tool / resource / prompt handlers |
 | `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--help`), source-dir resolution, stdio transport, `server.connect` |
 | `mcp-server/tests/resolve.test.mjs` | Unit tests for `resolveSourceDir` — explicit override, cwd vs home precedence, default fallback, config-file parsing |
 | `mcp-server/tests/server.test.mjs` | End-to-end tests via `InMemoryTransport` covering every tool, the subscribable resource, prompts list/get |
