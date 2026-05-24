@@ -28,8 +28,8 @@ The shell scripts and SKILL.md wrappers stay; the MCP server is an
 - **Bundling:** `esbuild` or `tsup` to a single bundled
   `dist/server.js` — code + deps in one file. No native modules in the
   hot path.
-- **Distribution:** publish as `@seewhatisee/mcp-server` on npm; users
-  invoke via `npx -y @seewhatisee/mcp-server`.
+- **Distribution:** publish as `@see-what-i-see/mcp-server` on npm; users
+  invoke via `npx -y @see-what-i-see/mcp-server`.
 - **Repo layout:** `mcp-server/` at the repo root.
   - `mcp-server/src/server.ts` — single source file (server probably
     won't grow past one file).

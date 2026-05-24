@@ -111,7 +111,8 @@ Own `package.json` (npm workspace), bundled to a single
 
 | File | Description |
 |------|-------------|
-| `mcp-server/package.json` | Package manifest — `@seewhatisee/mcp-server`, `bin: seewhatisee-mcp`, MCP SDK dep, build / test scripts |
+| `mcp-server/package.json` | Package manifest — `@see-what-i-see/mcp-server`, `bin: seewhatisee-mcp`, publish metadata, build / test / pack scripts |
+| `mcp-server/README.md` | npm-registry-facing README — install snippets per MCP client, tools / resources / prompts list |
 | `mcp-server/tsconfig.json` | TypeScript config for the server (ES2022, strict, output to `dist/`) |
 | `mcp-server/bundle.mjs` | esbuild step that bundles `src/cli.ts` + deps into `dist/seewhatisee-mcp.js` with a node shebang |
 | `mcp-server/build-prompts.mjs` | Reads `prompts/*.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
@@ -218,6 +219,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `scripts/build.mjs` | Cleans `dist/`, copies vendor scripts + theme, classic-wraps codejar, then runs `tsc` |
 | `scripts/_release-common.sh` | Sourced helpers for release scripts (gh check, clean-main check, tag-unused check, orphaned-tag trap) |
 | `scripts/release-extension.sh` | Cuts a GitHub release for the Chrome extension (tag `extension-vX.Y.Z`); builds the zip and runs `gh release create` (draft by default) |
+| `scripts/release-mcp-server.sh` | Cuts an `@see-what-i-see/mcp-server` npm release (tag `mcp-server-vX.Y.Z`); drafts a matching GH release |
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |

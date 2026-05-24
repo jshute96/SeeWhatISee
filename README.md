@@ -419,7 +419,7 @@ npx @modelcontextprotocol/inspector node mcp-server/dist/seewhatisee-mcp.js
 Register the bundled server with Claude Code (absolute path required):
 
 ```bash
-claude mcp add seewhatisee node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
+claude mcp add see-what-i-see node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
 Inside any Claude Code session after that, the `get_latest` / `watch` / `read_file` / `get_file_info` tools are callable directly, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
@@ -431,6 +431,19 @@ npm run test:mcp-server
 ```
 
 End-to-end tests use the SDK's in-memory transport — no subprocess, no stdio framing, just a `Client` and `Server` linked inside one Node process.
+
+#### Making an npm release of the MCP server
+
+```bash
+scripts/release-mcp-server.sh patch              # 0.1.0 → 0.1.1, GH release as draft
+scripts/release-mcp-server.sh minor              # 0.1.0 → 0.2.0
+scripts/release-mcp-server.sh patch --publish    # publish the GH release immediately
+scripts/release-mcp-server.sh patch --no-gh-release   # npm-only release, skip GH
+```
+
+Bumps `mcp-server/package.json`, runs tests + build, commits, tags as `mcp-server-vX.Y.Z`, publishes to npm, pushes, and (by default) drafts a GitHub release. Requires `npm login` and `gh auth login` first. See the script header for the rollback recipe if `npm publish` fails after the local commit lands.
+
+The first publish — to register the name on npm — is manual: `cd mcp-server && npm publish`. Subsequent releases use this script.
 
 ### Building a Chrome extension release
 

@@ -1,23 +1,49 @@
 {
-  "name": "@seewhatisee/mcp-server",
+  "name": "@see-what-i-see/mcp-server",
   "version": "0.1.0",
-  "private": true,
-  "description": "MCP server for collecting screenshots and captured data from the SeeWhatISee Chrome extension",
+  "description": "MCP server that exposes screenshots, HTML snapshots, and selections from the SeeWhatISee Chrome extension to any MCP client.",
   "type": "module",
+  "license": "MIT",
+  "author": "Jeff Shute",
+  "homepage": "https://github.com/jshute96/SeeWhatISee/tree/main/mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jshute96/SeeWhatISee.git",
+    "directory": "mcp-server"
+  },
+  "bugs": "https://github.com/jshute96/SeeWhatISee/issues",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "seewhatisee",
+    "see-what-i-see",
+    "chrome-extension",
+    "screenshot"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "seewhatisee-mcp": "dist/seewhatisee-mcp.js"
+  },
+  "files": [
+    "dist/seewhatisee-mcp.js",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "prompts": "node build-prompts.mjs",
     "postinstall": "node build-prompts.mjs && tsc",
     "build": "npm run prompts && tsc && node bundle.mjs",
     "pretest": "npm run prompts && tsc",
-    "test": "node --test 'tests/*.test.mjs'"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "test": "node --test 'tests/*.test.mjs'",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.10.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"

@@ -1,7 +1,7 @@
 // Bin entrypoint. Parses argv, resolves the source dir, hooks up stdio.
 //
 // Invocation (in an MCP client config):
-//   "command": "npx", "args": ["-y", "@seewhatisee/mcp-server"]
+//   "command": "npx", "args": ["-y", "@see-what-i-see/mcp-server"]
 //   "command": "seewhatisee-mcp", "args": ["--directory", "/some/path"]
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
