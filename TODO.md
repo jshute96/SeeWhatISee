@@ -39,9 +39,12 @@
 * BUG: command doesn't work if multiple gemini's run in workspaces with the same name, because one of their tmp dirs has -1, and we don't know that. See copy-last-snapshot.sh.
 * Fix general unreliability and permissions issues: https://github.com/jshute96/SeeWhatISee/issues/27.
 
+### MCP server
+* MCP server is experimental - see if it actually works
+* Add instructions for how to use it in various tools.
+
 ### Integrating other tools to read captures
 * CLI skills that work for other tools
-* MCP server version that desktop apps can call
 
 ## Ask pages (web chat integration)
 * Maybe allow pinning any page, so users can inject with copy/paste widget

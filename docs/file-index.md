@@ -100,6 +100,23 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — foreground loop that describes each new capture |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
 
+## MCP Server (`mcp-server/`)
+
+Standalone TypeScript MCP server. Exposes the same captures as
+`SeeWhatISee.sh`, plus a subscribable `seewhatisee://captures/stream`.
+Own `package.json` (npm workspace), bundled to a single
+`dist/seewhatisee-mcp.js`. Not part of the extension build.
+
+| File | Description |
+|------|-------------|
+| `mcp-server/package.json` | Package manifest — `@seewhatisee/mcp-server`, `bin: seewhatisee-mcp`, MCP SDK dep, build / test scripts |
+| `mcp-server/tsconfig.json` | TypeScript config for the server (ES2022, strict, output to `dist/`) |
+| `mcp-server/bundle.mjs` | esbuild step that bundles `src/cli.ts` + deps into `dist/seewhatisee-mcp.js` with a node shebang |
+| `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter, tool / resource / prompt handlers, prompt body strings |
+| `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--help`), source-dir resolution, stdio transport, `server.connect` |
+| `mcp-server/tests/resolve.test.mjs` | Unit tests for `resolveSourceDir` — explicit override, cwd vs home precedence, default fallback, config-file parsing |
+| `mcp-server/tests/server.test.mjs` | End-to-end tests via `InMemoryTransport` covering every tool, the subscribable resource, prompts list/get |
+
 ## Extension Source (`src/`)
 
 - **`src/` (top level)** — entry-point files and pure shared helpers.
@@ -304,6 +321,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing wrapper scripts, and the unified `SeeWhatISee.sh` backend |
+| `mcp-server.md` | Design doc for the `mcp-server/` MCP server — TS, single-bundled-file, mirrors `SeeWhatISee.sh` plus a subscription stream |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |
 | `images/download-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Save-as button |

@@ -1,0 +1,258 @@
+# MCP server
+
+A local MCP (Model Context Protocol) server that exposes the same
+"read the latest capture" / "watch for new captures" operations as the
+`SeeWhatISee.sh` skill backend, but as a structured server any
+MCP-aware client can call.
+
+## Why
+
+- **Reach beyond Claude Code and Gemini CLI.** Claude Desktop, Cursor,
+  Zed, Continue and other MCP clients can use SeeWhatISee without each
+  one needing its own per-tool skill wrapper.
+- **Structured I/O.** Typed tool schemas instead of stdout-line parsing
+  of a shell script.
+- **Real push notifications for watch.** Subscriptions replace the
+  current `--loop` polling + per-line notification scrape.
+- **Future extensibility.** Server-side helpers (ranged file reads,
+  HTML→markdown extraction, search) become feasible without changing
+  every wrapper.
+
+The shell scripts and SKILL.md wrappers stay; the MCP server is an
+*additional* surface, not a replacement (at least for v1).
+
+## Stack and layout
+
+- **Language:** TypeScript, using the official
+  `@modelcontextprotocol/sdk` package.
+- **Bundling:** `esbuild` or `tsup` to a single bundled
+  `dist/server.js` — code + deps in one file. No native modules in the
+  hot path.
+- **Distribution:** publish as `@seewhatisee/mcp-server` on npm; users
+  invoke via `npx -y @seewhatisee/mcp-server`.
+- **Repo layout:** `mcp-server/` at the repo root.
+  - `mcp-server/src/server.ts` — single source file (server probably
+    won't grow past one file).
+  - `mcp-server/package.json` — local manifest, declares the SDK
+    dependency and the `build` / `start` scripts.
+  - `mcp-server/dist/server.js` — bundled output; `.gitignore`d.
+- **Runtime:** Node ≥ 20 (matches Node SEA support era; also what
+  most MCP clients ship with).
+
+## Source-dir resolution
+
+Mirrors `SeeWhatISee.sh` exactly so users don't need separate config.
+Resolved **once** at server startup; tool calls don't take per-call
+directory overrides — the server has one source dir for its whole
+lifetime.
+
+- An optional CLI arg `--directory DIR` on the server itself overrides
+  everything (passed via `args` in the user's MCP config).
+- Otherwise, parse `.SeeWhatISee` in `cwd` then `$HOME` for a
+  `directory=...` line.
+- Otherwise, default to `$HOME/Downloads/SeeWhatISee`.
+- `$SNAP_REAL_HOME` overrides `$HOME` if present (same reason as the
+  shell script — snap-installed clients mangle `$HOME`).
+
+No `--copy-to-dir` equivalent. MCP clients read the absolute paths the
+tools return directly; they don't have the workspace-sandbox limitation
+the Gemini CLI does.
+
+## File paths returned by `get_latest` / `watch`
+
+Records carry **absolute paths** in `screenshot.filename`,
+`contents.filename`, and `selection.filename` — same shape as
+`SeeWhatISee.sh --get-latest` emits today.
+
+- Lets MCP clients with their own file-reading tool (e.g. Claude
+  Desktop's built-in Read) open the file directly without a round-trip
+  through `read_file`.
+- Lets the prompts and shell-script output stay one-to-one; the
+  template blocks under `skills/` keep working unchanged.
+- `read_file` and `get_file_info` accept the same absolute path, and
+  validate that it resolves inside the source dir before opening it.
+
+## Capabilities
+
+### Tools
+
+#### `get_latest`
+
+Returns the most recent record from `log.json`.
+
+- **Input:** none.
+- **Output:** one JSON object — the record from `log.json` with
+  `screenshot.filename` / `contents.filename` / `selection.filename`
+  rewritten to absolute paths. Same shape as
+  `SeeWhatISee.sh --get-latest` emits today (see
+  `skills/json-record.template.md`).
+- **Errors:** structured error if `log.json` is missing or empty
+  (parallel to the shell script's "No captures yet" messages).
+
+#### `watch`
+
+Returns new capture records — drains any pending, then blocks for the
+next one if none are pending.
+
+- **Input:**
+  - `after?: string` — timestamp from a prior record. Returns all
+    records strictly newer than this in the array. If absent or `null`,
+    pending state is "empty" — falls straight through to the blocking
+    wait.
+  - `timeout_ms?: number` — max time to block waiting for a new
+    capture. Default and cap discussed below.
+- **Output:** `{ records: CaptureRecord[] }` — possibly empty if the
+  timeout fired with nothing new.
+- **Behavior:**
+  - With `after`: behaves like `--watch --after <ts>` (without
+    `--catch-up-one`) — emit *all* records newer than `after`,
+    immediately, then return.
+  - With `after` and no newer records: fall through to the blocking
+    wait, return up to one record (or empty on timeout).
+  - Without `after`: blocking wait only — return up to one record or
+    empty on timeout.
+- **Why a single tool, not two:** matches the "drain + wait" loop a
+  client naturally writes. Splitting it into `pending_since` +
+  `wait_for_next` would force every caller to compose them.
+
+##### `watch` timeout — how long can it block?
+
+- **Server side:** we don't need a small cap. The watcher just sits on
+  an `fs.watch` event and a `setTimeout`; an hours-long block costs
+  nothing locally.
+- **Client side is the real limit.** Each MCP client picks its own
+  per-request timeout — typically 30–60 s. The server can advertise a
+  long timeout, but if the client times the RPC out, the call dies
+  regardless.
+- **Recommended defaults:** default `timeout_ms` to ~60 s; allow values
+  up to ~10 minutes. Document the tradeoff in the tool description so
+  the model knows that for genuinely long waits it should either
+  call `watch` in a loop or use the subscription resource.
+- **For minutes-to-hours waits, use the subscription.** That's what
+  `seewhatisee://captures/stream` is for — no per-request timeout,
+  server pushes whenever a capture arrives.
+
+#### `read_file`
+
+Returns a byte range of a captured file. Lets the model read large HTML
+snapshots in chunks without blowing context, and gives clients without
+their own file-read tool a way to fetch screenshot or selection bytes
+via the server.
+
+- **Input:** `{ filename: string, offset?: number, length?: number }`.
+  `filename` is the absolute path returned by `get_latest` / `watch`.
+- **Output:** `{ bytes: base64, totalSize: number, eof: boolean }`.
+- **Constraint:** `filename` must resolve (after symlink resolution)
+  inside the configured source dir. Reject everything else with a
+  structured error — no arbitrary file reads.
+
+#### `get_file_info`
+
+Returns metadata about a captured file without reading its contents.
+
+- **Input:** `{ filename: string }`.
+- **Output:** `{ size: number, mimeType: string, capturedAt: string }`.
+- **Constraint:** same source-dir containment check as `read_file`.
+
+### Resources
+
+#### `seewhatisee://captures/stream` *(subscribable)*
+
+The push-notification equivalent of `--watch --loop`.
+
+- Client calls `resources/subscribe` with this URI once.
+- Server fires `notifications/resources/updated` whenever a new
+  record appears in `log.json`.
+- Client calls `resources/read` on the URI to fetch the latest record
+  payload after each notification.
+- On unsubscribe (or client disconnect), the watcher tears down.
+
+**Fallback when the client doesn't support subscriptions:** the same
+client can still poll with the `watch` tool. Both code paths live in
+the server; only the client's capabilities decide which one gets used.
+
+### Prompts
+
+Both prompts are exposed via MCP's `prompts/list` and surface as slash
+commands in clients that render prompts (Claude Desktop, Claude Code).
+They are the MCP-side equivalents of today's two main SKILL.md files.
+
+#### `see-what-i-see`
+
+- **Args:** none.
+- **Renders to:** instructions that tell the model to call
+  `get_latest`, then process the returned record according to the
+  same rules as today's `skills/json-record.template.md` +
+  `skills/process.template.md` blocks.
+
+#### `see-what-i-see-watch`
+
+- **Args:** none.
+- **Renders to:** instructions to subscribe to
+  `seewhatisee://captures/stream` (preferred), or fall back to looping
+  on the `watch` tool with `after = <last record's timestamp>` if the
+  client doesn't support subscriptions. Then process each delivered
+  record using the same template blocks.
+
+No `see-what-i-see-stop` equivalent — the client owns the
+subscription's lifecycle and tears it down on its own.
+
+## Sharing the prompt body with the SKILL.md templates
+
+- `skills/json-record.template.md` and `skills/process.template.md` are
+  the canonical descriptions of the record shape and the per-capture
+  processing rules. Both already get inlined into the SKILL.md
+  templates by `skills/generate-skills.py`.
+- The MCP server's prompt bodies should be **generated from the same
+  templates** by the same generator, so the prompt text stays in sync
+  with the skill text by construction. Add MCP-prompt targets to
+  `skills/generate-skills.py` when implementing.
+
+## Differences from `SeeWhatISee.sh`
+
+| Concern              | `SeeWhatISee.sh`                          | MCP server                          |
+|----------------------|-------------------------------------------|-------------------------------------|
+| Single read          | `--get-latest`                            | `get_latest` tool                   |
+| Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
+| Streaming loop       | `--watch --loop`                          | `captures/stream` subscription      |
+| Stop watcher         | `--stop` + `.watch.pid`                   | client-managed; unsubscribe / exit  |
+| Inline selection     | `--print_selection`                       | not exposed; caller uses `read_file` (or its own Read tool) on `selection.filename` |
+| Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
+| Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
+
+## Decisions
+
+- **Single bundled file.** `esbuild` or `tsup` produces one
+  `dist/server.js`; no transitive `node_modules` at the user's end.
+- **`fs.watch` for the watcher.** Stdlib, no extra dependency, fine
+  for watching one file.
+- **No server-side processing (markdown extraction, OCR, etc.).** The
+  server's job is to expose captures; transformation lives client-side
+  (or in the extension).
+- **Subscription cleanup on client crash.** Track per-client subscribe
+  state; on stdio EOF tear everything down. Worth a unit test.
+
+## Possible future features
+
+- **`seewhatisee://latest` resource.** A read-only resource that
+  resolves to the latest record (same content as `get_latest`'s
+  output). Would let clients with an `@`-mention UI attach the latest
+  capture by reference. Skipped in v1 — `get_latest` covers the same
+  ground for the prompts we ship.
+- **Single-binary distribution.** Bun `--compile` for cross-platform
+  binaries published to GitHub Releases, for users without Node.
+- **`list_recent_captures` / `search_captures` tools.** Multi-record
+  queries beyond "latest" and "after a timestamp".
+
+## Cross-references
+
+- [`docs/cli_commands.md`](cli_commands.md) — the shell-script commands
+  this server parallels.
+- [`docs/claude-plugin.md`](claude-plugin.md) — how the SKILL.md
+  surface is wired in Claude Code today.
+- [`skills/SeeWhatISee.sh`](../skills/SeeWhatISee.sh) — the unified
+  backend whose flag surface this server mirrors.
+- [`skills/json-record.template.md`](../skills/json-record.template.md)
+  and [`skills/process.template.md`](../skills/process.template.md) —
+  shared template blocks that the MCP prompts should be generated
+  from.

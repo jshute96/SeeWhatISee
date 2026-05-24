@@ -347,11 +347,12 @@ In Chrome: open `chrome://extensions`, enable **Developer mode**, click **Load u
 ### Testing
 
 ```bash
-npm test             # validate skill templates, then run Playwright e2e tests
-npm run test:skills  # validate skill templates only (fast, no build)
-npm run test:e2e     # run Playwright e2e tests only
-npm run test:headed  # same as test:e2e, with a visible browser
-npm run test:unit    # run the HTML→markdown converter unit tests
+npm test                  # validate skill templates, run unit + MCP-server + Playwright e2e tests
+npm run test:skills       # validate skill templates only (fast, no build)
+npm run test:e2e          # run Playwright e2e tests only
+npm run test:headed       # same as test:e2e, with a visible browser
+npm run test:unit         # run the HTML→markdown converter unit tests
+npm run test:mcp-server   # run the MCP server's tests (in-memory transport)
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by
@@ -391,6 +392,46 @@ scripts/SeeWhatISee.sh --watch --pid-lockfile   # killable from another shell vi
 scripts/SeeWhatISee.sh --stop                   # stop a watcher running with --pid-lockfile
 ```
 
+### MCP server
+
+`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`, `read_file`, `get_file_info`) plus a subscribable resource that pushes notifications when new captures arrive. It's a separate package, wired into the root install as an npm workspace, so the root `npm install` covers it.
+
+Design doc: `docs/mcp-server.md`.
+
+Build the single-file bundle:
+
+```bash
+npm run build:mcp-server
+```
+
+That produces `mcp-server/dist/seewhatisee-mcp.js` — a single bundled Node script with a `#!/usr/bin/env node` shebang, ready to run.
+
+#### Try it with the MCP Inspector
+
+The fastest way to poke at the server is the official inspector — a local web UI that lists tools, lets you call each one with form-filled args, reads/subscribes to resources, and renders prompts:
+
+```bash
+npx @modelcontextprotocol/inspector node mcp-server/dist/seewhatisee-mcp.js
+```
+
+#### Try it in Claude Code
+
+Register the bundled server with Claude Code (absolute path required):
+
+```bash
+claude mcp add seewhatisee node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
+```
+
+Inside any Claude Code session after that, the `get_latest` / `watch` / `read_file` / `get_file_info` tools are callable directly, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
+
+#### Tests
+
+```bash
+npm run test:mcp-server
+```
+
+End-to-end tests use the SDK's in-memory transport — no subprocess, no stdio framing, just a `Client` and `Server` linked inside one Node process.
+
 ### Building a Chrome extension release
 
 Cut a Chrome extension release with `scripts/release-extension.sh`
@@ -427,6 +468,9 @@ GitHub UI.
   - `skills/claude-plugin/` → `plugin/` in the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo
   - `skills/dot-claude-plugin/` → `.claude-plugin/` in that release repo
   - `skills/dot-gemini/` → root of the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo
+- `mcp-server/` — standalone TS MCP server (npm workspace) that exposes
+  captures over the Model Context Protocol; bundled to a single
+  `dist/seewhatisee-mcp.js` for distribution
 - `tests/e2e/` — Playwright tests
 - `tests/fixtures/extension.ts` — fixture that loads the extension and
   exposes its service worker
