@@ -73,7 +73,8 @@ export async function maybeRecompressLargeScreenshot(
   try {
     pngBlob = await (await fetch(pngDataUrl)).blob();
   } catch (err) {
-    console.warn('[SeeWhatISee] large-screenshot fetch failed:', err);
+    // Handled: fall back to the original PNG.
+    console.info('[SeeWhatISee] large-screenshot fetch failed:', err);
     return { dataUrl: pngDataUrl, ext: 'png' };
   }
   if (pngBlob.size <= largeScreenshotThresholdBytes) {
@@ -92,7 +93,8 @@ export async function maybeRecompressLargeScreenshot(
       quality: LARGE_SCREENSHOT_JPG_QUALITY,
     });
   } catch (err) {
-    console.warn('[SeeWhatISee] large-screenshot JPEG re-encode failed:', err);
+    // Handled: keep the PNG.
+    console.info('[SeeWhatISee] large-screenshot JPEG re-encode failed:', err);
     return { dataUrl: pngDataUrl, ext: 'png' };
   }
   const useJpg = jpgBlob.size <= pngBlob.size * (1 - LARGE_SCREENSHOT_JPG_MIN_SAVINGS);
@@ -104,7 +106,8 @@ export async function maybeRecompressLargeScreenshot(
   try {
     jpgDataUrl = await blobToDataUrl(jpgBlob);
   } catch (err) {
-    console.warn('[SeeWhatISee] large-screenshot JPEG data-URL build failed:', err);
+    // Handled: keep the PNG.
+    console.info('[SeeWhatISee] large-screenshot JPEG data-URL build failed:', err);
     return { dataUrl: pngDataUrl, ext: 'png' };
   }
   return { dataUrl: jpgDataUrl, ext: 'jpg' };

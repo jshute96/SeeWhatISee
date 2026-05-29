@@ -122,11 +122,11 @@ async function countdownSleep(delayMs: number): Promise<void> {
  * we throw. Capturing a different window just so the call succeeds
  * would be confusing; the right fix from the user side is to focus
  * the real window first (or use a `delayMs` and switch focus during
- * the wait). The throw is downgraded to a `console.warn` by the
- * action / context-menu wrappers (and the targeted
- * `unhandledrejection` handler in background.ts catches the SW
- * devtools console invocation path) so it doesn't pollute the
- * chrome://extensions Errors page.
+ * the wait). The throw is caught by the action / context-menu
+ * wrappers (and the targeted `unhandledrejection` handler in
+ * background.ts catches the SW devtools console invocation path),
+ * so it surfaces on the friendly error page rather than as an
+ * unhandled rejection.
  *
  * Trade-off: the `activeTab` permission grant from a toolbar gesture
  * applies to the tab that was active at gesture time. If the user
@@ -402,7 +402,9 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
     screenshotDataUrl = recompressed.dataUrl;
     screenshotExt = recompressed.ext;
   } catch (err) {
-    console.warn('[SeeWhatISee] captureVisibleTab failed:', err);
+    // Handled: stash the message in `screenshotError` and carry on
+    // with the scrape.
+    console.info('[SeeWhatISee] captureVisibleTab failed:', err);
     screenshotError = err instanceof Error ? err.message : String(err);
   }
 

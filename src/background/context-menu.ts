@@ -384,7 +384,8 @@ export async function refreshActionTooltip(): Promise<void> {
   try {
     await chrome.action.setTitle({ title: await getDefaultActionTooltip() });
   } catch (err) {
-    console.warn('[SeeWhatISee] failed to refresh action tooltip:', err);
+    // Best-effort cosmetic refresh.
+    console.info('[SeeWhatISee] failed to refresh action tooltip:', err);
   }
 }
 

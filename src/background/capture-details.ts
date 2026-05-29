@@ -884,13 +884,14 @@ async function closeCapturePageTab(
     } catch (err) {
       // Best-effort: if the opener was closed during the Capture
       // page flow, just log and proceed with the close.
-      console.warn('[SeeWhatISee] failed to focus opener tab:', err);
+      console.info('[SeeWhatISee] failed to focus opener tab:', err);
     }
   }
   try {
     await chrome.tabs.remove(tabId);
   } catch (err) {
-    console.warn('[SeeWhatISee] failed to close Capture page tab:', err);
+    // Best-effort cleanup.
+    console.info('[SeeWhatISee] failed to close Capture page tab:', err);
   }
 }
 

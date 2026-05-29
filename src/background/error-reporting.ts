@@ -108,8 +108,9 @@ export async function reportCaptureError(
   const message = friendlyErrorMessage(err);
   // Always log the original error to the SW console — the friendly
   // string is for the user, but the developer message is what
-  // someone debugging will look for.
-  console.warn('[SeeWhatISee] capture failed:', err);
+  // someone debugging will look for. `console.info` because the
+  // failure is already handled via the error page.
+  console.info('[SeeWhatISee] capture failed:', err);
   const url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
   const createProps: chrome.tabs.CreateProperties = { url };
   if (opener?.index !== undefined) createProps.index = opener.index + 1;
@@ -160,6 +161,10 @@ export async function runWithErrorReporting(fn: () => Promise<unknown>): Promise
 // rejection bubbles up as unhandled and Chrome promotes it onto the
 // chrome://extensions Errors page, looking like an extension bug.
 //
+// `preventDefault()` stops the promotion; the log below must stay at
+// `console.info` (not `warn`), or it would re-promote the same line
+// and defeat the suppression.
+//
 // We deliberately match on the error message rather than swallowing
 // every unhandled rejection: a blanket catch would also silence
 // genuine bugs (failed downloads, storage quota errors, future
@@ -180,7 +185,7 @@ export function installUnhandledRejectionHandler(): void {
   self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
     const message = String((event.reason as Error)?.message ?? event.reason);
     if (SUPPRESSED_UNHANDLED.some((s) => message.includes(s))) {
-      console.warn('[SeeWhatISee] capture failed:', event.reason);
+      console.info('[SeeWhatISee] capture failed:', event.reason);
       event.preventDefault();
     }
   });

@@ -704,7 +704,8 @@ async function refreshHotkeys(): Promise<void> {
       // updates one click later than ideal.
     });
   } catch (err) {
-    console.warn('[SeeWhatISee] options: failed to refresh hotkeys:', err);
+    // Best-effort resync.
+    console.info('[SeeWhatISee] options: failed to refresh hotkeys:', err);
   }
 }
 

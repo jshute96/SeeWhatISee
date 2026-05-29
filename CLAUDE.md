@@ -26,6 +26,7 @@ repository. See `README.md` for setup instructions and available commands.
 
 ### Code Logic
 - **Documentation**: Where code has subtle or surprising logic, add comments to explain the "why" and intended behavior.
+- **Logging levels**: Don't use `console.warn` / `console.error` for expected, already-handled failures (recovered fallbacks, or errors the user already sees on a friendly surface). Chrome promotes warn/error from any extension context onto the `chrome://extensions` Errors page, making the extension look broken. Use `console.info` for those; reserve warn/error for genuine bugs or drift a developer should see. (See `docs/chrome-extension.md` for the full rationale.) Don't restate this rule at each logging site.
 
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT

@@ -48,8 +48,8 @@ The background script is an MV3 service worker. That means:
 
   1. Every user-initiated click flows through
      `runWithErrorReporting` in `background/error-reporting.ts`,
-     which catches the rejection and surfaces it on the icon +
-     tooltip.
+     which catches the rejection and opens the friendly error
+     Capture page (`?error=…`).
   2. A targeted `unhandledrejection` handler installed by
      `background/error-reporting.ts` catches the user-friendly
      messages (`No active tab found to capture`, `Failed to
@@ -58,6 +58,24 @@ The background script is an MV3 service worker. That means:
      console — that path doesn't go through
      `runWithErrorReporting`. The allowlist is deliberately
      narrow so real bugs still surface.
+- **`console.warn` / `console.error` also get promoted to the
+  Errors page** — from *any* extension context (service worker,
+  extension pages, content scripts), not just unhandled rejections.
+  So an expected, already-handled failure logged at `warn` reads
+  like an extension bug.
+  - Log expected/handled failures at **`console.info`** instead
+    (Chrome doesn't promote `info`/`log`). Examples: the
+    capture-failed log in `error-reporting.ts` (the user already
+    sees the error page), `captureVisibleTab` failures recovered
+    via `screenshotError`, recompress fallbacks to PNG, and
+    best-effort tab/tooltip/hotkey cleanup.
+  - Reserve `console.warn`/`error` for genuine failures or drift a
+    developer *should* see on the Errors page: unhandled
+    keyboard-command / context-menu ids, unknown stored default
+    ids, provider-id drift, last-resort "could not open error
+    tab", and SW-side response-errors on the Capture page (a file
+    that couldn't be materialized is a real failure "worth the
+    badge", unlike an expected clipboard `NotAllowedError`).
 
 ## Permissions: what we ended up with and why
 
@@ -214,6 +232,11 @@ One channel: **a dedicated Capture-page error tab.**
   capture-details flow rather than the wrapper).
 - A successful run is a no-op — there's no persistent icon flip
   or tooltip text to clean up anymore.
+- The developer-facing SW-console line logs at **`console.info`**,
+  not `console.warn` — the user already sees the error page, and a
+  `warn` would re-promote the same handled failure onto the
+  Errors page (see the `console.warn`/`error` promotion note
+  earlier in this doc).
 
 Why one full-page surface beats the icon+tooltip duo:
 
@@ -592,7 +615,8 @@ fidelity for a marginal saving.
   JPG y — using JPG / kept PNG`) so the constants can be tuned
   from real captures. Under-threshold captures are silent.
 - Failure modes (no `OffscreenCanvas`, decode error, encode error)
-  fall back to the PNG with a `console.warn`.
+  fall back to the PNG with a `console.info` (handled, so it stays
+  off the `chrome://extensions` Errors page).
 - Applies to both `captureVisible` (quick-save) and
   `captureBothToMemory` (Capture-page flow). The image-context
   right-click flow already starts from a non-PNG source and is

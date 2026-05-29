@@ -327,10 +327,10 @@ export async function setDefaultWithSelectionId(id: string): Promise<void> {
 // itself, so the immediate and delayed paths share one resolution
 // strategy (active tab in the last-focused window).
 //
-// runWithErrorReporting downgrades rejection to console.warn +
-// user-visible icon swap + tooltip "ERROR:" line, so
-// user-actionable failures like "No active tab found to capture"
-// don't get promoted onto the chrome://extensions Errors page.
+// runWithErrorReporting catches rejection and opens the friendly
+// error Capture page, so user-actionable failures like "No active
+// tab found to capture" surface there rather than as an unhandled
+// rejection.
 //
 // Extracted from the listener body so tests can drive the dispatch
 // directly via `self.SeeWhatISee.handleActionClick()` — Playwright
