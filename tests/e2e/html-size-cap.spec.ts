@@ -2,7 +2,7 @@
 // inline 5–15 MB of CSS / fonts / base64 assets into the page HTML;
 // rather than letting that blow the 10 MiB `chrome.storage.session`
 // quota silently, the capture-page flow drops the HTML and surfaces
-// a "Content too large: …" error on the Save HTML row.
+// a "Content too large for Capture page: …" error on the Save HTML row.
 //
 // Cases:
 //   1. Over-cap HTML at capture time → row disabled with error icon.
@@ -104,7 +104,8 @@ test.describe('html-size-cap', () => {
     );
 
     // Save HTML row disabled, has-error class, tooltip matches the
-    // "Content too large: X KB (limit 1 KB)." message verbatim.
+    // "Content too large for Capture page: X KB (limit 1 KB)." message
+    // verbatim, followed by the capture-directly hint on a second line.
     // Regression catch — without the cap the body would land in
     // storage and the row would render as a normal "HTML · N KB"
     // entry, masking the quota failure that would follow.
@@ -114,7 +115,11 @@ test.describe('html-size-cap', () => {
     await expect(capturePage.locator('#row-html')).toHaveClass(/has-error/);
     await expect(capturePage.locator('#error-html')).toHaveAttribute(
       'title',
-      /Content too large: \d+(?:\.\d+)? (?:KB|MB) \(limit 1 KB\)\./,
+      /Content too large for Capture page: \d+(?:\.\d+)? (?:KB|MB) \(limit 1 KB\)\./,
+    );
+    await expect(capturePage.locator('#error-html')).toHaveAttribute(
+      'title',
+      /Content can still be captured directly using 'Save' actions/,
     );
     await expect(capturePage.locator('#copy-html-name')).toBeDisabled();
     await expect(capturePage.locator('#edit-html')).toBeDisabled();
@@ -194,10 +199,37 @@ test.describe('html-size-cap', () => {
       });
     })) as { ok?: true; error?: string };
     expect(result.error).toBeDefined();
-    expect(result.error).toMatch(/^Content too large: /);
+    expect(result.error).toMatch(/^Content too large for Capture page: /);
     expect(result.error).toMatch(/\(limit 1 KB\)/);
 
     await capturePage.close();
     await openerPage.close();
+  });
+
+  test('error page: the capture-directly hint renders "Save" as italics with the quotes dropped', async ({
+    extensionContext,
+    extensionId,
+  }) => {
+    // Drive the `?error=` pane directly (the SW builds this URL for
+    // the quota-refusal paths). The message mirrors production: a
+    // quota line + the `CAPTURE_DIRECTLY_HINT` second line, whose
+    // quoted `'Save'` the page should upgrade to an <em>.
+    const message =
+      "Capture is too large (8 MB image; only 1 MB of 10 MB extension storage free).\n" +
+      "Content can still be captured directly using 'Save' actions (on the extension's context menu).";
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/capture.html?error=${encodeURIComponent(message)}`,
+    );
+
+    await expect(page.locator('#capture-failed-error')).toBeVisible();
+    const em = page.locator('#capture-failed-message em');
+    await expect(em).toHaveText('Save');
+    // The literal quotes are consumed by the render — only the <em>
+    // carries the emphasis now.
+    await expect(page.locator('#capture-failed-message')).not.toContainText(
+      "'Save'",
+    );
+    await page.close();
   });
 });

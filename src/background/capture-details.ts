@@ -69,9 +69,34 @@ function utf8ByteLength(s: string): number {
 }
 
 /**
+ * Second line appended to "too large for Capture page" rejections
+ * (over-cap HTML, quota-busting captures). The Capture page parks its
+ * payload in the size-limited `chrome.storage.session`, but the
+ * context-menu Save actions stream each artifact straight to disk
+ * without that cap — so a payload that's too big for the page can
+ * still be saved directly. Point the user at that escape hatch.
+ *
+ * "Save" is quoted because this string surfaces in two places: a
+ * native `title` tooltip (plain text — the quotes are the only
+ * emphasis available there) and the Capture-page "failed" pane (where
+ * `renderCaptureFailedMessage` swaps the quoted word for an italic
+ * `<em>Save</em>`). Keep the quotes so both surfaces stay in sync.
+ */
+const CAPTURE_DIRECTLY_HINT =
+  "Content can still be captured directly using 'Save' actions (on the extension's context menu).";
+
+/** User-facing "HTML over the byte cap" line, shared by the
+ *  capture-open path (`applyHtmlSizeCap`) and the `updateArtifact`
+ *  edit-save guard so the wording stays in lock-step. */
+function htmlTooLargeMessage(bytes: number): string {
+  return `Content too large for Capture page: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`;
+}
+
+/**
  * Apply the HTML byte-size cap to an `InMemoryCapture` in place.
  * If `capture.html` exceeds the cap, drops the body and sets
- * `htmlError` to the user-facing "Content too large: …" message.
+ * `htmlError` to the user-facing "Content too large for Capture
+ * page: …" message plus the capture-directly hint.
  * Mutates `capture`. Idempotent — once `html === ''` and `htmlError`
  * is set, a re-run is a no-op.
  *
@@ -85,7 +110,7 @@ function applyHtmlSizeCap(capture: InMemoryCapture): void {
   const bytes = utf8ByteLength(capture.html);
   if (bytes <= htmlSizeCapBytes) return;
   capture.html = '';
-  capture.htmlError = `Content too large: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`;
+  capture.htmlError = `${htmlTooLargeMessage(bytes)}\n${CAPTURE_DIRECTLY_HINT}`;
 }
 
 /**
@@ -582,7 +607,7 @@ async function openCapturePageWithSession(
     buildSession(),
   );
   if (!probe.ok) {
-    const message = formatQuotaError('capture', probe, captureBreakdown(data));
+    const message = `${formatQuotaError('capture', probe, captureBreakdown(data))}\n${CAPTURE_DIRECTLY_HINT}`;
     await chrome.tabs.create({
       ...createProps,
       url: capturePageUrlWithError(message),
@@ -611,6 +636,9 @@ async function openCapturePageWithSession(
     // wrapper's fallback path takes over.
     let msgText = err instanceof Error ? err.message : String(err);
     msgText = msgText.replace(/\.?\s*Values were not stored\.?\s*$/, '');
+    // Same escape hatch as the pre-flight branch: whatever blocked the
+    // session write, the context-menu Save actions skip session storage.
+    msgText = `${msgText}\n${CAPTURE_DIRECTLY_HINT}`;
     await chrome.tabs.update(tab.id, { url: capturePageUrlWithError(msgText) });
   }
 }
@@ -1530,9 +1558,7 @@ export function installDetailsMessageHandlers(): void {
           if (msg.kind === 'html') {
             const bytes = utf8ByteLength(msg.value);
             if (bytes > htmlSizeCapBytes) {
-              sendResponse({
-                error: `Content too large: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`,
-              });
+              sendResponse({ error: htmlTooLargeMessage(bytes) });
               return;
             }
           }

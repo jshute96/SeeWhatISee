@@ -622,7 +622,11 @@ The cap:
   (`applyHtmlSizeCap`) and in the `updateArtifact` handler for
   `kind: 'html'`.
 - Over the cap → HTML is dropped (`capture.html = ''`,
-  `capture.htmlError = "Content too large: 12 MB (limit 2 MB)."`).
+  `capture.htmlError`), with a two-line message:
+  - *"Content too large for Capture page: 12 MB (limit 2 MB)."*
+  - a hint that the content can still be saved via the context-menu
+    `'Save'` actions (which skip session storage). "Save" is quoted —
+    it shows in the native row tooltip, which can't render italics.
 - The Capture page's existing `htmlError` path takes over: Save
   HTML row greyed-out, error icon with the message, size badge
   hidden. Rest of the capture (image, URL, prompt, selection)
@@ -630,7 +634,10 @@ The cap:
 
 Edit-dialog saves run the same byte-length check on the incoming
 value before mutating the session; over-cap pastes return the
-"Content too large" error to the page without touching the body.
+"Content too large for Capture page" message (without the
+context-menu hint — it's an edit, not the live page) to the page
+without touching the body. Both wordings come from the shared
+`htmlTooLargeMessage` helper.
 
 `_setHtmlSizeCapForTest(bytes | null)` is exposed on
 `self.SeeWhatISee` so e2e can exercise both branches without

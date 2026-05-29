@@ -1770,5 +1770,14 @@ programmatic dispatch for).
       free)."*
     - single artifact: *"5 MB image"* (no `+` / `=`).
     - no breakdown (Ask flow): falls back to *"needs 11 MB"*.
+  - For the capture-open quota failures that land on this pane, the
+    background appends a second line pointing at the context-menu
+    Save actions (which skip session storage); it renders thanks to
+    the `pre-wrap` div. The Ask-flow quota text does not get this hint.
+  - `renderCaptureFailedMessage` italicizes the hint's "Save" (the
+    background ships it quoted as `'Save'` for the plain-text tooltip;
+    the pane swaps the quoted word for an `<em>`). Built from text
+    nodes + `<em>`, never `innerHTML`, so the `?error=` param can't
+    inject markup.
   - Same pane chrome (`.early-state-pane` class) so the visual
     hierarchy matches the upload-landing and stale-page panes.

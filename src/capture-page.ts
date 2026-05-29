@@ -232,6 +232,34 @@ function setStatusMessage(text: string, kind: 'ok' | 'error' | 'info'): void {
   if (kind === 'ok') pageStatus.classList.add('ask-status-ok');
   else if (kind === 'error') pageStatus.classList.add('ask-status-error');
 }
+
+/**
+ * Render an SW-supplied capture-failure message into `el`, italicizing
+ * the "Save" in the capture-directly hint's quoted "'Save' actions"
+ * phrase — the quotes are dropped and the bare word becomes
+ * `<em>Save</em>`. (The quotes are the plain-text emphasis used in the
+ * native row tooltip, which can't render italics; rich text gets the
+ * real thing here.) The `?error=` param is arbitrary text, so we build
+ * the node tree from split segments + `<em>` rather than assigning
+ * `innerHTML` — no markup is ever interpreted. The lookahead pins the
+ * match to the hint phrase so a stray "Save" elsewhere in an error
+ * string isn't touched.
+ */
+function renderCaptureFailedMessage(el: HTMLElement, message: string): void {
+  el.textContent = '';
+  // The delimiter `'Save'` (quotes included) is consumed by the split,
+  // so the quotes drop out; the captured bare word lands at odd indices.
+  const segments = message.split(/'(Save)'(?= actions\b)/);
+  segments.forEach((seg, i) => {
+    if (i % 2 === 1) {
+      const em = document.createElement('em');
+      em.textContent = seg;
+      el.appendChild(em);
+    } else if (seg) {
+      el.appendChild(document.createTextNode(seg));
+    }
+  });
+}
 const previewImg = document.getElementById('preview') as HTMLImageElement;
 const capturedTitleLink = document.getElementById('captured-title') as HTMLAnchorElement;
 const capturedUrlLink = document.getElementById('captured-url') as HTMLAnchorElement;
@@ -746,7 +774,7 @@ async function loadData(): Promise<void> {
       if (errorParam) {
         const failPane = document.getElementById('capture-failed-error');
         const failMsg = document.getElementById('capture-failed-message');
-        if (failMsg) failMsg.textContent = errorParam;
+        if (failMsg) renderCaptureFailedMessage(failMsg, errorParam);
         if (failPane) failPane.hidden = false;
         return;
       }

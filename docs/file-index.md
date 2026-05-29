@@ -267,7 +267,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML byte-size cap — capture-time rejection, under-cap pass-through, edit-save rejection |
+| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML byte-size cap — capture-time rejection, under-cap pass-through, edit-save rejection, error-page hint italics |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — pill text matches saved dims/bytes, JPG stays JPG on bake (sticky), WEBP→PNG label flip on bake, live dim updates during a Crop-tool drag |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
