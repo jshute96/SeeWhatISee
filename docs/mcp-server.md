@@ -14,8 +14,8 @@ MCP-aware client can call.
   of a shell script.
 - **Real push notifications for watch.** Subscriptions replace the
   current `--loop` polling + per-line notification scrape.
-- **Future extensibility.** Server-side helpers (ranged file reads,
-  HTML→markdown extraction, search) become feasible without changing
+- **Future extensibility.** Server-side helpers (HTML→markdown
+  extraction, thumbnailing, search) become feasible without changing
   every wrapper.
 
 The shell scripts and SKILL.md wrappers stay; the MCP server is an
