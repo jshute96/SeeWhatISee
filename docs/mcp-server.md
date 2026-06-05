@@ -58,19 +58,37 @@ No `--copy-to-dir` equivalent. MCP clients read the absolute paths the
 tools return directly; they don't have the workspace-sandbox limitation
 the Gemini CLI does.
 
-## File paths returned by `get_latest` / `watch`
+## How files are returned by `get_latest` / `watch`
 
-Records carry **absolute paths** in `screenshot.filename`,
-`contents.filename`, and `selection.filename` — same shape as
-`SeeWhatISee.sh --get-latest` emits today.
+Captured files are exposed as **resources**, not inlined bytes or raw
+paths. Each tool call returns, per record:
 
-- Lets MCP clients with their own file-reading tool (e.g. Claude
-  Desktop's built-in Read) open the file directly without a round-trip
-  through `read_file`.
-- Lets the prompts and shell-script output stay one-to-one; the
-  template blocks under `skills/` keep working unchanged.
-- `read_file` and `get_file_info` accept the same absolute path, and
-  validate that it resolves inside the source dir before opening it.
+- A **JSON metadata block** (a `text` content block) — the record with
+  each artifact's on-disk `filename` swapped for `{ uri, mimeType, size }`
+  plus its capture flags (`hasHighlights`, `format`, …). The `uri` is a
+  `file://` URL.
+- Per artifact, a **`resource_link`** content block (default) pointing at
+  the same `file://` URI, named for its role (`screenshot` / `contents` /
+  `selection`).
+
+Why links by default:
+
+- A `resource_link` is a reference, not the bytes — it costs no context
+  until the client reads it. The model decides what to pull in.
+- Clients with their own file-reading tool can open the `file://` path
+  directly; subscription-aware clients can attach the resource by URI.
+
+### `return_inline`
+
+Both tools accept `return_inline: boolean`. When `true`, each artifact's
+bytes come back inline instead of as a link:
+
+- **Images** → an `image` content block (the model can view it directly).
+- **Everything else** (HTML, markdown, text, selections, other binaries)
+  → an embedded `resource` block, so it arrives as a *file*, not as
+  assistant text.
+
+Inline content costs context immediately, so it's opt-in.
 
 ## Capabilities
 
@@ -80,12 +98,13 @@ Records carry **absolute paths** in `screenshot.filename`,
 
 Returns the most recent record from `log.json`.
 
-- **Input:** none.
-- **Output:** one JSON object — the record from `log.json` with
-  `screenshot.filename` / `contents.filename` / `selection.filename`
-  rewritten to absolute paths. Same shape as
-  `SeeWhatISee.sh --get-latest` emits today (see
-  `skills/json-record.template.md`).
+- **Input:** `{ return_inline?: boolean }`.
+- **Output:** a JSON metadata block plus a `resource_link` (or, with
+  `return_inline`, inline content) per artifact — see
+  [How files are returned](#how-files-are-returned-by-get_latest--watch).
+  The metadata mirrors `SeeWhatISee.sh --get-latest` (see
+  `skills/json-record.template.md`) except each artifact references its
+  file by `uri` + `mimeType` rather than a path.
 - **Errors:** structured error if `log.json` is missing or empty
   (parallel to the shell script's "No captures yet" messages).
 
@@ -101,8 +120,10 @@ next one if none are pending.
     wait.
   - `timeout_ms?: number` — max time to block waiting for a new
     capture. Default and cap discussed below.
-- **Output:** `{ records: CaptureRecord[] }` — possibly empty if the
-  timeout fired with nothing new.
+  - `return_inline?: boolean` — same meaning as on `get_latest`.
+- **Output:** the content blocks for each new record, concatenated (same
+  per-record shape as `get_latest`). A single `{ records: [] }` text
+  block if the timeout fired with nothing new.
 - **Behavior:**
   - With `after`: behaves like `--watch --after <ts>` (without
     `--catch-up-one`) — emit *all* records newer than `after`,
@@ -132,29 +153,24 @@ next one if none are pending.
   `seewhatisee://captures/stream` is for — no per-request timeout,
   server pushes whenever a capture arrives.
 
-#### `read_file`
-
-Returns a byte range of a captured file. Lets the model read large HTML
-snapshots in chunks without blowing context, and gives clients without
-their own file-read tool a way to fetch screenshot or selection bytes
-via the server.
-
-- **Input:** `{ filename: string, offset?: number, length?: number }`.
-  `filename` is the absolute path returned by `get_latest` / `watch`.
-- **Output:** `{ bytes: base64, totalSize: number, eof: boolean }`.
-- **Constraint:** `filename` must resolve (after symlink resolution)
-  inside the configured source dir. Reject everything else with a
-  structured error — no arbitrary file reads.
-
-#### `get_file_info`
-
-Returns metadata about a captured file without reading its contents.
-
-- **Input:** `{ filename: string }`.
-- **Output:** `{ size: number, mimeType: string, capturedAt: string }`.
-- **Constraint:** same source-dir containment check as `read_file`.
+There are no separate file-reading tools. Files are read through the
+resources interface below (or the client's own file tool at the
+`file://` path, or `return_inline`).
 
 ### Resources
+
+#### `file://…` captured files
+
+Every file under the source dir is a resource.
+
+- **`resources/list`** enumerates them (skipping `log.json` and
+  dotfiles): `{ uri: file://…, name, mimeType, size }` each.
+- **`resources/read`** on a `file://` URI returns the contents — `text`
+  for text/HTML/markdown/JSON, a base64 `blob` for images and other
+  binaries.
+- **Constraint:** the URI must resolve (after symlink resolution) inside
+  the configured source dir. Everything else is rejected with a
+  structured error — no arbitrary file reads.
 
 #### `seewhatisee://captures/stream` *(subscribable)*
 
@@ -237,7 +253,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
 | Streaming loop       | `--watch --loop`                          | `captures/stream` subscription      |
 | Stop watcher         | `--stop` + `.watch.pid`                   | client-managed; unsubscribe / exit  |
-| Inline selection     | `--print_selection`                       | not exposed; caller uses `read_file` (or its own Read tool) on `selection.filename` |
+| Inline selection     | `--print_selection`                       | `return_inline` on `get_latest` / `watch`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
 

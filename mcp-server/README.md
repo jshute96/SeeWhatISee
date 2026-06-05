@@ -42,16 +42,13 @@ Both surface as slash commands in clients that render MCP prompts.
 
 ### Tools
 
-- **`get_latest`** — returns the most recent capture record (timestamp, URL, title, plus absolute paths to the screenshot / HTML snapshot / selection file if present).
-- **`watch`** — returns new capture records. With `after: <timestamp>`, drains anything newer immediately. Otherwise blocks for up to `timeout_ms` waiting for the next capture (defaults to ~60s, max 10 min).
-- **`read_file`** — reads a byte range from a captured file (returns base64 bytes). Use with `offset` / `length` for ranged reads of large HTML.
-- **`get_file_info`** — returns `{ size, mimeType, capturedAt }` for a captured file.
-
-`read_file` and `get_file_info` only allow paths inside the configured source directory (lexical + symlink check).
+- **`get_latest`** — returns the most recent capture record: a JSON metadata block (timestamp, URL, title, and for each screenshot / HTML snapshot / selection a `file://` `uri` + `mimeType`) followed by a `resource_link` per file. Pass `return_inline: true` to get the bytes inline instead — images as image content, HTML / markdown / selections as embedded file resources.
+- **`watch`** — returns new capture records in the same shape as `get_latest` (`return_inline` applies too). With `after: <timestamp>`, drains anything newer immediately. Otherwise blocks for up to `timeout_ms` waiting for the next capture (defaults to ~60s, max 10 min); returns `{ records: [] }` if nothing arrives.
 
 ### Resources
 
 - **`seewhatisee://captures/stream`** — subscribable. Read returns the latest record (or `{ record: null }` if no captures yet). Subscribe to receive a `notifications/resources/updated` notification on every new capture. Not all MCP clients support resource subscriptions; the `watch` tool is the polling fallback.
+- **`file://…` captured files** — every file in the source directory is exposed as a resource (listed by `resources/list`, fetched by `resources/read`). Text and HTML come back as text; images and other binaries as base64 blobs. Reads only allow paths inside the configured source directory (lexical + symlink check).
 
 ## Source and contributing
 

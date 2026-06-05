@@ -16,7 +16,7 @@ Prefer the subscription path when the client supports it; fall back to polling o
 
 ### Polling path (fallback)
 
-1. Call the `watch` tool with no arguments. It blocks for up to ~60s and returns `{ records: [...] }`.
+1. Call the `watch` tool with no arguments. It blocks for up to ~60s and returns any new capture records — each as a JSON metadata block plus a `resource_link` per saved file, the same shape as `get_latest`. With nothing new it returns `{ records: [] }`.
 2. Process each returned record as described below.
 3. Call `watch` again with `after = <last record's timestamp>` to catch up on anything that arrived while you were processing, then block for the next.
 4. Continue until the user tells you to stop.
@@ -27,4 +27,7 @@ Prefer the subscription path when the client supports it; fall back to polling o
 
 2. [[process.template.md]]
 
-3. **Reading the referenced files:** Use your client's native file-read tool when you have one. Otherwise call `read_file` to fetch the bytes. Use `get_file_info` if you want to check size first. Both take the absolute path from the record.
+3. **Reading the referenced files:** each file is a resource you fetch only when you need it.
+  - Read it with `resources/read` on its `uri`, or with your client's native file-read tool at the `file://` path.
+  - Or pass `return_inline: true` to `watch` to get the bytes inline — images come back as image content you can view directly; HTML, markdown, and selections come back as embedded file resources.
+  - Prefer not to pull large HTML in until you know what you're looking for.

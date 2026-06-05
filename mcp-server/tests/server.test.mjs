@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { pathToFileURL } from 'node:url';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ResourceUpdatedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -70,10 +72,36 @@ async function setup({ records = [], watchDefaultTimeoutMs = 150 } = {}) {
   };
 }
 
-function parseToolResult(res) {
+// The tools return a JSON metadata text block per record, followed by a
+// resource_link (or inline content) per artifact file. These helpers pull the
+// pieces apart.
+
+/** Expected file:// URI for `name` under `dir`. */
+function uriFor(dir, name) {
+  return pathToFileURL(path.join(dir, name)).href;
+}
+
+/** The first (single-record) metadata record from a tool result. */
+function metaRecord(res) {
   assert.ok(Array.isArray(res.content));
-  const text = res.content.map((c) => c.text ?? '').join('');
-  return JSON.parse(text);
+  const block = res.content.find((c) => c.type === 'text');
+  assert.ok(block, 'expected a metadata text block');
+  return JSON.parse(block.text);
+}
+
+/** All non-text content blocks (resource_link / image / embedded resource). */
+function fileBlocks(res) {
+  return res.content.filter((c) => c.type !== 'text');
+}
+
+/**
+ * Records carried by a `watch` result. An empty watch returns a single
+ * `{ records: [] }` sentinel text block; otherwise each text block is a record.
+ */
+function watchRecords(res) {
+  const texts = res.content.filter((c) => c.type === 'text').map((c) => JSON.parse(c.text));
+  if (texts.length === 1 && Array.isArray(texts[0].records)) return texts[0].records;
+  return texts;
 }
 
 function sleep(ms) {
@@ -84,12 +112,12 @@ function sleep(ms) {
 // tools/list
 // ---------------------------------------------------------------------------
 
-test('tools/list exposes the four tools', async () => {
+test('tools/list exposes get_latest and watch', async () => {
   const ctx = await setup();
   try {
     const { tools } = await ctx.client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ['get_file_info', 'get_latest', 'read_file', 'watch']);
+    assert.deepEqual(names, ['get_latest', 'watch']);
   } finally {
     await ctx.cleanup();
   }
@@ -99,7 +127,7 @@ test('tools/list exposes the four tools', async () => {
 // get_latest
 // ---------------------------------------------------------------------------
 
-test('get_latest returns the last record with paths rewritten', async () => {
+test('get_latest returns the last record with the artifact as a resource', async () => {
   const ctx = await setup({
     records: [
       record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
@@ -108,15 +136,25 @@ test('get_latest returns the last record with paths rewritten', async () => {
   });
   try {
     const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
-    const rec = parseToolResult(res);
+    const rec = metaRecord(res);
     assert.equal(rec.timestamp, '2026-04-08T20:30:05.000Z');
-    assert.equal(rec.screenshot.filename, path.join(ctx.dir, 'b.png'));
+    // Metadata references the file by uri + mimeType, not an on-disk path.
+    assert.equal(rec.screenshot.uri, uriFor(ctx.dir, 'b.png'));
+    assert.equal(rec.screenshot.mimeType, 'image/png');
+    assert.equal(rec.screenshot.filename, undefined);
+    // And a resource_link rides alongside it.
+    const links = fileBlocks(res);
+    assert.equal(links.length, 1);
+    assert.equal(links[0].type, 'resource_link');
+    assert.equal(links[0].uri, uriFor(ctx.dir, 'b.png'));
+    assert.equal(links[0].name, 'screenshot');
+    assert.equal(links[0].mimeType, 'image/png');
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('get_latest rewrites all three artifact filenames', async () => {
+test('get_latest exposes all three artifacts as resource links, flags preserved', async () => {
   const ctx = await setup({
     records: [
       record({
@@ -127,14 +165,71 @@ test('get_latest rewrites all three artifact filenames', async () => {
     ],
   });
   try {
-    const rec = parseToolResult(
-      await ctx.client.callTool({ name: 'get_latest', arguments: {} }),
-    );
-    assert.equal(rec.screenshot.filename, path.join(ctx.dir, 'shot.png'));
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    const rec = metaRecord(res);
+    assert.equal(rec.screenshot.uri, uriFor(ctx.dir, 'shot.png'));
     assert.equal(rec.screenshot.hasHighlights, true);
-    assert.equal(rec.contents.filename, path.join(ctx.dir, 'page.html'));
-    assert.equal(rec.selection.filename, path.join(ctx.dir, 'sel.md'));
+    assert.equal(rec.contents.uri, uriFor(ctx.dir, 'page.html'));
+    assert.equal(rec.selection.uri, uriFor(ctx.dir, 'sel.md'));
     assert.equal(rec.selection.format, 'markdown');
+
+    const links = fileBlocks(res);
+    assert.deepEqual(
+      links.map((l) => [l.name, l.mimeType]),
+      [
+        ['screenshot', 'image/png'],
+        ['contents', 'text/html'],
+        ['selection', 'text/markdown'],
+      ],
+    );
+    assert.ok(links.every((l) => l.type === 'resource_link'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('get_latest resource_link carries a size when the file exists on disk', async () => {
+  const ctx = await setup({
+    records: [record({ screenshot: { filename: 'shot.png' } })],
+  });
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'shot.png'), Buffer.alloc(42));
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(fileBlocks(res)[0].size, 42);
+    assert.equal(metaRecord(res).screenshot.size, 42);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('get_latest return_inline inlines images and files', async () => {
+  const ctx = await setup({
+    records: [
+      record({
+        screenshot: { filename: 'shot.png' },
+        contents: { filename: 'page.html' },
+      }),
+    ],
+  });
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'shot.png'), Buffer.from([1, 2, 3]));
+    fs.writeFileSync(path.join(ctx.dir, 'page.html'), '<h1>hi</h1>');
+    const res = await ctx.client.callTool({
+      name: 'get_latest',
+      arguments: { return_inline: true },
+    });
+    const blocks = fileBlocks(res);
+    // Image comes back as image content the model can actually view.
+    const img = blocks.find((b) => b.type === 'image');
+    assert.ok(img, 'expected an image block');
+    assert.equal(img.mimeType, 'image/png');
+    assert.deepEqual(Array.from(Buffer.from(img.data, 'base64')), [1, 2, 3]);
+    // HTML comes back as an embedded resource (a file), not assistant text.
+    const html = blocks.find((b) => b.type === 'resource');
+    assert.ok(html, 'expected an embedded resource block');
+    assert.equal(html.resource.mimeType, 'text/html');
+    assert.equal(html.resource.text, '<h1>hi</h1>');
+    assert.equal(html.resource.uri, uriFor(ctx.dir, 'page.html'));
   } finally {
     await ctx.cleanup();
   }
@@ -145,10 +240,10 @@ test('get_latest leaves already-absolute paths alone', async () => {
     records: [record({ screenshot: { filename: '/already/abs.png' } })],
   });
   try {
-    const rec = parseToolResult(
+    const rec = metaRecord(
       await ctx.client.callTool({ name: 'get_latest', arguments: {} }),
     );
-    assert.equal(rec.screenshot.filename, '/already/abs.png');
+    assert.equal(rec.screenshot.uri, pathToFileURL('/already/abs.png').href);
   } finally {
     await ctx.cleanup();
   }
@@ -196,11 +291,13 @@ test('watch with `after` drains pending records strictly newer', async () => {
       name: 'watch',
       arguments: { after: '2026-04-08T20:30:00.000Z' },
     });
-    const { records } = parseToolResult(res);
+    const records = watchRecords(res);
     assert.equal(records.length, 2);
     assert.equal(records[0].timestamp, '2026-04-08T20:30:01.000Z');
     assert.equal(records[1].timestamp, '2026-04-08T20:30:02.000Z');
-    assert.equal(records[1].screenshot.filename, path.join(ctx.dir, 'c.png'));
+    assert.equal(records[1].screenshot.uri, uriFor(ctx.dir, 'c.png'));
+    // One resource_link per drained record.
+    assert.equal(fileBlocks(res).length, 2);
   } finally {
     await ctx.cleanup();
   }
@@ -210,8 +307,8 @@ test('watch with no pending returns empty on timeout', async () => {
   const ctx = await setup({ watchDefaultTimeoutMs: 120 });
   try {
     const res = await ctx.client.callTool({ name: 'watch', arguments: {} });
-    const { records } = parseToolResult(res);
-    assert.deepEqual(records, []);
+    assert.deepEqual(watchRecords(res), []);
+    assert.equal(fileBlocks(res).length, 0);
   } finally {
     await ctx.cleanup();
   }
@@ -227,8 +324,7 @@ test('watch with `after` matching the latest record falls through to blocking wa
       name: 'watch',
       arguments: { after: '2026-04-08T20:30:00.000Z' },
     });
-    const { records } = parseToolResult(res);
-    assert.deepEqual(records, []);
+    assert.deepEqual(watchRecords(res), []);
   } finally {
     await ctx.cleanup();
   }
@@ -251,10 +347,10 @@ test('watch returns the next record when one is appended', async () => {
       arguments: { after: '2026-04-08T20:30:00.000Z' },
     });
     setTimeout(() => appendRecord(ctx.dir, next), 80);
-    const { records } = parseToolResult(await watchPromise);
+    const records = watchRecords(await watchPromise);
     assert.equal(records.length, 1);
     assert.equal(records[0].timestamp, '2026-04-08T20:30:05.000Z');
-    assert.equal(records[0].screenshot.filename, path.join(ctx.dir, 'new.png'));
+    assert.equal(records[0].screenshot.uri, uriFor(ctx.dir, 'new.png'));
   } finally {
     await ctx.cleanup();
   }
@@ -268,7 +364,7 @@ test('watch wakes up when log.json is created from scratch', async () => {
     setTimeout(() => {
       writeLog(ctx.dir, [record({ timestamp: '2026-04-08T20:31:00.000Z' })]);
     }, 80);
-    const { records } = parseToolResult(await watchPromise);
+    const records = watchRecords(await watchPromise);
     assert.equal(records.length, 1);
     assert.equal(records[0].timestamp, '2026-04-08T20:31:00.000Z');
   } finally {
@@ -286,99 +382,151 @@ test('watch caps timeout_ms at watchMaxTimeoutMs', async () => {
       arguments: { timeout_ms: 600_000 },
     });
     setTimeout(() => appendRecord(ctx.dir, record({ timestamp: '2026-04-08T20:31:00.000Z' })), 80);
-    const { records } = parseToolResult(await watchPromise);
+    const records = watchRecords(await watchPromise);
     assert.equal(records.length, 1);
   } finally {
     await ctx.cleanup();
   }
 });
 
+test('watch return_inline inlines the new capture', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+    watchDefaultTimeoutMs: 2_000,
+  });
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'new.png'), Buffer.from([9, 8, 7]));
+    const watchPromise = ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:00.000Z', return_inline: true },
+    });
+    setTimeout(
+      () =>
+        appendRecord(ctx.dir, {
+          timestamp: '2026-04-08T20:30:05.000Z',
+          screenshot: { filename: 'new.png' },
+        }),
+      80,
+    );
+    const res = await watchPromise;
+    const img = fileBlocks(res).find((b) => b.type === 'image');
+    assert.ok(img, 'expected an inline image block');
+    assert.deepEqual(Array.from(Buffer.from(img.data, 'base64')), [9, 8, 7]);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
-// read_file
+// resources/list
 // ---------------------------------------------------------------------------
 
-test('read_file returns full bytes when no range given', async () => {
+test('resources/list exposes the captures/stream resource and the captured files', async () => {
+  const ctx = await setup();
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'shot.png'), Buffer.alloc(7));
+    fs.writeFileSync(path.join(ctx.dir, 'page.html'), '<h1>x</h1>');
+    writeLog(ctx.dir, [record()]); // log.json must NOT be listed
+    fs.writeFileSync(path.join(ctx.dir, '.hidden'), 'x'); // dotfiles skipped too
+    const { resources } = await ctx.client.listResources();
+    const byUri = new Map(resources.map((r) => [r.uri, r]));
+    assert.ok(byUri.has(STREAM_URI));
+    const shot = byUri.get(uriFor(ctx.dir, 'shot.png'));
+    assert.ok(shot, 'expected shot.png as a resource');
+    assert.equal(shot.mimeType, 'image/png');
+    assert.equal(shot.size, 7);
+    assert.equal(byUri.get(uriFor(ctx.dir, 'page.html'))?.mimeType, 'text/html');
+    assert.equal(byUri.has(uriFor(ctx.dir, 'log.json')), false);
+    assert.equal(byUri.has(uriFor(ctx.dir, '.hidden')), false);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// resources/read — captures/stream
+// ---------------------------------------------------------------------------
+
+test('resources/read returns { record: null } when log is empty', async () => {
+  const ctx = await setup();
+  try {
+    const res = await ctx.client.readResource({ uri: STREAM_URI });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.deepEqual(payload, { record: null });
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read returns the latest record referencing files by uri', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'b.png' } }),
+    ],
+  });
+  try {
+    const res = await ctx.client.readResource({ uri: STREAM_URI });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.equal(payload.timestamp, '2026-04-08T20:30:05.000Z');
+    assert.equal(payload.screenshot.uri, uriFor(ctx.dir, 'b.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read rejects unknown non-file URIs', async () => {
+  const ctx = await setup();
+  try {
+    const err = await ctx.client
+      .readResource({ uri: 'seewhatisee://other' })
+      .catch((e) => e);
+    assert.match(String(err), /unknown resource/i);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// resources/read — file:// captured files
+// ---------------------------------------------------------------------------
+
+test('resources/read returns image bytes as a blob', async () => {
   const ctx = await setup();
   try {
     const filePath = path.join(ctx.dir, 'shot.png');
     fs.writeFileSync(filePath, Buffer.from([1, 2, 3, 4, 5]));
-    const res = parseToolResult(
-      await ctx.client.callTool({
-        name: 'read_file',
-        arguments: { filename: filePath },
-      }),
-    );
-    assert.equal(res.totalSize, 5);
-    assert.equal(res.eof, true);
-    assert.deepEqual(
-      Array.from(Buffer.from(res.bytes, 'base64')),
-      [1, 2, 3, 4, 5],
-    );
+    const res = await ctx.client.readResource({ uri: pathToFileURL(filePath).href });
+    assert.equal(res.contents[0].mimeType, 'image/png');
+    assert.deepEqual(Array.from(Buffer.from(res.contents[0].blob, 'base64')), [1, 2, 3, 4, 5]);
+    assert.equal(res.contents[0].text, undefined);
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('read_file honors offset + length and reports eof=false mid-file', async () => {
+test('resources/read returns HTML/text files as text', async () => {
   const ctx = await setup();
   try {
     const filePath = path.join(ctx.dir, 'page.html');
-    fs.writeFileSync(filePath, Buffer.from([10, 20, 30, 40, 50, 60]));
-    const res = parseToolResult(
-      await ctx.client.callTool({
-        name: 'read_file',
-        arguments: { filename: filePath, offset: 2, length: 2 },
-      }),
-    );
-    assert.equal(res.totalSize, 6);
-    assert.equal(res.eof, false);
-    assert.deepEqual(Array.from(Buffer.from(res.bytes, 'base64')), [30, 40]);
+    fs.writeFileSync(filePath, '<h1>hi</h1>');
+    const res = await ctx.client.readResource({ uri: pathToFileURL(filePath).href });
+    assert.equal(res.contents[0].mimeType, 'text/html');
+    assert.equal(res.contents[0].text, '<h1>hi</h1>');
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('read_file at end-of-file returns eof=true with empty bytes', async () => {
+test('resources/read rejects file URIs outside the source dir', async () => {
   const ctx = await setup();
   try {
-    const filePath = path.join(ctx.dir, 'small.txt');
-    fs.writeFileSync(filePath, 'hi');
-    const res = parseToolResult(
-      await ctx.client.callTool({
-        name: 'read_file',
-        arguments: { filename: filePath, offset: 100, length: 10 },
-      }),
-    );
-    assert.equal(res.totalSize, 2);
-    assert.equal(res.eof, true);
-    assert.equal(Buffer.from(res.bytes, 'base64').length, 0);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('read_file rejects relative paths', async () => {
-  const ctx = await setup();
-  try {
-    const err = await ctx.client
-      .callTool({ name: 'read_file', arguments: { filename: 'relative.png' } })
-      .catch((e) => e);
-    assert.match(String(err), /absolute path/i);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('read_file rejects paths outside the source dir', async () => {
-  const ctx = await setup();
-  try {
-    // Create a file outside the source dir.
     const otherDir = tmpdir();
     const outside = path.join(otherDir, 'evil.png');
     fs.writeFileSync(outside, 'x');
     try {
       const err = await ctx.client
-        .callTool({ name: 'read_file', arguments: { filename: outside } })
+        .readResource({ uri: pathToFileURL(outside).href })
         .catch((e) => e);
       assert.match(String(err), /outside the source dir/i);
     } finally {
@@ -389,7 +537,7 @@ test('read_file rejects paths outside the source dir', async () => {
   }
 });
 
-test('read_file rejects symlink escapes', async () => {
+test('resources/read rejects symlink escapes', async () => {
   const ctx = await setup();
   try {
     const otherDir = tmpdir();
@@ -404,7 +552,7 @@ test('read_file rejects symlink escapes', async () => {
     }
     try {
       const err = await ctx.client
-        .callTool({ name: 'read_file', arguments: { filename: link } })
+        .readResource({ uri: pathToFileURL(link).href })
         .catch((e) => e);
       assert.match(String(err), /outside the source dir/i);
     } finally {
@@ -415,14 +563,11 @@ test('read_file rejects symlink escapes', async () => {
   }
 });
 
-test('read_file errors when the file is missing', async () => {
+test('resources/read reports not-found for missing files inside the source dir', async () => {
   const ctx = await setup();
   try {
     const err = await ctx.client
-      .callTool({
-        name: 'read_file',
-        arguments: { filename: path.join(ctx.dir, 'nope.png') },
-      })
+      .readResource({ uri: pathToFileURL(path.join(ctx.dir, 'nope.png')).href })
       .catch((e) => e);
     assert.match(String(err), /not found/i);
   } finally {
@@ -430,173 +575,16 @@ test('read_file errors when the file is missing', async () => {
   }
 });
 
-test('read_file rejects nonexistent paths outside the source dir without leaking existence', async () => {
-  // Regression: previously the server reported "file not found" for paths
-  // outside the source dir, which both gives the wrong error and leaks
-  // whether arbitrary paths exist on disk. The containment check must
-  // happen before any filesystem access.
+test('resources/read rejects nonexistent paths outside the source dir without leaking existence', async () => {
+  // The containment check must happen before any filesystem access, so a
+  // path outside the source dir reports "outside", never "not found".
   const ctx = await setup();
   try {
     const err = await ctx.client
-      .callTool({
-        name: 'read_file',
-        arguments: { filename: '/definitely/not/here/file.png' },
-      })
+      .readResource({ uri: pathToFileURL('/definitely/not/here/file.png').href })
       .catch((e) => e);
     assert.match(String(err), /outside the source dir/i);
     assert.doesNotMatch(String(err), /not found/i);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('read_file rejects `..` traversal that lexically escapes the source dir', async () => {
-  const ctx = await setup();
-  try {
-    const escape = path.join(ctx.dir, '..', 'sibling.png');
-    const err = await ctx.client
-      .callTool({ name: 'read_file', arguments: { filename: escape } })
-      .catch((e) => e);
-    assert.match(String(err), /outside the source dir/i);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// get_file_info
-// ---------------------------------------------------------------------------
-
-test('get_file_info returns size, mimeType, capturedAt', async () => {
-  const ctx = await setup();
-  try {
-    const filePath = path.join(ctx.dir, 'shot.png');
-    fs.writeFileSync(filePath, Buffer.alloc(128));
-    const info = parseToolResult(
-      await ctx.client.callTool({
-        name: 'get_file_info',
-        arguments: { filename: filePath },
-      }),
-    );
-    assert.equal(info.size, 128);
-    assert.equal(info.mimeType, 'image/png');
-    assert.match(info.capturedAt, /^\d{4}-\d{2}-\d{2}T/);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('get_file_info maps common extensions to expected mimeTypes', async () => {
-  const ctx = await setup();
-  try {
-    const cases = [
-      ['x.jpg', 'image/jpeg'],
-      ['x.html', 'text/html'],
-      ['x.md', 'text/markdown'],
-      ['x.unknown', 'application/octet-stream'],
-    ];
-    for (const [name, expected] of cases) {
-      const filePath = path.join(ctx.dir, name);
-      fs.writeFileSync(filePath, '');
-      const info = parseToolResult(
-        await ctx.client.callTool({
-          name: 'get_file_info',
-          arguments: { filename: filePath },
-        }),
-      );
-      assert.equal(info.mimeType, expected, `mime for ${name}`);
-    }
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('get_file_info applies the same containment check as read_file', async () => {
-  const ctx = await setup();
-  try {
-    const otherDir = tmpdir();
-    const outside = path.join(otherDir, 'evil.png');
-    fs.writeFileSync(outside, 'x');
-    try {
-      const err = await ctx.client
-        .callTool({ name: 'get_file_info', arguments: { filename: outside } })
-        .catch((e) => e);
-      assert.match(String(err), /outside the source dir/i);
-    } finally {
-      fs.rmSync(otherDir, { recursive: true, force: true });
-    }
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('get_file_info rejects nonexistent paths outside the source dir without leaking existence', async () => {
-  const ctx = await setup();
-  try {
-    const err = await ctx.client
-      .callTool({
-        name: 'get_file_info',
-        arguments: { filename: '/definitely/not/here/file.png' },
-      })
-      .catch((e) => e);
-    assert.match(String(err), /outside the source dir/i);
-    assert.doesNotMatch(String(err), /not found/i);
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// resources
-// ---------------------------------------------------------------------------
-
-test('resources/list exposes the captures/stream resource', async () => {
-  const ctx = await setup();
-  try {
-    const { resources } = await ctx.client.listResources();
-    assert.equal(resources.length, 1);
-    assert.equal(resources[0].uri, STREAM_URI);
-    assert.equal(resources[0].mimeType, 'application/json');
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('resources/read returns { record: null } when log is empty', async () => {
-  const ctx = await setup();
-  try {
-    const res = await ctx.client.readResource({ uri: STREAM_URI });
-    const payload = JSON.parse(res.contents[0].text);
-    assert.deepEqual(payload, { record: null });
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('resources/read returns the latest record with paths rewritten', async () => {
-  const ctx = await setup({
-    records: [
-      record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
-      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'b.png' } }),
-    ],
-  });
-  try {
-    const res = await ctx.client.readResource({ uri: STREAM_URI });
-    const payload = JSON.parse(res.contents[0].text);
-    assert.equal(payload.timestamp, '2026-04-08T20:30:05.000Z');
-    assert.equal(payload.screenshot.filename, path.join(ctx.dir, 'b.png'));
-  } finally {
-    await ctx.cleanup();
-  }
-});
-
-test('resources/read rejects unknown URIs', async () => {
-  const ctx = await setup();
-  try {
-    const err = await ctx.client
-      .readResource({ uri: 'seewhatisee://other' })
-      .catch((e) => e);
-    assert.match(String(err), /unknown resource/i);
   } finally {
     await ctx.cleanup();
   }
