@@ -10,9 +10,8 @@ You can't run this autonomously since it requires the user to have just clicked 
 
 1. Call the `get_latest` tool. It returns a JSON metadata block describing one capture record, plus a `resource_link` for each saved file.
   - If the call fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
-  - In the metadata, each of `screenshot`, `contents`, and `selection` carries a `uri` (a `file://` location) and `mimeType` instead of a path. The matching `resource_link` points at the same `uri`.
 
-2. The JSON record contains `{timestamp, url, title}` plus any of:
+2. The metadata block contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.
     - `hasRedactions: true` means the user blacked out at least one region. Those are deliberately hidden as irrelevant or private — don't comment about them unless asked.
@@ -25,9 +24,9 @@ You can't run this autonomously since it requires the user to have just clicked 
   - `prompt` — the user's instruction for this capture.
   - `imageUrl` — URL of a specific image the user captured, inside the page.
 
-  Each `screenshot` / `contents` / `selection` references its saved file: the skill scripts fill in an absolute path in `filename`; the MCP server gives a `file://` `uri` (with `mimeType`).
-
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
+
+  Each present artifact also comes as its own `resource_link` block (its `name` is the role: `screenshot` / `contents` / `selection`). That block carries the file's `uri` (a `file://` location) and `mimeType` — the metadata block does not repeat them. A small `selection` is also included inline. (When you read the `captures/stream` resource instead of calling a tool, there are no separate blocks, so each artifact carries its `uri` and `mimeType` directly.)
 
   **Look at referenced files only. Don't go fishing for others unless asked to.**
 
@@ -43,7 +42,4 @@ You can't run this autonomously since it requires the user to have just clicked 
     - For selection-only captures, quote or summarize the selected fragment and mention the source `url`.
     - For URL-only captures (no files), report the `url` and ask the user what they want to know about it.
 
-4. **Reading the referenced files:** each file is a resource you fetch only when you need it.
-  - Read it with `resources/read` on its `uri`, or with your client's native file-read tool at the `file://` path.
-  - Or call `get_latest` again with `return_inline: true` to get the bytes inline — images come back as image content you can view directly; HTML, markdown, and selections come back as embedded file resources.
-  - Prefer not to pull large HTML in until you know what you're looking for.
+4. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path. Prefer not to pull large HTML in until you know what you're looking for.

@@ -60,35 +60,37 @@ the Gemini CLI does.
 
 ## How files are returned by `get_latest` / `watch`
 
-Captured files are exposed as **resources**, not inlined bytes or raw
-paths. Each tool call returns, per record:
+Captured files are exposed as **resources**, not raw paths. Each tool
+call returns, per record:
 
 - A **JSON metadata block** (a `text` content block) — the record with
-  each artifact's on-disk `filename` swapped for `{ uri, mimeType, size }`
-  plus its capture flags (`hasHighlights`, `format`, …). The `uri` is a
-  `file://` URL.
-- Per artifact, a **`resource_link`** content block (default) pointing at
-  the same `file://` URI, named for its role (`screenshot` / `contents` /
-  `selection`).
+  each artifact's on-disk `filename` dropped, leaving its capture flags
+  (`hasHighlights`, `format`, …). The flags are keyed by role.
+- Per artifact, a **`resource_link`** content block — `name` is the role
+  (`screenshot` / `contents` / `selection`), carrying the file's
+  `file://` `uri`, `mimeType`, and `size`.
 
-Why links by default:
+The locator is **not duplicated**: the `uri` / `mimeType` live only on
+the `resource_link`; the metadata block joins to it by role. A link is a
+reference, not the bytes — it costs no context until read. Clients with
+their own file tool can open the `file://` path directly.
 
-- A `resource_link` is a reference, not the bytes — it costs no context
-  until the client reads it. The model decides what to pull in.
-- Clients with their own file-reading tool can open the `file://` path
-  directly; subscription-aware clients can attach the resource by URI.
+### Inlining
 
-### `return_inline`
+The bytes can also come back inline — as an `image` content block for
+images, or an embedded `resource` block otherwise (so HTML / markdown
+arrive as files, not assistant text). Inline content is returned **in
+addition to** the `resource_link`, never instead of it.
 
-Both tools accept `return_inline: boolean`. When `true`, each artifact's
-bytes come back inline instead of as a link:
+- **`return_inline: true`** — inline every artifact.
+- **`return_inline: false`** — links only.
+- **Omitted (default)** — inline only a `selection` smaller than 10 KB
+  (selections are usually tiny; this saves a round-trip). Everything else
+  is link-only.
 
-- **Images** → an `image` content block (the model can view it directly).
-- **Everything else** (HTML, markdown, text, selections, other binaries)
-  → an embedded `resource` block, so it arrives as a *file*, not as
-  assistant text.
-
-Inline content costs context immediately, so it's opt-in.
+If an artifact's file is missing or escapes the source dir, inlining is
+skipped for that artifact (its link still stands) rather than failing the
+whole call.
 
 ## Capabilities
 
@@ -99,12 +101,12 @@ Inline content costs context immediately, so it's opt-in.
 Returns the most recent record from `log.json`.
 
 - **Input:** `{ return_inline?: boolean }`.
-- **Output:** a JSON metadata block plus a `resource_link` (or, with
-  `return_inline`, inline content) per artifact — see
+- **Output:** a JSON metadata block plus a `resource_link` per artifact
+  (and optional inline content) — see
   [How files are returned](#how-files-are-returned-by-get_latest--watch).
   The metadata mirrors `SeeWhatISee.sh --get-latest` (see
-  `skills/json-record.template.md`) except each artifact references its
-  file by `uri` + `mimeType` rather than a path.
+  `skills/json-record.template.md`) except each artifact's `filename` is
+  dropped; the file's locator rides on its `resource_link`.
 - **Errors:** structured error if `log.json` is missing or empty
   (parallel to the shell script's "No captures yet" messages).
 
@@ -161,13 +163,15 @@ resources interface below (or the client's own file tool at the
 
 #### `file://…` captured files
 
-Every file under the source dir is a resource.
+Any file under the source dir can be read as a resource.
 
-- **`resources/list`** enumerates them (skipping `log.json` and
-  dotfiles): `{ uri: file://…, name, mimeType, size }` each.
 - **`resources/read`** on a `file://` URI returns the contents — `text`
   for text/HTML/markdown/JSON, a base64 `blob` for images and other
   binaries.
+- **Not listed.** `resources/list` does *not* enumerate captured files
+  (it would dump the whole capture history). Clients discover files via
+  the `resource_link` blocks in tool results and read them by URI;
+  `resources/read` accepts any in-dir `file://` whether listed or not.
 - **Constraint:** the URI must resolve (after symlink resolution) inside
   the configured source dir. Everything else is rejected with a
   structured error — no arbitrary file reads.

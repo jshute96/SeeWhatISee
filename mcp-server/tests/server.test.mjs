@@ -94,6 +94,21 @@ function fileBlocks(res) {
   return res.content.filter((c) => c.type !== 'text');
 }
 
+/** All resource_link blocks. */
+function links(res) {
+  return res.content.filter((c) => c.type === 'resource_link');
+}
+
+/** The resource_link with the given role name. */
+function linkFor(res, role) {
+  return links(res).find((c) => c.name === role);
+}
+
+/** Inline blocks (image / embedded resource) — i.e. non-text, non-link. */
+function inlineBlocks(res) {
+  return res.content.filter((c) => c.type === 'image' || c.type === 'resource');
+}
+
 /**
  * Records carried by a `watch` result. An empty watch returns a single
  * `{ records: [] }` sentinel text block; otherwise each text block is a record.
@@ -127,7 +142,7 @@ test('tools/list exposes get_latest and watch', async () => {
 // get_latest
 // ---------------------------------------------------------------------------
 
-test('get_latest returns the last record with the artifact as a resource', async () => {
+test('get_latest returns a flags-only metadata block plus a resource_link', async () => {
   const ctx = await setup({
     records: [
       record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
@@ -138,23 +153,24 @@ test('get_latest returns the last record with the artifact as a resource', async
     const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
     const rec = metaRecord(res);
     assert.equal(rec.timestamp, '2026-04-08T20:30:05.000Z');
-    // Metadata references the file by uri + mimeType, not an on-disk path.
-    assert.equal(rec.screenshot.uri, uriFor(ctx.dir, 'b.png'));
-    assert.equal(rec.screenshot.mimeType, 'image/png');
+    // The metadata block carries no locator — not the filename, and not a
+    // duplicated uri/mimeType (those live on the resource_link).
     assert.equal(rec.screenshot.filename, undefined);
-    // And a resource_link rides alongside it.
-    const links = fileBlocks(res);
-    assert.equal(links.length, 1);
-    assert.equal(links[0].type, 'resource_link');
-    assert.equal(links[0].uri, uriFor(ctx.dir, 'b.png'));
-    assert.equal(links[0].name, 'screenshot');
-    assert.equal(links[0].mimeType, 'image/png');
+    assert.equal(rec.screenshot.uri, undefined);
+    assert.equal(rec.screenshot.mimeType, undefined);
+    // The file rides as a single resource_link.
+    const all = fileBlocks(res);
+    assert.equal(all.length, 1);
+    const link = linkFor(res, 'screenshot');
+    assert.equal(link.type, 'resource_link');
+    assert.equal(link.uri, uriFor(ctx.dir, 'b.png'));
+    assert.equal(link.mimeType, 'image/png');
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('get_latest exposes all three artifacts as resource links, flags preserved', async () => {
+test('get_latest exposes all three artifacts as resource links, flags in metadata', async () => {
   const ctx = await setup({
     records: [
       record({
@@ -166,23 +182,22 @@ test('get_latest exposes all three artifacts as resource links, flags preserved'
   });
   try {
     const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    // Flags live in the metadata block, keyed by role.
     const rec = metaRecord(res);
-    assert.equal(rec.screenshot.uri, uriFor(ctx.dir, 'shot.png'));
     assert.equal(rec.screenshot.hasHighlights, true);
-    assert.equal(rec.contents.uri, uriFor(ctx.dir, 'page.html'));
-    assert.equal(rec.selection.uri, uriFor(ctx.dir, 'sel.md'));
     assert.equal(rec.selection.format, 'markdown');
-
-    const links = fileBlocks(res);
+    // Locators live on the resource_links.
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'shot.png'));
+    assert.equal(linkFor(res, 'contents').uri, uriFor(ctx.dir, 'page.html'));
+    assert.equal(linkFor(res, 'selection').uri, uriFor(ctx.dir, 'sel.md'));
     assert.deepEqual(
-      links.map((l) => [l.name, l.mimeType]),
+      links(res).map((l) => [l.name, l.mimeType]),
       [
         ['screenshot', 'image/png'],
         ['contents', 'text/html'],
         ['selection', 'text/markdown'],
       ],
     );
-    assert.ok(links.every((l) => l.type === 'resource_link'));
   } finally {
     await ctx.cleanup();
   }
@@ -195,14 +210,13 @@ test('get_latest resource_link carries a size when the file exists on disk', asy
   try {
     fs.writeFileSync(path.join(ctx.dir, 'shot.png'), Buffer.alloc(42));
     const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
-    assert.equal(fileBlocks(res)[0].size, 42);
-    assert.equal(metaRecord(res).screenshot.size, 42);
+    assert.equal(linkFor(res, 'screenshot').size, 42);
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('get_latest return_inline inlines images and files', async () => {
+test('get_latest return_inline adds inline content alongside the links', async () => {
   const ctx = await setup({
     records: [
       record({
@@ -218,14 +232,15 @@ test('get_latest return_inline inlines images and files', async () => {
       name: 'get_latest',
       arguments: { return_inline: true },
     });
-    const blocks = fileBlocks(res);
-    // Image comes back as image content the model can actually view.
-    const img = blocks.find((b) => b.type === 'image');
+    // Both resource_links are still present...
+    assert.equal(links(res).length, 2);
+    // ...plus the inline bytes in addition. Image as image content.
+    const img = inlineBlocks(res).find((b) => b.type === 'image');
     assert.ok(img, 'expected an image block');
     assert.equal(img.mimeType, 'image/png');
     assert.deepEqual(Array.from(Buffer.from(img.data, 'base64')), [1, 2, 3]);
-    // HTML comes back as an embedded resource (a file), not assistant text.
-    const html = blocks.find((b) => b.type === 'resource');
+    // HTML as an embedded resource (a file), not assistant text.
+    const html = inlineBlocks(res).find((b) => b.type === 'resource');
     assert.ok(html, 'expected an embedded resource block');
     assert.equal(html.resource.mimeType, 'text/html');
     assert.equal(html.resource.text, '<h1>hi</h1>');
@@ -235,9 +250,50 @@ test('get_latest return_inline inlines images and files', async () => {
   }
 });
 
+test('small selections are inlined by default; return_inline:false suppresses it', async () => {
+  const ctx = await setup({
+    records: [record({ screenshot: { filename: 'shot.png' }, selection: { filename: 'sel.md' } })],
+  });
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'sel.md'), 'a short selection');
+    // Default: the small selection comes inline (in addition to its link),
+    // but the screenshot does not.
+    const def = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(links(def).length, 2);
+    const sel = inlineBlocks(def);
+    assert.equal(sel.length, 1);
+    assert.equal(sel[0].type, 'resource');
+    assert.equal(sel[0].resource.text, 'a short selection');
+    assert.equal(sel[0].resource.uri, uriFor(ctx.dir, 'sel.md'));
+    // Explicit return_inline:false suppresses the default selection inlining.
+    const off = await ctx.client.callTool({
+      name: 'get_latest',
+      arguments: { return_inline: false },
+    });
+    assert.equal(inlineBlocks(off).length, 0);
+    assert.equal(links(off).length, 2);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a large selection is not inlined by default', async () => {
+  const ctx = await setup({
+    records: [record({ screenshot: undefined, selection: { filename: 'big.md' } })],
+  });
+  try {
+    fs.writeFileSync(path.join(ctx.dir, 'big.md'), 'x'.repeat(11 * 1024));
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(inlineBlocks(res).length, 0);
+    assert.equal(linkFor(res, 'selection').uri, uriFor(ctx.dir, 'big.md'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('get_latest return_inline falls back to a resource_link when a file is missing', async () => {
   // The screenshot file is never written to disk. Inline mode must not sink
-  // the whole call — it degrades that artifact to a resource_link.
+  // the whole call — that artifact stays a resource_link with no inline block.
   const ctx = await setup({
     records: [record({ screenshot: { filename: 'gone.png' } })],
   });
@@ -246,11 +302,9 @@ test('get_latest return_inline falls back to a resource_link when a file is miss
       name: 'get_latest',
       arguments: { return_inline: true },
     });
-    // Metadata still present, and the artifact came back as a link, not an image.
-    assert.equal(metaRecord(res).screenshot.uri, uriFor(ctx.dir, 'gone.png'));
-    const blocks = fileBlocks(res);
-    assert.equal(blocks.length, 1);
-    assert.equal(blocks[0].type, 'resource_link');
+    assert.equal(metaRecord(res).timestamp !== undefined, true);
+    assert.equal(links(res).length, 1);
+    assert.equal(inlineBlocks(res).length, 0);
   } finally {
     await ctx.cleanup();
   }
@@ -265,7 +319,8 @@ test('get_latest return_inline falls back to a link for paths outside the source
       name: 'get_latest',
       arguments: { return_inline: true },
     });
-    assert.equal(fileBlocks(res)[0].type, 'resource_link');
+    assert.equal(links(res).length, 1);
+    assert.equal(inlineBlocks(res).length, 0);
   } finally {
     await ctx.cleanup();
   }
@@ -276,10 +331,8 @@ test('get_latest leaves already-absolute paths alone', async () => {
     records: [record({ screenshot: { filename: '/already/abs.png' } })],
   });
   try {
-    const rec = metaRecord(
-      await ctx.client.callTool({ name: 'get_latest', arguments: {} }),
-    );
-    assert.equal(rec.screenshot.uri, pathToFileURL('/already/abs.png').href);
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(linkFor(res, 'screenshot').uri, pathToFileURL('/already/abs.png').href);
   } finally {
     await ctx.cleanup();
   }
@@ -331,9 +384,11 @@ test('watch with `after` drains pending records strictly newer', async () => {
     assert.equal(records.length, 2);
     assert.equal(records[0].timestamp, '2026-04-08T20:30:01.000Z');
     assert.equal(records[1].timestamp, '2026-04-08T20:30:02.000Z');
-    assert.equal(records[1].screenshot.uri, uriFor(ctx.dir, 'c.png'));
-    // One resource_link per drained record.
-    assert.equal(fileBlocks(res).length, 2);
+    // One resource_link per drained record, in order.
+    assert.deepEqual(
+      links(res).map((l) => l.uri),
+      [uriFor(ctx.dir, 'b.png'), uriFor(ctx.dir, 'c.png')],
+    );
   } finally {
     await ctx.cleanup();
   }
@@ -383,10 +438,11 @@ test('watch returns the next record when one is appended', async () => {
       arguments: { after: '2026-04-08T20:30:00.000Z' },
     });
     setTimeout(() => appendRecord(ctx.dir, next), 80);
-    const records = watchRecords(await watchPromise);
+    const res = await watchPromise;
+    const records = watchRecords(res);
     assert.equal(records.length, 1);
     assert.equal(records[0].timestamp, '2026-04-08T20:30:05.000Z');
-    assert.equal(records[0].screenshot.uri, uriFor(ctx.dir, 'new.png'));
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'new.png'));
   } finally {
     await ctx.cleanup();
   }
@@ -457,23 +513,16 @@ test('watch return_inline inlines the new capture', async () => {
 // resources/list
 // ---------------------------------------------------------------------------
 
-test('resources/list exposes the captures/stream resource and the captured files', async () => {
+test('resources/list exposes only the captures/stream resource (files are not enumerated)', async () => {
   const ctx = await setup();
   try {
+    // Even with captured files present, the list stays stream-only — files are
+    // reached by URI via resources/read, not by listing.
     fs.writeFileSync(path.join(ctx.dir, 'shot.png'), Buffer.alloc(7));
-    fs.writeFileSync(path.join(ctx.dir, 'page.html'), '<h1>x</h1>');
-    writeLog(ctx.dir, [record()]); // log.json must NOT be listed
-    fs.writeFileSync(path.join(ctx.dir, '.hidden'), 'x'); // dotfiles skipped too
     const { resources } = await ctx.client.listResources();
-    const byUri = new Map(resources.map((r) => [r.uri, r]));
-    assert.ok(byUri.has(STREAM_URI));
-    const shot = byUri.get(uriFor(ctx.dir, 'shot.png'));
-    assert.ok(shot, 'expected shot.png as a resource');
-    assert.equal(shot.mimeType, 'image/png');
-    assert.equal(shot.size, 7);
-    assert.equal(byUri.get(uriFor(ctx.dir, 'page.html'))?.mimeType, 'text/html');
-    assert.equal(byUri.has(uriFor(ctx.dir, 'log.json')), false);
-    assert.equal(byUri.has(uriFor(ctx.dir, '.hidden')), false);
+    assert.equal(resources.length, 1);
+    assert.equal(resources[0].uri, STREAM_URI);
+    assert.equal(resources[0].mimeType, 'application/json');
   } finally {
     await ctx.cleanup();
   }

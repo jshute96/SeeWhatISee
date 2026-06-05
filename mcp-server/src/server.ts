@@ -253,19 +253,42 @@ function statSizeOrUndefined(absPath: string): number | undefined {
 // Capture record -> MCP content blocks.
 //
 // A record's artifacts (screenshot / contents / selection) are exposed as
-// resources, not inlined bytes. Each call returns:
-//   1. a JSON metadata text block — the record with every artifact's on-disk
-//      `filename` swapped for { uri, mimeType, size } plus its capture flags
-//      (hasHighlights, format, ...). Carries the bits a resource_link can't.
-//   2. per artifact, either a `resource_link` (default) or, when the caller
-//      passes return_inline, the bytes inline: an `image` block for images,
-//      an embedded `resource` block for everything else (so HTML / markdown
-//      arrive as files, not as assistant text).
+// resources, not raw paths. `get_latest` / `watch` return:
+//   1. a JSON metadata text block — the record with each artifact's on-disk
+//      `filename` dropped, leaving its capture flags (hasHighlights, format,
+//      ...). The file's `uri` / `mimeType` are NOT duplicated here; they live
+//      on the matching `resource_link` (joined by its `name` = role).
+//   2. per artifact, a `resource_link` content block.
+//   3. optionally, the file's bytes inline *in addition to* the link — an
+//      `image` block for images, an embedded `resource` block otherwise (so
+//      HTML / markdown arrive as files, not assistant text). Driven by
+//      `return_inline`; small selections also inline by default.
 // ---------------------------------------------------------------------------
+
+// Selections are usually tiny text. Below this size we inline them by default
+// (no extra round-trip) unless the caller explicitly passed return_inline:false.
+const SELECTION_INLINE_MAX_BYTES = 10 * 1024;
 
 const ARTIFACT_KEYS = ['screenshot', 'contents', 'selection'] as const;
 
-/** Record with artifacts rewritten from on-disk paths to resource references. */
+/** Record with each artifact reduced to its capture flags (no locator). */
+function flagsRecord(rec: CaptureRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...rec };
+  for (const key of ARTIFACT_KEYS) {
+    const v = rec[key];
+    if (v && typeof v.filename === 'string') {
+      const { filename, ...flags } = v;
+      out[key] = flags;
+    }
+  }
+  return out;
+}
+
+/**
+ * Record with artifacts rewritten to resource references ({ uri, mimeType,
+ * size, ...flags }). Used by the `captures/stream` resource, whose JSON read
+ * has no `resource_link` channel to carry the locator.
+ */
 function toResourceRecord(
   rec: CaptureRecord,
   sourceDir: string,
@@ -288,62 +311,82 @@ function toResourceRecord(
   return out;
 }
 
-/** Resource link or inline content block for a single artifact file. */
-function artifactBlock(
-  role: string,
-  absPath: string,
-  sourceDir: string,
-  inline: boolean,
-): ContentBlock {
-  const mimeType = mimeFor(absPath);
-  const uri = fileUri(absPath);
-  const link = (): ContentBlock => {
-    const size = statSizeOrUndefined(absPath);
-    return {
-      type: 'resource_link',
-      uri,
-      name: role,
-      mimeType,
-      ...(size !== undefined ? { size } : {}),
-    };
+/** The `resource_link` for an artifact file. */
+function resourceLinkBlock(role: string, absPath: string): ContentBlock {
+  const size = statSizeOrUndefined(absPath);
+  return {
+    type: 'resource_link',
+    uri: fileUri(absPath),
+    name: role,
+    mimeType: mimeFor(absPath),
+    ...(size !== undefined ? { size } : {}),
   };
-  if (!inline) return link();
-  // Inline: read the bytes. Containment is enforced even though the path came
-  // from our own log — a record could carry an absolute filename that escapes.
-  // If the file is missing or escapes the source dir, fall back to a link
-  // rather than sinking the whole get_latest / watch call for one bad artifact.
+}
+
+/**
+ * Inline content block for an artifact file (image, or embedded resource),
+ * or null if the file is missing / escapes the source dir — in which case the
+ * caller just keeps the resource_link rather than failing the whole call.
+ */
+function inlineContentBlock(absPath: string, sourceDir: string): ContentBlock | null {
+  const mimeType = mimeFor(absPath);
   let buf: Buffer;
   try {
     buf = fs.readFileSync(ensureUnderSource(absPath, sourceDir));
   } catch {
-    return link();
+    return null;
   }
   if (isImageMime(mimeType)) {
     return { type: 'image', data: buf.toString('base64'), mimeType };
   }
+  const uri = fileUri(absPath);
   if (isTextMime(mimeType)) {
     return { type: 'resource', resource: { uri, mimeType, text: buf.toString('utf8') } };
   }
   return { type: 'resource', resource: { uri, mimeType, blob: buf.toString('base64') } };
 }
 
+/** Whether to inline an artifact, given the tri-state `return_inline` arg. */
+function shouldInline(
+  role: string,
+  absPath: string,
+  returnInline: boolean | undefined,
+): boolean {
+  if (returnInline === true) return true;
+  if (returnInline === false) return false;
+  // Default: auto-inline only small selections.
+  if (role === 'selection') {
+    const size = statSizeOrUndefined(absPath);
+    return size !== undefined && size <= SELECTION_INLINE_MAX_BYTES;
+  }
+  return false;
+}
+
 /** Full content array for one capture record. */
 function recordContent(
   rec: CaptureRecord,
   sourceDir: string,
-  inline: boolean,
+  returnInline: boolean | undefined,
 ): ContentBlock[] {
   const abs = rewriteFilenames(rec, sourceDir);
   const blocks: ContentBlock[] = [
-    { type: 'text', text: JSON.stringify(toResourceRecord(rec, sourceDir)) },
+    { type: 'text', text: JSON.stringify(flagsRecord(rec)) },
   ];
   for (const key of ARTIFACT_KEYS) {
     const v = abs[key];
-    if (v && typeof v.filename === 'string') {
-      blocks.push(artifactBlock(key, v.filename, sourceDir, inline));
+    if (!v || typeof v.filename !== 'string') continue;
+    blocks.push(resourceLinkBlock(key, v.filename));
+    if (shouldInline(key, v.filename, returnInline)) {
+      const inline = inlineContentBlock(v.filename, sourceDir);
+      if (inline) blocks.push(inline);
     }
   }
   return blocks;
+}
+
+/** Tri-state read of the `return_inline` arg: true / false / undefined. */
+function inlineArg(args: Record<string, unknown>): boolean | undefined {
+  return typeof args.return_inline === 'boolean' ? args.return_inline : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -466,18 +509,20 @@ export function createServer(opts: ServerOpts): Server {
         description:
           "Return the most recent capture record from the SeeWhatISee log. " +
           "Emits a JSON metadata block plus a `resource_link` for each screenshot / " +
-          "HTML / selection file (read those via resources/read, or with your own " +
-          "file tool at the `file://` path). Pass `return_inline: true` to get the " +
-          "file bytes inline instead — images as image content, everything else as " +
-          "an embedded resource.",
+          "HTML / selection file; read a file via resources/read on its link's " +
+          "`uri`, or with your own file tool at the `file://` path. Small selections " +
+          "are also inlined by default. Pass `return_inline: true` to additionally " +
+          "inline every file's bytes (images as image content, others as embedded " +
+          "resources), or `false` to suppress all inlining.",
         inputSchema: {
           type: 'object',
           properties: {
             return_inline: {
               type: 'boolean',
               description:
-                'Inline each file as a content block instead of a resource link. ' +
-                'Costs context immediately; default false.',
+                'true: inline every file as a content block alongside its link ' +
+                '(costs context immediately). false: links only, suppressing the ' +
+                'default small-selection inlining. Omit for the default.',
             },
           },
           additionalProperties: false,
@@ -508,8 +553,9 @@ export function createServer(opts: ServerOpts): Server {
             return_inline: {
               type: 'boolean',
               description:
-                'Inline each file as a content block instead of a resource link. ' +
-                'Costs context immediately; default false.',
+                'true: inline every file as a content block alongside its link ' +
+                '(costs context immediately). false: links only, suppressing the ' +
+                'default small-selection inlining. Omit for the default.',
             },
           },
           additionalProperties: false,
@@ -531,7 +577,7 @@ export function createServer(opts: ServerOpts): Server {
   });
 
   function handleGetLatest(args: Record<string, unknown>) {
-    const inline = args.return_inline === true;
+    const inline = inlineArg(args);
     const records = readAllRecords(logPath);
     if (records.length === 0) {
       const exists = fileExists(logPath);
@@ -546,7 +592,7 @@ export function createServer(opts: ServerOpts): Server {
   }
 
   async function handleWatch(args: Record<string, unknown>) {
-    const inline = args.return_inline === true;
+    const inline = inlineArg(args);
     const after = typeof args.after === 'string' ? args.after : undefined;
     let timeoutMs =
       typeof args.timeout_ms === 'number' ? args.timeout_ms : watchDefaultMs;
@@ -598,10 +644,12 @@ export function createServer(opts: ServerOpts): Server {
 
   // -------- resources --------
 
-  // Every captured file under the source dir is exposed as a `file://`
-  // resource, alongside the subscribable capture stream.
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    const resources: Array<Record<string, unknown>> = [
+  // Only the subscribable capture stream is listed. Individual captured files
+  // are not enumerated — clients discover them through the `resource_link`
+  // blocks in tool results and read them by URI (resources/read accepts any
+  // `file://` under the source dir without it being listed).
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
       {
         uri: STREAM_URI,
         name: 'Capture stream',
@@ -610,26 +658,8 @@ export function createServer(opts: ServerOpts): Server {
           'Subscribe to receive a `notifications/resources/updated` notification on every new capture.',
         mimeType: 'application/json',
       },
-    ];
-    let entries: fs.Dirent[] = [];
-    try {
-      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
-    } catch {
-      // Source dir missing — only the stream resource is available.
-    }
-    for (const e of entries) {
-      if (!e.isFile() || e.name === LOG_FILE || e.name.startsWith('.')) continue;
-      const abs = path.join(sourceDir, e.name);
-      const size = statSizeOrUndefined(abs);
-      resources.push({
-        uri: fileUri(abs),
-        name: e.name,
-        mimeType: mimeFor(e.name),
-        ...(size !== undefined ? { size } : {}),
-      });
-    }
-    return { resources };
-  });
+    ],
+  }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     const uri = req.params.uri;

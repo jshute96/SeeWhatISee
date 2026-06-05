@@ -42,13 +42,13 @@ Both surface as slash commands in clients that render MCP prompts.
 
 ### Tools
 
-- **`get_latest`** — returns the most recent capture record: a JSON metadata block (timestamp, URL, title, and for each screenshot / HTML snapshot / selection a `file://` `uri` + `mimeType`) followed by a `resource_link` per file. Pass `return_inline: true` to get the bytes inline instead — images as image content, HTML / markdown / selections as embedded file resources.
+- **`get_latest`** — returns the most recent capture record: a JSON metadata block (timestamp, URL, title, and each screenshot / HTML snapshot / selection's capture flags) followed by a `resource_link` per file carrying its `file://` `uri` + `mimeType`. Read a file via `resources/read` on that `uri`, or your own file tool at the `file://` path. Small selections are also inlined by default; `return_inline: true` additionally inlines every file (images as image content, others as embedded file resources), `false` suppresses all inlining.
 - **`watch`** — returns new capture records in the same shape as `get_latest` (`return_inline` applies too). With `after: <timestamp>`, drains anything newer immediately. Otherwise blocks for up to `timeout_ms` waiting for the next capture (defaults to ~60s, max 10 min); returns `{ records: [] }` if nothing arrives.
 
 ### Resources
 
 - **`seewhatisee://captures/stream`** — subscribable. Read returns the latest record (or `{ record: null }` if no captures yet). Subscribe to receive a `notifications/resources/updated` notification on every new capture. Not all MCP clients support resource subscriptions; the `watch` tool is the polling fallback.
-- **`file://…` captured files** — every file in the source directory is exposed as a resource (listed by `resources/list`, fetched by `resources/read`). Text and HTML come back as text; images and other binaries as base64 blobs. Reads only allow paths inside the configured source directory (lexical + symlink check).
+- **`file://…` captured files** — `resources/read` on any `file://` URI inside the source directory returns the file: text and HTML as text, images and other binaries as base64 blobs (lexical + symlink containment check). These aren't enumerated by `resources/list` — clients discover them through the `resource_link` blocks in tool results.
 
 ## Source and contributing
 
