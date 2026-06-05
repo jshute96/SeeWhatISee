@@ -235,6 +235,42 @@ test('get_latest return_inline inlines images and files', async () => {
   }
 });
 
+test('get_latest return_inline falls back to a resource_link when a file is missing', async () => {
+  // The screenshot file is never written to disk. Inline mode must not sink
+  // the whole call — it degrades that artifact to a resource_link.
+  const ctx = await setup({
+    records: [record({ screenshot: { filename: 'gone.png' } })],
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'get_latest',
+      arguments: { return_inline: true },
+    });
+    // Metadata still present, and the artifact came back as a link, not an image.
+    assert.equal(metaRecord(res).screenshot.uri, uriFor(ctx.dir, 'gone.png'));
+    const blocks = fileBlocks(res);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, 'resource_link');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('get_latest return_inline falls back to a link for paths outside the source dir', async () => {
+  const ctx = await setup({
+    records: [record({ screenshot: { filename: '/already/abs.png' } })],
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'get_latest',
+      arguments: { return_inline: true },
+    });
+    assert.equal(fileBlocks(res)[0].type, 'resource_link');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('get_latest leaves already-absolute paths alone', async () => {
   const ctx = await setup({
     records: [record({ screenshot: { filename: '/already/abs.png' } })],

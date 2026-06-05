@@ -11,6 +11,8 @@ The JSON record contains `{timestamp, url, title}` plus any of:
   - `prompt` — the user's instruction for this capture.
   - `imageUrl` — URL of a specific image the user captured, inside the page.
 
+  Each `screenshot` / `contents` / `selection` references its saved file: the skill scripts fill in an absolute path in `filename`; the MCP server gives a `file://` `uri` (with `mimeType`).
+
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 
   **Look at referenced files only. Don't go fishing for others unless asked to.**

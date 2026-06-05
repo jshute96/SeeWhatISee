@@ -297,7 +297,7 @@ function artifactBlock(
 ): ContentBlock {
   const mimeType = mimeFor(absPath);
   const uri = fileUri(absPath);
-  if (!inline) {
+  const link = (): ContentBlock => {
     const size = statSizeOrUndefined(absPath);
     return {
       type: 'resource_link',
@@ -306,11 +306,18 @@ function artifactBlock(
       mimeType,
       ...(size !== undefined ? { size } : {}),
     };
-  }
+  };
+  if (!inline) return link();
   // Inline: read the bytes. Containment is enforced even though the path came
   // from our own log — a record could carry an absolute filename that escapes.
-  const real = ensureUnderSource(absPath, sourceDir);
-  const buf = fs.readFileSync(real);
+  // If the file is missing or escapes the source dir, fall back to a link
+  // rather than sinking the whole get_latest / watch call for one bad artifact.
+  let buf: Buffer;
+  try {
+    buf = fs.readFileSync(ensureUnderSource(absPath, sourceDir));
+  } catch {
+    return link();
+  }
   if (isImageMime(mimeType)) {
     return { type: 'image', data: buf.toString('base64'), mimeType };
   }

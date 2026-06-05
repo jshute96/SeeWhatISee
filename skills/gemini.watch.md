@@ -21,7 +21,7 @@ This is a **foreground loop: each iteration blocks** on a shell command that doe
   [[json-record.template.md]]
 
 4. **Process each snapshot record** **before restarting the script for the next iteration**.
-  - If `screenshot` is present, read `screenshot.filename`.
+  - If `screenshot` is present, read the screenshot.
     - **If `screenshot.hasHighlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't read the file up front (HTML can be large); wait until you know what to look for.
   - If `selection` is present, don't read the file until you know what to look for.
