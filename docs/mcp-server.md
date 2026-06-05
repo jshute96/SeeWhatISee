@@ -257,7 +257,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
 | Streaming loop       | `--watch --loop`                          | `captures/stream` subscription      |
 | Stop watcher         | `--stop` + `.watch.pid`                   | client-managed; unsubscribe / exit  |
-| Inline selection     | `--print_selection`                       | `return_inline` on `get_latest` / `watch`, or `resources/read` on the selection's `file://` URI |
+| Inline selection     | `--print_selection`                       | small selections inline by default; otherwise `return_inline`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
 
