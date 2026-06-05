@@ -265,8 +265,8 @@ function statSizeOrUndefined(absPath: string): number | undefined {
 //      `return_inline`; small selections also inline by default.
 // ---------------------------------------------------------------------------
 
-// Selections are usually tiny text. Below this size we inline them by default
-// (no extra round-trip) unless the caller explicitly passed return_inline:false.
+// Selections are usually tiny text. At or below this size we inline them by
+// default (no extra round-trip) unless the caller passed return_inline:false.
 const SELECTION_INLINE_MAX_BYTES = 10 * 1024;
 
 const ARTIFACT_KEYS = ['screenshot', 'contents', 'selection'] as const;

@@ -38,7 +38,7 @@ Prefer the subscription path when the client supports it; fall back to polling o
 
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 
-  Each present artifact also comes as its own `resource_link` block (its `name` is the role: `screenshot` / `contents` / `selection`). That block carries the file's `uri` (a `file://` location) and `mimeType` — the metadata block does not repeat them. A small `selection` is also included inline. (When you read the `captures/stream` resource instead of calling a tool, there are no separate blocks, so each artifact carries its `uri` and `mimeType` directly.)
+  Each present artifact also comes as its own `resource_link` block (its `name` is the role: `screenshot` / `contents` / `selection`). That block carries the file's `uri` (a `file://` location) and `mimeType` — the metadata block does not repeat them. A small `selection` also arrives inline, so you don't need to fetch it separately. (When you read the `captures/stream` resource instead of calling a tool, there are no separate blocks, so each artifact carries its `uri` and `mimeType` directly.)
 
   **Look at referenced files only. Don't go fishing for others unless asked to.**
 

@@ -68,7 +68,7 @@ call returns, per record:
   (`hasHighlights`, `format`, …). The flags are keyed by role.
 - Per artifact, a **`resource_link`** content block — `name` is the role
   (`screenshot` / `contents` / `selection`), carrying the file's
-  `file://` `uri`, `mimeType`, and `size`.
+  `file://` `uri` and `mimeType` (plus `size` when the file is on disk).
 
 The locator is **not duplicated**: the `uri` / `mimeType` live only on
 the `resource_link`; the metadata block joins to it by role. A link is a
@@ -84,7 +84,7 @@ addition to** the `resource_link`, never instead of it.
 
 - **`return_inline: true`** — inline every artifact.
 - **`return_inline: false`** — links only.
-- **Omitted (default)** — inline only a `selection` smaller than 10 KB
+- **Omitted (default)** — inline only a `selection` of 10 KB or smaller
   (selections are usually tiny; this saves a round-trip). Everything else
   is link-only.
 
