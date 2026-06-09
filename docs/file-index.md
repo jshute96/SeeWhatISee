@@ -40,8 +40,10 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.sh` verbatim into each release bundle's `scripts/` dir |
 | `skills/SeeWhatISee.sh` | Canonical unified backend script (`--get-latest` / `--watch` / `--stop` actions, shared helpers); generator copies it verbatim into both release bundles |
-| `skills/json-record.template.md` | Shared block describing the `log.json` record shape, embedded via `[[...]]` |
-| `skills/process.template.md` | Shared block describing how to process a capture record, embedded via `[[...]]` |
+| `skills/record-common.template.md` | Shared block describing the capture-record shape (fields + flags), embedded by `json-record` and `mcp-record` via `[[...]]` |
+| `skills/json-record.template.md` | Shell-skill record block: includes `record-common.template.md` then the filename-based artifact tail |
+| `skills/mcp-record.template.md` | MCP-prompt record block: includes `record-common.template.md` then the `resource_link` artifact tail |
+| `skills/process.template.md` | Shared block on how to process a capture record (used by both shell and MCP skills) |
 | `skills/claude.see.md` | Template for `skills/claude-plugin/skills/see-what-i-see/SKILL.md` |
 | `skills/claude.watch.md` | Template for `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/claude.stop.md` | Template for `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md` |
@@ -118,7 +120,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `mcp-server/build-prompts.mjs` | Reads `prompts/*.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
 | `mcp-server/prompts/see-what-i-see.md` | Generated from `skills/mcp-server.see.md` — prompt body inlined into the bundle |
 | `mcp-server/prompts/see-what-i-see-watch.md` | Generated from `skills/mcp-server.watch.md` — prompt body inlined into the bundle |
-| `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter, tool / resource / prompt handlers |
+| `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter; tools + `file://` file resources + prompt handlers |
 | `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--help`), source-dir resolution, stdio transport, `server.connect` |
 | `mcp-server/tests/resolve.test.mjs` | Unit tests for `resolveSourceDir` — explicit override, cwd vs home precedence, default fallback, config-file parsing |
 | `mcp-server/tests/server.test.mjs` | End-to-end tests via `InMemoryTransport` covering every tool, the subscribable resource, prompts list/get |

@@ -14,8 +14,8 @@ MCP-aware client can call.
   of a shell script.
 - **Real push notifications for watch.** Subscriptions replace the
   current `--loop` polling + per-line notification scrape.
-- **Future extensibility.** Server-side helpers (ranged file reads,
-  HTML→markdown extraction, search) become feasible without changing
+- **Future extensibility.** Server-side helpers (HTML→markdown
+  extraction, thumbnailing, search) become feasible without changing
   every wrapper.
 
 The shell scripts and SKILL.md wrappers stay; the MCP server is an
@@ -58,19 +58,39 @@ No `--copy-to-dir` equivalent. MCP clients read the absolute paths the
 tools return directly; they don't have the workspace-sandbox limitation
 the Gemini CLI does.
 
-## File paths returned by `get_latest` / `watch`
+## How files are returned by `get_latest` / `watch`
 
-Records carry **absolute paths** in `screenshot.filename`,
-`contents.filename`, and `selection.filename` — same shape as
-`SeeWhatISee.sh --get-latest` emits today.
+Captured files are exposed as **resources**, not raw paths. Each tool
+call returns, per record:
 
-- Lets MCP clients with their own file-reading tool (e.g. Claude
-  Desktop's built-in Read) open the file directly without a round-trip
-  through `read_file`.
-- Lets the prompts and shell-script output stay one-to-one; the
-  template blocks under `skills/` keep working unchanged.
-- `read_file` and `get_file_info` accept the same absolute path, and
-  validate that it resolves inside the source dir before opening it.
+- A **JSON metadata block** (a `text` content block) — the record with
+  each artifact's on-disk `filename` dropped, leaving its capture flags
+  (`hasHighlights`, `format`, …). The flags are keyed by role.
+- Per artifact, a **`resource_link`** content block — `name` is the role
+  (`screenshot` / `contents` / `selection`), carrying the file's
+  `file://` `uri` and `mimeType` (plus `size` when the file is on disk).
+
+The locator is **not duplicated**: the `uri` / `mimeType` live only on
+the `resource_link`; the metadata block joins to it by role. A link is a
+reference, not the bytes — it costs no context until read. Clients with
+their own file tool can open the `file://` path directly.
+
+### Inlining
+
+The bytes can also come back inline — as an `image` content block for
+images, or an embedded `resource` block otherwise (so HTML / markdown
+arrive as files, not assistant text). Inline content is returned **in
+addition to** the `resource_link`, never instead of it.
+
+- **`return_inline: true`** — inline every artifact.
+- **`return_inline: false`** — links only.
+- **Omitted (default)** — inline only a `selection` of 10 KB or smaller
+  (selections are usually tiny; this saves a round-trip). Everything else
+  is link-only.
+
+If an artifact's file is missing or escapes the source dir, inlining is
+skipped for that artifact (its link still stands) rather than failing the
+whole call.
 
 ## Capabilities
 
@@ -80,12 +100,13 @@ Records carry **absolute paths** in `screenshot.filename`,
 
 Returns the most recent record from `log.json`.
 
-- **Input:** none.
-- **Output:** one JSON object — the record from `log.json` with
-  `screenshot.filename` / `contents.filename` / `selection.filename`
-  rewritten to absolute paths. Same shape as
-  `SeeWhatISee.sh --get-latest` emits today (see
-  `skills/json-record.template.md`).
+- **Input:** `{ return_inline?: boolean }`.
+- **Output:** a JSON metadata block plus a `resource_link` per artifact
+  (and optional inline content) — see
+  [How files are returned](#how-files-are-returned-by-get_latest--watch).
+  The metadata mirrors `SeeWhatISee.sh --get-latest` (see
+  `skills/json-record.template.md`) except each artifact's `filename` is
+  dropped; the file's locator rides on its `resource_link`.
 - **Errors:** structured error if `log.json` is missing or empty
   (parallel to the shell script's "No captures yet" messages).
 
@@ -101,8 +122,10 @@ next one if none are pending.
     wait.
   - `timeout_ms?: number` — max time to block waiting for a new
     capture. Default and cap discussed below.
-- **Output:** `{ records: CaptureRecord[] }` — possibly empty if the
-  timeout fired with nothing new.
+  - `return_inline?: boolean` — same meaning as on `get_latest`.
+- **Output:** the content blocks for each new record, concatenated (same
+  per-record shape as `get_latest`). A single `{ records: [] }` text
+  block if the timeout fired with nothing new.
 - **Behavior:**
   - With `after`: behaves like `--watch --after <ts>` (without
     `--catch-up-one`) — emit *all* records newer than `after`,
@@ -132,29 +155,26 @@ next one if none are pending.
   `seewhatisee://captures/stream` is for — no per-request timeout,
   server pushes whenever a capture arrives.
 
-#### `read_file`
-
-Returns a byte range of a captured file. Lets the model read large HTML
-snapshots in chunks without blowing context, and gives clients without
-their own file-read tool a way to fetch screenshot or selection bytes
-via the server.
-
-- **Input:** `{ filename: string, offset?: number, length?: number }`.
-  `filename` is the absolute path returned by `get_latest` / `watch`.
-- **Output:** `{ bytes: base64, totalSize: number, eof: boolean }`.
-- **Constraint:** `filename` must resolve (after symlink resolution)
-  inside the configured source dir. Reject everything else with a
-  structured error — no arbitrary file reads.
-
-#### `get_file_info`
-
-Returns metadata about a captured file without reading its contents.
-
-- **Input:** `{ filename: string }`.
-- **Output:** `{ size: number, mimeType: string, capturedAt: string }`.
-- **Constraint:** same source-dir containment check as `read_file`.
+There are no separate file-reading tools. Files are read through the
+resources interface below (or the client's own file tool at the
+`file://` path, or `return_inline`).
 
 ### Resources
+
+#### `file://…` captured files
+
+Any file under the source dir can be read as a resource.
+
+- **`resources/read`** on a `file://` URI returns the contents — `text`
+  for text/HTML/markdown/JSON, a base64 `blob` for images and other
+  binaries.
+- **Not listed.** `resources/list` does *not* enumerate captured files
+  (it would dump the whole capture history). Clients discover files via
+  the `resource_link` blocks in tool results and read them by URI;
+  `resources/read` accepts any in-dir `file://` whether listed or not.
+- **Constraint:** the URI must resolve (after symlink resolution) inside
+  the configured source dir. Everything else is rejected with a
+  structured error — no arbitrary file reads.
 
 #### `seewhatisee://captures/stream` *(subscribable)*
 
@@ -182,7 +202,7 @@ They are the MCP-side equivalents of today's two main SKILL.md files.
 - **Args:** none.
 - **Renders to:** instructions that tell the model to call
   `get_latest`, then process the returned record according to the
-  same rules as today's `skills/json-record.template.md` +
+  same rules as the `skills/mcp-record.template.md` +
   `skills/process.template.md` blocks.
 
 #### `see-what-i-see-watch`
@@ -199,9 +219,14 @@ subscription's lifecycle and tears it down on its own.
 
 ## Sharing the prompt body with the SKILL.md templates
 
-The MCP prompt bodies share the same `[[json-record.template.md]]` and
-`[[process.template.md]]` blocks as the SKILL.md files, generated through
-the same pipeline so wording can't drift.
+The MCP prompt bodies are generated through the same pipeline as the
+SKILL.md files, so wording can't drift:
+
+- `[[process.template.md]]` is shared verbatim with the SKILL.md files.
+- The record block uses `[[mcp-record.template.md]]`, which shares its
+  `[[record-common.template.md]]` head with the shell skills'
+  `[[json-record.template.md]]`, differing only in the artifact-locator
+  tail (`resource_link`/`uri` vs `filename`).
 
 Pipeline (edit the leftmost; everything to the right regenerates):
 
@@ -237,7 +262,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
 | Streaming loop       | `--watch --loop`                          | `captures/stream` subscription      |
 | Stop watcher         | `--stop` + `.watch.pid`                   | client-managed; unsubscribe / exit  |
-| Inline selection     | `--print_selection`                       | not exposed; caller uses `read_file` (or its own Read tool) on `selection.filename` |
+| Inline selection     | `--print_selection`                       | small selections inline by default; otherwise `return_inline`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
 
@@ -273,7 +298,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   surface is wired in Claude Code today.
 - [`skills/SeeWhatISee.sh`](../skills/SeeWhatISee.sh) — the unified
   backend whose flag surface this server mirrors.
-- [`skills/json-record.template.md`](../skills/json-record.template.md)
-  and [`skills/process.template.md`](../skills/process.template.md) —
-  shared template blocks that the MCP prompts should be generated
-  from.
+- [`skills/mcp-record.template.md`](../skills/mcp-record.template.md)
+  (+ its [`record-common.template.md`](../skills/record-common.template.md)
+  head) and [`skills/process.template.md`](../skills/process.template.md) —
+  the template blocks the MCP prompts are generated from.

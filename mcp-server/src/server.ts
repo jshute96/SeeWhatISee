@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
@@ -26,6 +27,7 @@ import {
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 
 import { PROMPT_SEE, PROMPT_WATCH } from './prompts.generated.js';
 
@@ -146,7 +148,7 @@ function rewriteFilenames(rec: CaptureRecord, sourceDir: string): CaptureRecord 
 }
 
 // ---------------------------------------------------------------------------
-// Path containment for read_file / get_file_info.
+// Path containment for resource reads (file:// URIs) and inline file bytes.
 // ---------------------------------------------------------------------------
 
 function ensureUnderSource(filename: string, sourceDir: string): string {
@@ -223,6 +225,168 @@ const MIME_BY_EXT: Record<string, string> = {
 
 function mimeFor(filename: string): string {
   return MIME_BY_EXT[path.extname(filename).toLowerCase()] ?? 'application/octet-stream';
+}
+
+function isImageMime(mime: string): boolean {
+  return mime.startsWith('image/');
+}
+
+// Which MIME types we hand back as resource *text* rather than a base64 blob.
+// Everything the extension writes that isn't an image is text-shaped.
+function isTextMime(mime: string): boolean {
+  return mime.startsWith('text/') || mime === 'application/json';
+}
+
+function fileUri(absPath: string): string {
+  return pathToFileURL(absPath).href;
+}
+
+function statSizeOrUndefined(absPath: string): number | undefined {
+  try {
+    return fs.statSync(absPath).size;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Capture record -> MCP content blocks.
+//
+// A record's artifacts (screenshot / contents / selection) are exposed as
+// resources, not raw paths. `get_latest` / `watch` return:
+//   1. a JSON metadata text block — the record with each artifact's on-disk
+//      `filename` dropped, leaving its capture flags (hasHighlights, format,
+//      ...). The file's `uri` / `mimeType` are NOT duplicated here; they live
+//      on the matching `resource_link` (joined by its `name` = role).
+//   2. per artifact, a `resource_link` content block.
+//   3. optionally, the file's bytes inline *in addition to* the link — an
+//      `image` block for images, an embedded `resource` block otherwise (so
+//      HTML / markdown arrive as files, not assistant text). Driven by
+//      `return_inline`; small selections also inline by default.
+// ---------------------------------------------------------------------------
+
+// Selections are usually tiny text. At or below this size we inline them by
+// default (no extra round-trip) unless the caller passed return_inline:false.
+const SELECTION_INLINE_MAX_BYTES = 10 * 1024;
+
+const ARTIFACT_KEYS = ['screenshot', 'contents', 'selection'] as const;
+
+/** Record with each artifact reduced to its capture flags (no locator). */
+function flagsRecord(rec: CaptureRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...rec };
+  for (const key of ARTIFACT_KEYS) {
+    const v = rec[key];
+    if (v && typeof v.filename === 'string') {
+      const { filename, ...flags } = v;
+      out[key] = flags;
+    }
+  }
+  return out;
+}
+
+/**
+ * Record with artifacts rewritten to resource references ({ uri, mimeType,
+ * size, ...flags }). Used by the `captures/stream` resource, whose JSON read
+ * has no `resource_link` channel to carry the locator.
+ */
+function toResourceRecord(
+  rec: CaptureRecord,
+  sourceDir: string,
+): Record<string, unknown> {
+  const abs = rewriteFilenames(rec, sourceDir);
+  const out: Record<string, unknown> = { ...abs };
+  for (const key of ARTIFACT_KEYS) {
+    const v = abs[key];
+    if (v && typeof v.filename === 'string') {
+      const { filename, ...flags } = v;
+      const size = statSizeOrUndefined(filename);
+      out[key] = {
+        ...flags,
+        uri: fileUri(filename),
+        mimeType: mimeFor(filename),
+        ...(size !== undefined ? { size } : {}),
+      };
+    }
+  }
+  return out;
+}
+
+/** The `resource_link` for an artifact file. */
+function resourceLinkBlock(role: string, absPath: string): ContentBlock {
+  const size = statSizeOrUndefined(absPath);
+  return {
+    type: 'resource_link',
+    uri: fileUri(absPath),
+    name: role,
+    mimeType: mimeFor(absPath),
+    ...(size !== undefined ? { size } : {}),
+  };
+}
+
+/**
+ * Inline content block for an artifact file (image, or embedded resource),
+ * or null if the file is missing / escapes the source dir — in which case the
+ * caller just keeps the resource_link rather than failing the whole call.
+ */
+function inlineContentBlock(absPath: string, sourceDir: string): ContentBlock | null {
+  const mimeType = mimeFor(absPath);
+  let buf: Buffer;
+  try {
+    buf = fs.readFileSync(ensureUnderSource(absPath, sourceDir));
+  } catch {
+    return null;
+  }
+  if (isImageMime(mimeType)) {
+    return { type: 'image', data: buf.toString('base64'), mimeType };
+  }
+  const uri = fileUri(absPath);
+  if (isTextMime(mimeType)) {
+    return { type: 'resource', resource: { uri, mimeType, text: buf.toString('utf8') } };
+  }
+  return { type: 'resource', resource: { uri, mimeType, blob: buf.toString('base64') } };
+}
+
+/** Whether to inline an artifact, given the tri-state `return_inline` arg. */
+function shouldInline(
+  role: string,
+  absPath: string,
+  returnInline: boolean | undefined,
+): boolean {
+  if (returnInline === true) return true;
+  if (returnInline === false) return false;
+  // Default: auto-inline only small selections.
+  if (role === 'selection') {
+    const size = statSizeOrUndefined(absPath);
+    return size !== undefined && size <= SELECTION_INLINE_MAX_BYTES;
+  }
+  return false;
+}
+
+/** Full content array for one capture record. */
+function recordContent(
+  rec: CaptureRecord,
+  sourceDir: string,
+  returnInline: boolean | undefined,
+): ContentBlock[] {
+  const abs = rewriteFilenames(rec, sourceDir);
+  const blocks: ContentBlock[] = [
+    { type: 'text', text: JSON.stringify(flagsRecord(rec)) },
+  ];
+  for (const key of ARTIFACT_KEYS) {
+    const v = abs[key];
+    if (!v || typeof v.filename !== 'string') continue;
+    blocks.push(resourceLinkBlock(key, v.filename));
+    if (shouldInline(key, v.filename, returnInline)) {
+      const inline = inlineContentBlock(v.filename, sourceDir);
+      if (inline) blocks.push(inline);
+    }
+  }
+  return blocks;
+}
+
+/** Tri-state read of the `return_inline` arg: true / false / undefined. */
+function inlineArg(args: Record<string, unknown>): boolean | undefined {
+  return typeof args.return_inline === 'boolean' ? args.return_inline : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,10 +508,17 @@ export function createServer(opts: ServerOpts): Server {
         name: 'get_latest',
         description:
           "Return the most recent capture record from the SeeWhatISee log. " +
-          "The record carries absolute paths to any screenshot / HTML / selection file.",
+          "Emits a JSON metadata block plus a `resource_link` for each screenshot / " +
+          "HTML / selection file.",
         inputSchema: {
           type: 'object',
-          properties: {},
+          properties: {
+            return_inline: {
+              type: 'boolean',
+              description:
+                'Whether to inline each file as a content block, in addition to its resource_link. true: inline every file. false: inline nothing. Omitted: auto-inline small text selections only.',
+            },
+          },
           additionalProperties: false,
         },
       },
@@ -371,37 +542,12 @@ export function createServer(opts: ServerOpts): Server {
               maximum: watchMaxMs,
               description: `Max ms to block waiting for the next capture. Default ${watchDefaultMs}.`,
             },
+            return_inline: {
+              type: 'boolean',
+              description:
+                'Whether to inline each file as a content block, in addition to its resource_link. true: inline every file. false: inline nothing. Omitted: auto-inline small text selections only.',
+            },
           },
-          additionalProperties: false,
-        },
-      },
-      {
-        name: 'read_file',
-        description:
-          "Read a byte range from a captured file. Returns base64-encoded bytes. " +
-          "`filename` must resolve inside the configured source dir.",
-        inputSchema: {
-          type: 'object',
-          properties: {
-            filename: { type: 'string', description: 'Absolute path from a capture record.' },
-            offset: { type: 'number', minimum: 0 },
-            length: { type: 'number', minimum: 1 },
-          },
-          required: ['filename'],
-          additionalProperties: false,
-        },
-      },
-      {
-        name: 'get_file_info',
-        description:
-          "Return {size, mimeType, capturedAt} for a captured file without reading it. " +
-          "`filename` must resolve inside the configured source dir.",
-        inputSchema: {
-          type: 'object',
-          properties: {
-            filename: { type: 'string', description: 'Absolute path from a capture record.' },
-          },
-          required: ['filename'],
           additionalProperties: false,
         },
       },
@@ -412,19 +558,16 @@ export function createServer(opts: ServerOpts): Server {
     const { name, arguments: args = {} } = req.params;
     switch (name) {
       case 'get_latest':
-        return handleGetLatest();
+        return handleGetLatest(args as Record<string, unknown>);
       case 'watch':
         return await handleWatch(args as Record<string, unknown>);
-      case 'read_file':
-        return handleReadFile(args as Record<string, unknown>);
-      case 'get_file_info':
-        return handleGetFileInfo(args as Record<string, unknown>);
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
   });
 
-  function handleGetLatest() {
+  function handleGetLatest(args: Record<string, unknown>) {
+    const inline = inlineArg(args);
     const records = readAllRecords(logPath);
     if (records.length === 0) {
       const exists = fileExists(logPath);
@@ -435,11 +578,11 @@ export function createServer(opts: ServerOpts): Server {
           : `${logPath} not found. No captures yet?`,
       );
     }
-    const latest = rewriteFilenames(records[records.length - 1], sourceDir);
-    return jsonContent(latest);
+    return { content: recordContent(records[records.length - 1], sourceDir, inline) };
   }
 
   async function handleWatch(args: Record<string, unknown>) {
+    const inline = inlineArg(args);
     const after = typeof args.after === 'string' ? args.after : undefined;
     let timeoutMs =
       typeof args.timeout_ms === 'number' ? args.timeout_ms : watchDefaultMs;
@@ -453,14 +596,14 @@ export function createServer(opts: ServerOpts): Server {
       const all = readAllRecords(logPath);
       const idx = all.findIndex((r) => r.timestamp === after);
       if (idx >= 0 && idx < all.length - 1) {
-        const pending = all.slice(idx + 1).map((r) => rewriteFilenames(r, sourceDir));
-        return jsonContent({ records: pending });
+        const pending = all.slice(idx + 1);
+        return { content: pending.flatMap((r) => recordContent(r, sourceDir, inline)) };
       }
     }
 
     const next = await waitForNext(after, timeoutMs);
-    const records = next ? [rewriteFilenames(next, sourceDir)] : [];
-    return jsonContent({ records });
+    if (!next) return jsonContent({ records: [] });
+    return { content: recordContent(next, sourceDir, inline) };
   }
 
   function waitForNext(
@@ -489,46 +632,12 @@ export function createServer(opts: ServerOpts): Server {
     });
   }
 
-  function handleReadFile(args: Record<string, unknown>) {
-    const filename = String(args.filename ?? '');
-    const offset = typeof args.offset === 'number' ? args.offset : 0;
-    const length = typeof args.length === 'number' ? args.length : undefined;
-    if (offset < 0) {
-      throw new McpError(ErrorCode.InvalidParams, 'offset must be >= 0');
-    }
-    const real = ensureUnderSource(filename, sourceDir);
-    const fd = fs.openSync(real, 'r');
-    try {
-      const stat = fs.fstatSync(fd);
-      const totalSize = stat.size;
-      const start = Math.min(offset, totalSize);
-      const want = length ?? Math.max(0, totalSize - start);
-      const buf = Buffer.alloc(want);
-      const bytesRead = want > 0 ? fs.readSync(fd, buf, 0, want, start) : 0;
-      const eof = start + bytesRead >= totalSize;
-      return jsonContent({
-        bytes: buf.subarray(0, bytesRead).toString('base64'),
-        totalSize,
-        eof,
-      });
-    } finally {
-      fs.closeSync(fd);
-    }
-  }
-
-  function handleGetFileInfo(args: Record<string, unknown>) {
-    const filename = String(args.filename ?? '');
-    const real = ensureUnderSource(filename, sourceDir);
-    const stat = fs.statSync(real);
-    return jsonContent({
-      size: stat.size,
-      mimeType: mimeFor(real),
-      capturedAt: stat.mtime.toISOString(),
-    });
-  }
-
   // -------- resources --------
 
+  // Only the subscribable capture stream is listed. Individual captured files
+  // are not enumerated — clients discover them through the `resource_link`
+  // blocks in tool results and read them by URI (resources/read accepts any
+  // `file://` under the source dir without it being listed).
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
       {
@@ -543,19 +652,35 @@ export function createServer(opts: ServerOpts): Server {
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
-    if (req.params.uri !== STREAM_URI) {
-      throw new McpError(ErrorCode.InvalidRequest, `Unknown resource: ${req.params.uri}`);
+    const uri = req.params.uri;
+    if (uri === STREAM_URI) {
+      const records = readAllRecords(logPath);
+      const payload =
+        records.length === 0
+          ? { record: null }
+          : toResourceRecord(records[records.length - 1], sourceDir);
+      return {
+        contents: [
+          { uri: STREAM_URI, mimeType: 'application/json', text: JSON.stringify(payload) },
+        ],
+      };
     }
-    const records = readAllRecords(logPath);
-    const payload =
-      records.length === 0
-        ? { record: null }
-        : rewriteFilenames(records[records.length - 1], sourceDir);
-    return {
-      contents: [
-        { uri: STREAM_URI, mimeType: 'application/json', text: JSON.stringify(payload) },
-      ],
-    };
+    if (uri.startsWith('file:')) {
+      let p: string;
+      try {
+        p = fileURLToPath(uri);
+      } catch {
+        throw new McpError(ErrorCode.InvalidParams, `Invalid file URI: ${uri}`);
+      }
+      const real = ensureUnderSource(p, sourceDir);
+      const mimeType = mimeFor(real);
+      const buf = fs.readFileSync(real);
+      const contents = isTextMime(mimeType)
+        ? [{ uri, mimeType, text: buf.toString('utf8') }]
+        : [{ uri, mimeType, blob: buf.toString('base64') }];
+      return { contents };
+    }
+    throw new McpError(ErrorCode.InvalidRequest, `Unknown resource: ${uri}`);
   });
 
   server.setRequestHandler(SubscribeRequestSchema, async (req) => {

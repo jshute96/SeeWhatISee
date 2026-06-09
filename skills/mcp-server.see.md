@@ -8,12 +8,11 @@ You can't run this autonomously since it requires the user to have just clicked 
 
 ## Steps
 
-1. Call the `get_latest` tool. It returns one JSON record.
+1. Call the `get_latest` tool. It returns a JSON metadata block describing one capture record, plus a `resource_link` for each saved file.
   - If the call fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
-  - The record has absolute paths already filled in for `screenshot`, `contents`, and `selection`.
 
-2. [[json-record.template.md]]
+2. [[mcp-record.template.md]]
 
 3. [[process.template.md]]
 
-4. **Reading the referenced files:** Use your client's native file-read tool when you have one. Otherwise call `read_file` to fetch the bytes. Use `get_file_info` if you want to check size first. Both take the absolute path from the record.
+4. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path.

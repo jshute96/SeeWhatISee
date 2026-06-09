@@ -429,7 +429,7 @@ scripts/SeeWhatISee.sh --stop                   # stop a watcher running with --
 
 ### MCP server
 
-`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`, `read_file`, `get_file_info`) plus a subscribable resource that pushes notifications when new captures arrive. It's a separate package, wired into the root install as an npm workspace, so the root `npm install` covers it.
+`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as an npm workspace, so the root `npm install` covers it.
 
 Design doc: `docs/mcp-server.md`.
 
@@ -457,7 +457,7 @@ Register the bundled server with Claude Code (absolute path required):
 claude mcp add see-what-i-see -- node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
-Inside any Claude Code session after that, the `get_latest` / `watch` / `read_file` / `get_file_info` tools are callable directly, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
+Inside any Claude Code session after that, the `get_latest` / `watch` tools are callable directly, captured files are readable as `file://` resources, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
 
 #### Tests
 
