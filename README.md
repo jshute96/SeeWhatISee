@@ -446,7 +446,7 @@ That produces `mcp-server/dist/seewhatisee-mcp.js` — a single bundled Node scr
 The fastest way to poke at the server is the official inspector — a local web UI that lists tools, lets you call each one with form-filled args, reads/subscribes to resources, and renders prompts:
 
 ```bash
-npx @modelcontextprotocol/inspector node mcp-server/dist/seewhatisee-mcp.js
+npx @modelcontextprotocol/inspector node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
 #### Try it in Claude Code
