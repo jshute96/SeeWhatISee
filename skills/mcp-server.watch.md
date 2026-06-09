@@ -25,6 +25,6 @@ Prefer the subscription path when the client supports it; fall back to polling o
 
 1. [[mcp-record.template.md]]
 
-2. [[mcp-process.template.md]]
+2. [[process.template.md]]
 
-3. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path. Prefer not to pull large HTML in until you know what you're looking for.
+3. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path.

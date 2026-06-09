@@ -202,7 +202,7 @@ They are the MCP-side equivalents of today's two main SKILL.md files.
 - **Args:** none.
 - **Renders to:** instructions that tell the model to call
   `get_latest`, then process the returned record according to the
-  same rules as today's `skills/json-record.template.md` +
+  same rules as the `skills/mcp-record.template.md` +
   `skills/process.template.md` blocks.
 
 #### `see-what-i-see-watch`
@@ -219,9 +219,14 @@ subscription's lifecycle and tears it down on its own.
 
 ## Sharing the prompt body with the SKILL.md templates
 
-The MCP prompt bodies share the same `[[json-record.template.md]]` and
-`[[process.template.md]]` blocks as the SKILL.md files, generated through
-the same pipeline so wording can't drift.
+The MCP prompt bodies are generated through the same pipeline as the
+SKILL.md files, so wording can't drift:
+
+- `[[process.template.md]]` is shared verbatim with the SKILL.md files.
+- The record block uses `[[mcp-record.template.md]]`, which shares its
+  `[[record-common.template.md]]` head with the shell skills'
+  `[[json-record.template.md]]`, differing only in the artifact-locator
+  tail (`resource_link`/`uri` vs `filename`).
 
 Pipeline (edit the leftmost; everything to the right regenerates):
 
@@ -293,7 +298,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   surface is wired in Claude Code today.
 - [`skills/SeeWhatISee.sh`](../skills/SeeWhatISee.sh) — the unified
   backend whose flag surface this server mirrors.
-- [`skills/json-record.template.md`](../skills/json-record.template.md)
-  and [`skills/process.template.md`](../skills/process.template.md) —
-  shared template blocks that the MCP prompts should be generated
-  from.
+- [`skills/mcp-record.template.md`](../skills/mcp-record.template.md)
+  (+ its [`record-common.template.md`](../skills/record-common.template.md)
+  head) and [`skills/process.template.md`](../skills/process.template.md) —
+  the template blocks the MCP prompts are generated from.

@@ -13,6 +13,6 @@ You can't run this autonomously since it requires the user to have just clicked 
 
 2. [[mcp-record.template.md]]
 
-3. [[mcp-process.template.md]]
+3. [[process.template.md]]
 
-4. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path. Prefer not to pull large HTML in until you know what you're looking for.
+4. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path.
