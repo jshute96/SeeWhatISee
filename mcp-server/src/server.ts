@@ -509,20 +509,14 @@ export function createServer(opts: ServerOpts): Server {
         description:
           "Return the most recent capture record from the SeeWhatISee log. " +
           "Emits a JSON metadata block plus a `resource_link` for each screenshot / " +
-          "HTML / selection file; read a file via resources/read on its link's " +
-          "`uri`, or with your own file tool at the `file://` path. Small selections " +
-          "are also inlined by default. Pass `return_inline: true` to additionally " +
-          "inline every file's bytes (images as image content, others as embedded " +
-          "resources), or `false` to suppress all inlining.",
+          "HTML / selection file.",
         inputSchema: {
           type: 'object',
           properties: {
             return_inline: {
               type: 'boolean',
               description:
-                'true: inline every file as a content block alongside its link ' +
-                '(costs context immediately). false: links only, suppressing the ' +
-                'default small-selection inlining. Omit for the default.',
+                'true: inline every file as a content block rather than returning a resource link',
             },
           },
           additionalProperties: false,
@@ -534,9 +528,7 @@ export function createServer(opts: ServerOpts): Server {
           "Return new capture records. With `after`, emits every record strictly newer " +
           "than that timestamp immediately. If nothing is pending, blocks for up to " +
           "`timeout_ms` waiting for the next capture. For long-running watches, " +
-          "subscribe to the `seewhatisee://captures/stream` resource instead. Each " +
-          "record is shaped like `get_latest`'s output; `return_inline` applies the " +
-          "same way.",
+          "subscribe to the `seewhatisee://captures/stream` resource instead.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -553,9 +545,7 @@ export function createServer(opts: ServerOpts): Server {
             return_inline: {
               type: 'boolean',
               description:
-                'true: inline every file as a content block alongside its link ' +
-                '(costs context immediately). false: links only, suppressing the ' +
-                'default small-selection inlining. Omit for the default.',
+                'true: inline every file as a content block rather than returning a resource link',
             },
           },
           additionalProperties: false,
