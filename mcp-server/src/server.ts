@@ -516,7 +516,7 @@ export function createServer(opts: ServerOpts): Server {
             return_inline: {
               type: 'boolean',
               description:
-                'true: inline every file as a content block rather than returning a resource link',
+                'Whether to inline each file as a content block, in addition to its resource_link. true: inline every file. false: inline nothing. Omitted: auto-inline small text selections only.',
             },
           },
           additionalProperties: false,
@@ -545,7 +545,7 @@ export function createServer(opts: ServerOpts): Server {
             return_inline: {
               type: 'boolean',
               description:
-                'true: inline every file as a content block rather than returning a resource link',
+                'Whether to inline each file as a content block, in addition to its resource_link. true: inline every file. false: inline nothing. Omitted: auto-inline small text selections only.',
             },
           },
           additionalProperties: false,
