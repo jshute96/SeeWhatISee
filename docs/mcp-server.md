@@ -183,6 +183,11 @@ The push-notification equivalent of `--watch --loop`.
 - Client calls `resources/subscribe` with this URI once.
 - Server fires `notifications/resources/updated` whenever a new
   record appears in `log.json`.
+  - Raw `fs.watch` events are **debounced** (`WATCH_DEBOUNCE_MS`): one
+    logical capture emits several events (overlapping file + dir
+    watchers, content-vs-mtime events, multi-write download bursts), so
+    the watcher coalesces a burst into a single notification once writes
+    go quiet. Without it, a single capture fired multiple notifications.
 - Client calls `resources/read` on the URI to fetch the latest record
   payload after each notification.
 - On unsubscribe (or client disconnect), the watcher tears down.

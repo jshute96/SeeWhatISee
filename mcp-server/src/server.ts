@@ -35,6 +35,11 @@ export const STREAM_URI = 'seewhatisee://captures/stream';
 const LOG_FILE = 'log.json';
 const DEFAULT_WATCH_DEFAULT_MS = 60 * 1000;
 const DEFAULT_WATCH_MAX_MS = 10 * 60 * 1000;
+// fs.watch emits several raw events per logical capture: overlapping file + dir
+// watchers both fire, an in-place write yields separate content/mtime events,
+// and the browser's download can touch the dir multiple times. Coalesce a burst
+// into one listener notification once writes go quiet.
+const WATCH_DEBOUNCE_MS = 100;
 
 // ---------------------------------------------------------------------------
 // Source-dir resolution. Mirrors SeeWhatISee.sh.
@@ -402,6 +407,7 @@ class LogWatcher {
   private fileWatcher: fs.FSWatcher | null = null;
   private dirWatcher: fs.FSWatcher | null = null;
   private listeners = new Set<ChangeListener>();
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly sourceDir: string) {}
 
@@ -448,7 +454,18 @@ class LogWatcher {
     }
   }
 
+  // Schedule a single fan-out once the burst of raw fs events settles. Each new
+  // event resets the timer, so a multi-write download notifies once, after the
+  // file goes quiet.
   private notify(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      this.fanOut();
+    }, WATCH_DEBOUNCE_MS);
+  }
+
+  private fanOut(): void {
     // Snapshot: a listener might unsubscribe inside its own callback.
     for (const cb of [...this.listeners]) {
       try {
@@ -460,6 +477,10 @@ class LogWatcher {
   }
 
   private stop(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
     this.fileWatcher?.close();
     this.fileWatcher = null;
     this.dirWatcher?.close();

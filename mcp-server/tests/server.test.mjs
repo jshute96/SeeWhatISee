@@ -723,6 +723,30 @@ test('unsubscribe stops further notifications', async () => {
   }
 });
 
+test('a burst of fs events for one capture is debounced to a single notification', async () => {
+  const ctx = await setup();
+  try {
+    let count = 0;
+    ctx.client.setNotificationHandler(ResourceUpdatedNotificationSchema, () => {
+      count += 1;
+    });
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    await sleep(50);
+    // One logical capture, written several times in quick succession (mimics
+    // the overlapping file+dir watchers and the browser's multi-write download).
+    // All writes land well within WATCH_DEBOUNCE_MS, so they must coalesce.
+    for (let i = 0; i < 5; i++) {
+      writeLog(ctx.dir, [record({ timestamp: '2026-04-08T20:33:00.000Z' })]);
+      await sleep(10);
+    }
+    // Wait out the debounce window plus margin.
+    await sleep(300);
+    assert.equal(count, 1, `expected exactly one coalesced notification, got ${count}`);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // prompts
 // ---------------------------------------------------------------------------
