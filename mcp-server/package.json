@@ -1,6 +1,6 @@
 {
   "name": "@see-what-i-see/mcp-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server that exposes screenshots, HTML snapshots, and selections from the SeeWhatISee Chrome extension to any MCP client.",
   "type": "module",
   "license": "MIT",
