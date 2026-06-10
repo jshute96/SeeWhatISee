@@ -19,7 +19,9 @@
 #
 # Output: each emitted record is the original log.json JSON line with
 # `screenshot` / `contents` / `selection` filenames rewritten to
-# absolute paths, followed by a blank line. With --copy-to-dir, the
+# absolute paths. Records are emitted as JSONL — one per line — with a
+# trailing blank line only after a multi-line `Selection:` block
+# (--print_selection). With --copy-to-dir, the
 # referenced files are first copied into that dir and the absolute
 # paths point there instead of the source dir; this lets
 # Gemini CLI (which can only read its own workspace tmp dir) consume
@@ -230,11 +232,16 @@ process_record() {
 }
 
 # Read a single JSON record from stdin and emit it with framing:
-# the JSON line, a blank line, and (if --print_selection and the
-# record has a selection artifact) "Selection:" + the selection
-# file's contents + a blank line.
+# the JSON line, then (if --print_selection and the record has a
+# selection artifact) "Selection:" + the selection file's contents.
+#
+# Records are emitted as JSONL — one JSON object per line — in every
+# mode, which is what both the single-shot and streaming skills consume.
+# The only trailing blank line we add is to terminate a multi-line
+# "Selection:" block, so the next record's JSON stays on its own line
+# (the selection contents may not end in a newline).
 emit_record() {
-  local line
+  local line printed_selection=false
   line=$(cat | process_record)
   printf '%s\n' "$line"
   if $PRINT_SELECTION; then
@@ -247,9 +254,16 @@ emit_record() {
     if [[ -n "$sel_file" && -f "$sel_file" ]]; then
       printf '\nSelection:\n'
       cat "$sel_file"
+      printed_selection=true
     fi
   fi
-  printf '\n'
+  # Use an `if` (not `cond && printf`): under `set -e`, a bare
+  # `$printed_selection && printf` would make the function return the
+  # non-zero status of the false test when there's no selection, which
+  # the `... | emit_record` pipelines would propagate as a fatal error.
+  if $printed_selection; then
+    printf '\n'
+  fi
 }
 
 # Kill any running watcher recorded in $PIDFILE; remove the pidfile.

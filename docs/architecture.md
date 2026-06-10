@@ -209,7 +209,7 @@ Every record has `timestamp` and `url`, plus optional fields:
   with an empty file so downstream consumers see the cleared
   state immediately. `get-latest.sh` treats an empty `log.json`
   the same as "no captures yet"; `watch.sh` swallows the clear's
-  mtime bump without emitting a blank line.
+  mtime bump without emitting a spurious empty record.
 - The log is capped at 100 entries (FIFO eviction of the oldest);
   without a cap, rewriting the whole file on every capture would
   be quadratic in capture count.

@@ -425,6 +425,95 @@ test.describe('SeeWhatISee.sh --watch', () => {
     expect(out2).toContain(`${tmpDir}/${fn2}`);
   });
 
+  test('single-shot mode: records are pure JSONL with no blank separator', () => {
+    // Records are emitted as JSONL (one per line) in every mode — no
+    // blank line between them. log.json has record 0 (beforeEach); add
+    // 2 more so --after r0 emits a batch of 2 records in one run.
+    simulateCapture(tmpDir, 1);
+    simulateCapture(tmpDir, 2);
+    const r0 = fakeRecord(0);
+
+    const r = runWatch(['--after', r0.timestamp, '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    // Both records, each on its own line, no blank separator.
+    const jsonLines = r.stdout.split('\n').filter((l) => l.startsWith('{'));
+    expect(jsonLines.length).toBe(2);
+    expect(r.stdout).not.toMatch(/}\n\n\{/);
+  });
+
+  test('loop mode: records are pure JSONL with no blank separator', async () => {
+    // Same JSONL framing as single-shot. Catch up two pending records
+    // via --after --loop, which the streaming skills consume line-by-line.
+    simulateCapture(tmpDir, 1);
+    simulateCapture(tmpDir, 2);
+    const r0 = fakeRecord(0);
+    const s2 = fakeRecord(2).screenshot;
+
+    const watch = startWatch(['--after', r0.timestamp, '--loop', '--directory', tmpDir]);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+
+    const out = watch.output();
+    // Both records emitted, each on its own line...
+    const jsonLines = out.split('\n').filter((l) => l.startsWith('{'));
+    expect(jsonLines.length).toBe(2);
+    // ...with no blank line between them.
+    expect(out).not.toMatch(/}\n\n\{/);
+  });
+
+  test('loop mode: keeps looping — stays alive and emits the next record', async () => {
+    // Direct regression guard for "--watch --loop stops after one
+    // capture": if a per-record emit returns non-zero (e.g. emit_record
+    // ending on a failed `&&` test under `set -e`), the poll loop's
+    // `tail -1 | emit_record` pipeline aborts the script right after the
+    // first emit. Assert both that the watcher is still running after the
+    // first record AND that a second capture is actually emitted.
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const { screenshot: s1 } = simulateCapture(tmpDir, 1);
+    await waitForPattern(watch.output, `${tmpDir}/${s1}`, 1, 5_000);
+
+    // The first record was emitted; the loop must NOT have exited.
+    expect(watch.proc.exitCode).toBeNull();
+
+    // A second capture must also be picked up — i.e. the loop kept going.
+    await new Promise((r) => setTimeout(r, 1200));
+    const { screenshot: s2 } = simulateCapture(tmpDir, 2);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+    expect(watch.proc.exitCode).toBeNull();
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+  });
+
+  test('--print_selection: keeps a delimiter after the selection block', async () => {
+    // A multi-line Selection block must still be terminated by a blank
+    // line, or the next record's JSON would be glued onto the
+    // selection's last line (selection contents may lack a trailing
+    // newline, as here). Exercised here under --loop.
+    const selBody = '<p>no trailing newline</p>'; // deliberately no \n
+    simulateCaptureWithSelection(tmpDir, 1, selBody);
+    simulateCapture(tmpDir, 2);
+    const r0 = fakeRecord(0);
+    const s2 = fakeRecord(2).screenshot;
+
+    const watch = startWatch([
+      '--after', r0.timestamp, '--loop', '--print_selection', '--directory', tmpDir,
+    ]);
+    await waitForPattern(watch.output, `${tmpDir}/${s2}`, 1, 5_000);
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+
+    const out = watch.output();
+    expect(out).toContain('Selection:');
+    // Both records' JSON lines stand on their own line — record 2 is not
+    // glued onto the selection contents.
+    const jsonLines = out.split('\n').filter((l) => l.startsWith('{'));
+    expect(jsonLines.length).toBe(2);
+  });
+
   test('once mode: clearing the log (empty log.json) does not emit or exit; next capture does', async () => {
     // "Clear log history" overwrites log.json with a zero-byte file.
     // The mtime bump must NOT produce a blank emission or exit the
@@ -497,11 +586,12 @@ test.describe('SeeWhatISee.sh --watch', () => {
       selBody +
       `\n`;
     expect(r.stdout).toContain(block);
-    // Record 2 has no selection, so no "Selection:" block should follow it.
+    // Record 2 has no selection, so no "Selection:" block and no trailing
+    // blank line — it ends the JSONL stream on its own line.
     const r2Line =
       `{"timestamp":"${r2Info.timestamp}","screenshot":` +
       `{"filename":"${tmpDir}/${r2Info.screenshot}"},` +
-      `"url":"http://example.com/page2"}\n\n`;
+      `"url":"http://example.com/page2"}\n`;
     expect(r.stdout.endsWith(r2Line)).toBe(true);
   });
 
