@@ -1514,7 +1514,20 @@ export function installDetailsMessageHandlers(): void {
           // builds a session with this field set.
           restoreUiState: session.uiState,
         });
-      })();
+      })().catch((err) => {
+        // Unlike the sibling handlers (which surface a structured
+        // `{ error }` the page renders inline), this fetch just needs
+        // *a* reply: an unanswered sendResponse leaves the page hung on
+        // its initial getDetailsData round-trip. `undefined` is the same
+        // payload the lost-session branch sends, so the page falls back
+        // to its blank state. Log at error level (not info): an
+        // unexpected session/defaults failure is a genuine bug, and
+        // without catching it the rejection used to bubble onto the
+        // chrome://extensions Errors page — catching it to respond would
+        // otherwise hide that signal.
+        console.error('[SeeWhatISee] getDetailsData failed:', err);
+        sendResponse(undefined);
+      });
       return true;
     }
 
