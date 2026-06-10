@@ -188,9 +188,40 @@ The push-notification equivalent of `--watch --loop`.
     watchers, content-vs-mtime events, multi-write download bursts), so
     the watcher coalesces a burst into a single notification once writes
     go quiet. Without it, a single capture fired multiple notifications.
-- Client calls `resources/read` on the URI to fetch the latest record
-  payload after each notification.
+- Client reads the resource to fetch records (see the read shapes
+  below) after each notification.
 - On unsubscribe (or client disconnect), the watcher tears down.
+
+**The notification is a doorbell, not the data.** `resources/updated`
+carries no payload and is allowed to coalesce, so it can't be the
+delivery channel — the lossless path is a **cursored read**:
+
+- **Bare read** (`seewhatisee://captures/stream`) returns the single
+  latest record (`{ record: null }` when the log is empty). A client
+  reads this once on subscribe to seed its cursor.
+- **Cursored read** (`seewhatisee://captures/stream?after=<timestamp>`)
+  scans the whole log and returns `{ records: [...] }` — every record
+  *strictly newer* than the cursor, in log order. An empty cursor
+  (`?after=`) means "from the start" and returns all records — what a
+  client that bootstrapped on an empty log uses.
+- The cursor is the record `timestamp`; the compare is exclusive (`>`),
+  matching the `watch` tool's `after`. ISO-8601 UTC timestamps are
+  fixed-width, so a lexical compare is chronological.
+
+**Why this is loss-free.** The client loop:
+
+- Subscribe → bootstrap read → on each notification, cursored-read from
+  its last-seen timestamp, process the returned records, advance the
+  cursor.
+- A coalesced or even dropped notification is harmless — the next read
+  still drains everything after the cursor.
+- Scanning the whole log (rather than slicing after a matched cursor)
+  also tolerates out-of-order arrivals.
+
+**Residual gaps (irreducible on stdio).** If the *final* notification is
+dropped and no capture ever follows, the client won't learn of the last
+record until the next ping or a manual read; an occasional poll or the
+blocking `watch` tool is the backstop.
 
 **Fallback when the client doesn't support subscriptions:** the same
 client can still poll with the `watch` tool. Both code paths live in

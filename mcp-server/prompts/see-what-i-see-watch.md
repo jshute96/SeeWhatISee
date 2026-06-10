@@ -10,8 +10,8 @@ Prefer the subscription path when the client supports it; fall back to polling o
 
 ### Subscription path (preferred)
 
-1. Subscribe to the resource `seewhatisee://captures/stream`.
-2. Each `notifications/resources/updated` notification means a new capture arrived. Read the resource to fetch the latest record, then process it as described below.
+1. Subscribe to the resource `seewhatisee://captures/stream`. Then read it once (bare, no query) to get an initial timestamp cursor: remember the `timestamp` of the latest record (or use an empty string if there are none yet).
+2. Each `notifications/resources/updated` notification means at least one new capture arrived. Read `seewhatisee://captures/stream?after=<timestamp>` to read **all records** newer than that timestamp — it returns `{ records: [...] }` in order. Process each, then remember the last record's `timestamp` as the new cursor.
 3. Continue until the user tells you to stop.
 
 ### Polling path (fallback)

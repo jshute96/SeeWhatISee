@@ -674,16 +674,31 @@ export function createServer(opts: ServerOpts): Server {
 
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     const uri = req.params.uri;
-    if (uri === STREAM_URI) {
+    if (uri === STREAM_URI || uri.startsWith(STREAM_URI + '?')) {
       const records = readAllRecords(logPath);
+      const qIndex = uri.indexOf('?');
+      const after =
+        qIndex >= 0 ? new URLSearchParams(uri.slice(qIndex + 1)).get('after') : null;
+      // Cursored drain: `?after=<ts>` returns EVERY record strictly newer than
+      // the cursor, in log order, so a client that re-reads after each
+      // notification never misses an intermediate capture — coalesced or even
+      // dropped pings are recovered on the next read. We scan the whole log
+      // (not a position after a matching cursor), so out-of-order arrivals are
+      // still caught. ISO-8601 UTC timestamps are fixed-width, so a lexical
+      // compare is chronological. An empty cursor (`?after=`) means "from the
+      // start" — every timestamp sorts after '' — which is what a client that
+      // bootstrapped on an empty log uses. Branch on the param being *present*
+      // (not truthy) so `?after=` stays in the cursored shape. With no cursor
+      // at all, return just the latest record — the bootstrap a client reads
+      // once to seed its cursor.
       const payload =
-        records.length === 0
-          ? { record: null }
-          : toResourceRecord(records[records.length - 1], sourceDir);
+        after !== null
+          ? { records: records.filter((r) => r.timestamp > after).map((r) => toResourceRecord(r, sourceDir)) }
+          : records.length === 0
+            ? { record: null }
+            : toResourceRecord(records[records.length - 1], sourceDir);
       return {
-        contents: [
-          { uri: STREAM_URI, mimeType: 'application/json', text: JSON.stringify(payload) },
-        ],
+        contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(payload) }],
       };
     }
     if (uri.startsWith('file:')) {

@@ -560,6 +560,91 @@ test('resources/read returns the latest record referencing files by uri', async 
   }
 });
 
+test('resources/read with ?after= drains every record strictly newer, in order', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'b.png' } }),
+      record({ timestamp: '2026-04-08T20:30:10.000Z', screenshot: { filename: 'c.png' } }),
+    ],
+  });
+  try {
+    const res = await ctx.client.readResource({
+      uri: STREAM_URI + '?after=2026-04-08T20:30:00.000Z',
+    });
+    const payload = JSON.parse(res.contents[0].text);
+    // Excludes the cursor record (strictly-greater), returns the rest in order.
+    assert.deepEqual(
+      payload.records.map((r) => r.timestamp),
+      ['2026-04-08T20:30:05.000Z', '2026-04-08T20:30:10.000Z'],
+    );
+    assert.equal(payload.records[0].screenshot.uri, uriFor(ctx.dir, 'b.png'));
+    assert.equal(payload.records[1].screenshot.uri, uriFor(ctx.dir, 'c.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read with ?after= at/after the latest returns an empty records array', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:05.000Z' })],
+  });
+  try {
+    const res = await ctx.client.readResource({
+      uri: STREAM_URI + '?after=2026-04-08T20:30:05.000Z',
+    });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.deepEqual(payload, { records: [] });
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read with an empty cursor (?after=) returns all records from the start', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z' }),
+    ],
+  });
+  try {
+    // A client that bootstrapped on an empty log seeds an empty cursor; the
+    // empty value must stay in the cursored ({ records }) shape, not fall back
+    // to the bare latest-record shape.
+    const res = await ctx.client.readResource({ uri: STREAM_URI + '?after=' });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.deepEqual(
+      payload.records.map((r) => r.timestamp),
+      ['2026-04-08T20:30:00.000Z', '2026-04-08T20:30:05.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a burst of captures is fully recovered by one cursored read (loss-free)', async () => {
+  const ctx = await setup();
+  try {
+    // Seed cursor from a bootstrap (bare) read of an empty log.
+    let res = await ctx.client.readResource({ uri: STREAM_URI });
+    assert.deepEqual(JSON.parse(res.contents[0].text), { record: null });
+    // Several captures land back-to-back (would collapse to one notification).
+    writeLog(ctx.dir, [
+      record({ timestamp: '2026-04-08T20:31:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:31:00.500Z' }),
+      record({ timestamp: '2026-04-08T20:31:01.000Z' }),
+    ]);
+    // A single cursored read from the seed cursor drains all three.
+    res = await ctx.client.readResource({
+      uri: STREAM_URI + '?after=2026-04-08T20:30:00.000Z',
+    });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.equal(payload.records.length, 3);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('resources/read rejects unknown non-file URIs', async () => {
   const ctx = await setup();
   try {
