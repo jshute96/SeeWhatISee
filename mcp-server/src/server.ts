@@ -34,6 +34,25 @@ import { PROMPT_SEE, PROMPT_WATCH } from './prompts.generated.js';
 
 export const STREAM_URI = 'seewhatisee://captures/stream';
 const LOG_FILE = 'log.json';
+
+// Version reported to MCP clients. Read from package.json at runtime so it
+// can't drift from the published package version (the release script bumps
+// only package.json). Both the tsc output (dist/server.js) and the esbuild
+// bundle (dist/seewhatisee-mcp.js) sit one level under the package root, so
+// `../package.json` resolves the same way from either.
+function readServerVersion(): string {
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(dir, '..', 'package.json'), 'utf8'),
+    ) as { version?: unknown };
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const SERVER_VERSION = readServerVersion();
 const DEFAULT_WATCH_DEFAULT_MS = 60 * 1000;
 const DEFAULT_WATCH_MAX_MS = 10 * 60 * 1000;
 // fs.watch emits several raw events per logical capture: overlapping file + dir
@@ -515,7 +534,7 @@ export function createServer(opts: ServerOpts): Server {
   let streamListener: ChangeListener | null = null;
 
   const server = new Server(
-    { name: 'seewhatisee', version: '0.1.0' },
+    { name: 'seewhatisee', version: SERVER_VERSION },
     {
       capabilities: {
         tools: {},
