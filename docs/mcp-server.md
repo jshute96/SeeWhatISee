@@ -129,11 +129,21 @@ next one if none are pending.
 - **Behavior:**
   - With `after`: behaves like `--watch --after <ts>` (without
     `--catch-up-one`) — emit *all* records newer than `after`,
-    immediately, then return.
-  - With `after` and no newer records: fall through to the blocking
-    wait, return up to one record (or empty on timeout).
-  - Without `after`: blocking wait only — return up to one record or
-    empty on timeout.
+    immediately, then return. This holds even when `after` isn't an
+    exact in-log timestamp: any already-present records newer than it
+    are returned at once rather than blocking.
+  - With `after` and no newer records yet: fall through to the blocking
+    wait. On wake it returns *every* record newer than `after` (a
+    coalesced burst is delivered whole, never just the latest), or empty
+    on timeout.
+  - Without `after`: blocking wait only — on wake, every record that
+    arrived after the call started; empty on timeout.
+- **No missed records.** The watcher is armed before a catch-up read, so
+  a capture landing in the gap between the call and the watch arming is
+  caught by that read, not stranded until the next change. Combined with
+  returning the whole newer-than-cursor batch on every wake, a client
+  that cursors forward by the newest returned timestamp never skips a
+  capture.
 - **Why a single tool, not two:** matches the "drain + wait" loop a
   client naturally writes. Splitting it into `pending_since` +
   `wait_for_next` would force every caller to compose them.

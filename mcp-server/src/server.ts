@@ -645,18 +645,30 @@ export function createServer(opts: ServerOpts): Server {
       }
     }
 
-    const next = await waitForNext(after, timeoutMs);
-    if (!next) return jsonContent({ records: [] });
-    return { content: recordContent(next, sourceDir, inline) };
+    const fresh = await waitForNext(after, timeoutMs);
+    if (fresh.length === 0) return jsonContent({ records: [] });
+    return { content: fresh.flatMap((r) => recordContent(r, sourceDir, inline)) };
   }
 
+  // Block until the log gains records newer than the caller's cursor, then
+  // resolve with ALL of them (not just the latest). Returning the whole batch
+  // is what makes a burst safe: fs events are debounced and coalesced, so two
+  // captures landing close together fan out as a single wake. If we resolved
+  // with only the last record, the client would advance its cursor past the
+  // intermediate one and never see it. The cursor is `after` when given,
+  // otherwise the latest timestamp at the moment we start waiting (so a
+  // pre-existing tail isn't re-emitted). Resolves with [] on timeout.
   function waitForNext(
     after: string | undefined,
     timeoutMs: number,
-  ): Promise<CaptureRecord | null> {
+  ): Promise<CaptureRecord[]> {
+    const startRecords = readAllRecords(logPath);
+    const baseline =
+      after ??
+      (startRecords.length ? startRecords[startRecords.length - 1].timestamp : '');
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (val: CaptureRecord | null) => {
+      const finish = (val: CaptureRecord[]) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -665,14 +677,22 @@ export function createServer(opts: ServerOpts): Server {
       };
       const onChange = () => {
         const all = readAllRecords(logPath);
-        if (all.length === 0) return; // log truncated; wait for next change
-        const last = all[all.length - 1];
-        // Ignore no-op changes (e.g. the same record we already saw).
-        if (after && last.timestamp === after) return;
-        finish(last);
+        // ISO-8601 UTC timestamps are fixed-width, so `>` is chronological.
+        // This also drops no-op changes (the cursor's own record is not `>`
+        // itself) and skips a truncated/empty log until real records return.
+        const fresh = all.filter((r) => r.timestamp > baseline);
+        if (fresh.length === 0) return;
+        finish(fresh);
       };
-      const timer = setTimeout(() => finish(null), timeoutMs);
+      const timer = setTimeout(() => finish([]), timeoutMs);
+      // Arm the watcher BEFORE the catch-up read, then read once. This closes
+      // the gap where a capture lands after we snapshot `baseline` but before
+      // the watcher is live: a write after `add` fires an fs event; a write
+      // before it is already on disk for this read. Either way it's caught,
+      // so we never block until the *next* change for a record that already
+      // exists. `finish` is idempotent, so a later fs event is harmless.
       logWatcher.add(onChange);
+      onChange();
     });
   }
 

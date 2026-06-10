@@ -448,6 +448,62 @@ test('watch returns the next record when one is appended', async () => {
   }
 });
 
+test('watch returns every record in a coalesced burst, not just the last', async () => {
+  // Two captures landing within one fs.watch debounce window fan out as a
+  // single wake. The wake must return BOTH — if it returned only the latest,
+  // a client cursoring forward would skip the intermediate record.
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+    watchDefaultTimeoutMs: 2_000,
+  });
+  try {
+    const watchPromise = ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:00.000Z' },
+    });
+    // Append both back-to-back so they coalesce into one notification.
+    setTimeout(() => {
+      appendRecord(ctx.dir, record({ timestamp: '2026-04-08T20:30:05.000Z' }));
+      appendRecord(ctx.dir, record({ timestamp: '2026-04-08T20:30:06.000Z' }));
+    }, 80);
+    const records = watchRecords(await watchPromise);
+    assert.deepEqual(
+      records.map((r) => r.timestamp),
+      ['2026-04-08T20:30:05.000Z', '2026-04-08T20:30:06.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('watch returns already-present newer records immediately, without blocking', async () => {
+  // Records newer than the cursor already sit in the log when watch is called
+  // (the cursor isn't an exact in-log timestamp, so the drain's exact-match
+  // skips them). The post-attach catch-up read must still surface them at once
+  // rather than blocking until the next fs change — closing the attach-gap
+  // race. A short timeout means a regression returns [] quickly instead of
+  // hanging.
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z' }),
+    ],
+    watchDefaultTimeoutMs: 300,
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:29:00.000Z' },
+    });
+    assert.deepEqual(
+      watchRecords(res).map((r) => r.timestamp),
+      ['2026-04-08T20:30:00.000Z', '2026-04-08T20:30:05.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('watch wakes up when log.json is created from scratch', async () => {
   // No log.json yet — exercises the parent-dir fs.watch path.
   const ctx = await setup({ watchDefaultTimeoutMs: 2_000 });
