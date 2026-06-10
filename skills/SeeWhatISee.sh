@@ -192,6 +192,17 @@ else
   OUT_DIR="$DIR"
 fi
 
+# Pre-escape OUT_DIR for safe interpolation into the sed *replacement*
+# strings in process_record (s|...|...$OUT_DIR_SED...|). A path
+# containing `&` (sed inserts the matched text), `\`, or `|` (our `s`
+# delimiter) would otherwise corrupt the rewritten JSON or make sed
+# error out — e.g. a real dir like `~/Downloads/Screens & Shots`.
+# Order matters: escape backslashes first, so the backslashes we add
+# for `&` and `|` aren't themselves re-escaped.
+OUT_DIR_SED=${OUT_DIR//\\/\\\\}
+OUT_DIR_SED=${OUT_DIR_SED//&/\\&}
+OUT_DIR_SED=${OUT_DIR_SED//|/\\|}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -226,9 +237,9 @@ process_record() {
     done
   fi
   printf '%s' "$line" \
-    | sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$OUT_DIR/\\1\"|" \
-          -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$OUT_DIR/\\1\"|" \
-          -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$OUT_DIR/\\1\"|"
+    | sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
+          -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
+          -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$OUT_DIR_SED/\\1\"|"
 }
 
 # Read a single JSON record from stdin and emit it with framing:
