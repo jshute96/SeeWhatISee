@@ -1,17 +1,31 @@
 ---
-name: see-what-i-see
-description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and describe what you see.
+name: see-what-i-see-watch
+description: Watch for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
 ---
-Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and make it available as context so the user can ask questions about what they see.
+Watch for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
 
-You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
+This runs through the **`see-what-i-see` MCP server**, which exposes the extension's captures as MCP tools (`watch`) and the `seewhatisee://captures/stream` resource. The steps below use those — your client must have that MCP server configured.
 
-## Steps
+## Getting snapshots in a loop
 
-1. Call the `get_latest` tool. It returns a JSON metadata block describing one capture record, plus a `resource_link` for each saved file.
-  - If the call fails, the SeeWhatISee Chrome extension probably hasn't taken any captures yet.
+Prefer the subscription path when the client supports it; fall back to polling otherwise.
 
-2. The capture record contains `{timestamp, url, title}` plus any of:
+### Subscription path (preferred)
+
+1. Subscribe to the resource `seewhatisee://captures/stream`. Then read it once (bare, no query) to get an initial timestamp cursor: remember the `timestamp` of the latest record (or use an empty string if there are none yet).
+2. Each `notifications/resources/updated` notification means at least one new capture arrived. Read `seewhatisee://captures/stream?after=<timestamp>` to read **all records** newer than that timestamp — it returns `{ records: [...] }` in order. Process each, then remember the last record's `timestamp` as the new cursor.
+3. Continue until the user tells you to stop.
+
+### Polling path (fallback)
+
+1. Call the `watch` tool with no arguments. It blocks for up to ~60s and returns any new capture records — each as a JSON metadata block plus a `resource_link` per saved file, the same shape as `get_latest`. With nothing new it returns `{ records: [] }`.
+2. Process each returned record as described below.
+3. Call `watch` again with `after = <last record's timestamp>` to catch up on anything that arrived while you were processing, then block for the next.
+4. Continue until the user tells you to stop.
+
+## Process each snapshot
+
+1. The capture record contains `{timestamp, url, title}` plus any of:
   - `screenshot` — object describing a captured PNG, with:
     - `hasHighlights: true` means the user drew red markup (boxes and/or lines) on top of the screenshot to call attention to specific regions.
     - `hasRedactions: true` means the user blacked out at least one region. Those are deliberately hidden as irrelevant or private — don't comment about them unless asked.
@@ -30,7 +44,7 @@ You can't run this autonomously since it requires the user to have just clicked 
 
   **Look at referenced files only. Don't go fishing for others unless asked to.**
 
-3. Process the capture:
+2. Process the capture:
   - If `screenshot` is present, read the screenshot.
     - **If `screenshot.hasHighlights` is `true`, the user has drawn red markup to call attention to specific regions. Focus your description on those marked areas. If a `prompt` is present, it is likely referring to those regions specifically — interpret it in that context.**
   - If `contents` is present, don't read the file up front (HTML can be large); wait until you know what to look for.
@@ -42,4 +56,4 @@ You can't run this autonomously since it requires the user to have just clicked 
     - For selection-only captures, quote or summarize the selected fragment and mention the source `url`.
     - For URL-only captures (no files), report the `url` and ask the user what they want to know about it.
 
-4. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path.
+3. **Reading the referenced files:** each file is a resource you fetch only when you need it. Read it with `resources/read` on the `uri` from its `resource_link`, or with your client's native file-read tool at the `file://` path.

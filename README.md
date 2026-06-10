@@ -179,6 +179,8 @@ Same two prompts:
 
 How the prompts surface depends on the client. Claude Code exposes them as `/mcp__see-what-i-see__see-what-i-see` and `/mcp__see-what-i-see__see-what-i-see-watch`; most other clients show MCP prompts in a picker UI.
 
+Some clients support an MCP server's tools but not its prompts. If your client doesn't support these prompts automatically from the MCP server, they are also available as plain skills under [`skills/mcp/`](skills/mcp/) — install those skills and they'll drive the `see-what-i-see` MCP server's tools directly.
+
 See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for details.
 
 ## Installation

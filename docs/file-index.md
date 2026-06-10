@@ -50,8 +50,8 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/gemini.see.md` | Template for `skills/dot-gemini/skills/see-what-i-see/SKILL.md` |
 | `skills/gemini.watch.md` | Template for `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` |
 | `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
-| `skills/mcp-server.see.md` | Template for `mcp-server/prompts/see-what-i-see.md` (MCP prompt body + frontmatter metadata) |
-| `skills/mcp-server.watch.md` | Template for `mcp-server/prompts/see-what-i-see-watch.md` (MCP prompt body + frontmatter metadata) |
+| `skills/mcp-server.see.md` | Template for `skills/mcp/see-what-i-see/SKILL.md` (MCP-driven skill body + frontmatter metadata) |
+| `skills/mcp-server.watch.md` | Template for `skills/mcp/see-what-i-see-watch/SKILL.md` (MCP-driven skill body + frontmatter metadata) |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
 | `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
@@ -104,6 +104,17 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — foreground loop that describes each new capture |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
 
+## MCP Skills (`skills/mcp/`)
+
+MCP-driven skills that double as the MCP server's prompt bodies — `mcp-server/build-prompts.mjs` inlines them into the bundle. Installable as plain skills for clients that support MCP tools but not prompts.
+
+**NOTE: the SKILL.md files below are generated from `skills/`, do not edit directly**
+
+| File | Description |
+|------|-------------|
+| `skills/mcp/see-what-i-see/SKILL.md` | Drives the `see-what-i-see` MCP server's `get_latest`; also inlined as the server's `see-what-i-see` prompt |
+| `skills/mcp/see-what-i-see-watch/SKILL.md` | Watches via the server's `watch` tool / `captures/stream`; also inlined as the `see-what-i-see-watch` prompt |
+
 ## MCP Server (`mcp-server/`)
 
 Standalone TypeScript MCP server. Exposes the same captures as
@@ -117,9 +128,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `mcp-server/README.md` | npm-registry-facing README — install snippets per MCP client, tools / resources / prompts list |
 | `mcp-server/tsconfig.json` | TypeScript config for the server (ES2022, strict, output to `dist/`) |
 | `mcp-server/bundle.mjs` | esbuild step that bundles `src/cli.ts` + deps into `dist/seewhatisee-mcp.js` with a node shebang |
-| `mcp-server/build-prompts.mjs` | Reads `prompts/*.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
-| `mcp-server/prompts/see-what-i-see.md` | Generated from `skills/mcp-server.see.md` — prompt body inlined into the bundle |
-| `mcp-server/prompts/see-what-i-see-watch.md` | Generated from `skills/mcp-server.watch.md` — prompt body inlined into the bundle |
+| `mcp-server/build-prompts.mjs` | Reads `../skills/mcp/*/SKILL.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
 | `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter; tools + `file://` file resources + prompt handlers |
 | `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--help`), source-dir resolution, stdio transport, `server.connect` |
 | `mcp-server/tests/resolve.test.mjs` | Unit tests for `resolveSourceDir` — explicit override, cwd vs home precedence, default fallback, config-file parsing |

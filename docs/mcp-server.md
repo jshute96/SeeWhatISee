@@ -283,7 +283,7 @@ Pipeline (edit the leftmost; everything to the right regenerates):
 skills/mcp-server.{see,watch}.md         (templates, edit these)
         │  skills/generate-skills.py
         ▼
-mcp-server/prompts/{see-what-i-see,see-what-i-see-watch}.md  (committed)
+skills/mcp/{see-what-i-see,see-what-i-see-watch}/SKILL.md  (committed; also installable skills)
         │  mcp-server/build-prompts.mjs
         ▼
 mcp-server/src/prompts.generated.ts      (gitignored — TS strings)
@@ -295,10 +295,13 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 - The `.md` templates carry YAML frontmatter (`name`, `description`)
   alongside the body, so both the `prompts/list` description and the
   `prompts/get` body come from the same source.
-- `skills/generate-skills.py` validates `mcp-server/prompts/*.md` against
+- The same `skills/mcp/*/SKILL.md` files double as installable skills
+  for clients that support an MCP server's tools but not its prompts —
+  they drive the `see-what-i-see` MCP server's tools directly.
+- `skills/generate-skills.py` validates `skills/mcp/*/SKILL.md` against
   the templates as part of `npm run test:skills` (root-level script,
   wired into `npm test`); drift fails the check.
-- `mcp-server/build-prompts.mjs` runs from `postinstall` (which also
+- `mcp-server/build-prompts.mjs` runs from `prepare` (which also
   runs `tsc`), so a fresh `npm install` leaves `dist/` ready for a
   direct `node --test tests/<file>.mjs` invocation. `pretest` and
   `build` also re-run it on every test / build.

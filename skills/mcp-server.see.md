@@ -4,6 +4,8 @@ description: Read the latest screenshot or HTML snapshot taken by the SeeWhatISe
 ---
 Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome extension and make it available as context so the user can ask questions about what they see.
 
+This runs through the **`see-what-i-see` MCP server**, which exposes the extension's captures as MCP tools (`get_latest`) and `seewhatisee://` resources. The steps below call those — your client must have that MCP server configured.
+
 You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
 
 ## Steps

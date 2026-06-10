@@ -4,6 +4,8 @@ description: Watch for new captures from the SeeWhatISee Chrome extension. Each 
 ---
 Watch for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
 
+This runs through the **`see-what-i-see` MCP server**, which exposes the extension's captures as MCP tools (`watch`) and the `seewhatisee://captures/stream` resource. The steps below use those — your client must have that MCP server configured.
+
 ## Getting snapshots in a loop
 
 Prefer the subscription path when the client supports it; fall back to polling otherwise.
