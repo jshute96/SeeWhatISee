@@ -110,8 +110,12 @@ do not edit the per-bundle copies.
   - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
   - `skills/mcp/see-what-i-see/SKILL.md` (also read by `mcp-server/build-prompts.mjs` for the MCP prompt body)
   - `skills/mcp/see-what-i-see-watch/SKILL.md` (also read by `mcp-server/build-prompts.mjs` for the MCP prompt body)
+  - `skills/generic-skills/see-what-i-see/SKILL.md`
+  - `skills/generic-skills/see-what-i-see-watch/SKILL.md`
+  - `skills/generic-skills/see-what-i-see-stop/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
   - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
+  - `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

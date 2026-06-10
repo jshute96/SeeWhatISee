@@ -183,6 +183,12 @@ Some clients support an MCP server's tools but not its prompts. If your client d
 
 See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for details.
 
+### Generic skills for other tools
+
+For other agentic tools that run skills, a client-agnostic set lives under [`skills/generic-skills/`](skills/generic-skills/). They're a hybrid of the Claude and Gemini skills with the client-specific bits removed — `see-what-i-see`, `see-what-i-see-watch`, and `see-what-i-see-stop`, each wrapping the shared backend script. The watch skill adapts to what your tool can do — a streaming watcher if it can read a command's output as it arrives, otherwise a single-shot loop run either in the background (waking on completion) or in the blocking foreground. Copy them into your tool and adapt as needed.
+
+These are a good starting point if you want to try making skills (using CLI scripts) work in other tools.
+
 ## Installation
 
 ### Chrome web store

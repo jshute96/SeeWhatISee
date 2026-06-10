@@ -49,8 +49,17 @@ PAIRS = [
     # same SKILL.md files and inlines their frontmatter + body into the bundle.
     ("mcp-server.see.md",   "skills/mcp/see-what-i-see/SKILL.md"),
     ("mcp-server.watch.md", "skills/mcp/see-what-i-see-watch/SKILL.md"),
+    # Generic skills: a client-agnostic hybrid of the Claude and Gemini
+    # sets, with the client-specific workarounds removed. Reference-only
+    # (the README points users at them to copy/adapt); not mirrored to a
+    # release repo. The wrapper scripts are committed directly; only the
+    # SeeWhatISee.sh backend is propagated verbatim like the other bundles.
+    ("generic.see.md",   "skills/generic-skills/see-what-i-see/SKILL.md"),
+    ("generic.watch.md", "skills/generic-skills/see-what-i-see-watch/SKILL.md"),
+    ("generic.stop.md",  "skills/generic-skills/see-what-i-see-stop/SKILL.md"),
     ("SeeWhatISee.sh",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh", "verbatim"),
     ("SeeWhatISee.sh",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh",    "verbatim"),
+    ("SeeWhatISee.sh",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh",       "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")

@@ -52,6 +52,9 @@ One-line descriptions of every source file, grouped by directory.
 | `skills/gemini.xtract.md` | Template for the `see-what-i-see-xtract` SKILL.md alias — same body as `gemini.see.md`, description marks it as an alias |
 | `skills/mcp-server.see.md` | Template for `skills/mcp/see-what-i-see/SKILL.md` (MCP-driven skill body + frontmatter metadata) |
 | `skills/mcp-server.watch.md` | Template for `skills/mcp/see-what-i-see-watch/SKILL.md` (MCP-driven skill body + frontmatter metadata) |
+| `skills/generic.see.md` | Template for `skills/generic-skills/see-what-i-see/SKILL.md` (client-agnostic get-latest skill) |
+| `skills/generic.watch.md` | Template for `skills/generic-skills/see-what-i-see-watch/SKILL.md` (watch skill: streaming, or single-shot loop in background or foreground) |
+| `skills/generic.stop.md` | Template for `skills/generic-skills/see-what-i-see-stop/SKILL.md` (stop the background watcher) |
 | `skills/diff-claude-gemini.sh` | Dev helper — opens `meld` on the claude/gemini template pairs |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
 | `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
@@ -114,6 +117,26 @@ MCP-driven skills that double as the MCP server's prompt bodies — `mcp-server/
 |------|-------------|
 | `skills/mcp/see-what-i-see/SKILL.md` | Drives the `see-what-i-see` MCP server's `get_latest`; also inlined as the server's `see-what-i-see` prompt |
 | `skills/mcp/see-what-i-see-watch/SKILL.md` | Watches via the server's `watch` tool / `captures/stream`; also inlined as the `see-what-i-see-watch` prompt |
+
+## Generic Skills (`skills/generic-skills/`)
+
+Client-agnostic hybrid of the Claude and Gemini skills, with the client-specific workarounds removed. Reference-only — the README points users at these to copy/adapt onto other tools; not mirrored to a release repo. The watch skill branches between a streaming background watcher and a blocking polling loop.
+
+| File | Description |
+|------|-------------|
+| `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.sh` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
+| `skills/generic-skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.sh --get-latest` |
+| `skills/generic-skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile` (streaming background watcher) |
+| `skills/generic-skills/see-what-i-see-watch/scripts/watch-once.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --catch-up-one` (one blocking poll iteration; supports `--after TIMESTAMP`) |
+| `skills/generic-skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --stop` |
+
+**NOTE: the SKILL.md files below are generated from `skills/`, do not edit directly**
+
+| File | Description |
+|------|-------------|
+| `skills/generic-skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture (client-agnostic) |
+| `skills/generic-skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — streaming-or-polling loop describing each new capture |
+| `skills/generic-skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the background watcher |
 
 ## MCP Server (`mcp-server/`)
 
