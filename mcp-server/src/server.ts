@@ -20,6 +20,7 @@ import {
   ErrorCode,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
@@ -40,6 +41,9 @@ const DEFAULT_WATCH_MAX_MS = 10 * 60 * 1000;
 // and the browser's download can touch the dir multiple times. Coalesce a burst
 // into one listener notification once writes go quiet.
 const WATCH_DEBOUNCE_MS = 100;
+// Canonical ISO-8601 UTC timestamp the extension writes (`toISOString()`). The
+// stream cursor must match this so the lexical `>` compare stays chronological.
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // ---------------------------------------------------------------------------
 // Source-dir resolution. Mirrors SeeWhatISee.sh.
@@ -663,11 +667,38 @@ export function createServer(opts: ServerOpts): Server {
     resources: [
       {
         uri: STREAM_URI,
-        name: 'Capture stream',
+        name: 'Read capture stream (latest)',
         description:
           'Read returns the latest capture record (or { record: null } if none yet). ' +
           'Subscribe to receive a `notifications/resources/updated` notification on every new capture.',
         mimeType: 'application/json',
+      },
+    ],
+  }));
+
+  // The bare stream is a concrete resource (above); these templates let a
+  // client construct the parameterized reads (and give Inspector-style UIs a
+  // field to fill in): the cursored stream, and a captured file by its
+  // `file://` path. `{+path}` uses reserved expansion so the path's slashes
+  // aren't percent-encoded.
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [
+      {
+        uriTemplate: `${STREAM_URI}{?after}`,
+        name: 'Read capture stream (cursored)',
+        description:
+          'Read every capture record strictly newer than ?after=<ISO-8601 timestamp>, ' +
+          'in log order, as { records: [...] }. An empty cursor (?after=) returns all ' +
+          'records; omit `after` entirely for the latest record only.',
+        mimeType: 'application/json',
+      },
+      {
+        uriTemplate: 'file://{+path}',
+        name: 'Read captured file',
+        description:
+          'Read a captured file by its file:// URI (taken from a capture record’s ' +
+          'resource_link). Only paths under the capture source directory are ' +
+          'readable; any other path is denied.',
       },
     ],
   }));
@@ -677,8 +708,20 @@ export function createServer(opts: ServerOpts): Server {
     if (uri === STREAM_URI || uri.startsWith(STREAM_URI + '?')) {
       const records = readAllRecords(logPath);
       const qIndex = uri.indexOf('?');
-      const after =
+      const afterRaw =
         qIndex >= 0 ? new URLSearchParams(uri.slice(qIndex + 1)).get('after') : null;
+      // Trim so a whitespace-only value (a workaround for UIs that won't send a
+      // truly blank param) reads as the empty "from the start" cursor.
+      const after = afterRaw === null ? null : afterRaw.trim();
+      // A non-empty cursor must be a real timestamp — the compare is lexical, so
+      // a malformed value would silently mis-order rather than erroring.
+      if (after && !ISO_TIMESTAMP_RE.test(after)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Invalid \`after\` cursor (expected an ISO-8601 UTC timestamp like ` +
+            `2026-01-01T00:00:00.000Z): ${after}`,
+        );
+      }
       // Cursored drain: `?after=<ts>` returns EVERY record strictly newer than
       // the cursor, in log order, so a client that re-reads after each
       // notification never misses an intermediate capture — coalesced or even

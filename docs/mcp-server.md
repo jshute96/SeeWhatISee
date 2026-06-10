@@ -206,7 +206,20 @@ delivery channel — the lossless path is a **cursored read**:
   client that bootstrapped on an empty log uses.
 - The cursor is the record `timestamp`; the compare is exclusive (`>`),
   matching the `watch` tool's `after`. ISO-8601 UTC timestamps are
-  fixed-width, so a lexical compare is chronological.
+  fixed-width, so a lexical compare is chronological. A non-empty cursor
+  that isn't a canonical ISO-8601 UTC timestamp is rejected (the lexical
+  compare only holds for that format).
+
+**Discovery.**
+
+- The bare stream is a concrete `resources/list` entry.
+- Two `resources/templates/list` templates let a client (or an
+  Inspector-style UI) construct the parameterized reads:
+  - `seewhatisee://captures/stream{?after}` — the cursored stream read.
+  - `file://{+path}` — a captured file by path (`{+path}` is reserved
+    expansion so slashes aren't encoded). The template advertises the
+    shape, but `ensureUnderSource` still gates it: only paths under the
+    capture source dir are readable.
 
 **Why this is loss-free.** The client loop:
 

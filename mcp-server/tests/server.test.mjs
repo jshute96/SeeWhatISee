@@ -528,6 +528,20 @@ test('resources/list exposes only the captures/stream resource (files are not en
   }
 });
 
+test('resources/templates/list advertises the cursored stream and file templates', async () => {
+  const ctx = await setup();
+  try {
+    const { resourceTemplates } = await ctx.client.listResourceTemplates();
+    const byUri = Object.fromEntries(resourceTemplates.map((t) => [t.uriTemplate, t]));
+    assert.equal(resourceTemplates.length, 2);
+    assert.equal(byUri[STREAM_URI + '{?after}'].mimeType, 'application/json');
+    // File template uses reserved expansion so path slashes aren't encoded.
+    assert.ok(byUri['file://{+path}'], 'expected a file://{+path} template');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // resources/read — captures/stream
 // ---------------------------------------------------------------------------
@@ -616,6 +630,44 @@ test('resources/read with an empty cursor (?after=) returns all records from the
     assert.deepEqual(
       payload.records.map((r) => r.timestamp),
       ['2026-04-08T20:30:00.000Z', '2026-04-08T20:30:05.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read trims a whitespace-only cursor to the empty "from the start" cursor', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+  });
+  try {
+    // A space is a workaround for UIs that won't submit a truly blank value;
+    // trimming makes it behave like `?after=`.
+    const res = await ctx.client.readResource({ uri: STREAM_URI + '?after=%20' });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.deepEqual(
+      payload.records.map((r) => r.timestamp),
+      ['2026-04-08T20:30:00.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('resources/read rejects a malformed after cursor', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+  });
+  try {
+    await assert.rejects(
+      ctx.client.readResource({ uri: STREAM_URI + '?after=not-a-timestamp' }),
+      /Invalid `after` cursor/,
+    );
+    // A date without the full fixed-width time/zone is also rejected — the
+    // lexical compare only works against the canonical format.
+    await assert.rejects(
+      ctx.client.readResource({ uri: STREAM_URI + '?after=2026-04-08' }),
+      /Invalid `after` cursor/,
     );
   } finally {
     await ctx.cleanup();
