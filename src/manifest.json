@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SeeWhatISee",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "The ultimate screenshot tool for vibe-coding: Share screenshots, HTML, or selected text with your coding agent — CLI or web.",
   "homepage_url": "https://github.com/jshute96/SeeWhatISee/blob/main/README.md",
   "permissions": ["activeTab", "clipboardWrite", "contextMenus", "downloads", "offscreen", "scripting", "storage"],
