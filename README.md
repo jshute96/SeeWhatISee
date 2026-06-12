@@ -15,6 +15,8 @@ tools using the MCP server.
 
 See [Usage](#usage) for the full feature tour, CLI [Skills](#claude-code-skills), or [Installation](#installation).
 
+See a [demo video here](https://youtu.be/X97j29qx2mU).
+
 The *Capture* page:
 
 ![Capture page with highlight drawn over a Wikipedia article](docs/images/readme-screenshot.png)
