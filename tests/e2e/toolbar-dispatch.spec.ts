@@ -13,12 +13,20 @@
 //     the Capture page flow's delayed path shares.
 //   - Selection-aware click dispatch: with-sel × single vs double
 //     click × ignore-selection opt-out.
+//   - Click while a Capture page is the active tab — no special
+//     case, it runs the stored default like any other tab.
 //   - `getDefaultWithoutSelectionId` fallback + legacy id migration.
 //   - `copyLastSelectionFilename` log lookup + offscreen forwarding.
 
 import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { SCREENSHOT_PATTERN, seedSelection } from './details-helpers';
+import {
+  SCREENSHOT_PATTERN,
+  installButtonClickSpy,
+  openDetailsFlow,
+  readButtonClickSpy,
+  seedSelection,
+} from './details-helpers';
 
 // captureVisibleTab quota wait is handled globally in
 // `tests/fixtures/extension.ts`. This hook only stubs out
@@ -655,6 +663,53 @@ test('double-click without selection: runs the stored dbl-without default', asyn
   const r = await latestLogRecord(sw);
   expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
 
+  await openerPage.close();
+});
+
+// ─── Click while the Capture page is the active tab ──────────────
+//
+// The toolbar click used to be special-cased here: if the active tab
+// was a Capture page, the SW sent it a `triggerCapture` message
+// (submitting the page) instead of running the stored default. That
+// special case was removed — a click on the Capture page now
+// dispatches exactly like a click on any other tab.
+
+test('click while the Capture page is active runs the stored default, not the page Capture button', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Pin after `openDetailsFlow` — it clears storage on entry, which
+  // would wipe these ids if they were set first. `save-screenshot`
+  // makes the dispatch observable in the log without opening a second
+  // Capture page.
+  const sw = await getServiceWorker();
+  await pinClickDefaults(sw, { clickWith: 'capture', clickWithout: 'save-screenshot' });
+
+  // The spy swallows any click on `#capture` / `#ask-btn`, so a
+  // regression that re-adds the page hand-off shows up as a recorded
+  // id rather than a real submit.
+  await installButtonClickSpy(capturePage);
+  await capturePage.bringToFront();
+
+  await runSingleClick(sw);
+
+  expect(
+    await readButtonClickSpy(capturePage),
+    'the page Capture/Ask buttons must NOT be triggered by a toolbar click',
+  ).toEqual([]);
+  // The screenshot is of the Capture page itself — that's the point:
+  // the click starts a fresh capture of whatever is on screen.
+  const r = await latestLogRecord(sw);
+  expect(r?.screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
+
+  await capturePage.close();
   await openerPage.close();
 });
 

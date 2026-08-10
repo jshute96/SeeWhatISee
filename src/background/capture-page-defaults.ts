@@ -6,8 +6,8 @@
 // Today this covers two things:
 //   - Save-checkbox defaults (per with/without-selection branch).
 //   - Which of the two main page buttons (Capture or Ask) is the
-//     "default" — drives the highlight ring, the Enter-on-prompt
-//     submit, and the `triggerCapture` toolbar-icon path.
+//     "default" — drives the highlight ring and the Enter-on-prompt
+//     submit.
 //
 // The Capture page (`capture-page.ts`) reads these on first paint, and
 // the options page reads / writes them via the SW message handlers in

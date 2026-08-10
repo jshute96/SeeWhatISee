@@ -12,7 +12,6 @@ import {
 } from './capture-actions.js';
 import { getCaptureDetailsDefaults } from './capture-page-defaults.js';
 import { runWithErrorReporting } from './error-reporting.js';
-import { detailsStorageKey } from './capture-details.js';
 import { commandsToShortcutMap, refreshMenusAndTooltip } from './context-menu.js';
 import { buildTooltip } from './tooltip.js';
 
@@ -409,23 +408,6 @@ export async function runDblDefault(): Promise<void> {
 }
 
 export async function handleActionClick(): Promise<void> {
-  // If the user is currently looking at a capture.html tab, clicking
-  // the toolbar icon triggers its Capture button — same as clicking
-  // it on the page. Only the active tab is affected; background
-  // capture tabs are left alone.
-  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (activeTab?.id !== undefined) {
-    const stored = await chrome.storage.session.get(detailsStorageKey(activeTab.id));
-    if (stored[detailsStorageKey(activeTab.id)]) {
-      if (pendingClickTimer !== undefined) {
-        clearTimeout(pendingClickTimer);
-        pendingClickTimer = undefined;
-      }
-      await chrome.tabs.sendMessage(activeTab.id, { action: 'triggerCapture' });
-      return;
-    }
-  }
-
   const clickWithoutId = await getDefaultWithoutSelectionId();
   const clickWithId = await getDefaultWithSelectionId();
   const dblWithoutId = await getDefaultDblWithoutSelectionId();

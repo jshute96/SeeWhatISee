@@ -50,7 +50,7 @@ Saving as markdown uses a lightweight conversion that includes headings, bullets
 
 This page allows full control of what's captured.  You can add highlights on the page and **add a prompt telling the agent what you want to do**.
 
-Click **Capture**, the toolbar icon ![icon](src/icons/icon-16.png), or press `Enter` in the prompt field to submit.
+Click **Capture** or press `Enter` in the prompt field to submit.
 
 On this page, you can:
 

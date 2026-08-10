@@ -64,20 +64,17 @@ interface CaptureDetailsDefaults {
   - `withSelection`: selection only, as markdown.
   - `defaultButton`: `capture` (the Capture page's main button).
   - `promptEnter`: `send` (Enter on the Prompt fires the default).
-- `defaultButton` drives three things on the Capture page:
+- `defaultButton` drives two things on the Capture page:
   - which of the two main buttons (Capture or the Ask split widget)
     gets the highlight ring.
   - which one fires when the user presses Enter on the Prompt.
-  - which one fires when the toolbar icon is clicked while the
-    Capture page is already open (the SW's `triggerCapture`
-    hand-off).
 - `promptEnter` only steers the un-modified Enter key in the Prompt
   textarea. Shift+Enter always inserts a newline; Ctrl+Enter always
   fires the default button.
 - Degraded-state fallback: if `defaultButton='ask'` but the Ask
   split is disabled (no provider enabled, mid-Ask round-trip),
-  Enter / `triggerCapture` falls through to `#capture` rather than
-  silently dropping the user's keystroke.
+  Enter falls through to `#capture` rather than silently dropping
+  the user's keystroke.
 - **Live updates.** The Capture page's `chrome.storage.onChanged`
   listener picks up `defaultButton` / `promptEnter` changes the
   moment the Options page Saves — no reload needed. The
@@ -119,10 +116,6 @@ interface AskProviderSettings {
 
 Reads all four stored ids up front, then picks a path:
 
-- **Viewing the Capture page.** If the active tab is a `capture.html`
-  page with stashed session data, the click sends it a
-  `triggerCapture` message — same effect as clicking the page's
-  Capture button. The Click/Dbl defaults are not consulted.
 - **First click.** Start the 250 ms double-click timer; on expiry,
   run `dispatchAction(clickWithout, clickWith)`.
 - **Second click within window.** Clear the timer and run

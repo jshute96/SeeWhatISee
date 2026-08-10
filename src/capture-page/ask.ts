@@ -1079,12 +1079,12 @@ export function initAsk(context: AskContext): void {
   //   `runAskWithMessage`.
   // - `local.capturePageDefaults` — flipped from the Options page in
   //   another tab. Live-applies `defaultButton` (highlight ring +
-  //   Enter / triggerCapture routing) and `promptEnter`. The
-  //   Save-checkbox state in the same blob is intentionally NOT
-  //   re-applied — those are seeded once on first paint; clobbering
-  //   the user's in-progress checkbox edits mid-session would be
-  //   jarring. `defaultButton` and `promptEnter` have no equivalent
-  //   in-page edit surface, so live-updating them has no conflict.
+  //   Enter routing) and `promptEnter`. The Save-checkbox state in the
+  //   same blob is intentionally NOT re-applied — those are seeded once
+  //   on first paint; clobbering the user's in-progress checkbox edits
+  //   mid-session would be jarring. `defaultButton` and `promptEnter`
+  //   have no equivalent in-page edit surface, so live-updating them
+  //   has no conflict.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes['askProviderSettings']) {
       void refreshAskTargetLabel();

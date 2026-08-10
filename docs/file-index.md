@@ -283,7 +283,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape-failure UX |
 | `tests/e2e/capture-paste.spec.ts` | E2E for rich-text paste — html→markdown / html-source routing, source-view short-circuit, real copy/paste round-trips |
 | `tests/e2e/capture-prompt-autogrow.spec.ts` | E2E for the prompt textarea's auto-grow sizing — whole-row growth, box matches content, measuring never shifts layout width |
-| `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, `triggerCapture` hand-off |
+| `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, live updates |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
 | `tests/e2e/capture-drawing-helpers.ts` | Shared `__seeState` reads and the `dragEdge` / `expectRedAtRectEdge` utilities for the drawing specs |
 | `tests/e2e/capture-drawing-basic.spec.ts` | E2E for per-tool draw → save flows (Box/Line/Arrow/Crop/Redact) and Undo/Clear button state |

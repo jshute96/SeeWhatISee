@@ -3,9 +3,8 @@
 // defaultButton` + `capturePageDefaults.promptEnter`):
 //
 //   - `defaultButton` decides which of the two main buttons gets the
-//     `.is-default` highlight ring, which one fires when the user
-//     presses Enter on the prompt, and which one fires on the SW's
-//     `triggerCapture` toolbar-icon hand-off.
+//     `.is-default` highlight ring and which one fires when the user
+//     presses Enter on the prompt.
 //   - `promptEnter` decides what plain Enter does in the Prompt
 //     textarea — `'send'` fires the default button, `'newline'`
 //     inserts a newline. Shift+Enter is always newline, Ctrl+Enter
@@ -345,88 +344,6 @@ test('Plain Enter on text ending in `\\` with promptEnter=newline inserts native
   await capturePage.keyboard.type('d');
   await expect(prompt).toHaveValue('abc\\\nd');
   expect(await readButtonClickSpy(capturePage)).toEqual([]);
-  await capturePage.close();
-  await openerPage.close();
-});
-
-// ─── triggerCapture toolbar-icon hand-off ─────────────────────────
-//
-// The SW sends a `triggerCapture` runtime message to the Capture
-// page's tab when the user clicks the toolbar icon while the Capture
-// page is already open. Pre-defaultButton this always fired
-// #capture; now it must fire whichever button the user picked as
-// default. We simulate the SW's hand-off by sending the same message
-// from the SW directly to the Capture tab.
-
-async function sendTriggerCaptureToCaptureTab(
-  capturePage: import('@playwright/test').Page,
-  getServiceWorker: () => Promise<import('@playwright/test').Worker>,
-): Promise<void> {
-  // Mirror production: the SW finds its target via
-  // `chrome.tabs.query({ active: true, lastFocusedWindow: true })`
-  // (the manifest has no `tabs` permission, so URL-based lookup
-  // returns no URL for chrome-extension:// pages). Bring the
-  // Capture tab to front first so that query returns it.
-  await capturePage.bringToFront();
-  const sw = await getServiceWorker();
-  await sw.evaluate(async () => {
-    const [activeTab] = await chrome.tabs.query({
-      active: true,
-      lastFocusedWindow: true,
-    });
-    if (!activeTab?.id) throw new Error('No active tab found');
-    await chrome.tabs.sendMessage(activeTab.id, { action: 'triggerCapture' });
-  });
-}
-
-test('triggerCapture message fires #capture by default', async ({
-  extensionContext,
-  fixtureServer,
-  getServiceWorker,
-}) => {
-  const { openerPage, capturePage } = await openDetailsFlow(
-    extensionContext,
-    fixtureServer,
-    getServiceWorker,
-  );
-  await installButtonClickSpy(capturePage);
-  await sendTriggerCaptureToCaptureTab(capturePage, getServiceWorker);
-  // Wait briefly for the runtime message to deliver and the spy to record.
-  await capturePage.waitForFunction(
-    () =>
-      ((self as unknown as { __seeBtnClicks?: string[] }).__seeBtnClicks?.length
-        ?? 0) > 0,
-    null,
-    { timeout: 2000 },
-  );
-  expect(await readButtonClickSpy(capturePage)).toEqual(['capture']);
-  await capturePage.close();
-  await openerPage.close();
-});
-
-test('triggerCapture message fires #ask-btn when defaultButton=ask', async ({
-  extensionContext,
-  fixtureServer,
-  getServiceWorker,
-}) => {
-  const { openerPage, capturePage } = await openDetailsFlow(
-    extensionContext,
-    fixtureServer,
-    getServiceWorker,
-    'purple.html',
-    undefined,
-    seed({ defaultButton: 'ask' }),
-  );
-  await installButtonClickSpy(capturePage);
-  await sendTriggerCaptureToCaptureTab(capturePage, getServiceWorker);
-  await capturePage.waitForFunction(
-    () =>
-      ((self as unknown as { __seeBtnClicks?: string[] }).__seeBtnClicks?.length
-        ?? 0) > 0,
-    null,
-    { timeout: 2000 },
-  );
-  expect(await readButtonClickSpy(capturePage)).toEqual(['ask-btn']);
   await capturePage.close();
   await openerPage.close();
 });

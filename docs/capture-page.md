@@ -380,10 +380,8 @@ moves the layout under the measurement:
   - `promptEnter` (`'send'` | `'newline'`): plain Enter follows
     this radio. Default `'send'`.
   - `defaultButton` (`'capture'` | `'ask'`): when an Enter press
-    submits, it clicks whichever button (`#capture` or
-    `#ask-btn`) the user picked as default. Default
-    `'capture'`. Same routing is used by the SW's
-    `triggerCapture` toolbar-icon hand-off.
+    submits, it clicks whichever button (`#capture` or `#ask-btn`)
+    the user picked as default. Default `'capture'`.
 - `\` + Enter (in `promptEnter='send'` mode) consumes the `\`
   immediately to the left of the caret (anywhere in the buffer,
   not just end-of-text) and inserts a newline. Mirrors CLI coding

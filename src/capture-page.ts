@@ -164,8 +164,7 @@ interface DetailsData {
       format: SelectionFormat;
     };
     /** Which of the two main page buttons is the "default" — drives
-     *  the highlight ring and routes Enter on the prompt + the
-     *  background's `triggerCapture` toolbar-icon hand-off. */
+     *  the highlight ring and routes Enter on the prompt. */
     defaultButton: 'capture' | 'ask';
     /** Plain-Enter behaviour in the Prompt textarea: 'send' fires the
      *  default button, 'newline' inserts a newline. Shift+Enter is
@@ -563,9 +562,9 @@ attachHtmlAwarePaste(promptInput, 'asMarkdown');
 
 // Which page button (Capture or Ask) is currently the user's "default"
 // for the Capture page — drives the highlight ring and routes
-// Enter-on-prompt + the SW's `triggerCapture` hand-off. Seeded from
-// `capturePageDefaults.defaultButton` in `loadData()`; falls back to
-// 'capture' for first paint before the round-trip resolves.
+// Enter-on-prompt. Seeded from `capturePageDefaults.defaultButton` in
+// `loadData()`; falls back to 'capture' for first paint before the
+// round-trip resolves.
 let currentDefaultButton: 'capture' | 'ask' = 'capture';
 
 // Plain-Enter behaviour in the Prompt textarea — 'send' fires the
@@ -611,10 +610,9 @@ function applyDefaultButtonHighlight(which: 'capture' | 'ask'): void {
 
 /**
  * Fire whichever of the two main buttons is the current default.
- * Returns true if a click was dispatched — Enter / triggerCapture
- * branches use the return to decide whether to preventDefault. A
- * disabled target is a no-op so a double-press can't re-submit while
- * a save is in flight.
+ * Returns true if a click was dispatched — the Enter branch uses the
+ * return to decide whether to preventDefault. A disabled target is a
+ * no-op so a double-press can't re-submit while a save is in flight.
  *
  * The Ask path clicks `#ask-btn` (send-to-default) rather than
  * `#ask-menu-btn` (open menu) — the user has already made a steering
@@ -1030,7 +1028,7 @@ async function loadData(): Promise<void> {
       selectionBox.checked = cdd.withSelection.selection;
     }
     // Apply the user's chosen "default button" highlight and rebind
-    // the Enter / triggerCapture routing in one shot.
+    // the Enter routing in one shot.
     applyDefaultButtonHighlight(cdd.defaultButton);
     currentPromptEnter = cdd.promptEnter;
 
@@ -1325,18 +1323,6 @@ captureBtn.addEventListener('click', (e) => {
       'error',
     );
     captureBtn.disabled = false;
-  }
-});
-
-// Let the background script trigger the Capture button remotely
-// (e.g. when the user clicks the toolbar icon while this page is
-// already open).
-chrome.runtime.onMessage.addListener((msg: { action: string }) => {
-  // The message name predates the Capture/Ask default-button toggle
-  // — keep the wire name but route through the helper so the SW's
-  // hand-off respects the user's chosen default.
-  if (msg.action === 'triggerCapture') {
-    clickDefaultPageButton();
   }
 });
 
