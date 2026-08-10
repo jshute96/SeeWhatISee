@@ -457,17 +457,81 @@ const toolButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('.tool-btn'),
 );
 
+// Vertical metrics of the prompt textarea: the height of one wrapped
+// row, the padding + border a `box-sizing: border-box` height has to
+// carry on top of the rows, and the growth cap.
+//
+// All of it is read from the element's own computed style, so
+// `#prompt-text`'s CSS in capture.html stays the single source of
+// truth — `cap` is that rule's `max-height`, not a copy of it. Re-read
+// on every call rather than cached, because browser page zoom rescales
+// every one of these values; the read is cheap next to the layout
+// `scrollHeight` already forces in the caller.
+function getPromptMetrics(): {
+  row: number;
+  pad: number;
+  frame: number;
+  cap: number;
+} {
+  const cs = getComputedStyle(promptInput);
+  const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const border =
+    parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+  // `max-height: none` parses to NaN, and every comparison against NaN
+  // is false — which reads as "uncapped", the right answer for a box
+  // with no cap.
+  const cap = parseFloat(cs.maxHeight);
+  // `line-height: 1.4` resolves to px here, but `normal` would parse to
+  // NaN and a raw ratio (`1.4`) would parse to a number far too small
+  // to be a row. Anything under the font size is one of those, and the
+  // caller falls back to the unsnapped measurement rather than guessing
+  // a ratio — guessing would put a second copy of the CSS in the TS.
+  const lineHeight = parseFloat(cs.lineHeight);
+  const row = lineHeight >= parseFloat(cs.fontSize) ? lineHeight : NaN;
+  return { row, pad, frame: pad + border, cap };
+}
+
+// Auto-grow the prompt textarea to fit its content, capped by CSS
+// max-height. After resizing we re-fit the image because its top has
+// shifted down by the same amount the textarea grew.
+// Height that fits `promptInput`'s current content, snapped to whole
+// rows. `scrollHeight` is an integer but a row is fractional (19.6px
+// at 14px / 1.4), so the raw measurement is ~1.6px short of a single
+// row — and a height that doesn't match the natural `height: auto`
+// height makes the *next* measurement lay the page out at a different
+// width. See `docs/capture-page.md` § Prompt textarea for why that
+// changes the wrap point and made the box flap between row counts.
+function measurePromptHeight(metrics: ReturnType<typeof getPromptMetrics>): number {
+  const { row, pad, frame } = metrics;
+  promptInput.style.height = 'auto';
+  const sh = promptInput.scrollHeight;
+  const snapped = Math.max(1, Math.round((sh - pad) / row)) * row + frame;
+  // Any unreadable metric poisons `snapped` with NaN — fall back to the
+  // raw measurement rather than writing a `NaNpx` height the browser
+  // would drop on the floor.
+  return Number.isFinite(snapped) && snapped > 0 ? snapped : sh;
+}
+
 // Auto-grow the prompt textarea to fit its content, capped by CSS
 // max-height. After resizing we re-fit the image because its top has
 // shifted down by the same amount the textarea grew.
 function autoGrowPrompt(): void {
-  promptInput.style.height = 'auto';
-  const sh = promptInput.scrollHeight;
-  promptInput.style.height = sh + 'px';
+  const metrics = getPromptMetrics();
+  const height = measurePromptHeight(metrics);
+  promptInput.style.height = height + 'px';
   // Only show the scrollbar once we've hit the CSS max-height cap, so
-  // short prompts stay scrollbar-free even when sub-pixel rounding
-  // would otherwise nudge scrollHeight just past the rendered height.
-  promptInput.style.overflowY = sh > 200 ? 'auto' : 'hidden';
+  // short prompts stay scrollbar-free.
+  const overflowY = height > metrics.cap ? 'auto' : 'hidden';
+  if (promptInput.style.overflowY !== overflowY) {
+    promptInput.style.overflowY = overflowY;
+    // Showing or hiding the textarea's own scrollbar changes the width
+    // the text wraps at, so the height we just measured is stale for
+    // the layout we've now got. One re-measure settles it — the flip
+    // itself can't repeat, since `overflowY` is already at its new
+    // value. Without this the box sits a partial row off its content
+    // while crossing the cap.
+    promptInput.style.height = measurePromptHeight(metrics) + 'px';
+  }
   fitImage();
 }
 promptInput.addEventListener('input', autoGrowPrompt);

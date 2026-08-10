@@ -622,6 +622,12 @@
     border: 1px solid #bbb;
     border-radius: 4px;
     resize: none;
+    /* This rule is the single source of truth for the auto-grow
+     * sizing: `autoGrowPrompt` reads `line-height`, the paddings, the
+     * borders, and this `max-height` off the computed style rather
+     * than hardcoding copies. Editing any of them here is enough —
+     * but they do have to stay resolvable to px (a `line-height`
+     * keyword or a percentage `max-height` would not be). */
     max-height: 200px;
     overflow-y: hidden;
     box-sizing: border-box;

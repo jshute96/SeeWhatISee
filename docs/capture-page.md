@@ -326,10 +326,54 @@ radio:
 ### Prompt textarea
 
 - Auto-growing, capped at 200px. `rows="1"` initially; on each
-  `input` event we set `style.height = 'auto'` then
-  `style.height = scrollHeight + 'px'`. Once `scrollHeight`
-  exceeds the cap we flip `overflow-y` from `hidden` to `auto`
-  so the scrollbar only appears when needed.
+  `input` event we set `style.height = 'auto'`, read
+  `scrollHeight`, and rebuild the height from whole rows. Once
+  the result exceeds the cap we flip `overflow-y` from `hidden`
+  to `auto` so the scrollbar only appears when needed.
+- **Snap to whole rows, don't use `scrollHeight` directly.**
+  `scrollHeight` is an integer; a row is 19.6px (14px × 1.4), so
+  the raw value under-reports a single row by ~1.6px.
+- We divide the measurement back into a row count and recompute
+  `rows × lineHeight + padding + border`.
+
+#### The CSS rule is the only source of truth
+
+- `autoGrowPrompt` reads `line-height`, the paddings, the
+  borders, and the `max-height` cap off `#prompt-text`'s computed
+  style. No pixel values are duplicated in the TS.
+- Metrics are re-read per call rather than cached — browser page
+  zoom rescales every one of them.
+- The tradeoff: those properties have to stay resolvable to px. A
+  `line-height` keyword or a percentage `max-height` would not
+  be, and the sizing falls back to the unsnapped measurement.
+
+#### Why the applied height must equal the natural one
+
+The next keystroke measures against whatever height was applied
+last, so a height that isn't the natural `height: auto` height
+moves the layout under the measurement:
+
+- `fitImage` sizes the image to consume the leftover viewport
+  height exactly, leaving the page with no vertical slack.
+- The next `height: auto` restores the taller natural row height,
+  so the document overflows and Chrome raises a page scrollbar.
+- The scrollbar takes ~15px off the `flex: 1` textarea, so
+  `scrollHeight` gets measured at a narrower width than the box
+  will render at.
+- The wrap point differs between those widths, so near the
+  boundary the measured row count disagreed with the rendered one
+  and the box visibly flapped between one and two rows.
+- Covered by `tests/e2e/capture-prompt-autogrow.spec.ts`, which
+  asserts the measurement never shifts the layout width.
+
+#### Crossing the cap
+
+- Flipping `overflow-y` to `auto` puts a scrollbar *inside* the
+  textarea, which rewraps the text and invalidates the height
+  just measured.
+- So the height is re-measured once whenever `overflow-y`
+  actually changes value. The flip can't repeat on that second
+  pass, so it settles in one step.
 - Enter submits, Shift+Enter inserts a newline.
 - The keydown handler reads two stored `capturePageDefaults`
   fields:
