@@ -22,7 +22,8 @@
 //
 // Module also owns pan (middle-click + Ctrl/Cmd-left-drag or a
 // scrollbar drag, plus the one-image-pixel arrow-key nudge while one
-// of those is held) and the
+// of those is held), the snap that parks a crop / box edit flush
+// against the visible pane's edges mid-drag, and the
 // cursor-position cache that the keyboard zoom + drawing's
 // arrow-key nudge both read.
 //
@@ -30,6 +31,12 @@
 // box's max-height, the image's width / height + max-* (mode-
 // dependent), and re-renders so stroke widths track the new
 // display→natural ratio.
+
+// Type-only import: erased at compile time, so it doesn't create a
+// runtime dependency back on `drawing.ts` (which imports from here).
+// Everything this module needs at runtime still arrives via
+// `ZoomContext`.
+import type { RectPct } from './drawing.js';
 
 export type ZoomMode = 'fit' | 1 | 2 | 4 | 8;
 const ZOOM_LEVELS: ZoomMode[] = ['fit', 1, 2, 4, 8];
@@ -81,6 +88,13 @@ export interface ZoomContext {
    *  zoom mid-polyline would jump the previous endpoint and break the
    *  loop-close hit-test. */
   rescaleAfterImageResize(scaleX: number, scaleY: number): void;
+
+  /** Drawing's `panSnapRects()` — the box-shaped edits a pan drag
+   *  snaps the visible pane's edges to, in image-percent coords. */
+  panSnapRects(): RectPct[];
+  /** Drawing's `SNAP_PX` — the same "close enough to mean it"
+   *  radius the drawing snaps use, so pan snap feels identical. */
+  snapRadiusPx: number;
 
   /** True iff an edit dialog is up — the Alt+± zoom shortcut bails
    *  in that state so the key isn't swallowed mid-edit. */
@@ -528,6 +542,9 @@ function cursorCenteredZoomStep(
     ctx.imageBox.scrollLeft = preBoxLeft + fx * r2.width - focalX!;
     ctx.imageBox.scrollTop  = preBoxTop  + fy * r2.height - focalY!;
   }
+  // A zoom step can land mid-pan (Ctrl+wheel with the drag held).
+  // Nothing to do here: the pan's `mousemove` notices the scroll it
+  // didn't write and re-seeds from it.
   return true;
 }
 
@@ -617,8 +634,65 @@ const WHEEL_NOTCH_PIXEL_MIN = 40;
 // `panState.button` records which button started the drag so the
 // matching `mouseup` releases it — a stray right-up shouldn't end
 // a Ctrl-left pan.
+//
+// ─── Snap while panning ───
+//
+// A drag pan snaps the pane's visible edges onto the edges of any
+// box-shaped edit (crop / rect / redact) that comes within
+// `ctx.snapRadiusPx` — the same radius the drawing snaps use. The
+// point is cross-image comparison: draw the same crop on two
+// captures of a page, park each one flush in the pane's top-left,
+// and flip between the tabs to see exactly what moved. Doing that by
+// hand-dragging is hopeless; landing on the snap is not.
+//
+// Candidates per axis (X shown; Y is the same with top / bottom):
+//   - box's left edge  → pane's left edge   (`scrollLeft = boxLeft`)
+//   - box's right edge → pane's right edge  (`boxRight - clientWidth`)
+// Both axes snap independently, so a corner is just both at once.
+// The alignment is against the box's *outside* — the geometric rect
+// the edit stores, which is what the user sees as the box's extent.
+//
+// Candidates that the scroll range can't reach are dropped rather
+// than left for the browser to clamp: a clamped assignment lands at
+// the end of the range, which is *not* the alignment that pulled the
+// view there, so it reads as an unexplained jump.
+//
+// `desiredX / desiredY` hold the un-snapped position the drag has
+// actually accumulated. Without them, a snapped scroll position
+// would be re-read as the drag's own baseline on the next move and
+// the pointer could never climb back out of the snap. Holding Shift
+// bypasses the snap, and because `desired` kept tracking underneath,
+// a bypass lands exactly where the pointer says.
+//
+// `appliedX / appliedY` are what we last wrote (read back, so the
+// comparison isn't fighting Chrome's device-pixel quantisation). A
+// scroll offset that no longer matches means something *else* moved
+// the view mid-drag — the arrow-key fine pan, a plain wheel scroll
+// under a held middle-button, a mid-drag zoom step, a resize re-fit —
+// and that axis re-seeds `desired` from reality. Per-axis, so a
+// vertical nudge doesn't discard the horizontal escape distance the
+// pointer had built up.
+//
+// The arrow-key fine pan deliberately does *not* snap — same rule as
+// drawing's arrow-key nudge, which bypasses snap so a user who
+// snapped with the mouse can still step off it one pixel at a time.
+// The re-seed above is what lets a pointer move resume from where the
+// keyboard left the view.
+//
+// A nudge also turns the snap off (`snapOff`) for the rest of the
+// drag. The keyboard is the precision tool: having stepped
+// deliberately off a snapped position, the user shouldn't have it
+// yanked back by the next twitch of a still-held mouse. Releasing and
+// re-dragging arms the snap again.
 
-let panState: { prevX: number; prevY: number; button: number } | null = null;
+let panState:
+  | {
+      prevX: number; prevY: number; button: number;
+      desiredX: number; desiredY: number;
+      appliedX: number; appliedY: number;
+      snapOff: boolean;
+    }
+  | null = null;
 // Timestamp of the last middle-mousedown on the image-box. Used by
 // the prompt's paste guard to recognise X11 primary-selection
 // pastes that the OS dispatched in response to the click and refuse
@@ -648,11 +722,81 @@ export function isPanning(): boolean {
 }
 
 export function startPan(e: MouseEvent): void {
-  panState = { prevX: e.clientX, prevY: e.clientY, button: e.button };
+  panState = {
+    prevX: e.clientX,
+    prevY: e.clientY,
+    button: e.button,
+    desiredX: ctx.imageBox.scrollLeft,
+    desiredY: ctx.imageBox.scrollTop,
+    appliedX: ctx.imageBox.scrollLeft,
+    appliedY: ctx.imageBox.scrollTop,
+    snapOff: false,
+  };
   // Class on body so the cursor change applies even over `#overlay`,
   // whose own `cursor: crosshair` rule would otherwise outrank a
   // style set on `imageBox`.
   document.body.classList.add('panning');
+}
+
+/**
+ * Where the image's top-left sits in the box's *scroll-content*
+ * coordinates: its viewport position, un-scrolled, relative to the
+ * box's content origin. Constant across scrolling (both terms move
+ * together), so it's the fixed origin every scroll-space measurement
+ * here is taken from. It's non-zero — `.image-wrap` carries a
+ * `WRAP_MARGIN` margin — so it can't be assumed away.
+ */
+function scrollContentOrigin(): { x: number; y: number } {
+  const r = ctx.imgRect();
+  const box = ctx.imageBox.getBoundingClientRect();
+  return {
+    x: r.left - (box.left + ctx.imageBox.clientLeft) + ctx.imageBox.scrollLeft,
+    y: r.top - (box.top + ctx.imageBox.clientTop) + ctx.imageBox.scrollTop,
+  };
+}
+
+/**
+ * Scroll offsets that would land a box edge flush against a pane
+ * edge, per axis. See the "Snap while panning" notes above for which
+ * pairings are offered and why. `maxX / maxY` are the box's scroll
+ * range: offsets outside it are dropped, since the browser would
+ * clamp them to somewhere that isn't the promised alignment.
+ */
+function panSnapTargets(maxX: number, maxY: number): { xs: number[]; ys: number[] } {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const rects = ctx.panSnapRects();
+  // Nothing drawn is the common case — skip the layout reads below.
+  if (rects.length === 0) return { xs, ys };
+  const r = ctx.imgRect();
+  const origin = scrollContentOrigin();
+  const push = (into: number[], value: number, max: number): void => {
+    if (value >= 0 && value <= max) into.push(value);
+  };
+  for (const b of rects) {
+    const left = origin.x + (b.x / 100) * r.width;
+    const top = origin.y + (b.y / 100) * r.height;
+    push(xs, left, maxX);
+    push(xs, left + (b.w / 100) * r.width - ctx.imageBox.clientWidth, maxX);
+    push(ys, top, maxY);
+    push(ys, top + (b.h / 100) * r.height - ctx.imageBox.clientHeight, maxY);
+  }
+  return { xs, ys };
+}
+
+/** Nearest candidate within the snap radius, or `value` unchanged.
+ *  Ties go to whichever candidate came first — they can only happen
+ *  when two boxes share an edge, where both answers are the same
+ *  position anyway. Strict `<` against the radius matches drawing's
+ *  snap helpers, so "the same radius" really is the same. */
+function snapScroll(value: number, candidates: number[]): number {
+  let best = value;
+  let bestD = ctx.snapRadiusPx;
+  for (const c of candidates) {
+    const d = Math.abs(c - value);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
 }
 
 /**
@@ -846,8 +990,41 @@ export function initZoom(context: ZoomContext): void {
     const dy = e.clientY - panState.prevY;
     panState.prevX = e.clientX;
     panState.prevY = e.clientY;
-    ctx.imageBox.scrollLeft -= dx;
-    ctx.imageBox.scrollTop -= dy;
+    // Anything that moved the scroll since our last write (arrow-key
+    // nudge, plain wheel under a held middle-button, a mid-drag zoom
+    // step, a resize re-fit) wins: re-seed that axis from reality
+    // rather than yanking the view back by the discrepancy.
+    if (ctx.imageBox.scrollLeft !== panState.appliedX) {
+      panState.desiredX = ctx.imageBox.scrollLeft;
+    }
+    if (ctx.imageBox.scrollTop !== panState.appliedY) {
+      panState.desiredY = ctx.imageBox.scrollTop;
+    }
+    // Accumulate into the un-snapped position, clamped to the scroll
+    // range so a drag that overshoots the edge doesn't bank distance
+    // the user then has to drag back through.
+    const maxX = Math.max(0, ctx.imageBox.scrollWidth - ctx.imageBox.clientWidth);
+    const maxY = Math.max(0, ctx.imageBox.scrollHeight - ctx.imageBox.clientHeight);
+    panState.desiredX = Math.max(0, Math.min(maxX, panState.desiredX - dx));
+    panState.desiredY = Math.max(0, Math.min(maxY, panState.desiredY - dy));
+    // Bare `shiftKey`, unlike drawing's `shiftKey && !ctrlKey` rule:
+    // Ctrl/Cmd+Shift means "fresh draw with snap on" at *mousedown*,
+    // and the Ctrl-left pan holds Ctrl for its whole life — under
+    // drawing's rule a Ctrl-drag could never bypass. There's no
+    // competing Ctrl+Shift gesture once a pan is in flight.
+    if (e.shiftKey || panState.snapOff) {
+      ctx.imageBox.scrollLeft = panState.desiredX;
+      ctx.imageBox.scrollTop = panState.desiredY;
+    } else {
+      const targets = panSnapTargets(maxX, maxY);
+      ctx.imageBox.scrollLeft = snapScroll(panState.desiredX, targets.xs);
+      ctx.imageBox.scrollTop = snapScroll(panState.desiredY, targets.ys);
+    }
+    // Read back rather than storing what we asked for: Chrome
+    // quantises scroll offsets to whole device pixels, and a
+    // half-pixel mismatch would read as an external scroll next move.
+    panState.appliedX = ctx.imageBox.scrollLeft;
+    panState.appliedY = ctx.imageBox.scrollTop;
   });
 
   // ─── Arrow-key fine pan (while a pan drag is in flight) ─────────
@@ -895,14 +1072,7 @@ export function initZoom(context: ZoomContext): void {
     }
     e.preventDefault();
     const step = naturalPixelStep();
-    // Where the image's top-left sits in the box's *scroll-content*
-    // coordinates: its viewport position, un-scrolled, relative to
-    // the box's content origin. Constant across scrolling (both terms
-    // move together), so it's the fixed origin the pixel grid is
-    // measured from. It's non-zero — `.image-wrap` carries a 4 px
-    // margin — so it can't be assumed away.
-    const r = ctx.imgRect();
-    const box = ctx.imageBox.getBoundingClientRect();
+    const origin = scrollContentOrigin();
     // Image pixel currently at the pane's top-left corner on this
     // axis, rounded to the nearest whole one (the snap), then
     // stepped. Sign convention matches the drag this continues: the
@@ -910,16 +1080,18 @@ export function initZoom(context: ZoomContext): void {
     // goes the other way. The browser clamps to the scroll range, so
     // a step past the edge just pins there.
     if (dx !== 0) {
-      const originX =
-        r.left - (box.left + ctx.imageBox.clientLeft) + ctx.imageBox.scrollLeft;
-      const px = Math.round((ctx.imageBox.scrollLeft - originX) / step.x) - dx;
-      ctx.imageBox.scrollLeft = originX + px * step.x;
+      const px = Math.round((ctx.imageBox.scrollLeft - origin.x) / step.x) - dx;
+      ctx.imageBox.scrollLeft = origin.x + px * step.x;
     } else {
-      const originY =
-        r.top - (box.top + ctx.imageBox.clientTop) + ctx.imageBox.scrollTop;
-      const py = Math.round((ctx.imageBox.scrollTop - originY) / step.y) - dy;
-      ctx.imageBox.scrollTop = originY + py * step.y;
+      const py = Math.round((ctx.imageBox.scrollTop - origin.y) / step.y) - dy;
+      ctx.imageBox.scrollTop = origin.y + py * step.y;
     }
+    // No re-seed of `panState` here: the pan's `mousemove` compares
+    // against what it last wrote and picks this up on the axis that
+    // moved, leaving the other axis's escape distance intact. It does
+    // drop the box snap for the rest of the drag — a deliberate
+    // one-pixel step shouldn't be undone by the next mouse twitch.
+    if (panState) panState.snapOff = true;
   }, true);
 
   window.addEventListener('mouseup', (e) => {

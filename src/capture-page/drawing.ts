@@ -86,6 +86,9 @@ function isLineFamilyTool(t: Tool): boolean {
   return t === 'line' || t === 'arrow' || polylineToolLineKind(t) !== null;
 }
 
+/** A rect in image-percent coordinates (0–100 on each axis), the
+ *  storage form every box-shaped edit uses. */
+export type RectPct = { x: number; y: number; w: number; h: number };
 export interface RectEdit {
   id: number;
   kind: RectKind;
@@ -616,7 +619,32 @@ function detectBoxHandle(p: Point): BoxHandleHit | null {
 // crop" gesture (boxDrag with `editId === null`) additionally
 // excludes the image bounding box from snap candidates — otherwise
 // the cursor would re-snap to the edge it's trying to leave.
-const SNAP_PX = 8;
+//
+// Exported because the zoom module's pan snap (aligning a box's
+// edges with the visible pane's edges) uses the same radius — one
+// "close enough to mean it" threshold across the page.
+export const SNAP_PX = 8;
+
+/**
+ * Box-shaped edits the pan gesture snaps the visible pane's edges
+ * to, in image-percent coordinates. Same set `detectBoxHandle`
+ * walks: every rect / redact, plus the *active* crop only (older
+ * crop edits are masked by the active crop's dim frame, so they're
+ * invisible and shouldn't pull the pan). Order doesn't matter — the
+ * caller takes the nearest candidate, not the first.
+ */
+export function panSnapRects(): RectPct[] {
+  const out: RectPct[] = [];
+  const ac = activeCrop();
+  for (const e of edits) {
+    if (e.kind === 'rect' || e.kind === 'redact') {
+      out.push({ x: e.x, y: e.y, w: e.w, h: e.h });
+    } else if (e.kind === 'crop' && ac && ac.id === e.id) {
+      out.push({ x: e.x, y: e.y, w: e.w, h: e.h });
+    }
+  }
+  return out;
+}
 
 // Returns the closest point on `rect`'s edges to `p`. `rect` is in
 // image-percent coordinates; `p` and the return value are in

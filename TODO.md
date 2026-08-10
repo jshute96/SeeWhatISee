@@ -56,6 +56,7 @@
 ### Pending docs for features not released yet (1.0.4)
 
 * While holding a pan drag (`Ctrl+drag`, middle-click drag, or a scrollbar drag), arrow keys pan by one image pixel, snapping the view to whole pixels — for precise alignment against another image
+* A pan drag snaps a crop / box edit flush against the edges of the visible pane, so the same box on two captures can be parked identically and flipped between; Shift bypasses
 
 ### Not documented
 

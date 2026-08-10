@@ -567,6 +567,9 @@ fresh edit.
   is also a committed line endpoint. The mid-chain preview's snap
   candidate set drops anything within ~0.5 CSS px of that anchor,
   so the in-flight endpoint can't pull back onto its own start.
+- **Pan snap** reuses the same `SNAP_PX` radius and Shift-bypass
+  convention, but snaps the *view* rather than a drag point — see
+  *Snap while panning* under the zoom section.
 
 ### Polyline mode (chained line / arrow segments)
 
@@ -1692,8 +1695,63 @@ programmatic dispatch for).
     branches: a stuck draw (e.g. mouseup lost to a window blur)
     blocks every fresh mousedown — including Ctrl-left — so a pan
     can't start on top of stale draw state.
-  - Drag scrolls `.image-box` (`scrollLeft / scrollTop` ± mouse
-    delta) via the window-level `mousemove` listener.
+  - Drag scrolls `.image-box` via the window-level `mousemove`
+    listener: the mouse delta accumulates into `panState.desiredX /
+    desiredY` (clamped to the scroll range), and the snap below
+    decides what actually gets written to `scrollLeft / scrollTop`.
+- **Snap while panning.** A drag pan snaps the pane's visible edges
+  onto the edges of any box-shaped edit within the snap radius, so a
+  crop / rect can be parked exactly flush in a corner of the pane.
+  - Motivation: draw the same box on two captures of a page, park
+    each flush in the pane's top-left, then flip between the tabs —
+    what moved is immediately visible. Hand-dragging can't hit that
+    alignment; the snap can.
+  - Candidates per axis, from `drawing.ts`'s `panSnapRects()` (every
+    rect / redact plus the *active* crop — older crops are masked by
+    the active one's dim frame, so they'd be invisible pulls):
+    - box's left edge → pane's left edge (`scrollLeft = boxLeft`)
+    - box's right edge → pane's right edge (`boxRight − clientWidth`)
+    - and the top / bottom equivalents on Y.
+  - Axes snap independently, so a corner is just both at once. The
+    alignment is against the box's *outside* — the geometric rect the
+    edit stores, which is the extent the user sees.
+  - Radius is drawing's `SNAP_PX`, reaching `zoom.ts` as
+    `ZoomContext.snapRadiusPx` — one "close enough to mean it"
+    threshold page-wide.
+  - Passed rather than imported: `drawing.ts` already imports from
+    `zoom.ts`, and the context object is how that dependency stays
+    one-way. (`RectPct` crosses as a *type-only* import, which is
+    erased at compile time.)
+  - `desiredX / desiredY` are what make it escapable. Writing the
+    snapped value back as the drag's own baseline would re-read it on
+    the next move and the pointer could never climb out.
+  - `appliedX / appliedY` record what we last wrote, read back so the
+    comparison isn't fighting Chrome's quantisation. A scroll that no
+    longer matches means something *else* moved the view mid-drag,
+    and that axis re-seeds `desired` from reality.
+  - Covers the arrow-key nudge, a plain wheel under a held middle
+    button, a mid-drag zoom step, and a resize re-fit — per axis, so a
+    vertical nudge can't discard the horizontal escape distance.
+  - **Shift bypasses.** Because `desired` kept tracking underneath, a
+    bypass lands exactly where the accumulated pointer movement says
+    — no jump.
+  - Bare `shiftKey`, unlike drawing's `shiftKey && !ctrlKey` rule:
+    Ctrl/Cmd+Shift is a *mousedown* gesture ("fresh draw, snap on"),
+    and since the Ctrl-left pan holds Ctrl for its whole life,
+    drawing's rule would leave a Ctrl-drag with no way to bypass.
+  - An arrow-key nudge drops the snap for the rest of the drag
+    (`panState.snapOff`). The keyboard is the precision tool — having
+    stepped deliberately off flush, the user shouldn't be yanked back
+    by the next twitch of a still-held mouse. Release and re-drag to
+    re-arm.
+  - Candidates outside the scroll range are dropped, not left for the
+    browser to clamp: a clamped assignment lands at the end of the
+    range, which is *not* the alignment that pulled the view there.
+  - Chrome stores scroll offsets snapped to whole device pixels, so a
+    fractional target lands within half a device pixel of flush —
+    invisible, and far below one image pixel at any zoom that matters.
+  - Scrollbar drags don't snap: the browser drives that scroll
+    itself, and we'd be fighting it every move.
 - **Arrow-key fine pan.** While the pan trigger is held, an arrow
   press scrolls the box by one image pixel — for pixel-exact
   alignment of the capture against something the user is comparing
@@ -1741,6 +1799,11 @@ programmatic dispatch for).
     the first press back *away* from an edge travels the snap
     remainder plus a pixel — N presses out and N back don't return
     to where an edge-clamped view started.
+  - No box snap on this path — same rule as drawing's arrow-key
+    nudge, which bypasses snap so a user who snapped with the mouse
+    can still step off it one pixel at a time. A press also turns the
+    box snap off for the remainder of the drag; see *Snap while
+    panning*.
   - Capture-phase listener + unconditional `preventDefault` so the
     press can't also move the prompt textarea's caret.
   - Ctrl / Meta are not excluded — the Ctrl-left gesture holds Ctrl

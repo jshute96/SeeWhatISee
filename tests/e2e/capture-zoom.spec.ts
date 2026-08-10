@@ -33,6 +33,14 @@
 //     released, arrows do nothing. Same again for a drag held on the
 //     box's scrollbar, and for a Ctrl-left drag (which also checks the
 //     press never reaches the prompt textarea's caret).
+//   - Pan snap: a drag that brings a drawn box's top-left within the
+//     snap radius of the pane's top-left corner parks it flush there;
+//     holding Shift bypasses to the un-snapped position, releasing
+//     Shift re-snaps, and dragging clear lets go without stickiness.
+//     The far-edge pairing (box's right / bottom → pane's right /
+//     bottom) gets its own case, and one more covers an arrow-key
+//     nudge mid-snap: it drops the snap for the rest of the drag and
+//     leaves the other axis's accumulated escape distance intact.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -589,5 +597,238 @@ test('pan: Ctrl-left drag arms the nudge, and the press never reaches the prompt
   );
   expect(caret).toBe(5);
 
+  await openerPage.close();
+});
+
+// Scroll offsets that would park the most-recent red rect's top-left
+// flush in the pane's top-left corner — i.e. the snap target the pan
+// drag should land on — plus the box's scroll range so the test can
+// check it has room to work in.
+async function readBoxSnapTarget(page: Page): Promise<{
+  left: number; top: number; maxX: number; maxY: number;
+}> {
+  return page.evaluate(() => {
+    const st = (window as unknown as {
+      __seeState: {
+        lastRectBounds: (k: 'rect') => { x: number; y: number; w: number; h: number } | null;
+      };
+    }).__seeState;
+    const b = st.lastRectBounds('rect');
+    if (!b) throw new Error('no rect edit to snap to');
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const r = img.getBoundingClientRect();
+    const br = box.getBoundingClientRect();
+    return {
+      left: r.left - (br.left + box.clientLeft) + box.scrollLeft + (b.x / 100) * r.width,
+      top: r.top - (br.top + box.clientTop) + box.scrollTop + (b.y / 100) * r.height,
+      maxX: box.scrollWidth - box.clientWidth,
+      maxY: box.scrollHeight - box.clientHeight,
+    };
+  });
+}
+
+// Chrome stores scroll offsets snapped to whole device pixels, so a
+// fractional target lands up to half a device pixel away. Assert
+// against that tolerance rather than the exact float — the snap is
+// still visually flush, and `toBeCloseTo` has no ≤ variant.
+function expectScrollNear(actual: number, expected: number, label: string): void {
+  expect(Math.abs(actual - expected), `${label}: ${actual} vs ${expected}`)
+    .toBeLessThanOrEqual(0.51);
+}
+
+async function readScrollPos(page: Page): Promise<{ left: number; top: number }> {
+  return page.evaluate(() => {
+    const b = document.querySelector('.image-box') as HTMLDivElement;
+    return { left: b.scrollLeft, top: b.scrollTop };
+  });
+}
+
+test('pan: a drag snaps a box edit flush to the pane corner, and Shift bypasses', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+
+  // Draw at Fit (the whole overlay is on-screen there), then zoom in
+  // so the image overflows and there's scroll range on both axes.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await applyZoomMode(capturePage, 8);
+
+  const target = await readBoxSnapTarget(capturePage);
+  // Start the drag 20 px past the snap on both axes — outside the 8 px
+  // radius, so the snap has to be *earned* by the moves below.
+  const OFFSET = 20;
+  expect(target.left + OFFSET).toBeLessThan(target.maxX);
+  expect(target.top + OFFSET).toBeLessThan(target.maxY);
+  await capturePage.evaluate((t) => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    box.scrollLeft = t.left;
+    box.scrollTop = t.top;
+  }, { left: target.left + OFFSET, top: target.top + OFFSET });
+
+  const boxRect = await capturePage.locator('.image-box').boundingBox();
+  if (!boxRect) throw new Error('.image-box has no bounding box');
+  const mx = boxRect.x + boxRect.width / 2;
+  const my = boxRect.y + boxRect.height / 2;
+  await capturePage.mouse.move(mx, my);
+  await capturePage.mouse.down({ button: 'middle' });
+
+  // Moving the pointer *down-right* scrolls back up-left by the same
+  // amount, so a 14 px move leaves the drag's un-snapped position 6 px
+  // from the target — inside the radius, so the view jumps flush.
+  await capturePage.mouse.move(mx + 14, my + 14);
+  const snapped = await readScrollPos(capturePage);
+  expectScrollNear(snapped.left, target.left, 'snapped left');
+  expectScrollNear(snapped.top, target.top, 'snapped top');
+
+  // Shift is the page-wide "no snap" modifier. The drag kept tracking
+  // the pointer underneath the snap, so bypassing lands exactly where
+  // the accumulated movement says — 5 px out after one more step.
+  await capturePage.keyboard.down('Shift');
+  await capturePage.mouse.move(mx + 15, my + 15);
+  const bypassed = await readScrollPos(capturePage);
+  expectScrollNear(bypassed.left, target.left + OFFSET - 15, 'bypassed left');
+  expectScrollNear(bypassed.top, target.top + OFFSET - 15, 'bypassed top');
+  await capturePage.keyboard.up('Shift');
+
+  // Release Shift and the very next move re-snaps.
+  await capturePage.mouse.move(mx + 16, my + 16);
+  const resnapped = await readScrollPos(capturePage);
+  expectScrollNear(resnapped.left, target.left, 'resnapped left');
+  expectScrollNear(resnapped.top, target.top, 'resnapped top');
+
+  // Drag well clear and the snap lets go — no stickiness, and the
+  // position picks up from the un-snapped track, not from the snap.
+  await capturePage.mouse.move(mx + 40, my + 40);
+  const released = await readScrollPos(capturePage);
+  expectScrollNear(released.left, target.left + OFFSET - 40, 'released left');
+  expectScrollNear(released.top, target.top + OFFSET - 40, 'released top');
+
+  await capturePage.mouse.up({ button: 'middle' });
+  await openerPage.close();
+});
+
+test('pan: the snap also parks a box flush against the pane\'s right / bottom edges', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await applyZoomMode(capturePage, 8);
+
+  // The far-edge pairing: box's right edge → pane's right edge, which
+  // is the `- clientWidth / - clientHeight` arm of the target math.
+  const target = await capturePage.evaluate(() => {
+    const st = (window as unknown as {
+      __seeState: {
+        lastRectBounds: (k: 'rect') => { x: number; y: number; w: number; h: number } | null;
+      };
+    }).__seeState;
+    const b = st.lastRectBounds('rect')!;
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const r = img.getBoundingClientRect();
+    const br = box.getBoundingClientRect();
+    const originX = r.left - (br.left + box.clientLeft) + box.scrollLeft;
+    const originY = r.top - (br.top + box.clientTop) + box.scrollTop;
+    return {
+      left: originX + ((b.x + b.w) / 100) * r.width - box.clientWidth,
+      top: originY + ((b.y + b.h) / 100) * r.height - box.clientHeight,
+      maxX: box.scrollWidth - box.clientWidth,
+      maxY: box.scrollHeight - box.clientHeight,
+    };
+  });
+  const OFFSET = 20;
+  expect(target.left + OFFSET).toBeLessThan(target.maxX);
+  expect(target.top + OFFSET).toBeLessThan(target.maxY);
+  await capturePage.evaluate((t) => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    box.scrollLeft = t.left;
+    box.scrollTop = t.top;
+  }, { left: target.left + OFFSET, top: target.top + OFFSET });
+
+  const boxRect = await capturePage.locator('.image-box').boundingBox();
+  if (!boxRect) throw new Error('.image-box has no bounding box');
+  const mx = boxRect.x + boxRect.width / 2;
+  const my = boxRect.y + boxRect.height / 2;
+  await capturePage.mouse.move(mx, my);
+  await capturePage.mouse.down({ button: 'middle' });
+  await capturePage.mouse.move(mx + 14, my + 14);
+  const snapped = await readScrollPos(capturePage);
+  expectScrollNear(snapped.left, target.left, 'right-edge snap');
+  expectScrollNear(snapped.top, target.top, 'bottom-edge snap');
+  await capturePage.mouse.up({ button: 'middle' });
+
+  await openerPage.close();
+});
+
+test('pan: an arrow-key nudge drops the snap and keeps the other axis\'s escape distance', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await applyZoomMode(capturePage, 8);
+
+  const target = await readBoxSnapTarget(capturePage);
+  const OFFSET = 20;
+  await capturePage.evaluate((t) => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    box.scrollLeft = t.left;
+    box.scrollTop = t.top;
+  }, { left: target.left + OFFSET, top: target.top + OFFSET });
+
+  const boxRect = await capturePage.locator('.image-box').boundingBox();
+  if (!boxRect) throw new Error('.image-box has no bounding box');
+  const mx = boxRect.x + boxRect.width / 2;
+  const my = boxRect.y + boxRect.height / 2;
+  await capturePage.mouse.move(mx, my);
+  await capturePage.mouse.down({ button: 'middle' });
+
+  // Snap both axes, leaving the drag's un-snapped position 6 px past
+  // the target on each.
+  await capturePage.mouse.move(mx + 14, my + 14);
+  expectScrollNear((await readScrollPos(capturePage)).left, target.left, 'pre-nudge left');
+
+  // A vertical nudge. It must not touch the horizontal axis's
+  // accumulated escape distance — the regression this pins down is
+  // re-seeding *both* axes from the (snapped) scroll, which would
+  // silently reset the 6 px of X escape back to 0.
+  await capturePage.keyboard.press('ArrowDown');
+  const nudged = await readScrollPos(capturePage);
+
+  // Now drag 3 px back the other way: X's un-snapped position is
+  // 6 + 3 = 9 px out, past the 8 px radius, so the view follows the
+  // pointer. With the escape distance reset it would have been only
+  // 3 px out and still stuck on the snap.
+  await capturePage.mouse.move(mx + 11, my + 14);
+  const after = await readScrollPos(capturePage);
+  expectScrollNear(after.left, target.left + 9, 'post-nudge left');
+  // And the nudged axis stays exactly where the keyboard put it: the
+  // nudge turns the snap off for the rest of the drag, so this move
+  // (which has no vertical component) can't pull it back to flush.
+  expectScrollNear(after.top, nudged.top, 'post-nudge top');
+  expect(Math.abs(nudged.top - target.top)).toBeGreaterThan(1);
+
+  await capturePage.mouse.up({ button: 'middle' });
   await openerPage.close();
 });
