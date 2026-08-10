@@ -53,9 +53,9 @@
 
 ## Documentation
 
-### Pending docs for features not released yet (1.0.3)
+### Pending docs for features not released yet (1.0.4)
 
-* None yet
+* While holding a pan drag (`Ctrl+drag`, middle-click drag, or a scrollbar drag), arrow keys pan by one image pixel, snapping the view to whole pixels — for precise alignment against another image
 
 ### Not documented
 

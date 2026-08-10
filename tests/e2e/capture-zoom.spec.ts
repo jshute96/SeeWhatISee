@@ -26,6 +26,13 @@
 //     (no premature narrowing).
 //   - Fit shrinkage well below half-size: stroke narrows per the
 //     piecewise formula and ends up < 3.
+//   - Arrow-key fine pan: while a pan drag is held, each arrow moves
+//     `.image-box`'s scroll by one *image* pixel against the arrow
+//     direction (the image moves *with* it), snapping that axis onto
+//     the image's pixel grid and leaving the other alone; once
+//     released, arrows do nothing. Same again for a drag held on the
+//     box's scrollbar, and for a Ctrl-left drag (which also checks the
+//     press never reaches the prompt textarea's caret).
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -365,6 +372,222 @@ test('zoom: Fit well below half-size narrows stroke-width to <3', async ({
   // future change that re-introduces the "always 3" behavior.
   expect(expected).toBeLessThan(3);
   expect(expected).toBeGreaterThanOrEqual(1);
+
+  await openerPage.close();
+});
+
+// Scroll geometry of `.image-box` expressed in image pixels: the
+// step (one natural image pixel in CSS px), the scroll-content origin
+// of the image's top-left, and the fractional image-pixel coordinate
+// currently at the pane's top-left corner. The test asserts against
+// `px` / `py` — whole numbers after a snap — rather than raw scroll
+// offsets, which depend on the zoom level and the wrap's margin.
+async function readPanPixelState(page: Page): Promise<{
+  stepX: number; stepY: number; px: number; py: number;
+}> {
+  return page.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const r = img.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    const stepX = r.width / img.naturalWidth;
+    const stepY = r.height / img.naturalHeight;
+    const originX = r.left - (b.left + box.clientLeft) + box.scrollLeft;
+    const originY = r.top - (b.top + box.clientTop) + box.scrollTop;
+    return {
+      stepX,
+      stepY,
+      px: (box.scrollLeft - originX) / stepX,
+      py: (box.scrollTop - originY) / stepY,
+    };
+  });
+}
+
+test('pan: arrow keys nudge the scroll by one image pixel while a pan drag is held', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+
+  // 8× guarantees the image overflows `.image-box` on both axes, so
+  // there's scroll range in every direction to nudge into.
+  await applyZoomMode(capturePage, 8);
+
+  // Park away from both scroll edges (so a nudge in any direction has
+  // somewhere to go) at a deliberately *mid-pixel* offset — the first
+  // press has to snap it onto the image's pixel grid.
+  await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const r = img.getBoundingClientRect();
+    box.scrollLeft = 50 + r.width / img.naturalWidth / 2;
+    box.scrollTop = 50 + r.height / img.naturalHeight / 2;
+  });
+  const start = await readPanPixelState(capturePage);
+  // Sanity: the fixture really is off-grid on both axes to begin with
+  // — the "perpendicular axis keeps its fraction" assertions below are
+  // vacuous otherwise.
+  expect(Math.abs(start.px - Math.round(start.px))).toBeGreaterThan(0.1);
+  expect(Math.abs(start.py - Math.round(start.py))).toBeGreaterThan(0.1);
+
+  const box = capturePage.locator('.image-box');
+  await box.hover();
+  // Middle-button press starts the pan; the trigger stays held for the
+  // arrow presses (that's the gesture the nudge belongs to).
+  await capturePage.mouse.down({ button: 'middle' });
+
+  // Arrow direction = direction the image moves, so the image pixel at
+  // the pane's top-left corner goes the opposite way — same convention
+  // as the mouse drag. Only the pressed axis snaps: the horizontal
+  // press leaves the (still fractional) vertical offset alone.
+  await capturePage.keyboard.press('ArrowRight');
+  const afterRight = await readPanPixelState(capturePage);
+  expect(afterRight.px).toBeCloseTo(Math.round(start.px) - 1, 3);
+  expect(afterRight.py).toBeCloseTo(start.py, 3);
+
+  await capturePage.keyboard.press('ArrowDown');
+  const afterDown = await readPanPixelState(capturePage);
+  expect(afterDown.px).toBeCloseTo(Math.round(start.px) - 1, 3);
+  expect(afterDown.py).toBeCloseTo(Math.round(start.py) - 1, 3);
+
+  // One image pixel is one *step* of CSS scroll, not one CSS pixel —
+  // at 8× with DPR=1 that's 8 CSS px per press. Measured from an
+  // already-snapped state, so the delta is the step alone.
+  const readScroll = () =>
+    capturePage.evaluate(() => {
+      const b = document.querySelector('.image-box') as HTMLDivElement;
+      return { left: b.scrollLeft, top: b.scrollTop };
+    });
+  const snapped = await readScroll();
+  await capturePage.keyboard.press('ArrowLeft');
+  await capturePage.keyboard.press('ArrowUp');
+  const back = await readPanPixelState(capturePage);
+  expect(back.px).toBeCloseTo(Math.round(start.px), 3);
+  expect(back.py).toBeCloseTo(Math.round(start.py), 3);
+  const scrollNow = await readScroll();
+  expect(scrollNow.left - snapped.left).toBeCloseTo(start.stepX, 1);
+  expect(scrollNow.top - snapped.top).toBeCloseTo(start.stepY, 1);
+  expect(start.stepX).toBeGreaterThan(1); // 8× really is a multi-CSS-px step
+
+  await capturePage.mouse.up({ button: 'middle' });
+
+  // With no pan in flight, arrows are none of our business again.
+  await capturePage.keyboard.press('ArrowRight');
+  const afterRelease = await readPanPixelState(capturePage);
+  expect(afterRelease.px).toBeCloseTo(back.px, 3);
+  expect(afterRelease.py).toBeCloseTo(back.py, 3);
+
+  await openerPage.close();
+});
+
+test('pan: arrow keys nudge while a scrollbar drag is held', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 8);
+
+  // Mid-gutter point on the vertical scrollbar, plus a starting scroll
+  // position away from both edges.
+  const grip = await capturePage.evaluate(() => {
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const ir = img.getBoundingClientRect();
+    box.scrollLeft = 50 + ir.width / img.naturalWidth / 2;
+    box.scrollTop = 50 + ir.height / img.naturalHeight / 2;
+    const r = box.getBoundingClientRect();
+    // The content area excludes the scrollbars, so the gap between
+    // `clientWidth` and the border-box width *is* the gutter.
+    const gutter = r.width - box.clientWidth;
+    return { x: r.left + box.clientWidth + gutter / 2, y: r.top + 40, gutter };
+  });
+  // A zero-width (overlay) scrollbar would make the rest meaningless.
+  expect(grip.gutter, 'vertical scrollbar gutter width').toBeGreaterThan(0);
+
+  await capturePage.mouse.move(grip.x, grip.y);
+  await capturePage.mouse.down();
+  // Read *after* the press: a mousedown on the track page-scrolls
+  // while one on the thumb doesn't, and the nudge is what's under
+  // test — not which part of the scrollbar the grip point landed on.
+  const start = await readPanPixelState(capturePage);
+  expect(Math.abs(start.py - Math.round(start.py))).toBeGreaterThan(0.1);
+
+  await capturePage.keyboard.press('ArrowUp');
+  const nudged = await readPanPixelState(capturePage);
+  expect(nudged.py).toBeCloseTo(Math.round(start.py) + 1, 3);
+  // Vertical press, so the horizontal offset keeps its fraction.
+  expect(nudged.px).toBeCloseTo(start.px, 3);
+
+  await capturePage.mouse.up();
+
+  // Released — arrows are the browser's business again.
+  await capturePage.keyboard.press('ArrowUp');
+  const afterRelease = await readPanPixelState(capturePage);
+  expect(afterRelease.py).toBeCloseTo(nudged.py, 3);
+
+  await openerPage.close();
+});
+
+test('pan: Ctrl-left drag arms the nudge, and the press never reaches the prompt', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 8);
+
+  // Focus the prompt with the caret parked mid-text: the arrow press
+  // has to be swallowed by the pan handler, not move the caret. This
+  // is the reason the handler `preventDefault`s unconditionally.
+  await capturePage.evaluate(() => {
+    const ta = document.getElementById('prompt-text') as HTMLTextAreaElement;
+    ta.value = 'hello world';
+    ta.focus();
+    ta.setSelectionRange(5, 5);
+    const box = document.querySelector('.image-box') as HTMLDivElement;
+    const img = document.getElementById('preview') as HTMLImageElement;
+    const r = img.getBoundingClientRect();
+    box.scrollLeft = 50 + r.width / img.naturalWidth / 2;
+    box.scrollTop = 50 + r.height / img.naturalHeight / 2;
+  });
+  const start = await readPanPixelState(capturePage);
+
+  // Ctrl-left is the other pan trigger. It's also the arm where "Ctrl
+  // is deliberately not excluded" matters — the gesture holds Ctrl, so
+  // every nudge press arrives as Ctrl+Arrow.
+  await capturePage.locator('.image-box').hover();
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.down();
+  await capturePage.keyboard.press('ArrowRight');
+  const nudged = await readPanPixelState(capturePage);
+  await capturePage.mouse.up();
+  await capturePage.keyboard.up('Control');
+
+  expect(nudged.px).toBeCloseTo(Math.round(start.px) - 1, 3);
+  expect(nudged.py).toBeCloseTo(start.py, 3);
+
+  // Caret untouched — Ctrl+ArrowRight would otherwise jump it a word.
+  const caret = await capturePage.evaluate(
+    () => (document.getElementById('prompt-text') as HTMLTextAreaElement).selectionStart,
+  );
+  expect(caret).toBe(5);
 
   await openerPage.close();
 });

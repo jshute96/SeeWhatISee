@@ -1122,3 +1122,57 @@ test('drawing: zooming out mid-polyline still lets the loop close on the origina
 
   await openerPage.close();
 });
+
+test('drawing: a held pan suppresses the polyline nudge, which resumes on release', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // A polyline chain keeps `dragStart` set between segments, and a
+  // middle-mousedown during the chain bubbles past the overlay and
+  // starts a pan — so both arrow-key handlers are live at once. The
+  // pan wins (`drawing.ts` bails on `isPanning()`), otherwise one
+  // press would scroll the box *and* move the pending endpoint.
+  await capturePage.locator('#tool-polyline').click();
+  const r = await readPreviewRect(capturePage);
+  const A = { x: r.x + 80, y: r.y + 80 };
+  const B = { x: r.x + 180, y: r.y + 80 };
+  const C = { x: r.x + 240, y: r.y + 130 };
+  // Nudges run on the x axis: the visible-pane clamp in the nudge
+  // handler bites on y in short viewports, which would muddy what
+  // this test is actually asserting.
+  const NUDGE_PANNING = 5;  // ArrowRight presses with the pan held — ignored
+  const NUDGE_AFTER = 3;    // ArrowRight presses after release — applied
+
+  // Segment 1 commits; the chain stays alive with `dragStart` at B.
+  await capturePage.mouse.move(A.x, A.y);
+  await capturePage.mouse.down();
+  await capturePage.mouse.move(B.x, B.y);
+  await capturePage.mouse.up();
+  await capturePage.mouse.move(C.x, C.y);
+
+  // Middle-button held: these presses belong to the pan, not the chain.
+  await capturePage.mouse.down({ button: 'middle' });
+  for (let i = 0; i < NUDGE_PANNING; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.up({ button: 'middle' });
+
+  for (let i = 0; i < NUDGE_AFTER; i++) await capturePage.keyboard.press('ArrowRight');
+  await capturePage.mouse.down();
+  await capturePage.mouse.up();
+  await capturePage.keyboard.press('Escape');
+
+  const lines = await readAllLines(capturePage, 'line');
+  expect(lines).toHaveLength(2);
+  // Segment 2's endpoint carries only the post-release nudges. Had the
+  // suppressed presses landed, it would sit NUDGE_PANNING further right.
+  const seg2EndXNat = lines[1]!.x2 * r.natW / 100;
+  expect(seg2EndXNat).toBeCloseTo((C.x - r.x) * r.natW / r.w + NUDGE_AFTER, 0);
+
+  await openerPage.close();
+});

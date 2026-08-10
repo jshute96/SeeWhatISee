@@ -818,10 +818,12 @@ fresh edit.
   in that direction, so the user can finish the gesture
   output-pixel-precisely without trying to inch the physical mouse.
 - The CSS-pixel step is `imgRect.width / naturalWidth` (and the
-  same for height). At 1× zoom with DPR=1 it equals 1 CSS px; on
-  HiDPI or zoomed in it shrinks below 1 (sub-pixel cursor positions
-  are fine — the drag math is float); zoomed out it grows above 1
-  so each press still maps to exactly one output pixel.
+  same for height), computed by `naturalPixelStep()` in `zoom.ts`
+  and shared with the arrow-key fine pan. At 1× zoom with DPR=1 it
+  equals 1 CSS px; on HiDPI or zoomed in it shrinks below 1
+  (sub-pixel cursor positions are fine — the drag math is float);
+  zoomed out it grows above 1 so each press still maps to exactly
+  one output pixel.
 - Direction filter mirrors the handle's degrees of freedom:
   - n / s edge: up / down only.
   - e / w edge: left / right only.
@@ -836,6 +838,9 @@ fresh edit.
   physical mousemove resyncs them — the drag jumps to wherever the
   OS pointer is — which keeps "what the cursor visibly points at"
   and "what the drag is doing" the same thing.
+- Bails while a pan drag is in flight (`isPanning()`) — see
+  *Arrow-key fine pan* under the zoom section for why the two can
+  overlap and why pan wins.
 - **Implementation**:
   - Window-level `keydown` handler registered in capture phase, so
     the prompt textarea's default arrow-key behaviour doesn't
@@ -1669,7 +1674,9 @@ programmatic dispatch for).
   handler because that one early-returns on `shiftKey`, and Alt++
   needs Shift on most layouts. We accept `+`, `=` (no-shift alias),
   `-`, and `_` (Shift+- on some layouts).
-- **Pan: middle-button OR Ctrl/Cmd + left.** Both gestures share
+- **Pan: middle-button OR Ctrl/Cmd + left** (a scrollbar drag is a
+  third view-positioning gesture — it doesn't use `panState`, but it
+  arms the same arrow keys; see *Arrow-key fine pan*)**.** Both gestures share
   `panState` and the `startPan` helper. `panState.button` records
   which trigger started the drag so the matching `mouseup` releases
   it (a stray right-up shouldn't end a Ctrl-left pan).
@@ -1687,6 +1694,64 @@ programmatic dispatch for).
     can't start on top of stale draw state.
   - Drag scrolls `.image-box` (`scrollLeft / scrollTop` ± mouse
     delta) via the window-level `mousemove` listener.
+- **Arrow-key fine pan.** While the pan trigger is held, an arrow
+  press scrolls the box by one image pixel — for pixel-exact
+  alignment of the capture against something the user is comparing
+  it to, which the hand can't do on the mouse.
+  - Triggers: middle-drag, Ctrl/Cmd-left-drag, *and* a left-drag on
+    one of `.image-box`'s scrollbars. All three are the same
+    "positioning the view" moment, so all three arm the arrow keys.
+    `isPanning()` is true for any of them.
+  - The scrollbar case is tracked by `scrollbarDrag`, set from a
+    window-level `mousedown` whose coords land in the gutter
+    (`isOverImageBoxScrollbar`), and cleared on any left-mouseup, on
+    window blur, and on the first `mousemove` with the left button no
+    longer down — the flag is invisible when stuck, unlike
+    `panState`'s `body.panning` class.
+  - None of the *mouse* handling on that path calls `preventDefault`:
+    the native thumb drag has to keep working. (The arrow handler
+    still does, as everywhere else.) Chrome dispatches a normal
+    `mousedown` for a scrollbar press, which is what makes the
+    gesture detectable at all.
+  - Caveat: during a scrollbar drag the browser keeps driving the
+    scroll from the pointer, so the next pointer *move* overrides
+    the nudge. Nudging then holding still is the working gesture —
+    same shape as the drawing nudge's snap-back caveat.
+  - One *natural* (saved-output) image pixel, the same unit
+    drawing's arrow-key nudge uses. Both call the shared
+    `naturalPixelStep()` in `zoom.ts` (`imgRect.width /
+    naturalWidth`), so a press means the same thing everywhere.
+  - Each press **snaps the axis it moves** so the pane's top-left
+    corner lands on a whole image pixel there:
+    `round((scroll − origin) / step)`, then ± 1. Zoomed in, a
+    fractional offset splits the source pixel grid across the pane
+    edge and defeats the comparison.
+  - The perpendicular axis is left alone — it's where the user's
+    drag deliberately put it, and snapping it too would move the
+    image in a direction they didn't ask for.
+  - `origin` is the image's top-left in the box's scroll-content
+    coordinates (`imgRect.left − boxContentLeft + scrollLeft`) — not
+    zero, since `.image-wrap` carries a 4 px margin.
+  - Arrow direction = the direction the *image* moves, matching the
+    drag it continues (so the scroll offset goes the other way),
+    rather than the browser's move-the-viewport convention.
+  - Past a scroll edge the browser clamps, so the press simply pins
+    that axis at the edge. Note the position it pins to is itself
+    off-grid (the wrap's 4 px margin sits left of image pixel 0), so
+    the first press back *away* from an edge travels the snap
+    remainder plus a pixel — N presses out and N back don't return
+    to where an edge-clamped view started.
+  - Capture-phase listener + unconditional `preventDefault` so the
+    press can't also move the prompt textarea's caret.
+  - Ctrl / Meta are not excluded — the Ctrl-left gesture holds Ctrl
+    by definition. Alt is, since Alt+Left / Alt+Right are Chrome's
+    Back / Forward shortcuts.
+  - Pan wins over drawing's arrow-key nudge: that handler bails on
+    `isPanning()`. The states overlap in practice — a polyline chain
+    keeps `dragStart` set between segments, and a middle-mousedown
+    during the chain bubbles past the overlay and starts a pan — so
+    without the bail one press would scroll *and* move the pending
+    endpoint.
 
 ### Zoom menu
 

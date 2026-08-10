@@ -53,6 +53,8 @@ import {
   isOverVisibleImage,
   isOverImageBoxScrollbar,
   isWithinEdgeCommitBuffer,
+  naturalPixelStep,
+  isPanning,
   startPan,
   getLastMousePos,
   setLastMousePos,
@@ -2371,6 +2373,14 @@ export function initDrawing(context: DrawingContext): void {
   // the press when focus happens to sit there during the drag.
   window.addEventListener('keydown', (e) => {
     if (boxDrag === null && dragStart === null) return;
+    // A pan drag wins. The two states can genuinely overlap: a
+    // polyline chain keeps `dragStart` set between segments, and a
+    // middle-mousedown during the chain bubbles past the overlay to
+    // `.image-box` and starts a pan. Without this bail, one arrow
+    // press would both scroll the box and nudge the pending polyline
+    // endpoint. The hand is on the pan trigger, so panning is what
+    // the user is asking for; zoom.ts's handler swallows the key.
+    if (isPanning()) return;
     // Alt is excluded — Alt+Left / Alt+Right are Chrome's Back /
     // Forward history-navigation shortcuts.
     if (e.altKey) return;
@@ -2426,20 +2436,12 @@ export function initDrawing(context: DrawingContext): void {
     const mp = getLastMousePos();
     if (mp === null) return;
     // One arrow press → one natural (output) pixel of change in the
-    // saved image, regardless of zoom or DPR. The drag handler maps
-    // a CSS-pixel cursor delta to a percent-space delta via
-    // `cssPx / r.width`, which becomes natural pixels at bake time
-    // via `pct * naturalWidth / 100`. Solving for "one natural px"
-    // gives `stepX = r.width / naturalWidth` (and similarly stepY).
-    // At 1× zoom with DPR=1 this is exactly 1 CSS px; on HiDPI or
-    // when zoomed in the step shrinks below 1 (sub-pixel positions
-    // are fine — the drag math is float). Zoomed out it grows above
-    // 1 so each press still bumps the output by exactly one pixel.
+    // saved image, regardless of zoom or DPR. `naturalPixelStep()`
+    // (zoom module) owns that conversion — it's shared with the pan
+    // module's arrow-key fine pan so both keyboard paths step by the
+    // same unit.
     const r = imgRect();
-    const natW = ctx.previewImg.naturalWidth;
-    const natH = ctx.previewImg.naturalHeight;
-    const stepX = natW > 0 ? r.width / natW : 1;
-    const stepY = natH > 0 ? r.height / natH : 1;
+    const { x: stepX, y: stepY } = naturalPixelStep();
     // Clamp to the visible-pane rect — mirrors `localCoords` so the
     // synthetic cursor can't wander past what the user can see, even
     // when zoomed and a chunk of the image lives in the scroll

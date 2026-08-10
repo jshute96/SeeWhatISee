@@ -131,7 +131,7 @@ While viewing a chatbot page, the toolbar context menu lets you **Set this tab a
 
 - `Shift+drag` — draw without snap and without grabbing resize handles.
 - `Ctrl+Shift+drag` — draw without grabbing resize handles, with snap still on.
-- Arrow keys while dragging — nudge the drag point by one output pixel.
+- Arrow keys while drawing or resizing — nudge the drag point by one output pixel.
 
 #### Options
 

@@ -2,7 +2,9 @@
 // wires the zoom dropdown, Ctrl+wheel and Alt+± stepping, the
 // middle-click + Ctrl-left pan, and the window resize / image-load
 // re-fit hooks. Also owns the `lastMousePos` cache that drawing's
-// arrow-key nudge reads and writes.
+// arrow-key nudge reads and writes, and `naturalPixelStep()` — the
+// one-output-pixel step both arrow-key paths (drawing's nudge and
+// the fine pan) measure in.
 //
 // Two display modes:
 //   - 'fit' (default) — image shrinks to the remaining viewport
@@ -18,7 +20,9 @@
 // resolution either way) — it only controls what the user sees
 // while editing.
 //
-// Module also owns pan (middle-click + Ctrl/Cmd-left-drag) and the
+// Module also owns pan (middle-click + Ctrl/Cmd-left-drag or a
+// scrollbar drag, plus the one-image-pixel arrow-key nudge while one
+// of those is held) and the
 // cursor-position cache that the keyboard zoom + drawing's
 // arrow-key nudge both read.
 //
@@ -259,6 +263,31 @@ export function currentDisplayScale(): number {
   const target = targetCssSize();
   if (!target.w) return 1;
   return ctx.imgRect().width / target.w;
+}
+
+// CSS-pixel size of one *natural* (saved-output) image pixel on
+// screen right now. Shared by every "one output pixel per press"
+// keyboard path: drawing's arrow-key drag / resize nudge and the
+// pan module's arrow-key fine pan below.
+//
+// The drag handler maps a CSS-pixel cursor delta to percent space via
+// `cssPx / r.width`, which becomes natural pixels at bake time via
+// `pct * naturalWidth / 100`. Solving for "one natural px" gives
+// `r.width / naturalWidth`. At 1× zoom with DPR=1 that's exactly 1
+// CSS px; on HiDPI or zoomed in it shrinks below 1 (sub-pixel
+// positions are fine — the drag and scroll math are both float);
+// zoomed out it grows above 1 so each press still moves exactly one
+// output pixel.
+//
+// Falls back to 1 before the image has loaded (natural size 0).
+export function naturalPixelStep(): { x: number; y: number } {
+  const r = ctx.imgRect();
+  const natW = ctx.previewImg.naturalWidth;
+  const natH = ctx.previewImg.naturalHeight;
+  return {
+    x: natW > 0 ? r.width / natW : 1,
+    y: natH > 0 ? r.height / natH : 1,
+  };
 }
 
 // Has Fit-mode's rendering already reached the editor's 1× display
@@ -574,6 +603,11 @@ const WHEEL_NOTCH_PIXEL_MIN = 40;
 // `window` for moves / release lets a drag that wanders off the
 // image keep panning until the triggering button is released.
 //
+// While the trigger is held, arrow keys nudge the scroll by one image
+// pixel each — the fine-alignment path (see the listener below). A
+// held *scrollbar* drag counts as the same moment (`scrollbarDrag`):
+// the user is positioning the view, just with a different grip.
+//
 // Ctrl-left needs to fire from over the SVG overlay too (the
 // overlay covers the image), so the overlay's `mousedown` handler
 // in the drawing module has a Ctrl-left branch that calls `startPan`
@@ -591,6 +625,27 @@ let panState: { prevX: number; prevY: number; button: number } | null = null;
 // them — `preventDefault` on the various mouse events alone has
 // proven not to catch every Linux Chromium build's paste path.
 let lastImageMiddleDownTime = 0;
+
+// Left-button drag on one of `.image-box`'s scrollbars. The browser
+// does the scrolling itself here — we only track that the gesture is
+// in flight so the arrow-key fine pan works during it too.
+//
+// Chrome dispatches a normal `mousedown` for a scrollbar press (with
+// the scrollable element as target), which is what makes this
+// detectable at all; `isOverImageBoxScrollbar` distinguishes gutter
+// coords from content coords. We deliberately don't `preventDefault`
+// anywhere on this path — that would kill the native thumb drag.
+let scrollbarDrag = false;
+
+/** Is a pan drag in flight? Drawing's arrow-key nudge checks this so
+ *  an arrow press during a pan pans and *only* pans — the two can
+ *  overlap (a middle-drag pan can start while a polyline chain is
+ *  alive, which leaves drawing's `dragStart` set). Scrollbar drags
+ *  count: they're the same "positioning the view" moment, and the
+ *  same arrow keys act on it. */
+export function isPanning(): boolean {
+  return panState !== null || scrollbarDrag;
+}
 
 export function startPan(e: MouseEvent): void {
   panState = { prevX: e.clientX, prevY: e.clientY, button: e.button };
@@ -765,7 +820,27 @@ export function initZoom(context: ZoomContext): void {
     startPan(e);
   });
 
+  // Scrollbar drag: track the gesture so arrow keys can fine-tune the
+  // position the user just dragged to. Listening on `window` (not
+  // `.image-box`) because a scrollbar press's event target isn't
+  // something we want to depend on — the coordinate test is the
+  // reliable signal. No `preventDefault`: the native thumb drag has
+  // to keep working, and the release is handled by the `mouseup`
+  // below.
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (!isOverImageBoxScrollbar(e.clientX, e.clientY)) return;
+    scrollbarDrag = true;
+  });
+
   window.addEventListener('mousemove', (e) => {
+    // Belt-and-braces release for `scrollbarDrag`. `mouseup` + `blur`
+    // cover the realistic paths, but the flag is invisible when stuck
+    // (unlike `panState`, which paints `body.panning`) and the arrow
+    // handler swallows arrows unconditionally — so a stuck flag would
+    // surface as "arrow keys stopped working in the prompt" with no
+    // clue why. `buttons` is authoritative on every move.
+    if (scrollbarDrag && !(e.buttons & 1)) scrollbarDrag = false;
     if (!panState) return;
     const dx = e.clientX - panState.prevX;
     const dy = e.clientY - panState.prevY;
@@ -775,7 +850,82 @@ export function initZoom(context: ZoomContext): void {
     ctx.imageBox.scrollTop -= dy;
   });
 
+  // ─── Arrow-key fine pan (while a pan drag is in flight) ─────────
+  //
+  // While the pan trigger is held — middle-button, Ctrl/Cmd-left, or
+  // a left-drag on one of the box's scrollbars — each arrow press
+  // scrolls the box by exactly one natural (saved-output) image
+  // pixel. That's the same unit drawing's arrow-key nudge steps in,
+  // via the shared `naturalPixelStep()`. The mouse can't be inched a
+  // single pixel by hand, so this is the way to nail a pixel-exact
+  // alignment between the captured image and whatever the user is
+  // comparing it against.
+  //
+  // Each press also *snaps* the axis it moves, so the visible area's
+  // top-left lands on a whole image pixel on that axis rather than
+  // mid-pixel — zoomed in, a fractional scroll offset splits the
+  // source pixel grid across the pane edge, which is what defeats a
+  // careful visual comparison. Only the pressed axis is touched: the
+  // perpendicular offset is where the user's drag deliberately put
+  // it, and silently shifting it would move the image under them in
+  // a direction they didn't ask for.
+  //
+  // Capture phase + unconditional `preventDefault` so the press can't
+  // also move the caret in the prompt textarea, which usually holds
+  // focus. Ctrl/Meta are deliberately *not* excluded — the Ctrl-left
+  // pan gesture holds Ctrl by definition. Alt is excluded because
+  // Alt+Left / Alt+Right are Chrome's Back / Forward shortcuts.
+  window.addEventListener('keydown', (e) => {
+    if (!isPanning()) return;
+    // Same bails as every other keyboard path in this module. A pan
+    // can't realistically be in flight behind a modal today, so these
+    // are for consistency rather than a live bug — but a future
+    // non-modal dialog shouldn't have its arrow keys eaten.
+    if (ctx.anyEditDialogOpen()) return;
+    if (ctx.isStaleMode()) return;
+    if (e.altKey) return;
+    let dx = 0;
+    let dy = 0;
+    switch (e.key) {
+      case 'ArrowLeft':  dx = -1; break;
+      case 'ArrowRight': dx =  1; break;
+      case 'ArrowUp':    dy = -1; break;
+      case 'ArrowDown':  dy =  1; break;
+      default: return;
+    }
+    e.preventDefault();
+    const step = naturalPixelStep();
+    // Where the image's top-left sits in the box's *scroll-content*
+    // coordinates: its viewport position, un-scrolled, relative to
+    // the box's content origin. Constant across scrolling (both terms
+    // move together), so it's the fixed origin the pixel grid is
+    // measured from. It's non-zero — `.image-wrap` carries a 4 px
+    // margin — so it can't be assumed away.
+    const r = ctx.imgRect();
+    const box = ctx.imageBox.getBoundingClientRect();
+    // Image pixel currently at the pane's top-left corner on this
+    // axis, rounded to the nearest whole one (the snap), then
+    // stepped. Sign convention matches the drag this continues: the
+    // arrow points the way the *image* moves, so the scroll offset
+    // goes the other way. The browser clamps to the scroll range, so
+    // a step past the edge just pins there.
+    if (dx !== 0) {
+      const originX =
+        r.left - (box.left + ctx.imageBox.clientLeft) + ctx.imageBox.scrollLeft;
+      const px = Math.round((ctx.imageBox.scrollLeft - originX) / step.x) - dx;
+      ctx.imageBox.scrollLeft = originX + px * step.x;
+    } else {
+      const originY =
+        r.top - (box.top + ctx.imageBox.clientTop) + ctx.imageBox.scrollTop;
+      const py = Math.round((ctx.imageBox.scrollTop - originY) / step.y) - dy;
+      ctx.imageBox.scrollTop = originY + py * step.y;
+    }
+  }, true);
+
   window.addEventListener('mouseup', (e) => {
+    // Scrollbar drags end on any left-up, wherever it lands — the
+    // native thumb drag follows the pointer outside the box too.
+    if (e.button === 0) scrollbarDrag = false;
     if (!panState || e.button !== panState.button) return;
     if (panState.button === 1) {
       // Mirror the mousedown preventDefault on mouseup too. Some
@@ -808,6 +958,11 @@ export function initZoom(context: ZoomContext): void {
   // to a different app), and a stuck polyline would keep the preview
   // line ghosting around the cursor on the next focus-in.
   window.addEventListener('blur', () => {
+    // Same reasoning as `panState` below: a mouseup that lands outside
+    // the window never reaches us, and a stuck `scrollbarDrag` would
+    // leave arrow keys hijacked (and swallowed from the prompt
+    // textarea) long after the gesture ended.
+    scrollbarDrag = false;
     if (panState) {
       panState = null;
       document.body.classList.remove('panning');
