@@ -26,7 +26,7 @@
 //
 // There's no right-click drawing. There's no in-place conversion
 // between kinds: every drag commits one new edit of the active
-// tool's kind, and Undo simply removes the last edit (Clear wipes
+// tool's kind, and Undo simply removes the last edit (Reset wipes
 // the stack). Coordinates are percentages of the image so edits
 // survive resizes and prompt growth.
 //
@@ -149,7 +149,7 @@ let selectedTool: Tool = 'rect';
 
 /**
  * Monotonic edit counter. Bumped every time the highlight stack
- * changes (drawn rect/line, undo, clear, shrink). Read by main's
+ * changes (drawn rect/line, undo, reset, shrink). Read by main's
  * Copy / Capture flow so the SW can decide whether the cached
  * on-disk PNG still represents the user's current state.
  *
@@ -169,7 +169,7 @@ let editVersion = 0;
  * `onEditCommit` callback) that the edit stack changed. Every place
  * that previously wrote `editVersion++` should go through this
  * helper so the last-capture push picks up every commit kind (drag,
- * undo, clear, shrink, edge-handle resize, test-only setter).
+ * undo, reset, shrink, edge-handle resize, test-only setter).
  */
 function commitEdit(): void {
   editVersion++;
@@ -355,11 +355,21 @@ export interface DrawingContext {
   shrinkBtn: HTMLButtonElement;
   viewCroppedBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
-  clearBtn: HTMLButtonElement;
+  resetBtn: HTMLButtonElement;
   /** All `.tool-btn` elements in DOM order. Drawing reads
    *  `dataset.tool`, toggles `.selected` / `aria-pressed`, and wires
    *  the mousedown handler. */
   toolButtons: HTMLButtonElement[];
+
+  /**
+   * The capture as it was taken, as a data URL — what Reset puts
+   * back. Read live rather than captured at init time because the
+   * capture arrives asynchronously, well after `initDrawing`; null
+   * until it does. Not `previewImg.src`, which View cropped
+   * replaces, and not the bottom of `viewCropStack`, which is empty
+   * in a restored session even when a view crop is in effect.
+   */
+  originalImageUrl(): string | null;
 
   /** Re-derive the Image-size pill's bake-derived parts. Called
    *  from `render()` after every edit-stack change so the
@@ -372,7 +382,7 @@ export interface DrawingContext {
   composeImageBadgeText(): void;
   /**
    * Fired after any edit-stack mutation that bumped `editVersion`
-   * (committed drag, undo, clear, shrink, edge-handle resize,
+   * (committed drag, undo, reset, shrink, edge-handle resize,
    * test-only setter). Optional — used by the page's last-capture
    * push to flush drawing state to the SW. The callback runs after
    * `render()` so the latest geometry is on screen by the time
@@ -1346,7 +1356,12 @@ export function render(): void {
 
   const hasEditHistory = editHistory.length > 0;
   ctx.undoBtn.disabled = !hasEditHistory;
-  ctx.clearBtn.disabled = !hasEditHistory;
+  // Reset also has work to do with an empty history but a view crop
+  // in effect — a restored session, whose `viewCrop` markers were
+  // dropped because the pre-crop image isn't in the snapshot. That's
+  // the one state where Undo can't get the original image back, so
+  // the button that can must stay live.
+  ctx.resetBtn.disabled = !hasEditHistory && !hasViewCrop();
   const shrinkable = shrinkTarget();
   setMenuItemDisabled(ctx.shrinkBtn, !shrinkable);
   // The menu item names what the next click would actually shrink,
@@ -1636,7 +1651,7 @@ let viewCropPct: RectPct | null = null;
 // Unbounded by depth, but each entry holds the image as it was
 // *before* that crop, so a drill-down series shrinks geometrically —
 // the whole stack costs on the order of the original capture, not a
-// multiple of it. Cleared by Clear.
+// multiple of it. Emptied by Reset.
 type ViewCropUndo = {
   src: string;
   edits: Edit[];
@@ -1665,10 +1680,18 @@ const viewCropStack: ViewCropUndo[] = [];
 // load lands: applying a crop under drawn edits on a JPG capture
 // re-encodes a second generation. That's a real difference, shown
 // when the pill legitimately refreshes.)
+//
+// On the swaps that grow the image back (Undo, Reset) the frozen
+// text is genuinely stale rather than a promise kept — the pill
+// holds the smaller size until the bigger image decodes. Dropping
+// the guard wouldn't help: `previewImg` still reports the outgoing
+// size until then, so the same stale dimensions would be recomposed
+// anyway, just at the cost of a full re-bake.
 let baseImageSwapPending = false;
 
 // Every base-image swap goes through here so the badge guard above
-// can't be forgotten on one of the paths (apply / undo / restore).
+// can't be forgotten on one of the paths (apply / undo / reset /
+// restore).
 function setBaseImage(url: string): void {
   // Assigning the `src` it already has is a no-op in the HTML image
   // update algorithm — no `load`, so the guard below would never be
@@ -2398,7 +2421,7 @@ export function getTestHooks(): DrawingTestHooks {
 
 /**
  * Wire all drawing-side handlers (overlay drags, window key/mouse,
- * Shrink / Undo / Clear / tool-button clicks) and trigger the first
+ * Shrink / Undo / Reset / tool-button clicks) and trigger the first
  * render. Called once by capture-page.ts after the static DOM has
  * loaded.
  */
@@ -3101,15 +3124,22 @@ export function initDrawing(context: DrawingContext): void {
     render();
   });
 
-  ctx.clearBtn.addEventListener('click', () => {
+  ctx.resetBtn.addEventListener('click', () => {
     edits.length = 0;
     editHistory.length = 0;
-    // A View cropped op isn't an *edit* — it re-framed the picture —
-    // so Clear leaves the cropped image in place. Its undo entries
-    // go with the history they were interleaved with, though:
-    // keeping them would let a later Undo resurrect an image state
-    // whose edits Clear already discarded.
     viewCropStack.length = 0;
+    // Reset goes all the way back to the capture as it was taken,
+    // View cropped included — see `docs/capture-page.md`.
+    //
+    // The crop state is dropped unconditionally, outside the guard:
+    // a null URL means the screenshot never arrived (a failed
+    // capture), so there's no image to put back, but leaving
+    // `viewCropPct` set would claim a crop for an edit stack that no
+    // longer has one — and with the undo stack gone, nothing could
+    // ever clear it.
+    viewCropPct = null;
+    const original = ctx.originalImageUrl();
+    if (original) setBaseImage(original);
     commitEdit();
     render();
   });

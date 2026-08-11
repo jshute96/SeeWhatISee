@@ -1,6 +1,6 @@
 // E2E coverage for basic Capture-page drawing flows: a draw + save
 // round-trip per tool (Box / Line / Arrow / Crop / Redact), undo /
-// clear button state, and the per-kind flags the saved record carries
+// reset button state, and the per-kind flags the saved record carries
 // (`hasHighlights`, `hasRedactions`, `isCropped`).
 //
 // Sibling drawing specs cover:
@@ -130,7 +130,7 @@ test('drawing: png + html with highlights, no prompt', async ({
   await openerPage.close();
 });
 
-test('drawing: undo/clear buttons reflect the edit stack', async ({
+test('drawing: undo/reset buttons reflect the edit stack', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -142,33 +142,33 @@ test('drawing: undo/clear buttons reflect the edit stack', async ({
   );
 
   const undo = capturePage.locator('#undo');
-  const clear = capturePage.locator('#clear');
+  const reset = capturePage.locator('#reset');
 
   // Empty stack → both buttons disabled.
   await expect(undo).toBeDisabled();
-  await expect(clear).toBeDisabled();
+  await expect(reset).toBeDisabled();
 
   // One edit → both enabled.
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
   await expect(undo).toBeEnabled();
-  await expect(clear).toBeEnabled();
+  await expect(reset).toBeEnabled();
 
   // Undo back to empty → both disabled.
   await undo.click();
   await expect(undo).toBeDisabled();
-  await expect(clear).toBeDisabled();
+  await expect(reset).toBeDisabled();
 
   // Two edits, one undo → still enabled (one left).
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
   await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.5, yPct: 0.5 });
   await undo.click();
   await expect(undo).toBeEnabled();
-  await expect(clear).toBeEnabled();
+  await expect(reset).toBeEnabled();
 
-  // Clear empties the stack regardless of count.
-  await clear.click();
+  // Reset empties the stack regardless of count.
+  await reset.click();
   await expect(undo).toBeDisabled();
-  await expect(clear).toBeDisabled();
+  await expect(reset).toBeDisabled();
 
   // Close the Capture page tab cleanly so it doesn't leak into the next
   // test.
@@ -313,10 +313,10 @@ test('drawing: draw arrow then undo → no highlights flag', async ({
 
   // Arrow is a new edit-kind; confirm it flows through the generic
   // undo path the same way Box / Line / Crop / Redact do — popping
-  // the arrow leaves the stack empty, the Undo / Clear buttons go
+  // the arrow leaves the stack empty, the Undo / Reset buttons go
   // back to disabled, and the saved record carries no highlight flag.
   const undo = capturePage.locator('#undo');
-  const clear = capturePage.locator('#clear');
+  const reset = capturePage.locator('#reset');
 
   await capturePage.locator('#tool-arrow').click();
   await dragRect(
@@ -330,7 +330,7 @@ test('drawing: draw arrow then undo → no highlights flag', async ({
   await undo.click();
   expect(await readEditKinds(capturePage)).toEqual([]);
   await expect(undo).toBeDisabled();
-  await expect(clear).toBeDisabled();
+  await expect(reset).toBeDisabled();
 
   await configureAndCapture(capturePage, {
     saveScreenshot: true,

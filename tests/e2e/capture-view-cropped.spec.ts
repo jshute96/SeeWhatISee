@@ -10,11 +10,21 @@
 //   - a Box edit surviving the re-frame with re-mapped percentages,
 //     and one that falls entirely outside being dropped;
 //   - Undo restoring the full-size image and the crop edit;
+//   - Reset returning to the original capture from any crop depth,
+//     and the saved record that follows carrying no crop flag;
 //   - the More menu's open / dismiss behaviour, which is what makes
 //     both items reachable.
 
+import fs from 'node:fs';
+import { PNG } from 'pngjs';
 import { test, expect } from '../fixtures/extension';
-import { dragRect, openDetailsFlow } from './details-helpers';
+import {
+  configureAndCapture,
+  dragRect,
+  findCapturedDownload,
+  openDetailsFlow,
+  readLatestRecord,
+} from './details-helpers';
 import {
   clickMoreMenuItem,
   readEditKinds,
@@ -122,6 +132,53 @@ test('view cropped: crops again inside the already-cropped image', async ({
   const twice = await readNaturalSize(capturePage);
   expect(Math.abs(twice.w - full.w / 4)).toBeLessThanOrEqual(1);
   expect(Math.abs(twice.h - full.h / 4)).toBeLessThanOrEqual(1);
+
+  await openerPage.close();
+});
+
+test('view cropped: Reset returns to the original capture from a crop-of-a-crop', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const full = await readNaturalSize(capturePage);
+  const reset = capturePage.locator('#reset');
+
+  // A box, then two nested View cropped ops — Reset has to undo all
+  // of it in one click, not just the edits.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.5, yPct: 0.5 });
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 2));
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 4));
+
+  await reset.click();
+  await waitForNaturalWidth(capturePage, full.w);
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  expect(await readEffectiveCrop(capturePage)).toBeNull();
+  // Nothing left to undo or reset, and no crop to re-frame.
+  await expect(capturePage.locator('#undo')).toBeDisabled();
+  await expect(reset).toBeDisabled();
+  await expect(capturePage.locator('#view-cropped')).toBeDisabled();
+
+  // The save that follows is the untouched capture: full-size pixels
+  // and no `isCropped` flag left over from the discarded re-frames.
+  await configureAndCapture(capturePage, { saveScreenshot: true, saveHtml: false });
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.isCropped).toBeUndefined();
+  const png = PNG.sync.read(fs.readFileSync(await findCapturedDownload(sw, '.png')));
+  expect(png.width).toBe(full.w);
+  expect(png.height).toBe(full.h);
 
   await openerPage.close();
 });

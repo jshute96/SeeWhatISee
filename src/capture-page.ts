@@ -282,6 +282,14 @@ const copyUrlBtn = document.getElementById('copy-url-btn') as HTMLButtonElement;
  * inert / no-URL state).
  */
 let capturedUrl = '';
+
+/**
+ * The captured screenshot exactly as it arrived, kept so Reset can
+ * put it back after a View cropped op replaced the preview's `src`.
+ * Empty until the capture response lands (and on the error panes,
+ * which never show an image).
+ */
+let originalImageDataUrl = '';
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const screenshotRow = document.getElementById('row-screenshot') as HTMLDivElement;
@@ -456,7 +464,7 @@ const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
 const viewCroppedBtn = document.getElementById('view-cropped') as HTMLButtonElement;
 const zoomBtn = document.getElementById('zoom') as HTMLButtonElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
-const clearBtn = document.getElementById('clear') as HTMLButtonElement;
+const resetBtn = document.getElementById('reset') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
 const downloadImageBtn = document.getElementById('download-image-btn') as HTMLButtonElement;
 const moreBtn = document.getElementById('more') as HTMLButtonElement;
@@ -877,6 +885,7 @@ async function loadData(): Promise<void> {
       return;
     }
     previewImg.src = response.screenshotDataUrl;
+    originalImageDataUrl = response.screenshotDataUrl;
     capturedUrl = response.url;
     // Title falls back to the URL when no title was captured (covers
     // restricted pages, scrape failures, and the rare untitled tab).
@@ -1404,8 +1413,9 @@ initDrawing({
   shrinkBtn,
   viewCroppedBtn,
   undoBtn,
-  clearBtn,
+  resetBtn,
   toolButtons,
+  originalImageUrl: () => originalImageDataUrl || null,
   updateImageSizeBadge,
   composeImageBadgeText,
   // Restorable state-changed: route through the debounced push so a
@@ -1574,7 +1584,7 @@ function pushUiStateDebounced(): void {
 //     to one push.
 //   - Save-checkbox / format-radio toggles: immediate — they're
 //     discrete user gestures, no benefit to coalescing.
-//   - Drawing edits, undo / clear / shrink, edge-handle resize, tool
+//   - Drawing edits, undo / reset / shrink, edge-handle resize, tool
 //     button click: routed through the drawing module's
 //     `onEditCommit` callback (see initDrawing wiring below). Debounced
 //     because rapid undo presses or a long polyline chain could

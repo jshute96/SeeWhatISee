@@ -457,7 +457,7 @@ fresh edit.
       an arrowhead at the upper-right tip).
     - Crop (word button, full width).
   - Zoom (display-only transform; popover menu picks the mode).
-  - Undo, Clear (edit-stack actions).
+  - Undo, Reset (edit-stack actions).
   - Copy, Save (image-level actions — Copy puts the *current* PNG
     bytes on the clipboard; Save opens the native save-as dialog).
   - More… (popover menu with the picture-rewriting actions — see
@@ -469,7 +469,7 @@ fresh edit.
   (not `click`) so the previously-selected tool deselects the
   moment the user presses a new one — otherwise both old
   `.selected` and new `:active` paint at once.
-- Action buttons (Undo / Clear / Copy / Save / More…) are
+- Action buttons (Undo / Reset / Copy / Save / More…) are
   *actions*, not modes — they never get `.selected`. They share a
   `.btn` press-look with every other primary button on the page
   (header Options/Help, Capture, Ask, edit-dialog Cancel/Save/Download),
@@ -838,10 +838,8 @@ fresh edit.
   in-memory `viewCropStack`, and a `viewCrop` marker onto
   `editHistory`. One Undo click pops both and restores the whole
   state, image included.
-- Clear drops the stack: it discards the edits those entries were
-  interleaved with, so keeping them would let a later Undo
-  resurrect a state the user already cleared. The re-framed image
-  itself stays — a re-frame isn't an edit.
+- Reset drops the stack along with everything else, and puts the
+  original capture back as the base image (see below).
 
 **Saved bytes**
 
@@ -879,6 +877,12 @@ fresh edit.
 - Bytes can still move once the load lands: applying a crop under
   drawn edits on a JPG capture re-encodes a second generation.
   That's a real difference, shown when the pill refreshes.
+- On the swaps that grow the image back (Undo, Reset) the frozen
+  text is stale rather than a promise kept — it holds the smaller
+  size until the bigger image decodes. Dropping the guard wouldn't
+  help: `previewImg` reports the outgoing size until then, so the
+  same stale dimensions would be recomposed anyway, at the cost of
+  a full re-bake.
 - `setBaseImage` bails when the incoming URL equals the current
   `src`. That assignment fires no `load`, so the guard would stay
   up and freeze the pill for the rest of the session.
@@ -1003,7 +1007,7 @@ fresh edit.
 
 ### Edit stack & geometry
 
-- **Undo / Clear** — single edit-history stack of two op kinds:
+- **Undo** — a single edit-history stack; entries are either:
   - `add` ops — drag-committed edits (tool draws + the image-edge
     crop-create gesture). Undo removes the matching edit from the
     stack.
@@ -1015,8 +1019,26 @@ fresh edit.
     whole pre-crop state (base image, edits, history) from the
     in-memory `viewCropStack`; see the View cropped section.
 
-  Clear wipes everything. Both buttons disable when the stack is
-  empty.
+  Unbounded depth — nothing trims either stack. Each
+  `viewCropStack` entry holds the pre-crop image, but a drill-down
+  series shrinks geometrically, so the whole stack costs on the
+  order of the original capture.
+- **Reset** — one click back to the capture as it was taken:
+  edits, history, and `viewCropStack` all emptied, `viewCropPct`
+  cleared, and the base image set back to the original data URL.
+  - The original comes from main via `ctx.originalImageUrl()`, not
+    from `previewImg.src` (View cropped replaced it) or the bottom
+    of `viewCropStack` (empty in a restored session).
+  - Not itself undoable — Undo's stack is one of the things it
+    empties.
+  - Undo disables on an empty history; Reset also stays enabled
+    while a view crop is in effect, which covers a restored session
+    whose `viewCrop` markers were dropped. That's the one state
+    where Undo *can't* reach the original image.
+  - Earlier versions called this Clear and left a View cropped
+    op applied while still dropping its undo entries — the crop
+    survived but became permanent, so the original was unreachable
+    for the rest of the session.
 - **Resize-stable coordinates** — edits are stored as percentages
   of the image dimensions, not CSS pixels, so they stay aligned
   across window resizes and after the prompt grows.
@@ -1617,7 +1639,7 @@ The page debounces a `pushUiState` message (~350 ms) on:
 - prompt textarea input,
 - Save / format checkbox + radio change,
 - drawing module's `onEditCommit` callback (fires on every edit-
-  stack mutation that bumped `editVersion` — commit, undo, clear,
+  stack mutation that bumped `editVersion` — commit, undo, reset,
   shrink, edge resize).
 
 Synchronous flushes elsewhere catch what the debounce window

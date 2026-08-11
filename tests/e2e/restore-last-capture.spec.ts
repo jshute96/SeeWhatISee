@@ -14,7 +14,9 @@
 //     `…-4.png`) and the saved/revisions round-trip.
 //   - View cropped: the slot carries only the cumulative crop
 //     rectangle, so the restored page has to re-derive the cropped
-//     image from the original capture.
+//     image from the original capture — and Reset, the only way
+//     back to the full image once the `viewCrop` undo markers are
+//     dropped, clears it for the next restore too.
 //
 // The restore handler is invoked directly through the SW test seam
 // (`self.SeeWhatISee.restoreLastCapture`) rather than the context
@@ -373,7 +375,7 @@ test('restore-last-capture: round-trip with no edits reuses filenames; with edit
   await openerPage.close();
 });
 
-test('restore-last-capture: a View-cropped image comes back cropped', async ({
+test('restore-last-capture: a View-cropped image comes back cropped, and Reset undoes it', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -417,6 +419,50 @@ test('restore-last-capture: a View-cropped image comes back cropped', async ({
   );
   expect(Math.abs(restoredWidth - fullWidth / 2)).toBeLessThanOrEqual(1);
 
+  // Reset is the only way back to the original image here: the
+  // pre-crop pixels aren't in the snapshot, so `restoreDrawingSnapshot`
+  // drops the `viewCrop` history markers and Undo has nothing to pop.
+  // Hence Reset stays enabled on an empty history while a view crop
+  // is in effect.
+  await expect(restored.locator('#undo')).toBeDisabled();
+  const reset = restored.locator('#reset');
+  await expect(reset).toBeEnabled();
+  await reset.click();
+  await restored.waitForFunction(
+    (w) => (document.getElementById('preview') as HTMLImageElement).naturalWidth === w,
+    fullWidth,
+  );
+  await expect(reset).toBeDisabled();
+
+  // Wait for the debounced `pushUiState` to land in the per-tab
+  // session before closing. The `pagehide` flush is explicitly
+  // fire-and-forget (the SW may not finish before the tab dies), so
+  // closing immediately would race the push rather than test it.
+  const swAfter = await getServiceWorker();
+  await expect.poll(async () => swAfter.evaluate(async () => {
+    const all = await chrome.storage.session.get(null);
+    const key = Object.keys(all).find((k) => k.startsWith('captureDetails_'));
+    const ui = key
+      ? (all[key] as { uiState?: { viewCropPct?: unknown } }).uiState
+      : undefined;
+    // `??` would swallow the null we're looking for, so map the
+    // outcomes onto distinct strings.
+    if (!ui || !('viewCropPct' in ui)) return 'absent';
+    return ui.viewCropPct === null ? 'null' : 'set';
+  })).toBe('null');
+
+  // Closing promotes that into the `lastCapture` slot, so restoring
+  // a second time comes back at full size instead of re-deriving the
+  // old rectangle.
   await restored.close();
+  const restoredAgain = await restoreAndWaitForCapturePage(
+    extensionContext,
+    getServiceWorker,
+  );
+  expect(await restoredAgain.evaluate(
+    () => (document.getElementById('preview') as HTMLImageElement).naturalWidth,
+  )).toBe(fullWidth);
+
+  await restoredAgain.close();
   await openerPage.close();
 });

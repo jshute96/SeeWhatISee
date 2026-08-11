@@ -1195,7 +1195,7 @@
   }
   /* Selected (pushed-down) tool button. Darker face plus an inset
    * shadow reads as pressed; border darkens so the "lift" is gone.
-   * The Undo/Clear buttons never get this class — they're actions,
+   * The Undo/Reset buttons never get this class — they're actions,
    * not modes. */
   .highlight-buttons .tool-btn.selected {
     background: #cfd6dc;
@@ -1203,7 +1203,7 @@
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
   /* Visual gaps between the palette clusters: tool selectors → Zoom
-   * (display-only transform) → Undo/Clear (edit-stack actions) →
+   * (display-only transform) → Undo/Reset (edit-stack actions) →
    * Copy/Save (image-level actions) → More (popover with the
    * picture-rewriting actions). Larger than the regular 6px row gap
    * so each group reads as its own cluster. */
@@ -1775,7 +1775,7 @@
         tool-line → red line, tool-redact → filled black rect,
         tool-polyline / tool-polyarrow → multi-segment chains,
         tool-crop → dim-frame cropped preview. Mouseup commits the edit.
-        Undo / Clear are *actions*, not modes — they're separated
+        Undo / Reset are *actions*, not modes — they're separated
         from the tool group by an extra top-margin on #undo.
       -->
       <div class="highlight-buttons">
@@ -1852,8 +1852,8 @@
                 title="Set image zoom&#10;Ctrl + scroll wheel to zoom&#10;Alt+- / Alt++ to zoom out / in">Zoom: Fit</button>
         <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
-        <button id="clear" class="btn" disabled
-                title="Clear all edits">Clear</button>
+        <button id="reset" class="btn" disabled
+                title="Undo all edits">Reset</button>
         <!--
           Image-level Copy + Save. Mirror the per-row Copy / Save-as
           buttons next to the Save-screenshot checkbox above, but
