@@ -117,11 +117,26 @@ export type Edit = RectEdit | LineEdit;
 //     edit re-mapped into the new frame. Undo restores the whole
 //     pre-crop state (image + edits + history) from `viewCropStack`,
 //     so `id` is unused.
+//   - `reset` set — the op was a Reset click, which emptied the
+//     stack and put the original capture back. Undo restores the
+//     whole pre-reset state from `resetStack`; `id` is unused.
+//     Reset clears the history before pushing it, so the marker is
+//     always at the bottom — anything above it was drawn after the
+//     Reset and undoes normally first.
 type HistoryOp = {
   id: number;
   prev?: { x: number; y: number; w: number; h: number };
   viewCrop?: true;
+  reset?: true;
 };
+
+// True for the whole-state markers (`viewCrop` / `reset`). They
+// carry `id: -1` and reference no edit, so every sweep that matches
+// history against the edit stack has to skip them. One predicate so
+// a third marker kind can't be half-handled.
+function isHistoryMarker(h: HistoryOp): boolean {
+  return h.viewCrop === true || h.reset === true;
+}
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // Id of the per-render `<clipPath>` that keeps annotations inside
@@ -1356,12 +1371,7 @@ export function render(): void {
 
   const hasEditHistory = editHistory.length > 0;
   ctx.undoBtn.disabled = !hasEditHistory;
-  // Reset also has work to do with an empty history but a view crop
-  // in effect — a restored session, whose `viewCrop` markers were
-  // dropped because the pre-crop image isn't in the snapshot. That's
-  // the one state where Undo can't get the original image back, so
-  // the button that can must stay live.
-  ctx.resetBtn.disabled = !hasEditHistory && !hasViewCrop();
+  ctx.resetBtn.disabled = !canReset();
   const shrinkable = shrinkTarget();
   setMenuItemDisabled(ctx.shrinkBtn, !shrinkable);
   // The menu item names what the next click would actually shrink,
@@ -1651,7 +1661,8 @@ let viewCropPct: RectPct | null = null;
 // Unbounded by depth, but each entry holds the image as it was
 // *before* that crop, so a drill-down series shrinks geometrically —
 // the whole stack costs on the order of the original capture, not a
-// multiple of it. Emptied by Reset.
+// multiple of it. Moved aside by Reset (onto `resetStack`), which
+// is how one Undo can bring a whole drill-down series back.
 type ViewCropUndo = {
   src: string;
   edits: Edit[];
@@ -1659,6 +1670,25 @@ type ViewCropUndo = {
   viewCropPct: RectPct | null;
 };
 const viewCropStack: ViewCropUndo[] = [];
+
+// Pre-reset state for each Reset click, newest last — everything
+// the click threw away, so undoing it is a wholesale restore rather
+// than a step back through the discarded ops.
+//
+// Also in-memory only, and the one stack that *grows* what's held:
+// a Reset would otherwise release the view-crop images, and an entry
+// here keeps them alive until its own Undo pops it. Nothing else
+// drops one — a second Reset just pushes another — so a
+// reset/draw/reset series accumulates an entry per click. Bounded by
+// user gestures, so no trimming.
+type ResetUndo = {
+  src: string;
+  edits: Edit[];
+  editHistory: HistoryOp[];
+  viewCropStack: ViewCropUndo[];
+  viewCropPct: RectPct | null;
+};
+const resetStack: ResetUndo[] = [];
 
 // True between assigning a new base-image `src` and its `load`.
 // During that window `previewImg` still reports the *outgoing*
@@ -1714,6 +1744,18 @@ function cloneEdits(src: readonly Edit[]): Edit[] {
 }
 function cloneHistory(src: readonly HistoryOp[]): HistoryOp[] {
   return src.map((h) => ({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) }));
+}
+// Clone-on-transfer, the same rule the two above follow: a
+// `viewCropStack` entry moved onto `resetStack` (or back) must not
+// share arrays with the live stack, or a later edit would rewrite
+// state a held snapshot still describes.
+function cloneViewCropUndo(v: ViewCropUndo): ViewCropUndo {
+  return {
+    src: v.src,
+    edits: cloneEdits(v.edits),
+    editHistory: cloneHistory(v.editHistory),
+    viewCropPct: v.viewCropPct ? { ...v.viewCropPct } : null,
+  };
 }
 
 /** True once View cropped has replaced the base image (until undone).
@@ -1818,7 +1860,7 @@ function remapEditsIntoRegion(region: RectPct): void {
   }
   for (let i = editHistory.length - 1; i >= 0; i--) {
     const h = editHistory[i]!;
-    if (!h.viewCrop && dropped.has(h.id)) {
+    if (!isHistoryMarker(h) && dropped.has(h.id)) {
       editHistory.splice(i, 1);
       continue;
     }
@@ -1908,6 +1950,75 @@ function undoViewCrop(): boolean {
   editHistory.length = 0;
   for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
   viewCropPct = prior.viewCropPct;
+  setBaseImage(prior.src);
+  return true;
+}
+
+// Reset asks a different question than Undo: is there anything to
+// go back *from*? Not "is there history" —
+//   - a restored session can hold a view crop with no history at
+//     all (its `viewCrop` markers were dropped because the pre-crop
+//     image isn't in the snapshot), and that's the one state where
+//     Undo can't reach the original image;
+//   - after a Reset the history holds its own `reset` marker, but
+//     the picture is already the original, so a second click would
+//     do nothing but stack an empty undo step.
+// With no edits and no view crop the base image must be the
+// original — `viewCropPct` is the only thing that swaps it away.
+function canReset(): boolean {
+  return edits.length > 0 || hasViewCrop();
+}
+
+// Reset: throw away every edit and re-frame and go back to the
+// capture as it was taken. The discarded state goes onto
+// `resetStack` and a `reset` marker onto the (now empty)
+// `editHistory`, so one Undo click brings all of it back.
+//
+// The marker is pushed *after* the clear, which is what makes Reset
+// a single undoable step rather than a hole in the history: Undo
+// pops it, `undoReset` swaps the whole world back, and the next Undo
+// carries on through the restored history as if Reset never
+// happened.
+function applyReset(): void {
+  // Guard rather than trusting the button's `disabled` state, so the
+  // "is there anything to go back from" rule lives in one place —
+  // without it a no-op click would stack an empty undo step.
+  if (!canReset()) return;
+  resetStack.push({
+    src: ctx.previewImg.src,
+    edits: cloneEdits(edits),
+    editHistory: cloneHistory(editHistory),
+    viewCropStack: viewCropStack.map(cloneViewCropUndo),
+    viewCropPct: viewCropPct ? { ...viewCropPct } : null,
+  });
+  edits.length = 0;
+  editHistory.length = 0;
+  viewCropStack.length = 0;
+  // The crop state is dropped unconditionally, outside the guard
+  // below: a null URL means the screenshot never arrived (a failed
+  // capture), so there's no image to put back, but leaving
+  // `viewCropPct` set would claim a crop for an edit stack that no
+  // longer has one.
+  viewCropPct = null;
+  const original = ctx.originalImageUrl();
+  if (original) setBaseImage(original);
+  editHistory.push({ id: -1, reset: true });
+}
+
+// Undo of a Reset: put back everything the click discarded. Returns
+// false when the marker has no matching stack entry — only possible
+// for a restored session, whose markers `restoreDrawingSnapshot`
+// drops for exactly that reason.
+function undoReset(): boolean {
+  const prior = resetStack.pop();
+  if (!prior) return false;
+  edits.length = 0;
+  for (const e of cloneEdits(prior.edits)) edits.push(e);
+  editHistory.length = 0;
+  for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
+  viewCropStack.length = 0;
+  for (const v of prior.viewCropStack) viewCropStack.push(cloneViewCropUndo(v));
+  viewCropPct = prior.viewCropPct ? { ...prior.viewCropPct } : null;
   setBaseImage(prior.src);
   return true;
 }
@@ -2287,16 +2398,22 @@ export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void
     // pre-crop image) doesn't survive the snapshot, so keeping them
     // would offer an Undo click that can't do what it says. The
     // crop itself is restored — see `applyRestoredViewCrop`.
+    // `reset` markers go for the same reason — `resetStack` is
+    // in-memory too, so the pre-reset image and stacks are gone.
     for (const h of cloneHistory(snapshot.editHistory)) {
-      if (!h.viewCrop) editHistory.push(h);
+      if (!isHistoryMarker(h)) editHistory.push(h);
     }
   }
   // View-crop state belongs to the session that did the cropping —
   // a restore re-derives it from the snapshot's `viewCropPct` via
   // `applyRestoredViewCrop`, and the pre-crop images can't come with
-  // it. Reset both so a second call can't inherit stale state.
+  // it. Same for the pre-reset state behind a `reset` marker. Clear
+  // all three so a second call can't inherit stale state, and so a
+  // dropped marker can't leave its multi-MB entry pinned for the
+  // session.
   viewCropPct = null;
   viewCropStack.length = 0;
+  resetStack.length = 0;
   if (typeof snapshot.nextEditId === 'number') nextEditId = snapshot.nextEditId;
   if (typeof snapshot.editVersion === 'number') editVersion = snapshot.editVersion;
   if (snapshot.selectedTool) setSelectedTool(snapshot.selectedTool);
@@ -3102,6 +3219,15 @@ export function initDrawing(context: DrawingContext): void {
       render();
       return;
     }
+    if (last.reset) {
+      // Same shape as the `viewCrop` branch: a whole-state restore,
+      // with the pop alone as the fallback for a marker whose stack
+      // entry didn't survive a restore.
+      undoReset();
+      commitEdit();
+      render();
+      return;
+    }
     const idx = edits.findIndex((e) => e.id === last.id);
     if (idx >= 0) {
       if (last.prev) {
@@ -3125,21 +3251,7 @@ export function initDrawing(context: DrawingContext): void {
   });
 
   ctx.resetBtn.addEventListener('click', () => {
-    edits.length = 0;
-    editHistory.length = 0;
-    viewCropStack.length = 0;
-    // Reset goes all the way back to the capture as it was taken,
-    // View cropped included — see `docs/capture-page.md`.
-    //
-    // The crop state is dropped unconditionally, outside the guard:
-    // a null URL means the screenshot never arrived (a failed
-    // capture), so there's no image to put back, but leaving
-    // `viewCropPct` set would claim a crop for an edit stack that no
-    // longer has one — and with the undo stack gone, nothing could
-    // ever clear it.
-    viewCropPct = null;
-    const original = ctx.originalImageUrl();
-    if (original) setBaseImage(original);
+    applyReset();
     commitEdit();
     render();
   });

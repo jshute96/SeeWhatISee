@@ -433,6 +433,9 @@ test('restore-last-capture: a View-cropped image comes back cropped, and Reset u
     fullWidth,
   );
   await expect(reset).toBeDisabled();
+  // That Reset is undoable in this session — its `reset` marker is
+  // the only thing in the history now.
+  await expect(restored.locator('#undo')).toBeEnabled();
 
   // Wait for the debounced `pushUiState` to land in the per-tab
   // session before closing. The `pagehide` flush is explicitly
@@ -462,6 +465,10 @@ test('restore-last-capture: a View-cropped image comes back cropped, and Reset u
   expect(await restoredAgain.evaluate(
     () => (document.getElementById('preview') as HTMLImageElement).naturalWidth,
   )).toBe(fullWidth);
+  // The pushed `reset` marker is dropped on the way back in —
+  // `resetStack` is in-memory, so honouring it would offer an Undo
+  // that can't do what it says.
+  await expect(restoredAgain.locator('#undo')).toBeDisabled();
 
   await restoredAgain.close();
   await openerPage.close();

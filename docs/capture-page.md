@@ -838,8 +838,10 @@ fresh edit.
   in-memory `viewCropStack`, and a `viewCrop` marker onto
   `editHistory`. One Undo click pops both and restores the whole
   state, image included.
-- Reset drops the stack along with everything else, and puts the
-  original capture back as the base image (see below).
+- Reset moves the whole stack aside onto `resetStack` and puts the
+  original capture back as the base image — so one Undo after a
+  Reset brings a whole drill-down series back at once, and further
+  Undos then peel it one level at a time (see below).
 
 **Saved bytes**
 
@@ -1018,23 +1020,44 @@ fresh edit.
   - `viewCrop` markers — pushed by View cropped. Undo restores the
     whole pre-crop state (base image, edits, history) from the
     in-memory `viewCropStack`; see the View cropped section.
+  - `reset` markers — pushed by Reset. Undo restores the whole
+    pre-reset state from the in-memory `resetStack`.
 
-  Unbounded depth — nothing trims either stack. Each
+  Unbounded depth — nothing trims any of the stacks. Each
   `viewCropStack` entry holds the pre-crop image, but a drill-down
-  series shrinks geometrically, so the whole stack costs on the
-  order of the original capture.
-- **Reset** — one click back to the capture as it was taken:
-  edits, history, and `viewCropStack` all emptied, `viewCropPct`
-  cleared, and the base image set back to the original data URL.
+  series shrinks geometrically, so that stack costs on the order of
+  the original capture. `resetStack` is the exception — see below.
+- **Reset** — one click back to the capture as it was taken: the
+  edits, history and `viewCropStack` are moved aside onto
+  `resetStack`, `viewCropPct` is cleared, and the base image is set
+  back to the original data URL.
   - The original comes from main via `ctx.originalImageUrl()`, not
     from `previewImg.src` (View cropped replaced it) or the bottom
     of `viewCropStack` (empty in a restored session).
-  - Not itself undoable — Undo's stack is one of the things it
-    empties.
-  - Undo disables on an empty history; Reset also stays enabled
-    while a view crop is in effect, which covers a restored session
-    whose `viewCrop` markers were dropped. That's the one state
-    where Undo *can't* reach the original image.
+  - Undoable in one step: the discarded state goes onto
+    `resetStack` and a `reset` marker is pushed onto the
+    now-empty history, so Undo swaps the whole world back and the
+    next Undo carries on through the restored history.
+  - `resetStack` is the one stack that *grows* what's held in
+    memory: a Reset would otherwise release the view-crop images,
+    and its entry keeps them alive until its own Undo pops it.
+    Nothing else drops an entry — a second Reset just pushes
+    another — so a reset/draw/reset series accumulates one per
+    click. Bounded by user gestures, so it isn't trimmed.
+  - Enabled by `canReset()` — "is there anything to go back
+    *from*", i.e. any edit or a view crop — not by whether the
+    history is non-empty. The click handler guards on the same
+    predicate, so the rule lives in one place:
+    - a restored session can hold a view crop with no history at
+      all — its `viewCrop` markers were dropped because the
+      pre-crop image isn't in the snapshot — and that's the one
+      state where Undo can't reach the original image;
+    - straight after a Reset the history holds that Reset's own
+      marker, but the picture is already the original, so a second
+      click would only stack an empty undo step.
+  - Restores drop `reset` markers along with `viewCrop` ones, and
+    empty both stacks — they're in-memory, so the state the markers
+    point at doesn't survive the snapshot.
   - Earlier versions called this Clear and left a View cropped
     op applied while still dropping its undo entries — the crop
     survived but became permanent, so the original was unreachable

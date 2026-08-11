@@ -165,8 +165,8 @@ test('view cropped: Reset returns to the original capture from a crop-of-a-crop'
   await waitForNaturalWidth(capturePage, full.w);
   expect(await readEditKinds(capturePage)).toEqual([]);
   expect(await readEffectiveCrop(capturePage)).toBeNull();
-  // Nothing left to undo or reset, and no crop to re-frame.
-  await expect(capturePage.locator('#undo')).toBeDisabled();
+  // Nothing left to reset and no crop to re-frame. Undo stays live
+  // — Reset is one undoable step (covered by the next test).
   await expect(reset).toBeDisabled();
   await expect(capturePage.locator('#view-cropped')).toBeDisabled();
 
@@ -179,6 +179,57 @@ test('view cropped: Reset returns to the original capture from a crop-of-a-crop'
   const png = PNG.sync.read(fs.readFileSync(await findCapturedDownload(sw, '.png')));
   expect(png.width).toBe(full.w);
   expect(png.height).toBe(full.h);
+
+  await openerPage.close();
+});
+
+test('view cropped: Undo of a Reset brings the whole crop stack back', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const full = await readNaturalSize(capturePage);
+  const undo = capturePage.locator('#undo');
+
+  // Box, then two nested re-frames — the same state the previous
+  // test resets, but here we put it all back.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.5, yPct: 0.5 });
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 2));
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 4));
+
+  await capturePage.locator('#reset').click();
+  await waitForNaturalWidth(capturePage, full.w);
+
+  // One Undo lands back at the twice-cropped image with the box
+  // still on it — Reset is a single step, not a hole in the history.
+  await undo.click();
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 4));
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+
+  // And the restored history keeps unwinding from there, so the
+  // re-frames didn't come back inert: pop the second `viewCrop`
+  // marker (back to the half-size image, with the crop that produced
+  // the quarter-size one), then that crop's own add op, then the
+  // first `viewCrop` marker.
+  await undo.click();
+  await waitForNaturalWidth(capturePage, Math.round(full.w / 2));
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'crop']);
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  await undo.click();
+  await waitForNaturalWidth(capturePage, full.w);
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'crop']);
 
   await openerPage.close();
 });

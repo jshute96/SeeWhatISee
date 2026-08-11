@@ -165,8 +165,21 @@ test('drawing: undo/reset buttons reflect the edit stack', async ({
   await expect(undo).toBeEnabled();
   await expect(reset).toBeEnabled();
 
-  // Reset empties the stack regardless of count.
+  // Reset empties the stack regardless of count, and leaves nothing
+  // to reset — but it's a single undoable step, so Undo stays live.
   await reset.click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await expect(reset).toBeDisabled();
+  await expect(undo).toBeEnabled();
+
+  // One Undo brings the whole pre-reset stack back, and the history
+  // it restored carries on from there.
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  await expect(reset).toBeEnabled();
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
   await expect(undo).toBeDisabled();
   await expect(reset).toBeDisabled();
 
@@ -176,6 +189,52 @@ test('drawing: undo/reset buttons reflect the edit stack', async ({
     capturePage.waitForEvent('close'),
     capturePage.locator('#capture').click(),
   ]);
+
+  await openerPage.close();
+});
+
+test('drawing: an edit drawn after a Reset undoes before the Reset itself', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const undo = capturePage.locator('#undo');
+
+  // The `reset` marker sits at the bottom of the history, so an edit
+  // made afterwards has to come off first — the Reset is only undone
+  // once the stack above it is exhausted. Different tools so the two
+  // edits are tellable apart.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await capturePage.locator('#reset').click();
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.5, yPct: 0.5 }, { xPct: 0.6, yPct: 0.6 });
+  expect(await readEditKinds(capturePage)).toEqual(['redact']);
+
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  await expect(undo).toBeEnabled();
+
+  // Two Resets in a row nest LIFO: each one snapshots the history
+  // containing the earlier `reset` marker, so undoing them steps
+  // back through the pairs in order.
+  await capturePage.locator('#reset').click();
+  await capturePage.locator('#tool-box').click();
+  await dragRect(capturePage, { xPct: 0.7, yPct: 0.7 }, { xPct: 0.8, yPct: 0.8 });
+  await capturePage.locator('#reset').click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await undo.click();
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
 
   await openerPage.close();
 });

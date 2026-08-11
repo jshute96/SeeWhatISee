@@ -59,7 +59,7 @@
 * A pan drag snaps a crop / box edit flush against the edges of the visible pane, so the same box on two captures can be parked identically and flipped between; Shift bypasses
 * **Shrink** and the new **View cropped** action moved into a **More…** menu at the bottom of the tool palette, as "Shrink last … to fit content" (the label names what it would shrink — box / redaction / crop) and "Replace with cropped image" (the README's Shrink bullet needs rewording for the new home)
 * **View cropped** replaces the image with just the cropped region, as if that was the captured screenshot — drawings survive (clipped to the new frame), a further crop can be drawn inside and applied again, and Undo puts the full image back
-* **Clear** is now **Reset** ("Undo all edits"): it goes all the way back to the original capture, undoing any **View cropped** re-frame as well as the drawings (the README's Undo/Clear bullet needs the new name)
+* **Clear** is now **Reset** ("Undo all edits"): it goes all the way back to the original capture, undoing any **View cropped** re-frame as well as the drawings, and is itself undoable in one click (the README's Undo/Clear bullet needs the new name)
 
 ### Not documented
 
