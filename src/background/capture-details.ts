@@ -725,8 +725,10 @@ interface SaveDetailsMessage {
   selectionFormat: SelectionFormat | null;
   prompt: string;
   /**
-   * True when at least one red rectangle or line (from the Box /
-   * Line tools) is on the preview. Causes the saved record's
+   * True when at least one red rectangle, line or arrow (from the
+   * Box / Line / Arrow tools) is baked into the saved PNG — markup
+   * that falls outside the crop doesn't count, since it isn't in
+   * those bytes. Causes the saved record's
    * screenshot artifact to carry `hasHighlights: true` (only when
    * `screenshot` is also true — see capture.ts). Redactions / crops
    * are separate edit kinds and get their own flags.

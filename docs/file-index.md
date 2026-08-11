@@ -286,8 +286,8 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-prompt-autogrow.spec.ts` | E2E for the prompt textarea's auto-grow sizing — whole-row growth, box matches content, measuring never shifts layout width |
 | `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, live updates |
 | `tests/e2e/capture-details-download.spec.ts` | E2E for the per-row Save-as buttons + the in-dialog Download button (filenames, MIME, committed vs. uncommitted edits, cancel-doesn't-leak) |
-| `tests/e2e/capture-drawing-helpers.ts` | Shared `__seeState` reads and the `dragEdge` / `expectRedAtRectEdge` utilities for the drawing specs |
-| `tests/e2e/capture-drawing-basic.spec.ts` | E2E for per-tool draw → save flows (Box/Line/Arrow/Crop/Redact) and Undo/Reset button state + undo-of-Reset ordering |
+| `tests/e2e/capture-drawing-helpers.ts` | Shared `__seeState` reads (kinds, crop, edit flags) and the `dragEdge` / `expectRedAtRectEdge` utilities for the drawing specs |
+| `tests/e2e/capture-drawing-basic.spec.ts` | E2E for per-tool draw → save flows (Box/Line/Arrow/Crop/Redact), the saved record's edit flags, Undo/Reset state + undo-of-Reset order |
 | `tests/e2e/capture-drawing-resize-nudge.spec.ts` | E2E for box-edge resize, arrow-key nudge of an in-flight drag, and visible-pane clamping under zoom |
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |

@@ -1787,20 +1787,19 @@ function composeViewCrop(outer: RectPct | null, inner: RectPct): RectPct {
   };
 }
 
-// True when a remapped edit's bounding box misses the new frame
-// entirely (all coordinates are already in the new frame's
-// percentages, so the frame is 0..100 on both axes).
+// True when an edit's bounding box misses `frame` entirely. Both are
+// in percentages of the same image.
 //
 // The comparisons are strict so an edit that merely *touches* an
 // edge survives: a horizontal line snapped flush to the crop's top
-// has a zero-height bounding box at y = 0, and half its stroke width
-// still paints inside the new frame (snapping flush to a box edge
+// has a zero-height bounding box at that edge, and half its stroke
+// width still paints inside the frame (snapping flush to a box edge
 // then cropping to that box is a normal sequence here). Lines and
 // arrows are tested by bounding box, which errs the other way — it
 // can keep a diagonal segment that only passes the corner.
-function isOutsideNewFrame(e: Edit): boolean {
+function isEditOutside(e: Edit, frame: RectPct): boolean {
   const outside = (l: number, r: number, t: number, b: number): boolean =>
-    r < 0 || l > 100 || b < 0 || t > 100;
+    r < frame.x || l > frame.x + frame.w || b < frame.y || t > frame.y + frame.h;
   // Both branches test the discriminant positively: `Edit`'s two
   // members carry union-typed `kind`s, and an `else` doesn't narrow
   // across them.
@@ -1826,9 +1825,12 @@ function isOutsideNewFrame(e: Edit): boolean {
 //   - crops, which the new base image has realised in its pixels;
 //   - edits that now fall entirely outside the frame. They'd be
 //     invisible (the overlay clip and the bake canvas both hide
-//     them) but not inert — they'd still flip `editFlags()`, force a
-//     page-side bake, and offer themselves as a Shrink target. Undo
-//     of the View cropped op brings them back with everything else.
+//     them) but not inert — they'd force a page-side bake and offer
+//     themselves as a Shrink target, and nothing would filter them
+//     out of `editFlags()`: the crop that put them out of frame is
+//     consumed here, so `visibleMarkupEdits()` has nothing left to
+//     test them against. Undo of the View cropped op brings them
+//     back with everything else.
 function remapEditsIntoRegion(region: RectPct): void {
   const mapX = (x: number): number => ((x - region.x) / region.w) * 100;
   const mapY = (y: number): number => ((y - region.y) / region.h) * 100;
@@ -1853,7 +1855,9 @@ function remapEditsIntoRegion(region: RectPct): void {
       e.x2 = mapX(e.x2);
       e.y2 = mapY(e.y2);
     }
-    if (isOutsideNewFrame(e)) {
+    // Already re-expressed in the new frame's percentages above, so
+    // the frame to test against is the whole 0..100 box.
+    if (isEditOutside(e, { x: 0, y: 0, w: 100, h: 100 })) {
       dropped.add(e.id);
       edits.splice(i, 1);
     }
@@ -2094,6 +2098,27 @@ function setSelectedTool(tool: Tool): void {
 
 // ─── Bake-flag helpers (read by main's Capture submit + bake) ────
 
+// True when `e` is markup (i.e. not a crop) that reaches the saved
+// image. Markup falling entirely outside the active crop doesn't:
+// the bake canvas *is* the crop, so it clips such an edit away, and
+// it must not flip a flag or force a bake. (On screen it's still
+// painted — the overlay clips to the image and the crop only dims
+// what's outside it — so the preview shows an edit the flags don't
+// count. The flags describe the bytes.)
+//
+// The test is by bounding box, so an edit that misses the crop by
+// less than half a stroke width can still paint a sliver into the
+// canvas. Erring toward "not marked up" is the benign direction:
+// consumers only ever *add* behaviour on a true flag.
+//
+// This is also what keeps the reported flags the same either side of
+// a View cropped op. That op drops out-of-frame edits from the stack
+// outright (`remapEditsIntoRegion`); with the crop still un-applied
+// they're all still here, and only this predicate hides them.
+function isVisibleMarkup(e: Edit, crop: RectEdit | undefined): boolean {
+  return e.kind !== 'crop' && (crop === undefined || !isEditOutside(e, crop));
+}
+
 // True iff there is at least one edit whose effect must be baked
 // into the saved image: any red rect / line / redaction, or an
 // effective crop. A crop that covers the whole image contributes
@@ -2115,9 +2140,16 @@ export function hasBakeableEdits(): boolean {
 // that should be saved, in the same format the bake would pick — so
 // re-running the canvas would cost a full re-encode (a second lossy
 // generation on a JPG capture) for identical output.
+//
+// Filtering by `isVisibleMarkup` can't change the answer today: the
+// only thing that hides markup is a crop, and that crop is itself
+// bakeable, so the second line already catches the case. Written
+// this way so the two stay in step if either side grows another way
+// to hide an edit.
 function bakeChangesPixels(): boolean {
-  if (edits.some((e) => e.kind !== 'crop')) return true;
-  return activeCrop() !== undefined;
+  const crop = activeCrop();
+  if (edits.some((e) => isVisibleMarkup(e, crop))) return true;
+  return crop !== undefined;
 }
 
 export interface EditFlags {
@@ -2136,11 +2168,16 @@ export interface EditFlags {
 // `isCropped` uses `activeCrop()` (not "any crop edit in the stack")
 // so a crop that's been dragged back out to the full image reports
 // as *not cropped* — the saved PNG matches the original, so the
-// flag would mislead downstream consumers.
+// flag would mislead downstream consumers. For the same reason the
+// per-kind flags skip anything `isVisibleMarkup` rejects: a box
+// drawn outside the crop isn't in the saved pixels, so it can't
+// claim the image was marked up.
 export function editFlags(): EditFlags {
+  const crop = activeCrop();
   let hasHighlights = false;
   let hasRedactions = false;
   for (const e of edits) {
+    if (!isVisibleMarkup(e, crop)) continue;
     if (e.kind === 'rect' || e.kind === 'line' || e.kind === 'arrow') hasHighlights = true;
     else if (e.kind === 'redact') hasRedactions = true;
   }
@@ -2150,7 +2187,7 @@ export function editFlags(): EditFlags {
     // A View cropped op counts as cropped too: the pixels on disk
     // are a sub-region of the capture, which is exactly what the
     // flag tells downstream consumers.
-    isCropped: activeCrop() !== undefined || hasViewCrop(),
+    isCropped: crop !== undefined || hasViewCrop(),
   };
 }
 

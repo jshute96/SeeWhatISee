@@ -40,6 +40,31 @@ export function expectRedAtRectEdge(buf: Buffer): void {
   expect(found, `no red stroke pixel found near x=${cx}, y=${y}`).toBe(true);
 }
 
+// The inverse of `expectRedAtRectEdge`: assert the PNG carries no
+// markup at all — no red stroke and no opaque-black redaction fill.
+// Scans every pixel, which is affordable on the small fixture
+// captures and is the point: markup excluded by the crop must be
+// absent from the whole image, not just from where it was drawn.
+// Safe against the `purple.html` fixture's #800080 background, which
+// is neither red-dominant nor near-black.
+export function expectNoMarkupPixels(buf: Buffer): void {
+  const png = PNG.sync.read(buf);
+  for (let i = 0; i < png.data.length; i += 4) {
+    const r = png.data[i]!;
+    const g = png.data[i + 1]!;
+    const b = png.data[i + 2]!;
+    const isRed = r > 200 && g < 60 && b < 60;
+    const isBlack = r < 40 && g < 40 && b < 40;
+    if (isRed || isBlack) {
+      const px = i / 4;
+      expect(
+        false,
+        `markup pixel at (${px % png.width}, ${Math.floor(px / png.width)}): rgb(${r}, ${g}, ${b})`,
+      ).toBe(true);
+    }
+  }
+}
+
 // Read the current effective crop bounds (or null when no crop is
 // effective) straight out of the Capture page. Relies on the
 // `__seeState` hook capture-page.ts installs at load time.
@@ -51,6 +76,21 @@ export async function readEffectiveCrop(
       | { x: number; y: number; w: number; h: number }
       | null,
   );
+}
+
+export type EditFlags = {
+  hasHighlights: boolean;
+  hasRedactions: boolean;
+  isCropped: boolean;
+};
+
+// Read the per-kind flags the page would report to the SW on save
+// (`hasHighlights` / `hasRedactions` / `isCropped`), without going
+// through a save. Mirrors `__seeState.flags`.
+export async function readEditFlags(capturePage: Page): Promise<EditFlags> {
+  return capturePage.evaluate(
+    () => (window as unknown as { __seeState: { flags: () => EditFlags } }).__seeState.flags(),
+  ) as Promise<EditFlags>;
 }
 
 export async function readEditKinds(capturePage: Page): Promise<string[]> {

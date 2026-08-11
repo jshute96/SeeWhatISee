@@ -8,7 +8,8 @@
 //     edit-stack effects of a click;
 //   - re-cropping the already-cropped image (crop-of-a-crop);
 //   - a Box edit surviving the re-frame with re-mapped percentages,
-//     and one that falls entirely outside being dropped;
+//     and one that falls entirely outside being dropped without
+//     changing the edit flags the save would report;
 //   - Undo restoring the full-size image and the crop edit;
 //   - Reset returning to the original capture from any crop depth,
 //     and the saved record that follows carrying no crop flag;
@@ -27,6 +28,7 @@ import {
 } from './details-helpers';
 import {
   clickMoreMenuItem,
+  readEditFlags,
   readEditKinds,
   readEffectiveCrop,
   readLastBounds,
@@ -284,11 +286,22 @@ test('view cropped: an edit entirely outside the crop is dropped, and Undo bring
   await dragRect(capturePage, { xPct: 0.1, yPct: 0.1 }, { xPct: 0.35, yPct: 0.35 });
   await capturePage.locator('#tool-crop').click();
   await dragRect(capturePage, { xPct: 0.55, yPct: 0.55 }, { xPct: 0.9, yPct: 0.9 });
+  const flagsBefore = await readEditFlags(capturePage);
+  expect(flagsBefore).toEqual({
+    hasHighlights: false,
+    hasRedactions: false,
+    isCropped: true,
+  });
+
   await clickMoreMenuItem(capturePage, '#view-cropped');
 
-  // Dropped, not just clipped: an invisible edit would still claim
-  // highlights on the saved record and offer itself to Shrink.
+  // Dropped, not just clipped: an invisible edit would still offer
+  // itself to Shrink, and with the crop consumed there'd be nothing
+  // left to keep it off the saved record's flags.
   expect(await readEditKinds(capturePage)).toEqual([]);
+  // Applying the crop can't change what the record says about the
+  // image — the same pixels are saved either way.
+  expect(await readEditFlags(capturePage)).toEqual(flagsBefore);
 
   // Undo restores the whole pre-crop state, the box included.
   await capturePage.locator('#undo').click();

@@ -27,6 +27,8 @@ import {
 } from './details-helpers';
 import {
   dragEdge,
+  expectNoMarkupPixels,
+  readEditFlags,
   readEditKinds,
   readEffectiveCrop,
 } from './capture-drawing-helpers';
@@ -533,6 +535,109 @@ test('drawing: Crop tool draw flips only isCropped', async ({
   expect(png.height).toBeLessThan(natural.h);
   expect(png.width).toBeGreaterThan(natural.w * 0.4);
   expect(png.width).toBeLessThan(natural.w * 0.6);
+
+  await openerPage.close();
+});
+
+test('drawing: markup outside the crop region flips no flag', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // A box, an arrow and a redaction in the top-left corner, then a crop
+  // to the bottom-right quadrant that excludes all three. None of them
+  // reaches the saved pixels, so none may claim the image was marked up
+  // — the same flags a View cropped op would produce, which drops those
+  // edits from the stack outright. The arrow matters separately: it
+  // takes the endpoint branch of the outside-the-frame test, not the
+  // rect branch.
+  await dragRect(capturePage, { xPct: 0.05, yPct: 0.05 }, { xPct: 0.15, yPct: 0.15 });
+  await capturePage.locator('#tool-arrow').click();
+  await dragRect(capturePage, { xPct: 0.05, yPct: 0.2 }, { xPct: 0.15, yPct: 0.3 });
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.05 }, { xPct: 0.3, yPct: 0.15 });
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.5, yPct: 0.5 }, { xPct: 0.9, yPct: 0.9 });
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'arrow', 'redact', 'crop']);
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const sw = await getServiceWorker();
+  const record = await readLatestRecord(sw);
+  expect(record.screenshot?.hasHighlights).toBeUndefined();
+  expect(record.screenshot?.hasRedactions).toBeUndefined();
+  expect(record.screenshot?.isCropped).toBe(true);
+
+  // The flags claim the bytes are unmarked; check the bytes agree.
+  expectNoMarkupPixels(fs.readFileSync(await findCapturedDownload(sw, '.png')));
+
+  await openerPage.close();
+});
+
+test('drawing: the flags depend on the final state, not the edit order', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  const OUTSIDE_FLAGS = {
+    hasHighlights: false,
+    hasRedactions: false,
+    isCropped: true,
+  };
+
+  // Crop first, then draw the markup outside it. Same end state as the
+  // draw-then-crop test above, so the same flags.
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.5, yPct: 0.5 }, { xPct: 0.9, yPct: 0.9 });
+  await capturePage.locator('#tool-box').click();
+  await dragRect(capturePage, { xPct: 0.05, yPct: 0.05 }, { xPct: 0.15, yPct: 0.15 });
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.05 }, { xPct: 0.3, yPct: 0.15 });
+  expect(await readEditKinds(capturePage)).toEqual(['crop', 'rect', 'redact']);
+  expect(await readEditFlags(capturePage)).toEqual(OUTSIDE_FLAGS);
+
+  // Now move the crop region over the markup. The edits didn't change,
+  // but they're visible again, so both flags come back.
+  await capturePage.locator('#tool-crop').click();
+  const cropped = await readEffectiveCrop(capturePage);
+  if (!cropped) throw new Error('expected a crop');
+  await dragEdge(capturePage, 'w', cropped, 0.02);
+  await dragEdge(
+    capturePage,
+    'n',
+    (await readEffectiveCrop(capturePage))!,
+    0.02,
+  );
+  expect(await readEditFlags(capturePage)).toEqual({
+    hasHighlights: true,
+    hasRedactions: true,
+    isCropped: true,
+  });
+
+  // And back out again — dragging the crop off the markup hides it, so
+  // the flags drop even though nothing was undone.
+  await dragEdge(
+    capturePage,
+    'w',
+    (await readEffectiveCrop(capturePage))!,
+    0.5,
+  );
+  expect(await readEditFlags(capturePage)).toEqual(OUTSIDE_FLAGS);
 
   await openerPage.close();
 });

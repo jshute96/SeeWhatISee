@@ -92,8 +92,10 @@ export interface ScreenshotArtifact {
   filename: string;
   /**
    * `true` iff the saved PNG bytes carry red highlights (Box-tool
-   * boxes / Line-tool lines) baked in. Redactions and crops are
-   * separate kinds and get their own flags below. Downstream
+   * boxes, Line-tool lines, Arrow-tool arrows) baked in. Markup the
+   * crop excluded isn't in those bytes and doesn't count.
+   * Redactions and crops are separate kinds and get their own flags
+   * below. Downstream
    * consumers treat `hasHighlights: true` as "the user marked
    * specific regions on this image; focus your description on those."
    */
@@ -427,8 +429,9 @@ export interface SaveDetailedOptions {
   prompt?: string;
   /**
    * True when `capture.screenshotDataUrl` has at least one red
-   * rectangle / line (from the Box / Line tools) baked into the PNG
-   * bytes. Causes the saved record's `screenshot` artifact object to
+   * rectangle / line / arrow (from the Box / Line / Arrow tools)
+   * baked into the PNG bytes — markup the crop excluded doesn't
+   * count. Causes the saved record's `screenshot` artifact object to
    * carry `hasHighlights: true`. Ignored unless `includeScreenshot`
    * is also true — there's no point flagging highlights on a record
    * that didn't save the image they're on.

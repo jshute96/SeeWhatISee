@@ -822,9 +822,10 @@ fresh edit.
   image on screen while the bake clipped it. Preview and saved
   bytes now agree.
 - Edits that end up *entirely* outside the frame are dropped, not
-  just hidden — an invisible edit would still flip `editFlags()`,
-  force a page-side bake, and offer itself as a Shrink target.
-  Undo of the View cropped op brings them back.
+  just hidden — an invisible edit would force a page-side bake and
+  offer itself as a Shrink target, and the crop that hid it from
+  `editFlags()` is consumed here, so nothing would filter it out
+  any more. Undo of the View cropped op brings them back.
 - Crop edits are consumed — the new image *is* the crop — along
   with the history ops that referenced them (undoing one would
   target an edit that no longer exists).
@@ -1280,14 +1281,26 @@ If the user has any edits *and* is saving the screenshot:
   message, alongside three per-kind edit flags (`highlights`,
   `hasRedactions`, `isCropped`).
   - `highlights` is `true` iff at least one red rectangle or line
-    is on the stack. Redactions and crops are separate edit kinds
-    and flip their own flag instead.
+    is baked in. Redactions and crops are separate edit kinds and
+    flip their own flag instead.
   - `hasRedactions` is `true` iff any redaction rectangle is
     baked into the image.
   - `isCropped` is `true` iff the saved image was cropped to a
     region.
   - The three are independent — any combination can be true at
     once on a single save.
+  - "Baked in" is the whole rule: `isVisibleMarkup()` rejects any
+    edit whose bounding box falls entirely outside the active crop,
+    because the clip rectangle above keeps it out of the saved
+    bytes. (Bounding box, so an edit missing the crop by less than
+    half a stroke width can still paint a sliver. The error runs
+    toward "not marked up", which is the harmless direction.)
+  - So the flags describe the final geometry, not the route to
+    it. Draw-then-crop, crop-then-draw, and dragging the crop off
+    the markup all report the same thing.
+  - It also keeps View cropped from changing the answer: that op
+    drops out-of-frame edits from the stack outright, while an
+    un-applied crop leaves them there to be filtered.
 - The background passes `screenshotOverride` through to
   `ensureScreenshotDownloaded` (the same helper the Copy-filename
   buttons use). On a cache miss it becomes the body of the image

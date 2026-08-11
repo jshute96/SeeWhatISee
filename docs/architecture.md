@@ -143,11 +143,14 @@ Every record has `timestamp` and `url`, plus optional fields:
   `{ "filename": "screenshot-<timestamp>.png", "hasHighlights"?: true, "hasRedactions"?: true, "isCropped"?: true }`,
   set when a screenshot was saved.
   - `hasHighlights` is `true` iff the saved PNG has red markup
-    (Box-tool boxes, Line-tool lines) baked into it. Redactions
-    and crops are separate kinds, reported via `hasRedactions` /
-    `isCropped` instead — they don't count as highlights.
+    (Box-tool boxes, Line-tool lines, Arrow-tool arrows) baked
+    into it. Redactions and crops are separate kinds, reported via
+    `hasRedactions` / `isCropped` instead — they don't count as
+    highlights.
   - `hasRedactions` is `true` iff the saved PNG has at least one
     opaque black redaction rectangle baked in.
+  - Both describe the saved bytes, so markup that falls entirely
+    outside the crop doesn't set them — it never reaches the file.
   - `isCropped` is `true` iff the saved PNG was cropped to a
     user-selected region (the bytes on disk cover only that
     region, not the full capture). A crop that was dragged back
