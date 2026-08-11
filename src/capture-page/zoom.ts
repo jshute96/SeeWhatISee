@@ -817,6 +817,12 @@ export function initZoom(context: ZoomContext): void {
     // new viewport size).
     ctx.autoGrowPrompt();
   });
+  // Re-fit whenever a new base image decodes. `initZoom` must stay
+  // *after* `initDrawing` in capture-page.ts: drawing registers its
+  // own `load` listener to clear the base-image swap guard, and
+  // listeners fire in registration order — this `applyZoom → render`
+  // is the one that has to see the guard already down, so it refreshes
+  // the Image-size pill at the new size.
   ctx.previewImg.addEventListener('load', applyZoom);
 
   ctx.zoomBtn.addEventListener('click', () => {

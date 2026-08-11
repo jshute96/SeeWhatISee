@@ -306,7 +306,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML byte-size cap — capture-time rejection, under-cap pass-through, edit-save rejection, error-page hint italics |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
-| `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — pill text matches saved dims/bytes, JPG stays JPG on bake (sticky), WEBP→PNG label flip on bake, live dim updates during a Crop-tool drag |
+| `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.sh --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
 | `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.sh --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |

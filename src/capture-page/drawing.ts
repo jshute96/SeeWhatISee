@@ -1369,8 +1369,12 @@ export function render(): void {
   // the user sees the selection size update in real time. Bytes
   // stay at the last committed value during a drag — re-baking
   // each frame would cost too much.
-  if (!baseImageSwapPending) ctx.updateImageSizeBadge();
-  ctx.composeImageBadgeText();
+  // Both calls are skipped across a base-image swap — see
+  // `baseImageSwapPending`.
+  if (!baseImageSwapPending) {
+    ctx.updateImageSizeBadge();
+    ctx.composeImageBadgeText();
+  }
 }
 
 // Viewport-edge indicators. The "real" image-edge border (solid
@@ -1643,16 +1647,36 @@ const viewCropStack: ViewCropUndo[] = [];
 
 // True between assigning a new base-image `src` and its `load`.
 // During that window `previewImg` still reports the *outgoing*
-// image's natural size, so `render()` skips the Image-size pill's
-// bake: the pill's cache key is `editVersion|naturalW|naturalH` and
-// the version has just been bumped, so it would miss the cache and
-// re-encode the old, full-size image — megabytes of work thrown away
-// a frame later when the load handler re-renders at the new size.
+// image's natural size while the edits have already been re-mapped
+// into the incoming one — so
+// `render()` leaves the Image-size pill completely alone until the
+// load lands. Both halves of the pill matter:
+//   - the bake, because its cache key is `editVersion|naturalW|
+//     naturalH` and the version has just been bumped, so it would
+//     miss the cache and re-encode the old, full-size image —
+//     megabytes of work thrown away a frame later;
+//   - the text, because the crop edit is gone from the stack by now
+//     while the image is still the old big one, so the dimensions
+//     would flash up to the *pre-crop* size for a frame before the
+//     load handler recomposes them at the new size.
+// Freezing it shows the pre-swap text throughout, which is what the
+// pill was already promising for the cropped save — so the
+// transition reads as no change. (Bytes can still shift once the
+// load lands: applying a crop under drawn edits on a JPG capture
+// re-encodes a second generation. That's a real difference, shown
+// when the pill legitimately refreshes.)
 let baseImageSwapPending = false;
 
 // Every base-image swap goes through here so the badge guard above
 // can't be forgotten on one of the paths (apply / undo / restore).
 function setBaseImage(url: string): void {
+  // Assigning the `src` it already has is a no-op in the HTML image
+  // update algorithm — no `load`, so the guard below would never be
+  // cleared and the pill would stay frozen for the session. Reachable
+  // only from `applyRestoredViewCrop` with a region that rounds to
+  // the whole image and re-encodes byte-identically, but the cost of
+  // ruling it out is one comparison.
+  if (ctx.previewImg.src === url) return;
   baseImageSwapPending = true;
   // The Shrink cache keys on `src` so it would miss anyway, but the
   // outgoing image's `ImageData` stays referenced until the next
@@ -2388,10 +2412,13 @@ export function initDrawing(context: DrawingContext): void {
   // reaches the Image-size pill — which is exactly the render that
   // should pay for the bake. `error` clears it too: a swap that
   // never decodes would otherwise leave the pill frozen for the rest
-  // of the session.
+  // of the session. On `error` nothing else re-renders (zoom's
+  // listener is `load`-only), so this path renders itself rather than
+  // leaving the frozen text up until the user happens to resize or
+  // draw something.
   const clearSwapGuard = (): void => { baseImageSwapPending = false; };
   ctx.previewImg.addEventListener('load', clearSwapGuard);
-  ctx.previewImg.addEventListener('error', clearSwapGuard);
+  ctx.previewImg.addEventListener('error', () => { clearSwapGuard(); render(); });
 
   // Pan via `.image-box` scroll changes which sides have scrolled-out
   // content, so the per-side dashed indicator needs to re-evaluate.

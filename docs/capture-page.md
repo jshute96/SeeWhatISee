@@ -213,6 +213,9 @@ referenced from this doc live in
     zoom / drag-mid-flight `render()` calls don't trigger a
     re-bake. Hidden when `screenshotError` is set on the capture
     record.
+  - The whole pill — bake and text alike — is frozen while a new
+    base image is decoding, so a View cropped swap can't flash a
+    half-updated readout. See "Image-size pill across the swap".
   - `HTML · <size>` — `formatBytes(new Blob([html]).size)`.
   - `Selection · <size>` — byte count of the format the
     Selection pill is currently showing (the checked radio when
@@ -856,6 +859,29 @@ fresh edit.
   on disk really are a sub-region of the capture.
 - Output format follows the same sticky rule as the bake
   (`bakeMime`) — a JPG capture stays JPG, everything else is PNG.
+
+**Image-size pill across the swap**
+
+- Assigning the new `src` starts a window (`baseImageSwapPending`)
+  where the edits already describe the incoming image but
+  `previewImg`'s natural size still reports the outgoing one.
+- `render()` leaves the pill entirely alone in that window — both
+  the bake and the text — and the load handler's `render()`
+  refreshes it once the new size is real.
+- Skipping the bake avoids re-encoding the old, full-size image
+  for a result that's discarded a frame later.
+- Skipping the text avoids a visible flash: the crop edit is off
+  the stack by then, so the dimensions would jump to the *pre-crop*
+  size for a frame.
+- Frozen, the pill shows the value it already had — the cropped
+  save it was already promising — so the transition reads as no
+  change.
+- Bytes can still move once the load lands: applying a crop under
+  drawn edits on a JPG capture re-encodes a second generation.
+  That's a real difference, shown when the pill refreshes.
+- `setBaseImage` bails when the incoming URL equals the current
+  `src`. That assignment fires no `load`, so the guard would stay
+  up and freeze the pill for the rest of the session.
 
 **Restore last capture**
 

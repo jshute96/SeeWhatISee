@@ -1,7 +1,7 @@
 // E2E coverage for the Capture-page Image-size pill —
 // `#image-size-badge`. The pill reads
 // "<FORMAT> · <W>×<H> · <size>" and is supposed to track the bytes
-// that *would* be saved right now. Three behaviors covered here:
+// that *would* be saved right now. Behaviors covered here:
 //
 //   1. Pill text matches the bytes / dimensions that actually land
 //      on disk after Save (PNG capture, no edits).
@@ -12,11 +12,15 @@
 //   3. Dimensions update *live* while the user is drawing a crop
 //      box with the Crop tool — before mouseup commits — so the
 //      readout works as a selection-size preview.
+//   4. The pill never shows an intermediate value while View
+//      cropped swaps in a new base image, and starts tracking
+//      again once the new image decodes.
 
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
+import { clickMoreMenuItem } from './capture-drawing-helpers';
 import {
   configureAndCapture,
   dragRect,
@@ -323,6 +327,87 @@ test('image pill: dimensions update live while drawing a Crop-tool box', async (
   expect(png.width).toBe(committed.width);
   expect(png.height).toBe(committed.height);
   expect(formatBytes(buf.length)).toBe(committed.size);
+
+  await openerPage.close();
+});
+
+test('image pill: View cropped swaps the base image without flashing an intermediate pill', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+
+  // Commit a crop over the middle half of each axis. The pill now
+  // promises the *cropped* save — that's the value View cropped
+  // realises, so the swap should be invisible in the pill.
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  const before = await readImagePill(capturePage);
+
+  // Record every write to the pill across the swap. The regression
+  // this guards: `render()` used to recompose the text while the new
+  // `src` was still decoding, at which point the crop edit was gone
+  // from the stack but `naturalWidth` was still the *old* full-size
+  // image — so the dimensions flashed up to the pre-crop size for a
+  // frame. The writes happen synchronously inside the click handler,
+  // so an observer installed first catches them.
+  // Read each mutation record rather than the element's current text
+  // — two writes inside one task would otherwise collapse into
+  // whatever the last one left behind, hiding exactly the kind of
+  // transient this test exists to catch.
+  await capturePage.evaluate(() => {
+    const w = window as unknown as { __pillWrites?: string[] };
+    w.__pillWrites = [];
+    const badge = document.getElementById('image-size-badge')!;
+    new MutationObserver((records) => {
+      for (const r of records) {
+        for (const node of r.addedNodes) w.__pillWrites!.push(node.textContent ?? '');
+        if (r.type === 'characterData') w.__pillWrites!.push(r.target.textContent ?? '');
+      }
+    }).observe(badge, { childList: true, characterData: true, subtree: true });
+  });
+
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await capturePage.waitForFunction(
+    (w) => (document.getElementById('preview') as HTMLImageElement).naturalWidth === w,
+    before.width,
+  );
+  await expect(capturePage.locator('#image-size-badge')).toHaveText(PILL_RE);
+
+  // The settled pill describes the same image, bytes included —
+  // that equality is what makes freezing the text across the swap
+  // the right call rather than a lie held for a few frames.
+  const after = await readImagePill(capturePage);
+  expect(after.label).toBe(before.label);
+  expect(after.width).toBe(before.width);
+  expect(after.height).toBe(before.height);
+  expect(after.size).toBe(before.size);
+
+  // Nothing else was ever displayed in between. The length check
+  // keeps this from passing vacuously if the observer never fired.
+  const writes: string[] = await capturePage.evaluate(
+    () => (window as unknown as { __pillWrites: string[] }).__pillWrites,
+  );
+  expect(writes.length).toBeGreaterThan(0);
+  for (const text of writes) {
+    expect(text).toBe(`${after.label} · ${after.width}×${after.height} · ${after.size}`);
+  }
+
+  // Crop again and re-apply. A stuck swap guard would freeze the
+  // pill for the rest of the session and still satisfy everything
+  // above, so prove it lifted by watching the pill follow a second
+  // re-frame down to a quarter of the original.
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await expect
+    .poll(async () => (await readImagePill(capturePage)).width)
+    .toBeLessThan(after.width);
 
   await openerPage.close();
 });
