@@ -3,64 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <title>SeeWhatISee — Capture screenshot or contents</title>
-<!--
-  highlight.js theme. Styles the <span class="hljs-*"> tokens produced
-  by `hljs.highlight(...).value` inside the edit-dialog editor. We
-  ship a small light theme (github.min.css) renamed to
-  highlight-theme.css by build.mjs so it matches the rest of the
-  page's light background.
--->
+<!-- highlight.js theme for the edit dialog's hljs tokens (github.min.css,
+     renamed by build.mjs). -->
 <link rel="stylesheet" href="highlight-theme.css">
-<!--
-  Shared `.btn` chrome (raised look + hover/active/.pressed flash +
-  disabled) used by every primary button on the page. Per-page
-  sizing/padding/border still lives in the per-button rules in the
-  inline <style> below.
--->
+<!-- Shared `.btn` chrome; per-button sizing stays in the <style> below. -->
 <link rel="stylesheet" href="shared-styles.css">
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 24px;
     color: #000;
-    /*
-     * Hidden at first paint. capture-page.ts flips visibility back
-     * to `visible` inside loadData once the page-card fields (title,
-     * URL, HTML-size badge), preview image, and Save selection state
-     * have all been populated.
-     * Avoids the user watching values fill in one at a time during
-     * the SW round-trip.
-     */
+    /* Hidden until loadData() has populated every field, so the user
+     * doesn't watch values fill in one at a time. */
     visibility: hidden;
   }
-  /* Page-specific header chrome — pulls the `.app-header` bar out to
-     the viewport edge through the body's 24px margin so the bar reads
-     as a full-width app header rather than a centred inset block.
-     Layout (flex/gap/font), image sizing, and the trailing-button
-     `.header-btn` chrome live in `shared-styles.css`. */
+  /* Negative margins pull the header bar out through the body margin to
+   * the viewport edge. */
   header {
     margin: -24px -24px 16px -24px;
     padding: 12px 24px;
   }
-  /*
-   * Captured-page card: bordered light-grey strip laid out as a
-   * two-column flex row.
-   *   Left  (.capture-card-body)  — title + URL row (with Copy
-   *                                 URL packed inline right after
-   *                                 the URL).
-   *   Right (.capture-card-pills) — Image / HTML / Selection size
-   *                                 pills, vertically stacked,
-   *                                 right-justified.
-   *
-   * The pills column sits outside `.capture-card-body` so it
-   * doesn't add height to the title row. When all three pills are
-   * visible at once, `.compact` flips the column to negative
-   * margins + `space-evenly` so the trio distributes evenly across
-   * the card height instead of stacking against the top edge.
-   *
-   * `overflow: hidden` clips long content to the card's rounded
-   * corner so the seam reads cleanly.
-   */
+  /* Captured-page card: text body on the left, size-pill column on the
+   * right (outside the body so the pills don't add title-row height). */
   .capture-card {
     display: flex;
     align-items: flex-start;
@@ -72,11 +36,8 @@
     background: #f5f5f5;
     overflow: hidden;
   }
-  /* `min-width: 0` is load-bearing: a flex child's default min-width
-   * is its intrinsic content size, which would push the card past
-   * the viewport on long titles / URLs. The text-overflow ellipsis
-   * inside the title and URL only triggers once the parent allows
-   * shrinking past intrinsic. */
+  /* `min-width: 0` is load-bearing: without it the flex child can't
+   * shrink past its intrinsic width and the ellipsis never triggers. */
   .capture-card-body {
     flex: 1;
     min-width: 0;
@@ -94,11 +55,6 @@
   .capture-card-title:hover {
     text-decoration: underline;
   }
-  /* Right-side column holding the size pills, vertically stacked.
-   * `align-items: flex-end` right-justifies each pill against the
-   * column edge, regardless of which one is wider. `flex: 0 0 auto`
-   * keeps the column at its content width so the body column gets
-   * everything else. */
   .capture-card-pills {
     display: flex;
     flex-direction: column;
@@ -106,9 +62,6 @@
     gap: 6px;
     flex: 0 0 auto;
   }
-  /* Size pill — white background, light border, small grey text.
-   * `flex: 0 0 auto` is harmless on a column-flex child but keeps
-   * the rule consistent if the parent ever switches to row mode. */
   .capture-card-badge {
     flex: 0 0 auto;
     padding: 1px 8px;
@@ -119,37 +72,15 @@
     border-radius: 10px;
     white-space: nowrap;
   }
-  /* Compact mode: applied by capture-page.ts when all three pills
-   * (Image / HTML / Selection) are visible at once.
-   *
-   * Two things happen together so the trio actually distributes:
-   *   1. Negative top/bottom margins (`-8px`) cancel out the
-   *      card's vertical padding for *this* column only — i.e.
-   *      smaller effective margin around the pills than around
-   *      the body's text rows on the left.
-   *   2. With those negatives the column's outer (margin-included)
-   *      box shrinks below the body's height; the body
-   *      (title + 22px Copy-URL button row, ~41px) becomes the
-   *      cross-axis height-determiner, and `align-self: stretch`
-   *      grows the column's inner height to match.
-   *   3. `justify-content: space-evenly` then distributes the slack
-   *      as four equal gaps — above pill #1, between #1/#2,
-   *      between #2/#3, below pill #3 — so the trio reads as a
-   *      visually balanced rhythm instead of pinning the outer
-   *      pills to the card edges (which is what `space-between`
-   *      did). */
+  /* Set by capture-page.ts when all three pills show at once. The
+   * negative margins shrink the column below the body's height so
+   * `stretch` + `space-evenly` can distribute the trio evenly. */
   .capture-card-pills.compact {
     align-self: stretch;
     justify-content: space-evenly;
     gap: 0;
     margin: -8px 0;
   }
-  /* URL row — URL anchor on the left, Copy URL button packed inline
-   * right after it. The anchor uses `flex: 0 1 auto` (shrink-only)
-   * so on a short URL the button sits snug next to the link rather
-   * than floating at the far right of the card; on a long URL the
-   * anchor takes the available width and ellipsises while the
-   * button stays put at the right of whatever the URL consumed. */
   .capture-card-url-row {
     display: flex;
     align-items: center;
@@ -157,6 +88,8 @@
     margin-top: 2px;
     min-width: 0;
   }
+  /* Shrink-only (`flex: 0 1 auto`) so the Copy URL button packs against
+   * a short URL instead of floating at the card's right edge. */
   .capture-card-url {
     flex: 0 1 auto;
     min-width: 0;
@@ -177,56 +110,32 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* When the captured URL isn't linkable (empty, or a non-http(s)
-   * scheme like chrome://) we strip the `href` and demote the rows
-   * to plain text. The text stays full-contrast (the title's #000 is
-   * already inherited; the URL row gets its blue overridden back to
-   * #000 here) so it remains readable — only the click affordance
-   * goes away. */
+  /* Non-linkable URL (empty, or a scheme like chrome://): the `href` is
+   * stripped, so demote to full-contrast plain text — only the click
+   * affordance goes away. */
   .capture-card-title:not([href]),
   .capture-card-url:not([href]) {
     color: #000;
     cursor: default;
     pointer-events: none;
   }
-  /*
-   * Controls-row layout: two columns.
-   *
-   *   .controls (flex row)
-   *     .checkboxes              [col 1: Save-row controls]
-   *     .right-stack (flex col)  [col 2: stacked rows]
-   *       .prompt-row              [row 1: "Prompt:" label + textarea]
-   *       .button-row              [row 2: Capture + Ask buttons,
-   *                                 horizontal, wraps to additional
-   *                                 lines when the column isn't wide]
-   *       #ask-status              [row 3: Capture/Ask status text]
-   *
-   * The textarea grows vertically with the user's input (its own
-   * `auto-grow` JS sizes the row count). The button row sits below
-   * it and wraps so a narrow viewport stacks the buttons across
-   * multiple lines instead of clipping past the page edge.
-   */
+  /* Controls strip: Save-row checkboxes on the left, `.right-stack`
+   * (prompt row / button row / status) on the right. `wrap` drops the
+   * right stack to its own line on a narrow viewport instead of
+   * overflowing the page width. */
   .controls {
     display: flex;
     align-items: flex-start;
     gap: 24px;
-    /* Wrap the right-stack column to a new line on a very narrow
-     * viewport rather than overflowing the page width. */
     flex-wrap: wrap;
   }
   .right-stack {
     flex: 1;
-    /* Take all the remaining controls-strip width. The prompt row
-     * fills it; the button row wraps inside it; the status reads
-     * within it. */
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  /* Prompt label + textarea sit on one row; the textarea takes
-   * the remaining width and grows vertically as the user types
-   * (capture-page.ts's `autoGrowPrompt` sizes the rows). */
   .prompt-row {
     display: flex;
     align-items: flex-start;
@@ -234,74 +143,35 @@
   }
   .prompt-row > #prompt-text {
     flex: 1;
-    /* `min-width: 0` lets the textarea actually shrink in narrow
-     * viewports — without it, flex defaults to the textarea's
-     * intrinsic min-content and the row would overflow. */
+    /* Lets the textarea shrink below its intrinsic min-content width. */
     min-width: 0;
   }
   .prompt-row > label[for="prompt-text"] {
-    /* Match the textarea's text baseline — its 6px top padding
-     * + 1px border puts the first line of text 7px from the row
-     * top, which is where the bold "Prompt:" label aligns to. */
+    /* Matches the textarea's 6px padding + 1px border so the label sits
+     * on the first line's baseline. */
     padding-top: 7px;
   }
-  /* Capture + Ask action buttons. Horizontal flex with wrap so a
-   * narrow column stacks the buttons across multiple lines rather
-   * than overflowing.
-   *
-   * `margin-top: 4px` adds to the parent `.right-stack`'s 8px
-   * `gap`, netting a 12px gap above the buttons (50% more than
-   * the gap below, which is just the parent's 8px). The extra
-   * breathing room separates the buttons from the prompt input
-   * — they're a distinct action surface, not a continuation. */
   .button-row {
+    /* Adds to `.right-stack`'s 8px gap for extra room above the buttons. */
     margin-top: 4px;
-    /* Define the action-button height once and apply it to every
-     * button kind in the row (Capture, the Ask split, the
-     * favicon squares). Same height across all kinds keeps the
-     * row visually flush even after wrapping; the favicon
-     * buttons pick up `width: var(--ask-btn-h)` for square. */
+    /* One height for every button kind in the row, so it stays flush
+     * even after wrapping. */
     --ask-btn-h: 34px;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     align-items: flex-start;
   }
-  /*
-   * Single grid for every Save row (screenshot / HTML / selection
-   * master + the three format rows) so the per-row icon buttons
-   * line up in fixed vertical columns regardless of which buttons
-   * exist on a given row. Columns: [label] [copy] [download] [edit]
-   * [error].
+  /* One grid for every Save row — columns [label] [copy] [download]
+   * [edit] [error] — so the icons line up regardless of which buttons a
+   * row has. The rows use `display: contents` to flow their children
+   * into this grid.
    *
-   * `.checkbox-row` and `.selection-formats` use `display: contents`
-   * so their direct children flow into the parent grid as if
-   * unwrapped — this is what lets the format rows (nested inside
-   * `.selection-formats`) share the *same* column tracks as the
-   * top-level rows so every Copy / Save / Edit icon stacks vertically.
-   *
-   * Items rely on `grid-auto-flow: row` (default, sparse): each row's
-   * children are emitted in source order in increasing column order
-   * (copy → download → edit), so the cursor never has to backtrack —
-   * if it did, the auto-placement algorithm would push the
-   * "earlier-column" item onto a fresh grid row. Reordering the icons
-   * in DOM also requires keeping that invariant.
-   *
-   * `.has-error` rows always have copy / download / edit `disabled`
-   * (and hidden via `.copy-btn:disabled { display: none }`), which is
-   * what frees column 2 for the error icon to share — see the
-   * `.error-icon` rule below.
-   */
+   * Icons must appear in DOM in increasing column order: `grid-auto-flow`
+   * would otherwise push a backtracking item onto a fresh row. */
   .checkboxes {
     display: grid;
-    /*
-     * Icon columns sit flush (no column-gap between them) — the
-     * 22px button is wider than its 14px icon, so adjacent icons
-     * already have visible breathing room from the per-button
-     * padding. The label column gets explicit `padding-right` and
-     * the error-icon column an explicit `margin-left` below so the
-     * icon strip doesn't bleed into them.
-     */
+    /* No column-gap: the 22px buttons already pad their 14px icons. */
     grid-template-columns: max-content 22px 22px 22px max-content;
     column-gap: 0;
     row-gap: 2px;
@@ -311,15 +181,8 @@
   .selection-formats {
     display: contents;
   }
-  /*
-   * `[hidden]` is normally `display: none`, but our `display:
-   * contents` rule above has equal specificity and would win on
-   * source order alone. The attribute selector below outranks it
-   * (one extra attribute selector), so the format-row block stays
-   * hidden until loadData() reveals it. `display: none` on the
-   * wrapper hides the entire subtree even though the wrapper itself
-   * has no box.
-   */
+  /* Outranks the `display: contents` rule above, which would otherwise
+   * beat the UA `[hidden]` rule on source order. */
   .selection-formats[hidden] {
     display: none;
   }
@@ -327,31 +190,12 @@
   .checkbox-row > .col-copy { grid-column: 2; }
   .checkbox-row > .col-download { grid-column: 3; }
   .checkbox-row > .col-edit { grid-column: 4; }
-  /*
-   * Error icon shares column 2 with the Copy button. A row only ever
-   * shows one or the other: when `has-error` is set, the row's
-   * Copy/Edit/Download buttons are all disabled (and hidden via
-   * `.copy-btn:disabled { display: none }`), so column 2 is free
-   * for the error indicator. Putting the error in the leftmost icon
-   * column keeps the indicator tight against the label rather than
-   * stranded out past empty button slots.
-   */
-  /*
-   * The icon column is 22px wide (sized to the Copy button), but the
-   * error glyph is only 16px — `justify-self: center` parks it in
-   * the middle of the column so it lines up under the centered icon
-   * glyphs in the rows above instead of hugging the column's left
-   * edge.
-   */
+  /* The error icon shares column 2 with Copy — an erroring row has its
+   * buttons disabled (and hidden), so the column is free. `justify-self`
+   * centres the 16px glyph in the 22px column. */
   .checkbox-row > .error-icon { grid-column: 2; justify-self: center; }
-  /*
-   * Indent the three "as HTML / text / markdown" rows so they read
-   * as children of the master "Save selection:" checkbox above.
-   * The indent lives on the label only (not the row, which has no
-   * box thanks to `display: contents`) so the row's icons still
-   * land in the shared columns 2–4 instead of shifting right with
-   * the label.
-   */
+  /* Indent the format rows under "Save selection:". On the label only,
+   * so the icons stay in the shared columns. */
   #row-selection-html > label,
   #row-selection-text > label,
   #row-selection-markdown > label {
@@ -382,12 +226,8 @@
     border-color: #bbb;
     color: #000;
   }
-  /*
-   * Disabled Copy button (e.g. Save selection with no selection
-   * captured): hide outright rather than greying. A greyed icon
-   * still reacts to hover via the shared rule above, which reads
-   * as a dead control.
-   */
+  /* Hide rather than grey: a greyed icon still hovers via the rule
+   * above, which reads as a dead control. */
   .copy-btn:disabled {
     display: none;
   }
@@ -395,24 +235,12 @@
     width: 14px;
     height: 14px;
   }
-  /*
-   * Grey out the label whenever its checkbox is disabled — covers
-   * both the no-selection default and the failed-scrape error case
-   * so they look identical (browser-default disabled checkbox styling
-   * already takes care of the box itself; this is the matching label
-   * fade). Uses `:has()`, fine for our Chrome-only target.
-   */
+  /* Match the browser's disabled-checkbox fade on the label too. */
   .checkbox-row:has(input:disabled) label {
     color: #888;
   }
-  /*
-   * Row-level error indicator. `capture-page.ts` toggles `.has-error`
-   * on `.checkbox-row` when the SW reports the corresponding artifact
-   * couldn't be captured (restricted URL, blocked scrape, etc.). The
-   * error icon becomes visible and its `title` carries the SW-reported
-   * reason so hovering it explains why the row is disabled. The label
-   * fade comes from the disabled-checkbox rule above.
-   */
+  /* Shown when capture-page.ts sets `.has-error` on the row; its `title`
+   * carries the SW-reported reason. */
   .error-icon {
     display: none;
     align-items: center;
@@ -429,13 +257,8 @@
     width: 14px;
     height: 14px;
   }
-  /*
-   * The HTML edit dialog reuses a modal <dialog> element. We hide it
-   * in CSS rather than via an attribute so toggling via JS doesn't
-   * need to fight the native display. The editor is full-width with
-   * a capped max-height so it never pushes the action row off-screen
-   * — it scrolls internally on long bodies instead.
-   */
+  /* Capped max-height so a long body scrolls internally instead of
+   * pushing the action row off-screen. */
   dialog.edit-dialog {
     width: min(900px, 90vw);
     max-height: 85vh;
@@ -458,24 +281,16 @@
     gap: 12px;
     margin-bottom: 12px;
   }
-  /*
-   * Edit / Preview segmented control. The two buttons share a
-   * border so they read as a single widget; the selected one keeps
-   * an inset "pressed" look. capture-page.ts toggles `.selected`
-   * and `aria-pressed` on click.
-   */
+  /* Edit / Preview segmented control — shared border so the pair reads
+   * as one widget. */
   .edit-dialog-mode-toggle {
     display: inline-flex;
     border: 1px solid #555;
     border-radius: 4px;
     overflow: hidden;
   }
-  /*
-   * Explicit `display` rules override the user-agent `[hidden]`
-   * default of `display: none`, so the toggle would always render
-   * — including on dialogs that have no preview mode (the text
-   * dialog). Re-assert `none` for the hidden state.
-   */
+  /* Re-assert `none`: the explicit `display` above beats the UA
+   * `[hidden]` rule on dialogs that have no preview mode. */
   .edit-dialog-mode-toggle[hidden] {
     display: none;
   }
@@ -495,14 +310,8 @@
     color: #fff;
     cursor: default;
   }
-  /*
-   * In-dialog "Download this file" button. Sits in the titlebar to
-   * the right of the Edit/Preview toggle (when present) and is
-   * always shown — even on dialogs without a preview mode. Styled
-   * to match the segmented Edit/Preview control's visual weight
-   * (same padding / font / border) so they read as siblings rather
-   * than as the small icon-only buttons used on the main page.
-   */
+  /* In-dialog Download button — matches the Edit/Preview control's
+   * visual weight so they read as siblings. */
   .edit-dialog-download {
     display: inline-flex;
     align-items: center;
@@ -522,18 +331,10 @@
     width: 14px;
     height: 14px;
   }
-  /*
-   * The editor is a `contenteditable` <div> (not a <textarea>) because
-   * CodeJar rewrites its own inner HTML with highlight.js-produced
-   * <span class="hljs-*"> tokens on every input. The styles below
-   * mirror the old textarea dimensions so the dialog slot keeps the
-   * same intrinsic size across mode switches. `white-space: pre-wrap`
-   * preserves user-entered newlines + indentation the way a textarea
-   * would; `overflow: auto` + `resize: vertical` keep the
-   * user-resizable feel. `caret-color` is explicit because the hljs
-   * theme can override the inherited text color on child spans, which
-   * in some browsers also dims the caret.
-   */
+  /* The editor is a `contenteditable` <div>, not a <textarea>, because
+   * CodeJar rewrites its inner HTML with hljs tokens. Only
+   * layout-affecting properties are set here — background / color are
+   * left to the hljs theme. */
   .edit-dialog .edit-dialog-textarea {
     display: block;
     width: 100%;
@@ -551,25 +352,15 @@
     white-space: pre-wrap;
     word-break: break-word;
     outline: none;
-    /* Use the theme's text color for the caret so they match. */
+    /* Explicit: the hljs theme can recolor child spans, which in some
+     * browsers dims the inherited caret. */
     caret-color: currentColor;
-    /*
-     * The github.min.css theme sets its own `background` / `color` on
-     * `.hljs`, which CodeJar adds to the editor element. Leave those
-     * to the theme — we only override layout-affecting properties
-     * here so the editor keeps its dialog-slot geometry.
-     */
   }
   .edit-dialog .edit-dialog-textarea:focus-visible {
     border-color: #555;
   }
-  /*
-   * Body slot holds the editor + iframe. `position: relative`
-   * anchors the iframe's `inset: 0` overlay to exactly the
-   * editor's rect, so flipping modes can't shift dialog
-   * dimensions by even a pixel. The editor keeps defining the
-   * slot's intrinsic size; the iframe paints on top.
-   */
+  /* Anchors the preview iframe's `inset: 0` to the editor's rect, so a
+   * mode flip can't shift the dialog's dimensions. */
   .edit-dialog-body {
     position: relative;
   }
@@ -607,9 +398,6 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  /* "Prompt:" label lives in `.prompt-row` to the left of the
-   * textarea. The padding-top alignment trick lives on the
-   * `.prompt-row > label` rule inside the .controls block above. */
   label[for="prompt-text"] {
     font-size: 14px;
     font-weight: bold;
@@ -622,12 +410,9 @@
     border: 1px solid #bbb;
     border-radius: 4px;
     resize: none;
-    /* This rule is the single source of truth for the auto-grow
-     * sizing: `autoGrowPrompt` reads `line-height`, the paddings, the
-     * borders, and this `max-height` off the computed style rather
-     * than hardcoding copies. Editing any of them here is enough —
-     * but they do have to stay resolvable to px (a `line-height`
-     * keyword or a percentage `max-height` would not be). */
+    /* Single source of truth for the auto-grow sizing: `autoGrowPrompt`
+     * reads line-height, padding, border and this max-height off the
+     * computed style, so they must all stay resolvable to px. */
     max-height: 200px;
     overflow-y: hidden;
     box-sizing: border-box;
@@ -636,11 +421,8 @@
   button.ask-row,
   button.ask-caret-btn,
   button.ask-provider-btn {
-    /* Pin every action-row button to the same height so the row
-     * stays visually flush after wrapping. Vertical padding is
-     * dropped because `height` + flex-center positions the label
-     * with no risk of clipping; horizontal padding stays for the
-     * text rows. */
+    /* One height for every action button so the row stays flush after
+     * wrapping; flex-centring makes vertical padding unnecessary. */
     height: var(--ask-btn-h);
     border: 1px solid #555;
     background: #f5f5f5;
@@ -656,49 +438,20 @@
   button#capture {
     border-radius: 4px;
   }
-  /*
-   * Highlight the two primary actions — Capture and the
-   * resolved-default Ask button — with bold deep-purple text
-   * (`#512da8`, the same brand colour the title in `.app-header`
-   * uses). Button chrome stays neutral grey so the highlighting
-   * comes purely from the label, which keeps the per-provider
-   * `.ask-provider-btn` favicon buttons (no text to colour)
-   * reading as visibly secondary alongside the primary pair.
-   */
+  /* Primary actions, marked by label colour only (brand purple) so the
+   * favicon-only provider buttons still read as secondary. */
   button#capture,
   button#ask-btn {
     color: #512da8;
     font-weight: 700;
   }
-  /*
-   * Default-button highlight — the user picks Capture or Ask as the
-   * "default" in Options; whichever wins gets `.is-default` from
-   * capture-page.ts and shows a subtle outer ring so it reads as
-   * "primary" even when nothing on the page has focus.
+  /* Default-button ring — capture-page.ts sets `.is-default` on whichever
+   * of Capture / Ask the user picked in Options. Inset rather than
+   * `outline` so it doesn't eat into the row's gaps.
    *
-   * For Ask, the ring traces only `#ask-btn` (the row that fires on
-   * Alt+A and on Enter when defaultButton=ask) — not the whole
-   * Ask-button stack. The other rows (Ask…, per-provider) are
-   * lateral-mode entries; ringing them too would dilute the "this
-   * is the default" signal.
-   */
-  /*
-   * Default-button highlight ring. Inset rather than outline so it
-   * doesn't visibly shrink the adjacent `.button-row` gaps by 2px
-   * on each side.
-   *
-   * Capture is a single button with its own background, so an
-   * inset `box-shadow` paints over that background and reads as
-   * an inner ring directly.
-   *
-   * `.ask-split` is a flex wrapper whose inner buttons paint their
-   * own backgrounds — an inset `box-shadow` on the wrapper would
-   * be hidden behind those children. A `::after` pseudo-element
-   * overlay paints on top of the children instead, drawing a
-   * single ring around the whole split (main button + caret) at
-   * exact wrapper bounds with `pointer-events: none` so clicks
-   * still pass through to the underlying buttons.
-   */
+   * `.ask-split` needs a `::after` overlay instead: its children paint
+   * their own backgrounds, which would hide an inset shadow on the
+   * wrapper. Only `#ask-btn` is ringed, not the whole stack. */
   button#capture.is-default {
     border-radius: 4px;
     box-shadow: inset 0 0 0 2px rgba(0, 95, 204, 0.35);
@@ -711,21 +464,13 @@
     border-radius: 4px;
     pointer-events: none;
   }
-  /*
-   * Ask split button: #ask-btn (the main "Ask <provider>" label)
-   * and #ask-menu-btn (the chevron-only square that opens the
-   * destination-picker menu) sit inside `.ask-split` and share a
-   * single visual chrome — common border at the seam, outer radii
-   * at the start of the main button and the end of the caret.
-   * `.ask-split` is also the popup menu's `position: relative`
-   * anchor so the menu lands directly under the caret rather than
-   * the row's left edge.
-   */
+  /* Wrapper for the Ask split button (label + caret), and the popup
+   * menu's positioning anchor so the menu lands under the caret. The
+   * height matches the inner buttons exactly so a wrapped row still
+   * lines up with the rest of `.button-row`. */
   .ask-split {
     position: relative;
     display: flex;
-    /* Match the heights of the inner buttons exactly so the wrap
-     * row aligns with sibling buttons across the .button-row. */
     height: var(--ask-btn-h);
   }
   button.ask-row {
@@ -736,25 +481,15 @@
     border-bottom-left-radius: 4px;
   }
   .ask-row-label {
-    /* Inline-block so the underline on the hotkey letter renders
-     * cleanly inside the flex item. */
+    /* Inline-block so the hotkey letter's underline renders cleanly. */
     display: inline-block;
   }
+  /* Holds `↗` or `📌`. `color` tints the `↗` green to match the Ask
+   * menu's indicators; the emoji pin ignores it. */
   .ask-row-icon {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-    /* `#ask-btn-icon` is a <span> holding a single text codepoint:
-     * `↗` (text-presentation arrow, new-window state) or `📌`
-     * (emoji-presentation pushpin, pin state). `color: #060` tints
-     * the `↗` green to match the green pin / arrow indicators in
-     * the Ask dropdown menu's leading slot — keeps the visual
-     * language consistent across both surfaces. The colored 📌
-     * emoji ignores `color`, so this rule only affects the `↗`.
-     * `font-size` sizes the glyphs to match the row's label
-     * height; `line-height: 1` and the inline-flex layout keep
-     * them vertically centred without shifting the row's
-     * baseline. */
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -762,13 +497,8 @@
     font-size: 14px;
     line-height: 1;
   }
-  /* Caret button: chevron-only sliver attached to the right edge
-   * of #ask-btn. Narrower than the square button height — the
-   * chevron is small (10×10) and only needs enough horizontal
-   * room to look like a deliberate split-button divider rather
-   * than a second equal-weight button. Border-left dropped so the
-   * seam reads as a divider, outer radii on the right corners
-   * only. */
+  /* Chevron sliver on the right edge of #ask-btn. Narrower than a square
+   * so it reads as a split-button divider, not a second button. */
   button.ask-caret-btn {
     display: flex;
     align-items: center;
@@ -791,12 +521,7 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  /*
-   * Per-provider Ask buttons. No text label — just the destination
-   * site's bundled logo. Square, matching the row's button height.
-   * The icon takes most of the button area so the brand mark
-   * reads clearly even at this small size.
-   */
+  /* Per-provider Ask buttons: square, favicon only. */
   button.ask-provider-btn {
     display: flex;
     align-items: center;
@@ -806,19 +531,13 @@
     border-radius: 4px;
   }
   button.ask-provider-btn img {
-    /* ~20px on a 34px button — comfortable inset that lets the
-     * brand mark read clearly without crowding the button edge. */
     width: 20px;
     height: 20px;
-    /* `display: block` removes the inline-image baseline gap so
-     * the icon centres precisely inside the square button. */
+    /* Kills the inline-image baseline gap so the icon centres exactly. */
     display: block;
   }
-  /*
-   * Anchored popup. Hidden by default; capture-page.ts unhides it
-   * after rebuilding the contents on each Ask click. Outside-click
-   * and Escape both dismiss it.
-   */
+  /* Ask destination menu. Unhidden by capture-page.ts after it rebuilds
+   * the contents; outside-click and Escape dismiss it. */
   .ask-menu {
     position: absolute;
     top: 100%;
@@ -843,10 +562,6 @@
     list-style: none;
   }
   .ask-menu .ask-menu-heading {
-    /* Headings sit flush with the menu's left edge (matching item
-     * padding only — no indent for the row's leading indicator
-     * slot). Reads as a separator strip introducing each group
-     * rather than as a label aligned with the items. */
     padding: 6px 12px 2px;
     font-size: 11px;
     font-weight: 600;
@@ -854,12 +569,9 @@
     letter-spacing: 0.04em;
     color: #444;
   }
+  /* [indicator slot 16px][label]. The slot is always reserved so an
+   * appearing glyph doesn't shift neighbouring rows. */
   .ask-menu .ask-menu-item {
-    /* Two-column row: [indicator slot 16px][label flexes].
-     * The indicator slot is always reserved (even on items that
-     * aren't the current default) so labels stay vertically aligned
-     * across the menu and the 📌 / ❗ / ↗ glyph
-     * appearing/disappearing doesn't shift neighbouring rows. */
     display: flex;
     align-items: center;
     gap: 6px;
@@ -868,6 +580,8 @@
     white-space: nowrap;
     overflow: hidden;
   }
+  /* `color` only reaches the text-presentation `↗`; the emoji
+   * indicators (📌 / ❗) take their colour from the system font. */
   .ask-menu .ask-menu-item .ask-menu-check {
     flex: 0 0 16px;
     width: 16px;
@@ -875,43 +589,25 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    /* `color: #060` paints the only color-inheriting glyph in this
-     * slot — the new-window `↗`, which uses text presentation. The
-     * other indicators (📌 active pin, ❗ stale pin) are emoji-
-     * presentation codepoints whose color is fixed by the system
-     * emoji font, so this rule has no effect on them. `font-size` /
-     * `line-height` size the text glyphs.
-     * (The toolbar context-menu uses ☐ / ☑ instead of 📌 — native
-     * menus on Linux fall back to a monochrome glyph for 📌, while
-     * the web font stack here renders it in color.) */
     color: #060;
     font-size: 14px;
     line-height: 1;
   }
-  /* Hide the indicator slot's contents when the row is neither the
-   * resolved default (📌 / ↗) nor a stale pin (❗). `visibility:
-   * hidden` on the slot itself keeps the 16px box width-allocated
-   * so labels stay aligned across rows. */
+  /* `visibility` (not `display`) keeps the 16px box allocated. */
   .ask-menu .ask-menu-item:not(.is-default):not(.is-stale)
       .ask-menu-check {
     visibility: hidden;
   }
+  /* Shrink-only so a long title ellipsises before the suffix is pushed
+   * off the row. */
   .ask-menu .ask-menu-item .ask-menu-label {
-    /* Don't claim the row's whole flex space — let the suffix sit
-     * inline next to the label. flex-shrink:1 + min-width:0 lets a
-     * long title give way and ellipsise instead of pushing the
-     * suffix off the row's edge when the menu is at its 360px max
-     * width. */
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* Italic annotation appended after the label — used today to
-   * mark excluded tabs as "(Wrong page: /<segment>)". The
-   * suffix is always one short string (segment is truncated past
-   * 20 chars in capture-page.ts), so flex-shrink:0 keeps it whole;
-   * the label ellipsises first when the row is tight. */
+  /* Italic annotation after the label (e.g. "(Wrong page: /…)"), always
+   * short, so it never gives way. */
   .ask-menu .ask-menu-item .ask-menu-suffix {
     flex: 0 0 auto;
     font-style: italic;
@@ -929,115 +625,67 @@
   .ask-menu .ask-menu-item[aria-disabled="true"]:hover {
     background: transparent;
   }
-  /*
-   * Visual divider between the "New tab in" block and each
-   * "Existing tab in <provider>" block. Rendered as an empty
-   * <li> so the parent <ul>'s structure stays valid; the line
-   * itself comes from a top border, not an <hr>.
-   */
+  /* Group divider — an empty <li> with a top border, so the <ul> stays
+   * structurally valid. */
   .ask-menu .ask-menu-separator {
     margin: 4px 0;
     border-top: 1px solid #ddd;
     height: 0;
     padding: 0;
   }
-  /*
-   * Result line for the last Ask / Capture attempt. Bottom row of
-   * `.right-stack`; sized by its parent flex column.
-   * `overflow-wrap: anywhere` handles long unbreakable tokens
-   * (e.g. URLs in error messages) so they wrap mid-word instead
-   * of forcing horizontal overflow.
-   */
+  /* Result line for the last Capture / Ask attempt. `overflow-wrap`
+   * breaks long URLs in error messages rather than widening the column. */
   #ask-status {
-    /* Plain block sized by its parent flex column. A long error
-     * message wraps inside the column rather than widening it. */
     font-size: 13px;
     min-height: 1em;
     word-wrap: break-word;
     overflow-wrap: anywhere;
   }
-  /* Status colours used by `#ask-status` for the flat single-segment
-     state AND by the success+skipped two-span state in
-     `setAskSentWithSkipped`. Defined on standalone classes (rather
-     than `#ask-status.ok`) so the same colour values can apply to
-     either the wrapper or its child spans without duplicating the
-     hex codes in JS. */
+  /* Standalone classes so the same colours apply to `#ask-status` itself
+   * or to child spans (the success+skipped two-span state). */
   .ask-status-ok    { color: #060; }
   .ask-status-error { color: #b00; }
   hr {
     border: none;
     border-top: 2px solid #555;
-    /* Asymmetric on purpose: the preceding `.controls` strip ends
-     * with the `#ask-status` row, which has `min-height: 1em` so
-     * a future status message doesn't shift the layout. That
-     * ~13px of invisible space sits inside `.controls` but visibly
-     * above the rule, so a symmetric 32/32 margin would read as
-     * ~45 above vs. 32 below. Trim ~13px off the top here to
-     * balance the visible gap. */
+    /* Asymmetric on purpose: `#ask-status`'s `min-height: 1em` adds
+     * ~13px of invisible space above the rule, so trim that off the top
+     * to balance the visible gap. */
     margin: 19px 0 32px 0;
   }
-  /*
-   * Drawing-tool palette + image. The palette (`.highlight-controls`)
-   * is a fit-content column on the LEFT; the image (`.image-box`)
-   * takes the remaining width (flex: 1). min-width: 0 on the flex
-   * item lets the image actually shrink below its intrinsic size
-   * when needed.
-   */
+  /* Palette column on the left, image on the right. */
   .image-and-highlights {
     display: flex;
     align-items: flex-start;
     gap: 24px;
-    /* Containing block for the absolutely-positioned `#viewport-edges`
-       SVG that overlays `.image-box` from outside its scroll region. */
+    /* Containing block for the `#viewport-edges` overlay. */
     position: relative;
   }
-  /*
-   * Image-box is the scrollable viewport in non-Fit zoom modes.
-   * `block` (not flex) so the inline-block .image-wrap inside is
-   * sized by its content (image natural*N) and overflow:auto kicks
-   * in cleanly when the wrap is bigger than the box. In Fit mode
-   * the image itself caps at max-width/max-height of the box so no
-   * scrollbars appear. JS sets the box's max-height and the
-   * image's sizing on every applyZoom() / resize.
-   *
-   * The visible image edge (solid black, 1 px outside the image) is
-   * drawn inside `#overlay` and scrolls with the image; the
-   * viewport-edge replacement (dashed medium grey, drawn when the
-   * image extends past a side of the viewport) is drawn in the
-   * separate `#viewport-edges` SVG that overlays this element from
-   * outside its scroll region — see `drawViewportEdges()`.
-   */
+  /* Scrollable viewport in the Nx zoom modes. `block` (not flex) so the
+   * inline-block `.image-wrap` is sized by its content and `overflow`
+   * kicks in cleanly; JS sets the max-height on every applyZoom(). */
   .image-box {
     flex: 1;
     min-width: 0;
     overflow: auto;
   }
-  /* `margin: 4px` keeps the wrap inset 4px from the .image-box's
-     edges so the corner-aligned crop grips (drawn centered on each
-     corner — half inside, half outside the image) have a halo of
-     box-content area to paint into without hitting `.image-box`'s
-     `overflow: auto` clipping edge. The image-edge black border
-     (drawn 1 px outside the image in `#overlay`) lives inside this
-     same halo. */
   .image-wrap {
     position: relative;
     display: inline-block;
-    /* `vertical-align: top` kills the baseline descender gap an
-       inline-block normally leaves below itself within its parent's
-       line box. Without this, the gap (~3-4px) was pushing the wrap
-       past .image-box's max-height in Fit mode and producing a
-       phantom vertical scrollbar even when the math added up. */
+    /* Kills the inline-block baseline descender gap, which would push
+     * the wrap past `.image-box`'s max-height and produce a phantom
+     * scrollbar in Fit mode. */
     vertical-align: top;
     line-height: 0;
     font-size: 0;
+    /* Halo for the corner crop grips and the image-edge border, which
+     * paint just outside the image. */
     margin: 4px;
   }
-  /* Viewport-edge dashed indicators. JS sizes this SVG to cover
-     `.image-box`'s content area (excluding scrollbars). It paints
-     above `.image-box` (later in DOM order) so the dashed lines
-     overlay any user annotations that touch the viewport edge.
-     `pointer-events: none` keeps clicks falling through to the
-     scrollbar gutters and the overlay below. */
+  /* Dashed viewport-edge indicators, sized by JS to cover `.image-box`'s
+   * content area. Painted above it (later in DOM order) so the dashes
+   * overlay annotations at the edge; `pointer-events: none` lets clicks
+   * fall through to the scrollbar gutters and the overlay below. */
   #viewport-edges {
     position: absolute;
     pointer-events: none;
@@ -1045,38 +693,23 @@
   }
   .image-box img {
     display: block;
-    /* Default (Fit) sizing — capped to .image-box. Nx modes set
-       explicit width / height inline and clear max-* to allow
-       overflow into the scrollable .image-box. */
+    /* Fit-mode sizing; the Nx modes set width / height inline and clear
+     * max-* so the image can overflow into the scroll region. */
     max-width: 100%;
     width: auto;
     height: auto;
   }
-  /*
-   * Zoom popover menu. Inserted by capture-page.ts inside
-   * `.highlight-controls` and positioned absolutely against it, so
-   * opening the menu doesn't push the image-box right or change
-   * any other layout. JS sets `top` inline to align with the Zoom
-   * button. The .zoom-menu[hidden] override is needed because the
-   * bare `[hidden]` UA rule (`display: none`) loses to the
-   * class-level `display: flex` below on cascade. `z-index` keeps
-   * the popover above the SVG overlay it overlaps with.
-   */
+  /* Positioning anchor for the Zoom and More popovers, so opening one
+   * can't shift the image box. */
   .highlight-controls {
     position: relative;
     flex: 0 0 auto;
   }
-  /* `.palette-menu` (the More popover) shares every bit of the Zoom
-   * menu's chrome — same anchoring, same paper, same item metrics —
-   * so the two popovers on this column can't drift apart visually.
-   * Only the item's disabled look is extra: More's items mirror the
-   * enable rules the buttons had in the column.
-   *
-   * Items are `nowrap`, so the More menu is as wide as its longest
-   * label (~250px) and paints further over the image than the Zoom
-   * menu does. Accepted rather than flipped/wrapped: it's transient,
-   * it overlays the image it belongs to, and a flip would need edge
-   * detection for a menu that's only ever a couple of items tall. */
+  /* Both popovers share one chrome so they can't drift apart. Items are
+   * `nowrap`, so the More menu is as wide as its longest label and
+   * paints over the image — accepted, it's transient. `z-index` keeps
+   * either popover above the SVG overlay it overlaps; JS sets `top`
+   * inline to align the menu with its button. */
   .zoom-menu,
   .palette-menu {
     position: absolute;
@@ -1090,6 +723,7 @@
     flex-direction: column;
     z-index: 10;
   }
+  /* Needed: the `display: flex` above outranks the UA `[hidden]` rule. */
   .zoom-menu[hidden],
   .palette-menu[hidden] {
     display: none;
@@ -1115,9 +749,8 @@
     color: #999;
     cursor: default;
   }
-  /* The Zoom menu's check-mark gutter: a narrower left padding so
-   * the ✓ column doesn't push its labels in. `.palette-menu` has no
-   * check column and keeps the symmetric padding above. */
+  /* Narrower left padding for the ✓ gutter, which `.palette-menu` (no
+   * check column) doesn't have. */
   .zoom-menu-item {
     padding-left: 8px;
   }
@@ -1130,38 +763,28 @@
   .zoom-menu-item[aria-checked="true"] .zoom-menu-check {
     visibility: visible;
   }
-  /* Active middle-click pan: force the grabbing cursor everywhere
-     (including over the SVG overlay, which has its own
-     `cursor: crosshair` rule that would otherwise outrank an inline
-     style on `.image-box`). */
+  /* Active middle-click pan. `!important` beats `#overlay`'s own
+   * `cursor: crosshair`. */
   body.panning,
   body.panning #overlay {
     cursor: grabbing !important;
   }
-  /* "Edit image" header above the tool palette. Matches the
-   * "Prompt:" label's bold + 14px styling so the two field titles
-   * read as siblings. */
+  /* Matches the "Prompt:" label so the two field titles read as
+   * siblings. */
   .highlight-title {
     margin: 0 0 6px 0;
     font-size: 14px;
     font-weight: bold;
   }
+  /* 2-column grid pairing each icon tool with its variant; every other
+   * button spans both columns (rule below). `fit-content` collapses the
+   * grid to the widest spanning child. */
   .highlight-buttons {
-    /* 2-column grid so the SVG-icon tool buttons (Box / Redact,
-     * Line / N-Line, Arrow / N-Arrow) pair up side-by-side, while
-     * every other button (Crop and the action buttons below it)
-     * spans both columns via the `:not(.tool-btn-icon)` rule below.
-     * `width: fit-content` collapses the grid to the widest spanning
-     * child — the longest word-button label — so the icon columns
-     * inherit a sensible width without us having to hardcode it. */
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
     width: fit-content;
   }
-  /* Anything that isn't one of the icon tool buttons spans the full
-   * width of the grid — keeps word buttons looking the same as
-   * before (single column, label-width). */
   .highlight-buttons > *:not(.tool-btn-icon) {
     grid-column: 1 / -1;
   }
@@ -1173,40 +796,29 @@
     background: #f5f5f5;
     cursor: pointer;
   }
-  /* `.btn` shared chrome (raised look + hover/active/.pressed flash +
-   * disabled) lives in src/shared-styles.css — linked above. */
-  /* SVG-icon tool buttons. The `.highlight-buttons` prefix matches
-   * the specificity of `.highlight-buttons button` (which sets the
-   * default 6px 12px padding) so this rule actually wins. Slim
-   * horizontal padding keeps each icon button's min-content small
-   * enough that two of them plus the 6px gap fit inside the widest
-   * word-button label width — otherwise the grid would expand and
-   * shift the image pane to the right of where it sat before. */
+  /* `.btn` shared chrome lives in src/shared-styles.css — linked above. */
+  /* Slim padding keeps two icon buttons plus the gap inside the widest
+   * word-button label, so the grid doesn't widen and shift the image
+   * pane right. The `.highlight-buttons` prefix is needed to outrank
+   * the padding rule above. */
   .highlight-buttons .tool-btn-icon {
     padding: 6px 6px;
   }
-  /* The glyph centers horizontally in the grid cell; padding above
-   * gives the button height. */
   .tool-btn-icon svg {
     display: block;
     width: 22px;
     height: 16px;
     margin: 0 auto;
   }
-  /* Selected (pushed-down) tool button. Darker face plus an inset
-   * shadow reads as pressed; border darkens so the "lift" is gone.
-   * The Undo/Reset buttons never get this class — they're actions,
-   * not modes. */
+  /* Pushed-down look for the selected tool. Action buttons (Undo /
+   * Reset) never get this class — they're not modes. */
   .highlight-buttons .tool-btn.selected {
     background: #cfd6dc;
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
-  /* Visual gaps between the palette clusters: tool selectors → Zoom
-   * (display-only transform) → Undo/Reset (edit-stack actions) →
-   * Copy/Save (image-level actions) → More (popover with the
-   * picture-rewriting actions). Larger than the regular 6px row gap
-   * so each group reads as its own cluster. */
+  /* Extra space above each palette cluster: tools → Zoom → Undo/Reset →
+   * Copy/Save → More. */
   .highlight-buttons #zoom,
   .highlight-buttons #undo,
   .highlight-buttons #copy-image-btn,
@@ -1219,20 +831,16 @@
     left: 0;
     width: 100%;
     height: 100%;
-    /* Visible (not hidden) so the corner crop-grip squares can
-       extend past the image edges — without this, grips at a
-       boundary corner are clipped to a quarter-square nub. Drag
-       previews stay inside the image because localCoords()
-       already clamps mouse coords to the image rect. */
+    /* Visible so the corner crop grips aren't clipped to a quarter
+     * square at the image boundary. Drag previews stay inside anyway —
+     * localCoords() clamps them. */
     overflow: visible;
     cursor: crosshair;
     user-select: none;
   }
-  /* Shared chrome for the early-state panes shown before (or instead
-     of) the normal Capture-page content: missing-session, upload
-     landing, and the capture-failed error pane. No `max-width` —
-     long error messages need the full body width to avoid awkward
-     wrapping at arbitrary points. */
+  /* Shared chrome for the panes shown instead of the normal content
+   * (missing session, upload landing, capture failed). No `max-width`:
+   * long error messages need the full body width. */
   .early-state-pane {
     margin: 16px 0;
     padding: 12px 16px;
@@ -1240,22 +848,19 @@
     font-size: 16px;
     line-height: 1.5;
   }
-  /* Upload-landing card chrome (lives inside an `.early-state-pane`).
-     The error message is a block child rather than an inline sibling
-     of the button so a long Chrome-quota / decode-failure message
-     wraps cleanly under the button instead of pushing it sideways. */
   #upload-choose-btn {
     margin-top: 8px;
     padding: 6px 14px;
     font-size: 14px;
   }
+  /* A block, not an inline sibling of the button, so a long message
+   * wraps under it instead of pushing it sideways. */
   #upload-error {
     display: none;
     margin-top: 8px;
     color: #c00;
   }
-  /* Error text inside the Capture-failed pane. Always visible (the
-     parent pane is the toggle); red to match `#upload-error`. */
+  /* Always visible — the parent pane is the toggle. */
   #capture-failed-message {
     margin-top: 8px;
     color: #c00;
@@ -1264,26 +869,19 @@
   #upload-file-input {
     display: none;
   }
-  /* Force-hide the main-content blocks when capture-page.ts sets
-     `hidden` on them. Required because each block has its own
-     `display: flex` / `display: block` rule with class-level
-     specificity, which would otherwise tie the UA `[hidden]` rule and
-     win on source order, leaving the controls visible. */
+  /* `!important` because each main block's own `display` rule ties the
+   * UA `[hidden]` rule and wins on source order. */
   [data-capture-main][hidden] {
     display: none !important;
   }
 </style>
 </head>
 <body>
-  <!--
-    Inline SVG sprite: every <use href="#copy-icon"> below points back
-    here so the glyph is defined once. The host <svg> is hidden so it
-    doesn't reserve layout space; <symbol> + <use> are the standard
-    SVG primitive for this and don't need any JS.
-  -->
+  <!-- Inline SVG sprite: every <use href="#…"> below points back here so
+       each glyph is defined once. -->
   <svg width="0" height="0" style="position: absolute" aria-hidden="true">
     <defs>
-      <!-- Standard "copy" glyph: two overlapping rounded rects. -->
+      <!-- Copy: two overlapping rounded rects. -->
       <symbol id="copy-icon" viewBox="0 0 24 24">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"
               fill="none" stroke="currentColor" stroke-width="2"
@@ -1292,13 +890,13 @@
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- Error glyph: filled circle with a white exclamation mark. -->
+      <!-- Error: filled circle with a white exclamation mark. -->
       <symbol id="error-icon" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="10" fill="currentColor"></circle>
         <rect x="11" y="6" width="2" height="8" fill="#fff"></rect>
         <rect x="11" y="16" width="2" height="2" fill="#fff"></rect>
       </symbol>
-      <!-- Pencil glyph — edit action on the HTML row. -->
+      <!-- Pencil — the edit action. -->
       <symbol id="edit-icon" viewBox="0 0 24 24">
         <path d="M4 20h4L19 9l-4-4L4 16v4z"
               fill="none" stroke="currentColor" stroke-width="2"
@@ -1307,10 +905,7 @@
               fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- Drawing-tool glyphs for the highlight panel:
-           - draw-box-icon: red rectangle outline, mirrors the boxes
-             the Box tool draws.
-           - draw-line-icon: red diagonal line, mirrors a line draw. -->
+      <!-- Drawing-tool glyphs: each mirrors what its tool draws. -->
       <symbol id="draw-box-icon" viewBox="0 0 24 16">
         <rect x="2" y="2" width="20" height="12"
               fill="none" stroke="red" stroke-width="2"></rect>
@@ -1319,11 +914,6 @@
         <line x1="3" y1="13" x2="21" y2="3"
               stroke="red" stroke-width="2" stroke-linecap="round"></line>
       </symbol>
-      <!-- draw-arrow-icon: red diagonal line with an arrowhead at the
-           end-point, matching what the Arrow tool draws (line + two
-           barbs on the click-release end). Barb endpoints are
-           computed from the line direction (~-29°) so the arrowhead
-           sits symmetrically on the line. -->
       <symbol id="draw-arrow-icon" viewBox="0 0 24 16">
         <line x1="3" y1="13" x2="21" y2="3"
               stroke="red" stroke-width="2" stroke-linecap="round"></line>
@@ -1331,21 +921,11 @@
               fill="none" stroke="red" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></polyline>
       </symbol>
-      <!-- draw-polyline-icon: red zigzag (three connected segments,
-           rising-falling-rising) — mirrors what the N-Line tool draws:
-           a chain of straight segments end-to-end. Segments 1 and 3
-           share the (1,-1) direction (so they read as parallel);
-           segment 3 is longer than segment 1, leaving the matching
-           polyarrow icon below clear room for its arrowhead. -->
       <symbol id="draw-polyline-icon" viewBox="0 0 24 16">
         <polyline points="3,13 9,7 13,11 21,3"
               fill="none" stroke="red" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></polyline>
       </symbol>
-      <!-- draw-polyarrow-icon: same zigzag as draw-polyline-icon, with
-           an arrowhead at the final endpoint. Barb endpoints (~6 units
-           from tip, ±30° from the reverse of the last segment's
-           direction vector (8,-8)) frame the tip symmetrically. -->
       <symbol id="draw-polyarrow-icon" viewBox="0 0 24 16">
         <polyline points="3,13 9,7 13,11 21,3"
               fill="none" stroke="red" stroke-width="2"
@@ -1354,27 +934,16 @@
               fill="none" stroke="red" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"></polyline>
       </symbol>
-      <!-- draw-redact-icon: filled black rectangle, mirroring the
-           opaque cover the Redact tool paints. -->
       <symbol id="draw-redact-icon" viewBox="0 0 24 16">
         <rect x="2" y="2" width="20" height="12" fill="black"></rect>
       </symbol>
-      <!-- Down-chevron glyph for the Ask split-button caret. -->
+      <!-- Down-chevron for the Ask split-button caret. -->
       <symbol id="caret-down-icon" viewBox="0 0 24 24">
         <path d="M6 9l6 6 6-6"
               fill="none" stroke="currentColor" stroke-width="3"
               stroke-linecap="round" stroke-linejoin="round"></path>
       </symbol>
-      <!-- The Ask-menu indicator slot is rendered entirely from
-           text codepoints by `renderAskMenuItem` in `capture-page.ts`:
-             - 📌 (active pin)
-             - ❗ (stale pin — the row used to be the pin but the
-                tab has navigated onto a wrong page)
-             - ↗ (new-window default)
-           No SVG symbols needed for this slot. -->
-      <!-- Download glyph — arrow into a tray. Shown on the per-row
-           "Save as…" buttons that open a native save dialog with the
-           current edited body. -->
+      <!-- Download — arrow into a tray. -->
       <symbol id="download-icon" viewBox="0 0 24 24">
         <path d="M12 4v11"
               fill="none" stroke="currentColor" stroke-width="2"
@@ -1399,46 +968,25 @@
        target="_blank" rel="noreferrer noopener">Help</a>
   </header>
 
-  <!--
-    Stale-page error pane. Hidden by default; capture-page.ts reveals
-    it (and hides every `[data-capture-main]` block below) when
-    `getDetailsData` resolves with no session — i.e. capture.html
-    was opened directly (bookmark, history, browser restart) without
-    the SW-seeded snapshot the page is built from. Header stays
-    visible so Options and Help remain reachable.
-  -->
+  <!-- Shown instead of the main content when the page was opened without
+       a session (bookmark, history, browser restart). -->
   <div id="missing-session-error" class="early-state-pane" hidden>
     <b>Invalid capture page.</b><br>
     No capture connected.<br>
     Open SeeWhatISee from the toolbar icon on the page you want to capture.
   </div>
 
-  <!--
-    Capture-failed pane. Hidden by default; capture-page.ts reveals it
-    when the URL carries `?error=<message>` and the SW had no session
-    to attach. Used by every toolbar / hotkey / context-menu capture
-    failure (via `runWithErrorReporting`) and by the session-storage
-    quota refusal path — instead of dropping the user on the generic
-    "Invalid capture page" pane, we land them here with the actual
-    reason. Reuses the `.early-state-pane` chrome so the visual
-    hierarchy matches the other early-state panes.
-  -->
+  <!-- Shown when the URL carries `?error=<message>` and there's no
+       session, so the user gets the real reason rather than the generic
+       "Invalid capture page" pane. -->
   <div id="capture-failed-error" class="early-state-pane" hidden>
     <b>Capture failed.</b><br>
     <div id="capture-failed-message"></div>
   </div>
 
-  <!--
-    Upload landing pane. Hidden by default; revealed by capture-page.ts
-    when the URL carries `?upload=true` and `getDetailsData` resolves
-    with no session — i.e. the user came from the More-submenu's
-    "Upload image to Capture..." entry. Selecting an image dispatches
-    `initializeUploadSession` to the SW, which seeds a synthetic
-    `DetailsSession`; the page then strips `?upload=true` from the
-    URL and falls into the normal `loadData` happy-path. Reuses the
-    `.early-state-pane` chrome so the visual hierarchy matches
-    the rest of the early-state panes.
-  -->
+  <!-- Shown for `?upload=true` with no session. Choosing a file seeds a
+       synthetic session in the SW and the page falls into the normal
+       loadData path. -->
   <div id="upload-landing" class="early-state-pane" hidden>
     <b>Upload an image to Capture.</b><br>
     <button type="button" id="upload-choose-btn">Choose image…</button>
@@ -1446,28 +994,13 @@
   </div>
   <input type="file" id="upload-file-input" accept="image/*">
 
-  <!--
-    Captured-page card. Visual: bordered strip with the page title on
-    top (clickable, opens the source page in a new tab), the URL
-    underneath in monospace blue, an HTML-size pill on the right side
-    of the title row, and a Copy URL button at the far right. Both
-    links share a single `href` to the captured URL — the title text
-    is the human-readable label, the URL row is the verbatim address.
-    capture-page.ts populates title text + href in `loadData`;
-    restricted / unavailable URLs drop the `href` so the rows render
-    as inert grey text.
-  -->
+  <!-- Captured-page card: title and URL (both linking to the captured
+       page; capture-page.ts drops the `href` when it isn't linkable),
+       plus the size pills. -->
   <div class="capture-card" data-capture-main>
     <div class="capture-card-body">
       <a id="captured-title" class="capture-card-title"
          target="_blank" rel="noreferrer noopener"></a>
-      <!--
-        URL row: the captured URL as a clickable monospace-blue link,
-        followed inline by a Copy URL button styled like the per-row
-        Copy buttons elsewhere on the page. The anchor uses
-        `flex: 0 1 auto` so the button packs against the URL on short
-        links rather than floating at the far right of the card.
-      -->
       <div class="capture-card-url-row">
         <a id="captured-url" class="capture-card-url"
            target="_blank" rel="noreferrer noopener">
@@ -1479,19 +1012,8 @@
         </button>
       </div>
     </div>
-    <!--
-      Right-side column with the size pills, vertically stacked
-      (Image on top, then HTML, then Selection), right-justified.
-      capture-page.ts toggles each `hidden` and updates `textContent`
-      on edit-saves, drawing-edit commits, and selection-format radio
-      changes — see `updateImageSizeBadge` /
-      `updateSelectionSizeBadge` for the per-format wiring. The
-      column sits outside `.capture-card-body` so the pills don't
-      push the title row's height when all are visible. When three
-      pills end up shown, capture-page.ts also flips `.compact` on
-      the column — negative margins + `space-evenly` distribute
-      the trio evenly across the card height (see the CSS above).
-    -->
+    <!-- Image / HTML / Selection size pills. capture-page.ts unhides and
+         updates each one, and flips `.compact` when all three show. -->
     <div class="capture-card-pills">
       <span id="image-size-badge" class="capture-card-badge" hidden></span>
       <span id="html-size-badge" class="capture-card-badge" hidden></span>
@@ -1525,13 +1047,6 @@
                 aria-label="Copy HTML filename">
           <svg aria-hidden="true"><use href="#copy-icon"></use></svg>
         </button>
-        <!--
-          Edit the captured HTML before save. Opens a modal dialog
-          with an editor prefilled with the current HTML. Follows the
-          same disabled-hides-the-button convention as copy-btn so the
-          row stays tidy. Disabled (and hidden) when the HTML scrape
-          failed — there's nothing to edit in that case.
-        -->
         <button type="button" class="copy-btn col-download" id="download-html-btn"
                 title="Save HTML"
                 aria-label="Save HTML">
@@ -1547,32 +1062,10 @@
           <svg aria-hidden="true"><use href="#error-icon"></use></svg>
         </span>
       </div>
-      <!--
-        Save selection is a master checkbox plus three mutually-
-        exclusive radios picking which serialization format to
-        write. A single capture can only produce one selection
-        file; the master checkbox decides whether to write any,
-        and the radios pick which one.
-
-        Interactions, wired up in capture-page.ts:
-          - Toggling the master off unchecks all three radios.
-          - Toggling it back on restores the default radio (the
-            first format with non-empty content) so the user
-            doesn't have to manually re-pick.
-          - Clicking a radio also checks the master — picking a
-            format implies "yes save the selection."
-
-        Per-format Copy + Edit buttons still sit next to each
-        radio so the user can pre-materialize or edit any format
-        to disk independent of which one ends up getting saved.
-
-        Default state: master disabled + unchecked; all three
-        radios + their Copy / Edit disabled. capture-page.ts's
-        loadData() flips these on based on selection presence
-        (master) and per-format content (radios). The body stays
-        `visibility: hidden` until loadData resolves so the user
-        never sees the disabled-default state.
-      -->
+      <!-- Save selection: a master checkbox plus three mutually-exclusive
+           format radios (a capture writes at most one selection file).
+           capture-page.ts keeps them in sync and decides the enabled
+           state from what was actually captured. -->
       <div class="checkbox-row" id="row-selection">
         <label><input type="checkbox" id="cap-selection" disabled>
           Save selectio<u>n</u></label>
@@ -1581,14 +1074,7 @@
           <svg aria-hidden="true"><use href="#error-icon"></use></svg>
         </span>
       </div>
-      <!--
-        Hidden by default. capture-page.ts's loadData() reveals
-        this block only when at least one format has saveable
-        content. If no selection was captured at all, or every
-        format trimmed to empty (whitespace-only selection, etc.),
-        the block stays hidden and the error — if any — surfaces
-        on the master "Save selection" row above.
-      -->
+      <!-- Revealed by loadData() only when some format has content. -->
       <div class="selection-formats" hidden>
         <div class="checkbox-row" id="row-selection-html">
           <label><input type="radio" name="cap-selection-format" value="html"
@@ -1664,66 +1150,17 @@
         </div>
       </div>
     </div>
-    <!--
-      Left stack: buttons + "Prompt:" label on row 1, Ask status
-      directly under them on row 2. The textarea is intentionally
-      a *sibling* of this stack (not a child) so its height is
-      independent — a tall prompt does not push the status away
-      from the buttons. The status's width tracks the row above
-      it and wraps long messages instead of stretching the column.
-      Full design rationale lives on `.controls` in the CSS above
-      (intents 1–3); change that block alongside any restructure
-      here so the comment stays the source of truth.
-    -->
-    <!--
-      Right side of the controls strip: three stacked rows.
-        Row 1: "Prompt:" label + the prompt textarea (textarea
-               grows vertically as the user types).
-        Row 2: Capture + Ask buttons, laid out horizontally and
-               wrapping to additional lines if the controls strip
-               isn't wide enough.
-        Row 3: #ask-status (Capture / Ask success or error text).
-    -->
+    <!-- Right side of the controls strip: prompt row, button row, status. -->
     <div class="right-stack">
       <div class="prompt-row">
         <label for="prompt-text">Prompt:</label>
         <textarea id="prompt-text" rows="1"></textarea>
       </div>
-      <!--
-        Action buttons, in source order (== visual order):
-          - #capture sits first to match the save-then-send
-            reading order users started with.
-          - .ask-split is a split button: #ask-btn (the main
-            "Ask <provider>" label) plus #ask-menu-btn (a
-            chevron-only square attached to its right edge that
-            opens the destination-picker menu). They share a
-            visual chrome — common border at the seam, outer
-            radii at the start of #ask-btn and the end of
-            #ask-menu-btn.
-              · #ask-btn fires the resolved default destination —
-                pinned tab if alive, else a new tab in the
-                preferred / Options-default provider. Carries
-                the Alt+A hotkey. Trailing #ask-target-label +
-                the button's tooltip track the resolved default;
-                the trailing icon flips between 📌 (existing
-                pinned tab) and a green ↗ (new-tab fallback).
-              · #ask-menu-btn opens the destination-picker menu.
-                Picking a row shifts the default for the next
-                plain-Ask click but does not send.
-          - One favicon-only `.ask-provider-btn` per enabled
-            provider, appended directly into `.button-row` after
-            `.ask-split` by `refreshAskTargetLabel()`. They're
-            real flex children of the row (no wrapper) so each
-            wraps independently AND the row's `gap` spaces them
-            evenly with the static buttons — `display: contents`
-            wrappers can perturb gap math. The "currently
-            selected" provider also appears as the #ask-btn label,
-            so picking the same provider here equates to "open a
-            fresh tab on the same site you already had pinned."
-        The popup menu anchors to `.ask-split` (its position-
-        relative parent), so it lands right under the caret
-        rather than the button row's left edge.
-      -->
+      <!-- Capture, then the Ask split button (#ask-btn sends to the
+           resolved default destination; #ask-menu-btn opens the picker,
+           which only changes that default). `refreshAskTargetLabel()`
+           appends one favicon-only provider button per enabled provider
+           directly into this row, so each wraps independently. -->
       <div class="button-row">
         <button id="capture" class="btn"
                 title="Save to disk (Read with /see-what-i-see skills)"><u>C</u>apture</button>
@@ -1731,14 +1168,8 @@
           <button id="ask-btn" type="button" class="btn ask-row"
                   title="Send to Claude on web">
             <span class="ask-row-label"><u>A</u>sk <span id="ask-target-label">Claude</span></span>
-            <!-- `#ask-btn-icon` is a <span> holding a single text
-                 codepoint that swaps between `↗` (U+2197 text
-                 presentation, new-window default) and the `📌`
-                 emoji (existing-tab pin) — see `setAskBtnIcon` in
-                 `capture-page.ts`. The `↗` is tinted green via
-                 `.ask-row-icon`'s `color: #060` (matching the green
-                 indicators in the Ask dropdown menu); `📌` is
-                 emoji-default and renders red regardless. -->
+            <!-- One text codepoint, swapped by `setAskBtnIcon`: `↗` for a
+                 new tab, `📌` for an existing pinned tab. -->
             <span id="ask-btn-icon" class="ask-row-icon" aria-hidden="true">↗</span>
           </button>
           <button id="ask-menu-btn" type="button" class="btn ask-caret-btn"
@@ -1758,37 +1189,13 @@
 
   <hr data-capture-main>
 
-  <!--
-    Image + drawing-tool sidebar. The user picks a tool button in
-    the panel to the left of the image, then drags on the image to
-    commit an edit of that kind. See the `.tool-btn` block below
-    for the per-tool details.
-  -->
   <div class="image-and-highlights" data-capture-main>
     <div class="highlight-controls">
       <div class="highlight-title" role="heading" aria-level="2">Edit image</div>
-      <!--
-        Drawing-tool palette. Exactly one tool button is selected at
-        a time (default: Box). Selected = pushed-down look via
-        `.selected`. Each tool's drag paints what it will commit so
-        the user sees the final result live: tool-box → red rect,
-        tool-line → red line, tool-redact → filled black rect,
-        tool-polyline / tool-polyarrow → multi-segment chains,
-        tool-crop → dim-frame cropped preview. Mouseup commits the edit.
-        Undo / Reset are *actions*, not modes — they're separated
-        from the tool group by an extra top-margin on #undo.
-      -->
+      <!-- Drawing-tool palette. Exactly one tool is selected at a time
+           (default: Box); the drag paints what it will commit, and
+           mouseup commits it. Undo / Reset are actions, not modes. -->
       <div class="highlight-buttons">
-        <!--
-          The icon tools flow row-by-row into a 2-column grid (see
-          .highlight-buttons CSS) — Box/Redact (rectangles),
-          Line/N-Line, Arrow/N-Arrow — so each polyline variant
-          sits adjacent to its single-segment sibling. The
-          dedicated N-Line / N-Arrow tools make polyline mode
-          discoverable from the palette — the Ctrl-on-release
-          modifier path on Line/Arrow still works as a power-user
-          shortcut.
-        -->
         <button id="tool-box" class="tool-btn tool-btn-icon btn selected"
                 type="button" data-tool="rect"
                 title="Draw boxes" aria-label="Draw boxes"
@@ -1834,18 +1241,8 @@
                 type="button" data-tool="crop"
                 title="Drag to crop to a region"
                 aria-pressed="false">Crop</button>
-        <!--
-          Zoom controls how the preview is displayed; it never
-          touches what gets saved. Modes: Fit (default — image
-          shrinks to remaining viewport), 1× / 2× / 4× / 8× (image
-          renders at natural*N pixels with scrollbars on the
-          .image-box when bigger than the viewport). Mouse-wheel
-          over the image cycles modes; middle-click drag pans.
-          Clicking opens a popover menu with the current mode
-          checked; the menu is built lazily inside `.highlight-controls`
-          (absolute-positioned with `left: calc(100% + 6px)`, inline
-          `top` set from `zoomBtn.offsetTop`).
-        -->
+        <!-- Zoom affects the preview only, never the saved image. Opens a
+             popover menu with the current mode checked. -->
         <button id="zoom" class="btn" type="button"
                 aria-haspopup="menu" aria-expanded="false"
                 aria-controls="zoom-menu"
@@ -1854,60 +1251,25 @@
                 title="Undo the most recent edit">Undo</button>
         <button id="reset" class="btn" disabled
                 title="Undo all edits">Reset</button>
-        <!--
-          Image-level Copy + Save. Mirror the per-row Copy / Save-as
-          buttons next to the Save-screenshot checkbox above, but
-          live in the palette next to the image. Copy puts PNG bytes
-          (with current edits baked in) on the clipboard regardless
-          of source format — `ClipboardItem` only accepts image/png
-          reliably; Save opens the native download dialog seeded
-          with `screenshot.<bakeExt>` (sticky output format — JPG
-          stays JPG). Both are disabled when the screenshot capture
-          errored, same as the per-row buttons.
-        -->
+        <!-- Image-level Copy / Save, mirroring the per-row buttons next
+             to the Save-screenshot checkbox. Copy always writes PNG
+             (`ClipboardItem` only takes PNG reliably); Save keeps the
+             capture's format. -->
         <button id="copy-image-btn" type="button" class="btn"
                 title="Copy screenshot to clipboard">Copy</button>
         <button id="download-image-btn" type="button" class="btn"
                 title="Save screenshot">Save</button>
-        <!--
-          More: the picture-rewriting actions that don't earn a
-          permanent slot in the column. Labelled "More…" — the
-          Zoom button, the column's other menu opener, carries no
-          affix either (its label is a mode readout), so neither
-          gets a caret. Opens the `#more-menu` popover below; both
-          column menus share their open / close / dismiss mechanics
-          through `menu-popover.ts`.
-        -->
+        <!-- More: the picture-rewriting actions that don't earn a
+             permanent slot in the column. -->
         <button id="more" class="btn" type="button"
                 aria-haspopup="menu" aria-expanded="false"
                 aria-controls="more-menu"
                 title="More image actions">More&hellip;</button>
       </div>
-      <!--
-        More menu. Static markup (not built lazily like the Zoom
-        menu) because the drawing module looks both items up by id at
-        init time and drives their disabled state from `render()`.
-        The items are still `<button>`s carrying the same ids,
-        tooltips and enable rules they had as palette buttons; only
-        the label is longer, now that the width is the popover's.
-        The Shrink item's label is rewritten by `render()` to name
-        the target it would act on ("box" / "redaction" / "crop", or
-        the generic "box or crop" when there's nothing to shrink) —
-        the text below is just the disabled starting state.
-
-          - Shrink last … tightens the current tool's last-drawn rect
-            (Box / Redact) — or the active crop region (Crop),
-            virtually starting from the full image when no crop
-            exists yet — to the smallest box that still encloses the
-            same content. Disabled in Line / Arrow modes, and in
-            Box / Redact modes with no matching edit on the stack.
-          - View cropped replaces the displayed image with just the
-            cropped region, as if the capture had been taken at that
-            size: further crops can be drawn inside it and applied
-            again, and existing drawings survive (re-mapped into the
-            new frame, clipped at its edges). Undoable. Enabled only
-            while a crop region is drawn.
-      -->
+      <!-- Static markup (unlike the Zoom menu) because the drawing module
+           looks these items up by id at init and drives their disabled
+           state from `render()`, which also rewrites Shrink's label to
+           name the target it would act on. -->
       <div id="more-menu" class="palette-menu" role="menu"
            aria-labelledby="more" hidden>
         <button id="shrink" class="palette-menu-item" type="button"
@@ -1927,30 +1289,15 @@
     <svg id="viewport-edges" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
-  <!--
-    Edit-dialog template. Each editable artifact kind (HTML,
-    selection, …) gets a cloned instance appended to <body> by
-    capture-page.ts's `createEditDialog`, which fills in the
-    per-kind `id`s, title text, and aria labels. Keeping the markup
-    here (rather than building nodes by hand in JS) lets CSS
-    selectors like `.edit-dialog .edit-dialog-textarea` apply
-    uniformly to every instance. New kinds don't need any new markup.
-
-    The per-instance ids follow a `edit-${kind}-${role}` convention
-    (e.g. `edit-html-dialog`, `edit-selection-textarea`) so the e2e
-    tests can locate the right element without the test file
-    having to care which kinds exist.
-  -->
+  <!-- Cloned once per editable artifact kind by `createEditDialog`, which
+       fills in the per-kind ids (`edit-${kind}-${role}`), title and aria
+       labels. Markup lives here so the CSS above applies to every
+       instance and new kinds need no new markup. -->
   <template id="edit-dialog-template">
     <dialog class="edit-dialog">
-      <!--
-        Title row. For HTML-capable kinds (html, selectionHtml), the
-        mode-toggle slot holds an Edit / Preview segmented control
-        wired up by capture-page.ts. For non-previewable kinds the
-        slot stays empty and the row is just the title.
-      -->
       <div class="edit-dialog-titlebar">
         <h2 class="edit-dialog-title"></h2>
+        <!-- Shown only for previewable kinds. -->
         <div class="edit-dialog-mode-toggle" hidden role="group"
              aria-label="View mode">
           <button type="button" class="edit-dialog-mode-edit selected"
@@ -1958,50 +1305,25 @@
           <button type="button" class="edit-dialog-mode-preview"
                   aria-pressed="false">Preview</button>
         </div>
-        <!--
-          Save the in-dialog (un-committed) editor body to a user-
-          chosen path via chrome.downloads.download({ saveAs: true }).
-          Mirrors the per-row Save-as button on the main page, but
-          writes whatever is currently typed in the dialog rather
-          than the committed `captured[kind]` body — so the user can
-          export an experimental edit without first clicking Save.
-        -->
+        <!-- Writes whatever is currently in the editor, so an
+             experimental edit can be exported without committing it. -->
         <button type="button" class="edit-dialog-download btn"
                 title="Download this file">
           <svg aria-hidden="true"><use href="#download-icon"></use></svg>
           Download
         </button>
       </div>
-      <!--
-        Body slot. The editor is always in the DOM so the user's
-        resize stays sticky and the slot height stays constant across
-        mode switches. In Preview mode, capture-page.ts sets
-        `visibility: hidden` on the editor (to keep its layout
-        footprint) and reveals the iframe, which is positioned
-        absolutely on top via `.edit-dialog-body { position: relative }`
-        + `.edit-dialog-preview { inset: 0 }`. The iframe uses a blob:
-        URL rather than `srcdoc` because `srcdoc` has an attribute-
-        size limit that truncates large captured HTML to blank. sandbox
-        denies scripts / forms / same-origin / top navigation; the two
-        `allow-popups` tokens let `target="_blank"` clicks open a
-        normal new tab.
-      -->
+      <!-- The editor stays in the DOM in Preview mode (hidden via
+           `visibility`, so its layout footprint holds the slot's size)
+           and the iframe paints on top of it. The iframe uses a blob:
+           URL — `srcdoc`'s attribute-size limit truncates large bodies —
+           and the sandbox tokens allow only `target="_blank"` popups. -->
       <div class="edit-dialog-body">
-        <!--
-          CodeJar-driven editor. capture-page.ts wraps this element
-          with `CodeJar(el, highlight)`; the chosen highlighter
-          depends on the kind (xml for html/selectionHtml, markdown
-          for selectionMarkdown, a no-op for plain-text kinds). The
-          element is `contenteditable="plaintext-only"` so the user
-          can only enter plain text — CodeJar rewrites the innerHTML
-          on input using highlight.js tokens, and plaintext-only
-          prevents the browser's native rich-text paste from
-          injecting formatting the highlighter would then have to
-          strip. `aria-multiline="true"` makes screen readers treat
-          it as a textarea-like control. role="textbox" keeps the
-          semantics close to the old <textarea> so existing aria
-          wiring still applies.
-        -->
+        <!-- CodeJar wraps this element and rewrites its innerHTML with
+             hljs tokens on input; `plaintext-only` stops the browser's
+             rich-text paste injecting formatting the highlighter would
+             then have to strip. The aria attributes keep the old
+             <textarea> semantics. -->
         <div class="edit-dialog-textarea"
              contenteditable="plaintext-only"
              spellcheck="false"
@@ -2012,11 +1334,7 @@
                 referrerpolicy="no-referrer"
                 title="Rendered HTML preview"></iframe>
       </div>
-      <!--
-        Hidden until Save fails; capture-page.ts toggles `hidden`
-        and writes the SW error message into textContent.
-        `role="alert"` lets screen readers announce it on appear.
-      -->
+      <!-- Unhidden by capture-page.ts when a Save fails. -->
       <p class="edit-dialog-error dialog-error" role="alert" hidden></p>
       <div class="dialog-actions">
         <button type="button" class="edit-dialog-cancel btn">Cancel</button>
@@ -2026,43 +1344,14 @@
     </dialog>
   </template>
 
-  <!--
-    Marked (markdown → HTML) runs in the page rather than the SW so we
-    keep the rendering close to the dialog. Loaded before
-    capture-page.js so `window.marked` is available when setMode()
-    renders the Selection markdown preview. capture-page.ts pipes
-    marked's HTML output through the same `buildPreviewHtml`
-    sanitizer used by the HTML previews (strips <script> and
-    <meta http-equiv=refresh>, injects <meta charset> and
-    <base target=_blank>), so raw HTML inside markdown can't execute
-    anything beyond what the sandboxed iframe already permits.
-  -->
+  <!-- Vendor globals, all classic scripts so they're in place before the
+       module below runs: marked (markdown → HTML for the preview, piped
+       through the same `buildPreviewHtml` sanitizer as the HTML
+       previews), highlight.js, and CodeJar (rewritten from ESM to a
+       `window.CodeJar` assignment by build.mjs). -->
   <script src="marked.umd.js"></script>
-  <!--
-    highlight.js ships the prebuilt "common" bundle (xml, markdown,
-    plaintext, and many more) as a classic script that attaches to
-    `window.hljs`. Loaded before capture-page.js so CodeJar's
-    highlighter callback can call `hljs.highlight(code, {language})`
-    synchronously on every input.
-  -->
   <script src="highlight.min.js"></script>
-  <!--
-    CodeJar is ESM-only upstream; build.mjs rewrites its single
-    `export function CodeJar` into a `window.CodeJar` assignment so
-    we can load it here as a classic script (same pattern as
-    `marked.umd.js`). Must precede capture-page.js so the global is
-    in place before `bindEditDialog` instantiates editors.
-  -->
   <script src="codejar.js"></script>
-  <!--
-    `capture-page.js` is loaded as an ES module so it can `import`
-    from `./markdown.js` directly. The `marked`/`hljs`/`CodeJar`
-    vendor globals above are still classic-script tags — module
-    code reads window globals fine, so they don't need to be
-    imported. Module scripts are deferred (run after DOM parses);
-    that's the same effective ordering we had with the classic-
-    script-at-end-of-body pattern.
-  -->
   <script type="module" src="capture-page.js"></script>
 </body>
 </html>
