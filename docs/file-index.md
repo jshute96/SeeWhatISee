@@ -174,12 +174,12 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
 | `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules under `src/capture/` |
 | `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
-| `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, bake-in — orchestrates the submodules under `src/capture-page/` |
+| `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, More… menu, bake-in — orchestrates the submodules under `src/capture-page/` |
 | `src/ask-inject.ts` | MAIN-world helpers (clear composer, attach files, type prompt, click submit) callable via a `window.postMessage` bridge from the widget; chip-count gate per call |
 | `src/ask-widget.ts` | ISOLATED-world status widget — drives the inject via a postMessage bridge, renders per-item rows with retry, copy-to-clipboard recovery |
 | `src/scrape-page-state.ts` | Self-contained page-context worker (HTML + selection scrape) injected into tabs via `executeScript` and reused by tests |
 | `src/markdown.ts` | Pure HTML → markdown + HTML → text converter plus markdown-source detection (selection capture + paste) |
-| `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink button |
+| `src/shrink.ts` | Pure pixel-buffer operator that tightens a rectangle around its content — backs the Capture-page Shrink menu item |
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
@@ -233,9 +233,10 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/capture-page/paste.ts` | Capture-page rich-text paste — `attachHtmlAwarePaste` (text/html → markdown or HTML-source), highlighter / markdown detection, nbsp normalization |
 | `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guard, cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: fit/Nx sizing, zoom menu, wheel + key zoom, drag / scrollbar pan with box snap + arrow-key fine nudge |
-| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink, tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
+| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
 | `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
+| `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour for the Capture column's Zoom and More… popovers |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
 | `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
 
@@ -291,8 +292,9 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
+| `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo, and More-menu dismissal |
 | `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
-| `tests/e2e/capture-zoom.spec.ts` | E2E for zoom-mode sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width ladder + DPR-stub regressions, arrow-key fine pan (drag + scrollbar), and pan snap to a box edit |
+| `tests/e2e/capture-zoom.spec.ts` | E2E for zoom-mode sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width ladder + DPR-stub regressions, arrow-key fine pan (drag + scrollbar), pan snap to a box edit, and Zoom-popover dismissal |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |
@@ -312,7 +314,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
 | `tests/e2e/options-refresh.spec.ts` | E2E test for the Options-page hotkey-refresh hook — opening Options resyncs the toolbar tooltip when shortcut bindings have changed |
-| `tests/e2e/restore-last-capture.spec.ts` | E2E for "Restore last capture" — slot lifecycle, prompt restore, bump round-trip (reused filenames with no edits, `-N` suffix after edits) |
+| `tests/e2e/restore-last-capture.spec.ts` | E2E for "Restore last capture" — slot lifecycle, prompt restore, bump round-trip (reused filenames with no edits, `-N` suffix after edits), View-cropped image re-derived on restore |
 | `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime, Alt+A keyboard binding |
 | `tests/e2e/ask-pinned-tabs.spec.ts` | E2E tests for target-window pinning — pin lifecycle, dead/navigated/disabled-provider invalidation, plain-Ask reuse |
 | `tests/e2e/ask-toolbar-pin.spec.ts` | E2E tests for the toolbar context-menu Set/Unset entry — eligibility, "Set"/"Unset" title flip, toggle behavior |

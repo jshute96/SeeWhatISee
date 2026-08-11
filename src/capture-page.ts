@@ -44,6 +44,7 @@ import {
   wasMiddleDownRecently,
   type ZoomMode,
 } from './capture-page/zoom.js';
+import { createMenuPopover } from './capture-page/menu-popover.js';
 import {
   initDrawing,
   imgRect,
@@ -70,7 +71,9 @@ import {
   SNAP_PX,
   getDrawingSnapshot,
   restoreDrawingSnapshot,
+  applyRestoredViewCrop,
   type Tool,
+  type RectPct,
 } from './capture-page/drawing.js';
 
 /**
@@ -196,6 +199,7 @@ interface DetailsData {
     nextEditId?: number;
     editVersion?: number;
     selectedTool?: string;
+    viewCropPct?: { x: number; y: number; w: number; h: number } | null;
   };
 }
 
@@ -449,14 +453,40 @@ const highlightControls = document.querySelector(
   '.highlight-controls',
 ) as HTMLDivElement;
 const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
+const viewCroppedBtn = document.getElementById('view-cropped') as HTMLButtonElement;
 const zoomBtn = document.getElementById('zoom') as HTMLButtonElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
 const downloadImageBtn = document.getElementById('download-image-btn') as HTMLButtonElement;
+const moreBtn = document.getElementById('more') as HTMLButtonElement;
+const moreMenu = document.getElementById('more-menu') as HTMLDivElement;
 const toolButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('.tool-btn'),
 );
+
+// ─── More menu (popover) ──────────────────────────────────────────
+//
+// Open / close / dismiss behaviour is shared with the Zoom menu via
+// `createMenuPopover` — see `menu-popover.ts` for the mechanics.
+// The items themselves (`#shrink`, `#view-cropped`) are owned by the
+// drawing module, which wires their clicks and disabled state; this
+// only opens and closes the container.
+const morePopover = createMenuPopover({ menu: moreMenu, button: moreBtn });
+
+moreBtn.addEventListener('click', () => { morePopover.toggle(); });
+
+// Any item click dismisses the menu. Registered on the container so
+// it stays independent of the drawing module's own handlers — both
+// run, in either order.
+moreMenu.addEventListener('click', (e) => {
+  if (!(e.target as HTMLElement).closest('.palette-menu-item')) return;
+  morePopover.close();
+  // Focus would otherwise land on `<body>` when the item it sits on
+  // goes `hidden`. Returning it to the opener matches the Zoom
+  // menu's items and keeps keyboard users where they were.
+  moreBtn.focus();
+});
 
 // Vertical metrics of the prompt textarea: the height of one wrapped
 // row, the padding + border a `box-sizing: border-box` height has to
@@ -1052,18 +1082,18 @@ async function loadData(): Promise<void> {
       applyRestoredUiState(response.restoreUiState);
     }
 
-    // Wait for the preview image to decode before revealing, so the
-    // page comes in with the screenshot already visible (not
-    // popping in a frame later). `complete` is false for a freshly-
-    // assigned src; data: URLs decode fast but the event is still
-    // async. Treat `error` the same as `load` so a broken image
-    // doesn't strand the page invisible.
-    if (!previewImg.complete) {
-      await new Promise<void>((resolve) => {
-        const done = (): void => resolve();
-        previewImg.addEventListener('load', done, { once: true });
-        previewImg.addEventListener('error', done, { once: true });
-      });
+    // Decode before revealing, so the page comes in with the
+    // screenshot already visible rather than popping in a frame
+    // later. (Mechanics in `awaitPreviewDecode`.)
+    await awaitPreviewDecode();
+    // A restored session's edits are stored against the view-cropped
+    // frame, but the SW only ever hands back the original capture —
+    // so re-derive the cropped base now that the original has
+    // decoded, and wait for the replacement to decode in turn.
+    if (pendingRestoredViewCrop) {
+      applyRestoredViewCrop(pendingRestoredViewCrop);
+      pendingRestoredViewCrop = null;
+      await awaitPreviewDecode();
     }
   } finally {
     // Reveal the body unconditionally — including on an empty
@@ -1075,6 +1105,19 @@ async function loadData(): Promise<void> {
     // earlier `.focus()` (e.g. at module-init time) wouldn't stick.
     promptInput.focus();
   }
+}
+
+// Resolve once the preview image has decoded (or failed to). A
+// freshly-assigned `src` is never `complete`, and data: URLs decode
+// fast but still asynchronously; `error` resolves too so a broken
+// image can't strand the page invisible.
+async function awaitPreviewDecode(): Promise<void> {
+  if (previewImg.complete) return;
+  await new Promise<void>((resolve) => {
+    const done = (): void => resolve();
+    previewImg.addEventListener('load', done, { once: true });
+    previewImg.addEventListener('error', done, { once: true });
+  });
 }
 
 // ─── Copy-filename buttons ────────────────────────────────────────
@@ -1359,6 +1402,7 @@ initDrawing({
   overlay,
   edgesSvg,
   shrinkBtn,
+  viewCroppedBtn,
   undoBtn,
   clearBtn,
   toolButtons,
@@ -1457,6 +1501,10 @@ initEditDialogs({
 // same values right back to the SW and clobber any in-flight
 // state).
 
+// Cumulative View-cropped region carried by a restored snapshot,
+// waiting for the preview image to decode. See `applyRestoredUiState`.
+let pendingRestoredViewCrop: RectPct | null = null;
+
 const PUSH_DEBOUNCE_MS = 350;
 let pushDebounceTimer: number | null = null;
 let pushingDisabled = false;
@@ -1474,6 +1522,7 @@ function captureUiStateSnapshot(): {
   nextEditId: number;
   editVersion: number;
   selectedTool: string;
+  viewCropPct: RectPct | null;
 } {
   const drawing = getDrawingSnapshot();
   return {
@@ -1489,6 +1538,7 @@ function captureUiStateSnapshot(): {
     nextEditId: drawing.nextEditId,
     editVersion: drawing.editVersion,
     selectedTool: drawing.selectedTool,
+    viewCropPct: drawing.viewCropPct,
   };
 }
 
@@ -1620,6 +1670,10 @@ function applyRestoredUiState(
       editVersion: state.editVersion,
       selectedTool: state.selectedTool as Tool | undefined,
     });
+    // Deferred: the base image may not have decoded yet, and
+    // re-cropping it needs its natural dimensions. `loadData` applies
+    // this right after the decode wait.
+    pendingRestoredViewCrop = state.viewCropPct ?? null;
     // Zoom mode is deliberately not restored — viewport size and
     // scroll position aren't snapshotted either, so reapplying a
     // saved zoom against a possibly-different window would land at

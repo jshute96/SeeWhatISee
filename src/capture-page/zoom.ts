@@ -37,6 +37,7 @@
 // Everything this module needs at runtime still arrives via
 // `ZoomContext`.
 import type { RectPct } from './drawing.js';
+import { createMenuPopover, type MenuPopover } from './menu-popover.js';
 
 export type ZoomMode = 'fit' | 1 | 2 | 4 | 8;
 const ZOOM_LEVELS: ZoomMode[] = ['fit', 1, 2, 4, 8];
@@ -334,20 +335,23 @@ function fitMatches1x(): boolean {
 // with `position: absolute; left: calc(100% + 6px)` so it floats to
 // the right of the column without taking layout space — opening the
 // menu doesn't push the image, just paints over the gap between the
-// column and the image-box. Inline `top` aligns the menu's top edge
-// with the Zoom button. Toggle is fully controlled by the Zoom
-// button — we deliberately don't add an outside-click closer: it
-// competed with the button's own click handler in a way that could
-// leave the user unable to close the menu via the button. Escape
-// (when the page has focus) and the menu items themselves also
-// close it.
+// column and the image-box. Open / close / dismiss behaviour (top
+// alignment, `aria-expanded`, Escape, outside-click) is shared with
+// the More… menu through `createMenuPopover`; the menu items close
+// it themselves as well.
 
 let zoomMenuEl: HTMLDivElement | null = null;
+let zoomPopover: MenuPopover | null = null;
 
 function buildZoomMenu(): HTMLDivElement {
   const menu = document.createElement('div');
   menu.className = 'zoom-menu';
   menu.setAttribute('role', 'menu');
+  // Same wiring the More menu carries in `capture.html`: the id lets
+  // the button point at it with `aria-controls`, and `aria-labelledby`
+  // gives the menu its accessible name.
+  menu.id = 'zoom-menu';
+  menu.setAttribute('aria-labelledby', 'zoom');
   menu.hidden = true;
   for (const value of ZOOM_LEVELS) {
     const item = document.createElement('button');
@@ -376,6 +380,13 @@ function buildZoomMenu(): HTMLDivElement {
   // pixels — narrower than putting it inline as a flex sibling,
   // which would move the image when the menu opens).
   ctx.highlightControls.appendChild(menu);
+  zoomPopover = createMenuPopover({
+    menu,
+    button: ctx.zoomBtn,
+    // Check marks track the current mode, which can change between
+    // opens (wheel zoom, Alt+±).
+    onBeforeOpen: refreshZoomMenuChecks,
+  });
   return menu;
 }
 
@@ -392,29 +403,11 @@ function refreshZoomMenuChecks(): void {
 
 function openZoomMenu(): void {
   if (!zoomMenuEl) zoomMenuEl = buildZoomMenu();
-  refreshZoomMenuChecks();
-  // Align the menu's top with the Zoom button's top within the
-  // column. `offsetTop` is relative to the column (the absolute-
-  // positioned element's offsetParent), so it doesn't drift when
-  // the page scrolls or the prompt grows.
-  zoomMenuEl.style.top = ctx.zoomBtn.offsetTop + 'px';
-  zoomMenuEl.hidden = false;
-  ctx.zoomBtn.setAttribute('aria-expanded', 'true');
-  document.addEventListener('keydown', onZoomMenuKey);
+  zoomPopover?.open();
 }
 
 function closeZoomMenu(): void {
-  if (!zoomMenuEl || zoomMenuEl.hidden) return;
-  zoomMenuEl.hidden = true;
-  ctx.zoomBtn.setAttribute('aria-expanded', 'false');
-  document.removeEventListener('keydown', onZoomMenuKey);
-}
-
-function onZoomMenuKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    closeZoomMenu();
-    ctx.zoomBtn.focus();
-  }
+  zoomPopover?.close();
 }
 
 // ─── Wheel + keyboard zoom ────────────────────────────────────────
@@ -827,11 +820,8 @@ export function initZoom(context: ZoomContext): void {
   ctx.previewImg.addEventListener('load', applyZoom);
 
   ctx.zoomBtn.addEventListener('click', () => {
-    if (zoomMenuEl && !zoomMenuEl.hidden) {
-      closeZoomMenu();
-    } else {
-      openZoomMenu();
-    }
+    if (zoomPopover?.isOpen()) closeZoomMenu();
+    else openZoomMenu();
   });
 
   ctx.imageBox.addEventListener('wheel', (e) => {

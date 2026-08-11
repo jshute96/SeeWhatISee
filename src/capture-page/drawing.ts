@@ -112,12 +112,21 @@ export type Edit = RectEdit | LineEdit;
 //     click at a time. Pushed by both Shrink clicks and edge-handle
 //     resize drags (rect / redact / crop) — both operations share
 //     the same in-place-mutate shape.
+//   - `viewCrop` set — the op was a View-cropped click: the base
+//     image itself was replaced by its cropped region and every
+//     edit re-mapped into the new frame. Undo restores the whole
+//     pre-crop state (image + edits + history) from `viewCropStack`,
+//     so `id` is unused.
 type HistoryOp = {
   id: number;
   prev?: { x: number; y: number; w: number; h: number };
+  viewCrop?: true;
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+// Id of the per-render `<clipPath>` that keeps annotations inside
+// the image bounds. Only has to be unique within the page.
+const EDIT_CLIP_ID = 'edit-clip';
 // Movement under this many CSS pixels counts as a stray click, not
 // a drag — discarded so a single click never produces a degenerate
 // zero-size rectangle or a zero-length line.
@@ -344,6 +353,7 @@ export interface DrawingContext {
   overlay: SVGSVGElement;
   edgesSvg: SVGSVGElement;
   shrinkBtn: HTMLButtonElement;
+  viewCroppedBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
   clearBtn: HTMLButtonElement;
   /** All `.tool-btn` elements in DOM order. Drawing reads
@@ -1051,17 +1061,27 @@ export function arrowBarbs(
 // proportionally so a zoomed-in arrow keeps the stroke / head-size
 // ratio constant.
 function appendArrow(
+  parent: SVGElement,
   x1: number, y1: number, x2: number, y2: number,
   strokePx: number = 3,
 ): void {
-  ctx.overlay.appendChild(makeLine(x1, y1, x2, y2, strokePx));
+  parent.appendChild(makeLine(x1, y1, x2, y2, strokePx));
   // Scale the head-cap with the stroke so the barbs grow together
   // with the line at higher zoom levels.
   const headCap = ARROW_HEAD_MAX_PX * (strokePx / 3);
   const b = arrowBarbs(x1, y1, x2, y2, headCap);
   if (!b) return;
-  ctx.overlay.appendChild(makeLine(b.ax, b.ay, x2, y2, strokePx));
-  ctx.overlay.appendChild(makeLine(b.bx, b.by, x2, y2, strokePx));
+  parent.appendChild(makeLine(b.ax, b.ay, x2, y2, strokePx));
+  parent.appendChild(makeLine(b.bx, b.by, x2, y2, strokePx));
+}
+
+// Disable a More-menu item. `aria-disabled` rides along with the
+// real `disabled` attribute because assistive tech support for
+// `disabled` on a `role="menuitem"` is patchy — the pairing is what
+// screen readers reliably read as unavailable.
+function setMenuItemDisabled(btn: HTMLButtonElement, disabled: boolean): void {
+  btn.disabled = disabled;
+  btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
 }
 
 export function render(): void {
@@ -1133,6 +1153,38 @@ export function render(): void {
       ? { id: boxDrag.editId, x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH }
       : null;
 
+  // Annotations go in their own group, clipped to the image bounds.
+  // The bake clips too (`renderHighlightedImage` clips to its canvas
+  // rect) — though not to the same rectangle when an un-applied crop
+  // is on the stack, since the bake's canvas is the crop region.
+  // Two cases reach this clip:
+  //
+  //   - View cropped re-frames the base image, so edits that
+  //     straddled the crop edge have geometry poking past the new
+  //     image; unclipped they'd paint over the surrounding pane.
+  //   - A box or line snapped flush to an image edge centres its
+  //     stroke on the boundary, so half of it used to paint outside
+  //     the image on screen while the bake clipped it. Clipping the
+  //     preview too makes what you see match what you save.
+  //
+  // The group only wraps the user's artwork — the image-edge border,
+  // crop dim frame and corner grips are affordances that
+  // deliberately paint 1px outside and stay unclipped.
+  // A `<clipPath>` element (rather than a `clip-path: inset(…)`
+  // basic-shape attribute) because that's the form every SVG
+  // renderer accepts. Rebuilt each render since the overlay is
+  // cleared above; the id only has to be unique on the page.
+  const clip = document.createElementNS(SVG_NS, 'clipPath');
+  clip.setAttribute('id', EDIT_CLIP_ID);
+  const clipRect = document.createElementNS(SVG_NS, 'rect');
+  clipRect.setAttribute('x', '0');
+  clipRect.setAttribute('y', '0');
+  clipRect.setAttribute('width', String(w));
+  clipRect.setAttribute('height', String(h));
+  clip.appendChild(clipRect);
+  ctx.overlay.appendChild(clip);
+  const annots = document.createElementNS(SVG_NS, 'g');
+  annots.setAttribute('clip-path', `url(#${EDIT_CLIP_ID})`);
   for (const e of edits) {
     if (e.kind === 'line' || e.kind === 'arrow') {
       const ax1 = (e.x1 / 100) * w;
@@ -1140,9 +1192,9 @@ export function render(): void {
       const ax2 = (e.x2 / 100) * w;
       const ay2 = (e.y2 / 100) * h;
       if (e.kind === 'arrow') {
-        appendArrow(ax1, ay1, ax2, ay2, sw);
+        appendArrow(annots, ax1, ay1, ax2, ay2, sw);
       } else {
-        ctx.overlay.appendChild(makeLine(ax1, ay1, ax2, ay2, sw));
+        annots.appendChild(makeLine(ax1, ay1, ax2, ay2, sw));
       }
     } else if (e.kind === 'rect' || e.kind === 'redact') {
       const live = liveResize && liveResize.id === e.id ? liveResize : e;
@@ -1151,15 +1203,16 @@ export function render(): void {
       const dw = (live.w / 100) * w;
       const dh = (live.h / 100) * h;
       if (e.kind === 'rect') {
-        ctx.overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
+        annots.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
       } else {
-        ctx.overlay.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
+        annots.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
       }
     }
     // 'crop' is not drawn inline — it's painted as a single
     // "outside-is-dimmed" overlay below using the active crop
     // (only the most recent crop is visible).
   }
+  ctx.overlay.appendChild(annots);
 
   // Render the crop as the drag preview if a crop drag is in
   // progress (either a Crop-tool *creation* drag or a handle
@@ -1256,14 +1309,22 @@ export function render(): void {
     // Live-preview shape mirrors what mouseup will commit. The
     // polyline tools commit each segment as a plain line / arrow
     // edit, so their preview is the same as the matching base tool.
+    //
+    // Its own clipped group, not `annots`: the preview has to paint
+    // *above* the crop dim frame (appended in between), but it still
+    // needs the same clip — otherwise a drag at the image edge would
+    // preview a wider stroke than the commit renders.
+    const preview = document.createElementNS(SVG_NS, 'g');
+    preview.setAttribute('clip-path', `url(#${EDIT_CLIP_ID})`);
+    ctx.overlay.appendChild(preview);
     const previewKind = polylineToolLineKind(selectedTool) ?? selectedTool;
     if (previewKind === 'line') {
-      ctx.overlay.appendChild(makeLine(
+      preview.appendChild(makeLine(
         dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       ));
     } else if (previewKind === 'arrow') {
       appendArrow(
-        dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
+        preview, dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, sw,
       );
     } else if (previewKind === 'rect' || previewKind === 'redact') {
       // Both tools draw exactly what they'll commit, so the user
@@ -1276,9 +1337,9 @@ export function render(): void {
       const dw = Math.abs(dragCurrent.x - dragStart.x);
       const dh = Math.abs(dragCurrent.y - dragStart.y);
       if (selectedTool === 'rect') {
-        ctx.overlay.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
+        preview.appendChild(makeStrokedRect(x, y, dw, dh, 'red', sw));
       } else {
-        ctx.overlay.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
+        preview.appendChild(makeFilledRect(x, y, dw, dh, 'black'));
       }
     }
   }
@@ -1286,7 +1347,19 @@ export function render(): void {
   const hasEditHistory = editHistory.length > 0;
   ctx.undoBtn.disabled = !hasEditHistory;
   ctx.clearBtn.disabled = !hasEditHistory;
-  ctx.shrinkBtn.disabled = !shrinkTarget();
+  const shrinkable = shrinkTarget();
+  setMenuItemDisabled(ctx.shrinkBtn, !shrinkable);
+  // The menu item names what the next click would actually shrink,
+  // so the user doesn't have to remember which tool the action
+  // follows. With nothing to shrink it stays generic (and greyed).
+  // Guarded assignment: `render()` runs on every drag mousemove, and
+  // writing `textContent` replaces the text node even when the
+  // string is identical.
+  const shrinkLabel = `Shrink last ${shrinkTargetNoun(shrinkable)} to fit content`;
+  if (ctx.shrinkBtn.textContent !== shrinkLabel) {
+    ctx.shrinkBtn.textContent = shrinkLabel;
+  }
+  setMenuItemDisabled(ctx.viewCroppedBtn, !viewCropTarget());
   // Refresh the Image-size pill ("PNG · 1920×1080 · 312 KB").
   // `updateImageSizeBadge` is keyed on editVersion + natural dims
   // and short-circuits when nothing relevant changed — so the
@@ -1296,7 +1369,7 @@ export function render(): void {
   // the user sees the selection size update in real time. Bytes
   // stay at the last committed value during a drag — re-baking
   // each frame would cost too much.
-  ctx.updateImageSizeBadge();
+  if (!baseImageSwapPending) ctx.updateImageSizeBadge();
   ctx.composeImageBadgeText();
 }
 
@@ -1465,6 +1538,17 @@ function shrinkTarget(): ShrinkTarget | null {
   return null;
 }
 
+// What the Shrink menu item calls its current target: the kind of
+// edit a click would tighten, or the generic pairing when there's
+// nothing to act on.
+function shrinkTargetNoun(target: ShrinkTarget | null): string {
+  if (!target) return 'box or crop';
+  if (target.kind === 'new-crop') return 'crop';
+  if (target.edit.kind === 'redact') return 'redaction';
+  if (target.edit.kind === 'crop') return 'crop';
+  return 'box';
+}
+
 // Cache of the natural-resolution base-image pixel buffer. Reading
 // `previewImg` into a canvas costs ~5–20 ms for a typical viewport
 // screenshot; caching it keeps repeated Shrink clicks responsive.
@@ -1517,6 +1601,313 @@ function pixelsToPctRect(
   };
 }
 
+// ─── View cropped ─────────────────────────────────────────────────
+//
+// "View cropped" re-frames the page around the active crop: the
+// crop's pixels are drawn into a canvas and become the new base
+// image, exactly as if the capture had been taken at that size.
+// Everything downstream then treats it as the whole screenshot —
+// zoom, Fit, the Image-size pill, the bake, a *further* crop drawn
+// inside it and applied again.
+//
+// Edits survive: each one's percentages are re-mapped into the new
+// frame, so a box that overlapped the crop keeps its position and
+// the parts that fall outside are clipped (by the overlay's clip
+// group live, and by the bake's canvas clip on save). Crop edits
+// themselves are consumed — the new image *is* the crop.
+//
+// Undoable: the pre-crop image / edits / history are pushed onto
+// `viewCropStack` and a `viewCrop` marker onto `editHistory`, so
+// one Undo click puts the full-size image back.
+
+// Cumulative view-cropped region, in percentages of the *original*
+// captured image, or null while the base image is still the
+// original. Only used to re-derive the cropped base after a
+// restore-last-capture (which hands back the original capture data
+// URL plus the already-re-mapped edits).
+let viewCropPct: RectPct | null = null;
+
+// Pre-crop state for each View-cropped click, newest last. Held in
+// memory only (the data URLs are far too big to push to the SW).
+// Unbounded by depth, but each entry holds the image as it was
+// *before* that crop, so a drill-down series shrinks geometrically —
+// the whole stack costs on the order of the original capture, not a
+// multiple of it. Cleared by Clear.
+type ViewCropUndo = {
+  src: string;
+  edits: Edit[];
+  editHistory: HistoryOp[];
+  viewCropPct: RectPct | null;
+};
+const viewCropStack: ViewCropUndo[] = [];
+
+// True between assigning a new base-image `src` and its `load`.
+// During that window `previewImg` still reports the *outgoing*
+// image's natural size, so `render()` skips the Image-size pill's
+// bake: the pill's cache key is `editVersion|naturalW|naturalH` and
+// the version has just been bumped, so it would miss the cache and
+// re-encode the old, full-size image — megabytes of work thrown away
+// a frame later when the load handler re-renders at the new size.
+let baseImageSwapPending = false;
+
+// Every base-image swap goes through here so the badge guard above
+// can't be forgotten on one of the paths (apply / undo / restore).
+function setBaseImage(url: string): void {
+  baseImageSwapPending = true;
+  // The Shrink cache keys on `src` so it would miss anyway, but the
+  // outgoing image's `ImageData` stays referenced until the next
+  // Shrink click replaces it — tens of MB on a large capture, held
+  // alongside the undo stack's data URLs. Drop it now.
+  basePixelsCache = null;
+  ctx.previewImg.src = url;
+}
+
+function cloneEdits(src: readonly Edit[]): Edit[] {
+  return src.map((e) => ({ ...e }));
+}
+function cloneHistory(src: readonly HistoryOp[]): HistoryOp[] {
+  return src.map((h) => ({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) }));
+}
+
+/** True once View cropped has replaced the base image (until undone).
+ *  The saved bytes then have to come from the page's canvas rather
+ *  than the SW's copy of the original capture — see
+ *  `hasBakeableEdits`. */
+function hasViewCrop(): boolean {
+  return viewCropPct !== null;
+}
+
+/** Cumulative view-cropped region in original-capture percentages,
+ *  or null. Part of the last-capture snapshot so a restore can
+ *  re-crop the original image back down to what the user was
+ *  looking at. */
+function getViewCropPct(): RectPct | null {
+  return viewCropPct ? { ...viewCropPct } : null;
+}
+
+// Compose a crop-of-a-crop: `inner` is expressed in percentages of
+// the image `outer` already describes, and the result is back in
+// percentages of the original capture.
+function composeViewCrop(outer: RectPct | null, inner: RectPct): RectPct {
+  const base = outer ?? { x: 0, y: 0, w: 100, h: 100 };
+  return {
+    x: base.x + (inner.x / 100) * base.w,
+    y: base.y + (inner.y / 100) * base.h,
+    w: (base.w * inner.w) / 100,
+    h: (base.h * inner.h) / 100,
+  };
+}
+
+// True when a remapped edit's bounding box misses the new frame
+// entirely (all coordinates are already in the new frame's
+// percentages, so the frame is 0..100 on both axes).
+//
+// The comparisons are strict so an edit that merely *touches* an
+// edge survives: a horizontal line snapped flush to the crop's top
+// has a zero-height bounding box at y = 0, and half its stroke width
+// still paints inside the new frame (snapping flush to a box edge
+// then cropping to that box is a normal sequence here). Lines and
+// arrows are tested by bounding box, which errs the other way — it
+// can keep a diagonal segment that only passes the corner.
+function isOutsideNewFrame(e: Edit): boolean {
+  const outside = (l: number, r: number, t: number, b: number): boolean =>
+    r < 0 || l > 100 || b < 0 || t > 100;
+  // Both branches test the discriminant positively: `Edit`'s two
+  // members carry union-typed `kind`s, and an `else` doesn't narrow
+  // across them.
+  if (e.kind === 'line' || e.kind === 'arrow') {
+    return outside(
+      Math.min(e.x1, e.x2), Math.max(e.x1, e.x2),
+      Math.min(e.y1, e.y2), Math.max(e.y1, e.y2),
+    );
+  }
+  if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+    return outside(e.x, e.x + e.w, e.y, e.y + e.h);
+  }
+  return false;
+}
+
+// Re-express every edit (and every history op's stored geometry) in
+// percentages of `region`, which is itself in percentages of the
+// current image.
+//
+// Two kinds of edit leave the stack, along with the history ops that
+// referenced them (undoing one would target an edit that no longer
+// exists, so the click would silently do nothing):
+//   - crops, which the new base image has realised in its pixels;
+//   - edits that now fall entirely outside the frame. They'd be
+//     invisible (the overlay clip and the bake canvas both hide
+//     them) but not inert — they'd still flip `editFlags()`, force a
+//     page-side bake, and offer themselves as a Shrink target. Undo
+//     of the View cropped op brings them back with everything else.
+function remapEditsIntoRegion(region: RectPct): void {
+  const mapX = (x: number): number => ((x - region.x) / region.w) * 100;
+  const mapY = (y: number): number => ((y - region.y) / region.h) * 100;
+  const scaleX = (v: number): number => (v / region.w) * 100;
+  const scaleY = (v: number): number => (v / region.h) * 100;
+  const dropped = new Set<number>();
+  for (let i = edits.length - 1; i >= 0; i--) {
+    const e = edits[i]!;
+    if (e.kind === 'crop') {
+      dropped.add(e.id);
+      edits.splice(i, 1);
+      continue;
+    }
+    if (e.kind === 'rect' || e.kind === 'redact') {
+      e.x = mapX(e.x);
+      e.y = mapY(e.y);
+      e.w = scaleX(e.w);
+      e.h = scaleY(e.h);
+    } else if (e.kind === 'line' || e.kind === 'arrow') {
+      e.x1 = mapX(e.x1);
+      e.y1 = mapY(e.y1);
+      e.x2 = mapX(e.x2);
+      e.y2 = mapY(e.y2);
+    }
+    if (isOutsideNewFrame(e)) {
+      dropped.add(e.id);
+      edits.splice(i, 1);
+    }
+  }
+  for (let i = editHistory.length - 1; i >= 0; i--) {
+    const h = editHistory[i]!;
+    if (!h.viewCrop && dropped.has(h.id)) {
+      editHistory.splice(i, 1);
+      continue;
+    }
+    if (h.prev) {
+      h.prev = {
+        x: mapX(h.prev.x),
+        y: mapY(h.prev.y),
+        w: scaleX(h.prev.w),
+        h: scaleY(h.prev.h),
+      };
+    }
+  }
+}
+
+// Draw a region of the current base image into a fresh data URL, in
+// the sticky bake format (a JPG capture stays a JPG). `region` is in
+// natural pixels. Returns null if the canvas isn't usable.
+function cropBaseImage(region: { x: number; y: number; w: number; h: number }): string | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = region.w;
+  canvas.height = region.h;
+  const c2d = canvas.getContext('2d');
+  if (!c2d) return null;
+  c2d.drawImage(
+    ctx.previewImg,
+    region.x, region.y, region.w, region.h,
+    0, 0, region.w, region.h,
+  );
+  const mime = bakeMime();
+  return mime === 'image/jpeg'
+    ? canvas.toDataURL(mime, JPEG_BAKE_QUALITY)
+    : canvas.toDataURL(mime);
+}
+
+// Enabled state + click target for the View cropped button: the
+// active crop, whatever tool is selected (unlike Shrink, this isn't
+// a per-tool action). A full-image crop reports as no crop, so the
+// button stays disabled when there's nothing to re-frame.
+function viewCropTarget(): RectEdit | undefined {
+  return activeCrop();
+}
+
+function applyViewCrop(): void {
+  const crop = viewCropTarget();
+  if (!crop) return;
+  const natW = ctx.previewImg.naturalWidth;
+  const natH = ctx.previewImg.naturalHeight;
+  if (natW === 0 || natH === 0) return;
+  // Route through `pctRectToPixels` so the new image's dimensions
+  // match what the Image-size pill was already promising for a
+  // cropped save.
+  const px = pctRectToPixels(crop, natW, natH);
+  if (px.w <= 0 || px.h <= 0) return;
+  const url = cropBaseImage(px);
+  if (!url) return;
+
+  viewCropStack.push({
+    src: ctx.previewImg.src,
+    edits: cloneEdits(edits),
+    editHistory: cloneHistory(editHistory),
+    viewCropPct,
+  });
+  // Re-map against the region actually copied (the rounded pixel
+  // rect), not the crop's raw percentages — otherwise edits would
+  // sit a fraction of a pixel off from the new image.
+  const region = pixelsToPctRect(px, natW, natH);
+  remapEditsIntoRegion(region);
+  viewCropPct = composeViewCrop(viewCropPct, region);
+  editHistory.push({ id: -1, viewCrop: true });
+  // Swapping `src` re-fires zoom's `load` listener → `applyZoom` →
+  // `render()`, which re-fits the new (smaller) image and refreshes
+  // the Image-size pill once the decode lands.
+  setBaseImage(url);
+  commitEdit();
+  render();
+}
+
+// Undo of a View-cropped op: put back the image and the edit state
+// captured before it. Returns false when the marker has no matching
+// stack entry, which happens only for a restored session (the
+// pre-crop image isn't part of the SW snapshot).
+function undoViewCrop(): boolean {
+  const prior = viewCropStack.pop();
+  if (!prior) return false;
+  edits.length = 0;
+  for (const e of cloneEdits(prior.edits)) edits.push(e);
+  editHistory.length = 0;
+  for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
+  viewCropPct = prior.viewCropPct;
+  setBaseImage(prior.src);
+  return true;
+}
+
+/**
+ * Re-apply a restored session's cumulative view crop to the freshly
+ * loaded original capture. The restored edits are already stored in
+ * the cropped frame, so only the base image has to be re-derived.
+ * Called by main once the preview image has decoded; a no-op when
+ * the snapshot carried no view crop.
+ *
+ * The pre-crop image isn't part of the snapshot (data URLs are far
+ * too big to push), so a restored view crop is *not* undoable —
+ * `restoreDrawingSnapshot` drops the `viewCrop` history markers to
+ * keep the Undo button honest.
+ */
+export function applyRestoredViewCrop(region: RectPct): void {
+  const natW = ctx.previewImg.naturalWidth;
+  const natH = ctx.previewImg.naturalHeight;
+  const px = natW && natH ? pctRectToPixels(region, natW, natH) : null;
+  const url = px && px.w > 0 && px.h > 0 ? cropBaseImage(px) : null;
+  if (!url) {
+    // Couldn't re-derive the crop (the capture failed to decode, or
+    // the canvas is unavailable). The restored edits are stored in
+    // the *cropped* frame, so leaving them on the full-size original
+    // would scatter them across the wrong parts of the picture —
+    // drop them rather than show a lie. `console.info`, not warn:
+    // the user still has their capture, and a degraded restore isn't
+    // a bug a developer needs surfaced on chrome://extensions.
+    console.info('[SeeWhatISee] could not restore the view crop; dropping restored edits');
+    edits.length = 0;
+    editHistory.length = 0;
+    // Unlike the success path (which keeps the restored `editVersion`
+    // the SW already knows about), this one has to commit: the bump
+    // invalidates the Image-size pill's cache — otherwise it keeps
+    // showing the bake of the edits we just dropped — and pushes the
+    // corrected state, so a second Restore doesn't replay the same
+    // failure from a record still claiming a crop.
+    commitEdit();
+    render();
+    return;
+  }
+  viewCropPct = { ...region };
+  setBaseImage(url);
+  render();
+}
+
 // Tool selection. Each `.tool-btn` carries `data-tool` matching one
 // of `Tool`'s string values. Clicking a button updates `selectedTool`
 // and toggles the `.selected` / `aria-pressed` state across the
@@ -1552,6 +1943,21 @@ function setSelectedTool(tool: Tool): void {
 // so a stack whose only edits are full-image crops skips the bake
 // and the saved PNG stays identical to the untouched capture.
 export function hasBakeableEdits(): boolean {
+  if (bakeChangesPixels()) return true;
+  // A View cropped op leaves no edit behind — the crop is in the
+  // base image itself — but the saved bytes still have to come from
+  // this page. Without this, an edit-free cropped page would let the
+  // SW serve its copy of the *original*, full-size capture.
+  return hasViewCrop();
+}
+
+// Narrower question than `hasBakeableEdits()`: would the bake paint
+// anything `previewImg` doesn't already show? A View cropped op
+// doesn't count — `cropBaseImage` already encoded exactly the bytes
+// that should be saved, in the same format the bake would pick — so
+// re-running the canvas would cost a full re-encode (a second lossy
+// generation on a JPG capture) for identical output.
+function bakeChangesPixels(): boolean {
   if (edits.some((e) => e.kind !== 'crop')) return true;
   return activeCrop() !== undefined;
 }
@@ -1580,7 +1986,14 @@ export function editFlags(): EditFlags {
     if (e.kind === 'rect' || e.kind === 'line' || e.kind === 'arrow') hasHighlights = true;
     else if (e.kind === 'redact') hasRedactions = true;
   }
-  return { hasHighlights, hasRedactions, isCropped: activeCrop() !== undefined };
+  return {
+    hasHighlights,
+    hasRedactions,
+    // A View cropped op counts as cropped too: the pixels on disk
+    // are a sub-region of the capture, which is exactly what the
+    // flag tells downstream consumers.
+    isCropped: activeCrop() !== undefined || hasViewCrop(),
+  };
 }
 
 // ─── Bake (canvas counterpart to render()) ───────────────────────
@@ -1657,7 +2070,7 @@ const JPEG_BAKE_QUALITY = 0.92;
 // a no-edits source whose MIME doesn't already match — otherwise
 // the caller's `ClipboardItem` MIME would mismatch the bytes.
 export function renderHighlightedImage(forceMime?: 'image/png' | 'image/jpeg'): string {
-  if (!hasBakeableEdits()) {
+  if (!bakeChangesPixels()) {
     if (!forceMime || sourceMime() === forceMime) return ctx.previewImg.src;
   }
   const outMime: 'image/png' | 'image/jpeg' = forceMime ?? bakeMime();
@@ -1790,14 +2203,20 @@ export interface DrawingSnapshot {
   nextEditId: number;
   editVersion: number;
   selectedTool: Tool;
+  /** Cumulative View-cropped region (original-capture percentages),
+   *  or null. The pre-crop images can't be snapshotted, but this
+   *  rectangle is enough to re-derive the cropped base image the
+   *  restored edits are expressed against. */
+  viewCropPct: RectPct | null;
 }
 export function getDrawingSnapshot(): DrawingSnapshot {
   return {
-    edits: edits.map((e) => ({ ...e })),
-    editHistory: editHistory.map((h) => ({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) })),
+    edits: cloneEdits(edits),
+    editHistory: cloneHistory(editHistory),
     nextEditId,
     editVersion,
     selectedTool,
+    viewCropPct: getViewCropPct(),
   };
 }
 
@@ -1817,10 +2236,20 @@ export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void
   }
   if (snapshot.editHistory) {
     editHistory.length = 0;
-    for (const h of snapshot.editHistory) {
-      editHistory.push({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) });
+    // View-cropped markers are dropped: their undo state (the
+    // pre-crop image) doesn't survive the snapshot, so keeping them
+    // would offer an Undo click that can't do what it says. The
+    // crop itself is restored — see `applyRestoredViewCrop`.
+    for (const h of cloneHistory(snapshot.editHistory)) {
+      if (!h.viewCrop) editHistory.push(h);
     }
   }
+  // View-crop state belongs to the session that did the cropping —
+  // a restore re-derives it from the snapshot's `viewCropPct` via
+  // `applyRestoredViewCrop`, and the pre-crop images can't come with
+  // it. Reset both so a second call can't inherit stale state.
+  viewCropPct = null;
+  viewCropStack.length = 0;
   if (typeof snapshot.nextEditId === 'number') nextEditId = snapshot.nextEditId;
   if (typeof snapshot.editVersion === 'number') editVersion = snapshot.editVersion;
   if (snapshot.selectedTool) setSelectedTool(snapshot.selectedTool);
@@ -1951,6 +2380,18 @@ export function getTestHooks(): DrawingTestHooks {
  */
 export function initDrawing(context: DrawingContext): void {
   ctx = context;
+
+  // Clear the swap guard as soon as the new base image decodes.
+  // Registered before `initZoom`'s own `load` listener (drawing is
+  // initialised first), and listeners fire in registration order, so
+  // the flag is already down by the time zoom's `applyZoom → render`
+  // reaches the Image-size pill — which is exactly the render that
+  // should pay for the bake. `error` clears it too: a swap that
+  // never decodes would otherwise leave the pill frozen for the rest
+  // of the session.
+  const clearSwapGuard = (): void => { baseImageSwapPending = false; };
+  ctx.previewImg.addEventListener('load', clearSwapGuard);
+  ctx.previewImg.addEventListener('error', clearSwapGuard);
 
   // Pan via `.image-box` scroll changes which sides have scrolled-out
   // content, so the per-side dashed indicator needs to re-evaluate.
@@ -2601,6 +3042,16 @@ export function initDrawing(context: DrawingContext): void {
   ctx.undoBtn.addEventListener('click', () => {
     const last = editHistory.pop();
     if (!last) return;
+    if (last.viewCrop) {
+      // Whole-state restore (base image included) — nothing to look
+      // up in `edits`. `undoViewCrop` returning false would mean a
+      // marker with no stack entry; `restoreDrawingSnapshot` drops
+      // those, so the pop alone is the right fallback.
+      undoViewCrop();
+      commitEdit();
+      render();
+      return;
+    }
     const idx = edits.findIndex((e) => e.id === last.id);
     if (idx >= 0) {
       if (last.prev) {
@@ -2626,8 +3077,18 @@ export function initDrawing(context: DrawingContext): void {
   ctx.clearBtn.addEventListener('click', () => {
     edits.length = 0;
     editHistory.length = 0;
+    // A View cropped op isn't an *edit* — it re-framed the picture —
+    // so Clear leaves the cropped image in place. Its undo entries
+    // go with the history they were interleaved with, though:
+    // keeping them would let a later Undo resurrect an image state
+    // whose edits Clear already discarded.
+    viewCropStack.length = 0;
     commitEdit();
     render();
+  });
+
+  ctx.viewCroppedBtn.addEventListener('click', () => {
+    applyViewCrop();
   });
 
   ctx.shrinkBtn.addEventListener('click', () => {

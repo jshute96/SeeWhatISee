@@ -220,3 +220,17 @@ export async function readPolylineChainStart(
     }).__seeState.polylineChainStart(),
   );
 }
+
+/**
+ * Click one of the More-menu items (`#shrink`, `#view-cropped`).
+ * They live in the `#more-menu` popover, so the menu has to be
+ * opened first; it closes again on the item click, so every click
+ * goes through this helper rather than being batched.
+ */
+export async function clickMoreMenuItem(
+  capturePage: Page,
+  selector: '#shrink' | '#view-cropped',
+): Promise<void> {
+  await capturePage.locator('#more').click();
+  await capturePage.locator(selector).click();
+}

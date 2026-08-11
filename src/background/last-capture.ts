@@ -36,6 +36,11 @@ export const LAST_CAPTURE_STORAGE_KEY = 'lastCapture';
  *   - `edits` / `editHistory` / `nextEditId` / `editVersion`
  *     mirror the drawing module's module-scope state.
  *   - `selectedTool` is the palette button's tool id.
+ *   - `viewCropPct` is the cumulative View-cropped region, in
+ *     percentages of the *original* capture. The pre-crop images
+ *     are far too big to push, so this rectangle is what lets a
+ *     restored page re-derive the cropped base the stored edits are
+ *     expressed against.
  *   - `prompt` is the literal textarea value (untrimmed — the user
  *     may want to keep trailing whitespace they were about to edit).
  *   - `saveCheckboxes` snapshot the three toggles + the chosen
@@ -66,6 +71,7 @@ export interface CapturePageUiState {
   nextEditId?: number;
   editVersion?: number;
   selectedTool?: string;
+  viewCropPct?: { x: number; y: number; w: number; h: number } | null;
 }
 
 /**

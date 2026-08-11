@@ -1066,7 +1066,19 @@
     position: relative;
     flex: 0 0 auto;
   }
-  .zoom-menu {
+  /* `.palette-menu` (the More popover) shares every bit of the Zoom
+   * menu's chrome — same anchoring, same paper, same item metrics —
+   * so the two popovers on this column can't drift apart visually.
+   * Only the item's disabled look is extra: More's items mirror the
+   * enable rules the buttons had in the column.
+   *
+   * Items are `nowrap`, so the More menu is as wide as its longest
+   * label (~250px) and paints further over the image than the Zoom
+   * menu does. Accepted rather than flipped/wrapped: it's transient,
+   * it overlays the image it belongs to, and a flip would need edge
+   * detection for a menu that's only ever a couple of items tall. */
+  .zoom-menu,
+  .palette-menu {
     position: absolute;
     left: calc(100% + 6px);
     border: 1px solid #555;
@@ -1078,14 +1090,16 @@
     flex-direction: column;
     z-index: 10;
   }
-  .zoom-menu[hidden] {
+  .zoom-menu[hidden],
+  .palette-menu[hidden] {
     display: none;
   }
-  .zoom-menu-item {
+  .zoom-menu-item,
+  .palette-menu-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 12px 5px 8px;
+    padding: 5px 12px;
     background: transparent;
     border: 0;
     font-size: 14px;
@@ -1095,7 +1109,18 @@
     color: inherit;
     white-space: nowrap;
   }
-  .zoom-menu-item:hover { background: #e9eef2; }
+  .zoom-menu-item:hover,
+  .palette-menu-item:enabled:hover { background: #e9eef2; }
+  .palette-menu-item:disabled {
+    color: #999;
+    cursor: default;
+  }
+  /* The Zoom menu's check-mark gutter: a narrower left padding so
+   * the ✓ column doesn't push its labels in. `.palette-menu` has no
+   * check column and keeps the symmetric padding above. */
+  .zoom-menu-item {
+    padding-left: 8px;
+  }
   .zoom-menu-check {
     display: inline-block;
     width: 14px;
@@ -1177,15 +1202,15 @@
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
   }
-  /* Visual gaps between the four palette clusters: tool selectors
-   * → Shrink + Zoom → Undo/Clear → Copy/Download image. Shrink and
-   * Zoom share a cluster: both act on the picture (Shrink rewrites
-   * pixels, Zoom scales the display), distinct from Undo/Clear
-   * (edit-stack actions). Larger than the regular 6px row gap so
-   * each group reads as its own cluster. */
-  .highlight-buttons #shrink,
+  /* Visual gaps between the palette clusters: tool selectors → Zoom
+   * (display-only transform) → Undo/Clear (edit-stack actions) →
+   * Copy/Save (image-level actions) → More (popover with the
+   * picture-rewriting actions). Larger than the regular 6px row gap
+   * so each group reads as its own cluster. */
+  .highlight-buttons #zoom,
   .highlight-buttons #undo,
-  .highlight-buttons #copy-image-btn {
+  .highlight-buttons #copy-image-btn,
+  .highlight-buttons #more {
     margin-top: 14px;
   }
   #overlay {
@@ -1810,17 +1835,6 @@
                 title="Drag to crop to a region"
                 aria-pressed="false">Crop</button>
         <!--
-          Shrink is an action (not a tool mode): it tightens the
-          current tool's last-drawn rect (Box / Redact) — or the
-          active crop region (Crop), virtually starting from the
-          full image when no crop exists yet — to the smallest box
-          that still encloses the same content. Disabled when there
-          is nothing to shrink (Line / Arrow modes, or Box / Redact
-          modes with no matching edit on the stack).
-        -->
-        <button id="shrink" class="btn" disabled
-                title="Shrink the last Box/Redact, or the crop region, to fit its content">Shrink</button>
-        <!--
           Zoom controls how the preview is displayed; it never
           touches what gets saved. Modes: Fit (default — image
           shrinks to remaining viewport), 1× / 2× / 4× / 8× (image
@@ -1834,6 +1848,7 @@
         -->
         <button id="zoom" class="btn" type="button"
                 aria-haspopup="menu" aria-expanded="false"
+                aria-controls="zoom-menu"
                 title="Set image zoom&#10;Ctrl + scroll wheel to zoom&#10;Alt+- / Alt++ to zoom out / in">Zoom: Fit</button>
         <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
@@ -1854,6 +1869,53 @@
                 title="Copy screenshot to clipboard">Copy</button>
         <button id="download-image-btn" type="button" class="btn"
                 title="Save screenshot">Save</button>
+        <!--
+          More: the picture-rewriting actions that don't earn a
+          permanent slot in the column. Labelled "More…" — the
+          Zoom button, the column's other menu opener, carries no
+          affix either (its label is a mode readout), so neither
+          gets a caret. Opens the `#more-menu` popover below; both
+          column menus share their open / close / dismiss mechanics
+          through `menu-popover.ts`.
+        -->
+        <button id="more" class="btn" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="more-menu"
+                title="More image actions">More&hellip;</button>
+      </div>
+      <!--
+        More menu. Static markup (not built lazily like the Zoom
+        menu) because the drawing module looks both items up by id at
+        init time and drives their disabled state from `render()`.
+        The items are still `<button>`s carrying the same ids,
+        tooltips and enable rules they had as palette buttons; only
+        the label is longer, now that the width is the popover's.
+        The Shrink item's label is rewritten by `render()` to name
+        the target it would act on ("box" / "redaction" / "crop", or
+        the generic "box or crop" when there's nothing to shrink) —
+        the text below is just the disabled starting state.
+
+          - Shrink last … tightens the current tool's last-drawn rect
+            (Box / Redact) — or the active crop region (Crop),
+            virtually starting from the full image when no crop
+            exists yet — to the smallest box that still encloses the
+            same content. Disabled in Line / Arrow modes, and in
+            Box / Redact modes with no matching edit on the stack.
+          - View cropped replaces the displayed image with just the
+            cropped region, as if the capture had been taken at that
+            size: further crops can be drawn inside it and applied
+            again, and existing drawings survive (re-mapped into the
+            new frame, clipped at its edges). Undoable. Enabled only
+            while a crop region is drawn.
+      -->
+      <div id="more-menu" class="palette-menu" role="menu"
+           aria-labelledby="more" hidden>
+        <button id="shrink" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                title="Shrink the last drawn box or crop region, to fit its contents, removing surrounding margins">Shrink last box or crop to fit content</button>
+        <button id="view-cropped" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                title="Replace the image with just the cropped region, as if that was the captured screenshot">Replace with cropped image</button>
       </div>
     </div>
     <div class="image-box">

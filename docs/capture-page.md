@@ -453,12 +453,12 @@ fresh edit.
     - Arrow, N-Arrow (diagonal line / red zigzag, each ending in
       an arrowhead at the upper-right tip).
     - Crop (word button, full width).
-  - Shrink (image-content transform — its own cluster because it
-    rewrites a rect's geometry from pixel data, not the edit stack).
   - Zoom (display-only transform; popover menu picks the mode).
   - Undo, Clear (edit-stack actions).
   - Copy, Save (image-level actions — Copy puts the *current* PNG
     bytes on the clipboard; Save opens the native save-as dialog).
+  - More… (popover menu with the picture-rewriting actions — see
+    below).
 - Every tool selector uses a red SVG icon (`.tool-btn-icon`); the
   other buttons use text labels. Default selected tool is Box.
 - Selected button gets `.selected` (darker face + inset shadow)
@@ -466,7 +466,7 @@ fresh edit.
   (not `click`) so the previously-selected tool deselects the
   moment the user presses a new one — otherwise both old
   `.selected` and new `:active` paint at once.
-- Action buttons (Shrink / Undo / Clear / Copy / Save) are
+- Action buttons (Undo / Clear / Copy / Save / More…) are
   *actions*, not modes — they never get `.selected`. They share a
   `.btn` press-look with every other primary button on the page
   (header Options/Help, Capture, Ask, edit-dialog Cancel/Save/Download),
@@ -475,6 +475,28 @@ fresh edit.
   gate as the per-row `.copy-btn` / `#download-screenshot-btn`
   next to the Save-screenshot checkbox above.
 - Every button carries a `title` tooltip explaining what it does.
+
+**More menu**
+
+- Holds the picture-rewriting actions — Shrink and View cropped
+  — so the column stays short. Labels are longer than the
+  column allowed ("Shrink last … to fit content", "Replace with
+  cropped image"); ids, tooltips and enable rules are the same ones
+  they had as buttons.
+- The Shrink item names its target: `render()` rewrites the label
+  to "box", "redaction" or "crop" depending on what the next click
+  would tighten, and falls back to "box or crop" when there's
+  nothing to shrink (the disabled state).
+- Markup is static (`#more-menu` in `capture.html`), not built
+  lazily like the Zoom menu: the drawing module looks both items up
+  by id at init and drives their `disabled` state from `render()`.
+- Mechanics come from `menu-popover.ts`, shared with the Zoom menu
+  — see the Column popover menus section.
+- Labelled "More…". Neither column menu opener carries a caret —
+  Zoom's label is a mode readout ("Zoom: Fit") with no room for
+  one, so the two stay visually consistent without it.
+- The CSS is shared too: `.palette-menu` / `.palette-menu-item` are
+  grouped with the `.zoom-menu` rules, plus a disabled item look.
 
 ### Drawing tools
 
@@ -679,15 +701,18 @@ fresh edit.
 
 ### Shrink action
 
+- Lives in the More menu as "Shrink last … to fit content", where
+  the ellipsis names the live target (see the More menu section).
 - Tightens a rectangle around its content by reading the *base*
-  (pre-edit) image and trimming solid borders. Operates on the
-  most recent edit of the selected tool's kind for Box / Redact,
-  on the active crop for Crop, or commits a new crop edit when
-  Crop has no active region (using the full image as the start).
-- Disabled in Line / Arrow modes. Disabled in Box / Redact modes
-  when no edit of that kind exists. The `render()` pass refreshes
-  the disabled flag, and `setSelectedTool` re-renders so the
-  button tracks the active tool.
+  (pre-edit) image and trimming solid borders.
+- Target follows the selected tool: the most recent edit of that
+  kind for Box / Redact, the active crop for Crop, or a fresh crop
+  edit when Crop has no active region (starting from the full
+  image).
+- Disabled in Line / Arrow modes, and in Box / Redact modes when no
+  edit of that kind exists. `render()` refreshes both the disabled
+  flag and the label, and `setSelectedTool` re-renders, so the item
+  tracks the active tool.
 - Backed by `src/shrink.ts` — a pure pixel-buffer operator with
   unit tests. Each edge advances inward as long as the line one
   step deeper still matches the *original* edge line, sliced to
@@ -759,6 +784,97 @@ fresh edit.
   drawn entirely inside a uniform region), `shrink()` returns
   `null` and the click is a silent no-op rather than producing a
   mis-tightened rect.
+
+### View cropped action
+
+**What it does**
+
+- Lives in the More menu as "Replace with cropped image".
+- Replaces the base image with just the active crop's pixels, as if
+  the capture had been taken at that size.
+- Everything downstream then treats the smaller picture as the
+  whole screenshot: Fit / zoom, the Image-size pill, the bake, and
+  the edge-handle "drag to crop" affordance.
+- Enabled whenever an active crop exists, in any tool mode —
+  unlike Shrink, it isn't a per-tool action.
+- Re-croppable: a new crop drawn inside the re-framed image can be
+  applied again, so the user can drill down in steps.
+- Motivation: park the page on exactly the region of interest, at
+  a size that Fit / 1× can show whole, and compare it against the
+  same region on another capture.
+
+**Edits survive the re-frame**
+
+- Every non-crop edit's percentages are re-mapped into the new
+  frame (`remapEditsIntoRegion`), so a box or arrow keeps its
+  position relative to the picture content.
+- Parts that fall outside the crop are *clipped*, not deleted:
+  `render()` puts annotations (and the live drag preview) in
+  `<g clip-path>` groups matching the image bounds. The bake clips
+  to its canvas too — the same rectangle here, though not while an
+  un-applied crop is on the stack (the bake's canvas is the crop).
+- That clip also changes rendering for users who never touch View
+  cropped: an edit snapped flush to an image edge centres its
+  stroke on the boundary, so the outer half used to paint past the
+  image on screen while the bake clipped it. Preview and saved
+  bytes now agree.
+- Edits that end up *entirely* outside the frame are dropped, not
+  just hidden — an invisible edit would still flip `editFlags()`,
+  force a page-side bake, and offer itself as a Shrink target.
+  Undo of the View cropped op brings them back.
+- Crop edits are consumed — the new image *is* the crop — along
+  with the history ops that referenced them (undoing one would
+  target an edit that no longer exists).
+- In-place history ops carry pre-mutation geometry, so their
+  `prev` rects are re-mapped too; otherwise a later Undo would
+  restore coordinates from the old frame.
+
+**Undo**
+
+- The pre-crop image / edits / history are pushed onto an
+  in-memory `viewCropStack`, and a `viewCrop` marker onto
+  `editHistory`. One Undo click pops both and restores the whole
+  state, image included.
+- Clear drops the stack: it discards the edits those entries were
+  interleaved with, so keeping them would let a later Undo
+  resurrect a state the user already cleared. The re-framed image
+  itself stays — a re-frame isn't an edit.
+
+**Saved bytes**
+
+- `hasBakeableEdits()` reports true while a view crop is in
+  effect, even with an empty edit stack. Without that, the SW
+  would serve its own copy of the *original*, full-size capture
+  for a page that has no edits left.
+- The bake itself asks a narrower question (`bakeChangesPixels()`):
+  a view-cropped page with no other edits still short-circuits to
+  `previewImg.src`, which `cropBaseImage` already encoded in the
+  bake's own format. Re-running the canvas would cost a full
+  re-encode — a second lossy generation on a JPG capture — for
+  identical output.
+- `editFlags().isCropped` is true for the same reason: the pixels
+  on disk really are a sub-region of the capture.
+- Output format follows the same sticky rule as the bake
+  (`bakeMime`) — a JPG capture stays JPG, everything else is PNG.
+
+**Restore last capture**
+
+- The pre-crop images are far too big to push to the SW, so the
+  snapshot carries only `viewCropPct` — the cumulative crop
+  region in percentages of the *original* capture.
+- On restore, `applyRestoredViewCrop` re-derives the cropped base
+  from the original once it has decoded. The restored edits are
+  already stored in the cropped frame, so nothing else moves.
+- Not pixel-exact: each apply rounds to whole pixels and the
+  restore rounds the composed rectangle once, so the re-derived
+  image can differ from the pre-restore one by about a pixel per
+  drill-down level. Edits ride along with it.
+- If the re-derive fails (the capture didn't decode, no canvas),
+  the restored edits are dropped rather than painted over the
+  full-size original at positions that mean nothing there.
+- `viewCrop` history markers are dropped on restore — their undo
+  state didn't survive, and an Undo button that can't do what it
+  says is worse than one op fewer.
 
 ### Box-edge handles (drag-to-resize, drag-to-crop)
 
@@ -869,6 +985,9 @@ fresh edit.
     clicks and edge-handle resize drags on rect / redact / crop.
     Undo restores those coordinates in place instead of removing
     the edit.
+  - `viewCrop` markers — pushed by View cropped. Undo restores the
+    whole pre-crop state (base image, edits, history) from the
+    in-memory `viewCropStack`; see the View cropped section.
 
   Clear wipes everything. Both buttons disable when the stack is
   empty.
@@ -878,6 +997,12 @@ fresh edit.
 - **Click-vs-drag threshold** — movement under 4 CSS pixels
   between mousedown and mouseup counts as a stray click and is
   discarded, so no tool can produce a degenerate zero-size shape.
+- **Clipped to the image** — committed edits and the live drag
+  preview render inside `<g clip-path>` groups matching the image
+  bounds, the same clip the bake canvas applies. Affordances (image
+  border, crop dim frame, corner grips) stay outside the groups and
+  keep painting their 1px past the edge. See the View cropped
+  section for what this changes.
 
 ### Crop rendering
 
@@ -1407,7 +1532,8 @@ or prompt was still in flight. Lives in `last-capture.ts`.
   round-trip; opt-out by adding its key to the denylist.
 - `uiState` is what the page pushes via `pushUiState`: prompt
   text, save-checkbox + format-radio state, drawing edits + undo
-  history + `nextEditId` + `editVersion`, selected tool. Zoom is
+  history + `nextEditId` + `editVersion`, selected tool, and the
+  cumulative View-cropped region (`viewCropPct`). Zoom is
   deliberately *not* carried — viewport size, scroll position, and
   DPR are page-local and aren't snapshotted, so reapplying a saved
   zoom against a possibly-different window would land at arbitrary
@@ -1816,21 +1942,44 @@ programmatic dispatch for).
     without the bail one press would scroll *and* move the pending
     endpoint.
 
-### Zoom menu
+### Column popover menus
+
+Both column menus — Zoom and More… — run on `menu-popover.ts`
+(`createMenuPopover`), so their behaviour can't drift apart.
+
+**Placement**
 
 - Inserted into `.highlight-controls` with `position: absolute;
   left: calc(100% + 6px)`. Floats to the right of the column over
   the gap to `.image-box` (and a few px into the image's left
-  edge). Choosing this over a flex-sibling layout because making
-  the menu a flex item would push the image right when the menu
-  opened — visible movement of the captured content the user
-  is editing.
-- Inline `top` is set to `zoomBtn.offsetTop` on each open so a
-  prompt-grow that pushed the button down doesn't leave the menu
-  misaligned.
-- Toggle is owned entirely by the Zoom button click handler
-  (open if hidden, close if shown). Escape and clicking a menu
-  item also close it.
+  edge). Chosen over a flex-sibling layout because making the menu
+  a flex item would push the image right when the menu opened —
+  visible movement of the captured content the user is editing.
+- Inline `top` is set to the owning button's `offsetTop` on each
+  open, so a prompt-grow that pushed the button down doesn't leave
+  the menu misaligned.
+
+**Dismissal**
+
+- The owning button toggles it; Escape closes it and returns focus
+  to the button; clicking a menu item closes it.
+- A mousedown anywhere else closes it, the way a menu is expected
+  to behave. Two details keep that from fighting the button:
+  - the listener runs on `mousedown` in the **capture** phase and
+    is registered only while the menu is open, so it never sees the
+    mousedown of the gesture that opened the menu (which would
+    close it before the click landed);
+  - a mousedown on the owning button is ignored and left to the
+    button's own click handler — otherwise both fire and the menu
+    closes, then immediately reopens.
+- The dismissing press still reaches whatever was under it, so
+  clicking the image to dismiss doesn't cost an extra click.
+
+**Per-menu differences**
+
+- Zoom builds its items lazily on first open and refreshes its
+  check marks through `onBeforeOpen`; More…'s items are static
+  markup owned by the drawing module.
 
 ### Stroke scaling
 

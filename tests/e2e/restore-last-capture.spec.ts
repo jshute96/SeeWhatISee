@@ -3,7 +3,7 @@
 // session-storage slot, and the More-menu "Restore last capture"
 // entry rehydrates that slot into a fresh Capture-page tab.
 //
-// Two specs:
+// Specs here:
 //   - Slot lifecycle + prompt restore (the smallest end-to-end
 //     check that the round-trip is wired at all).
 //   - The multi-capture bump round-trip the user actually asked
@@ -12,6 +12,9 @@
 //     suffixes with new bytes. This pins both the `bases` carry-
 //     forward (the regression that produced `…-3-4.png` instead of
 //     `…-4.png`) and the saved/revisions round-trip.
+//   - View cropped: the slot carries only the cumulative crop
+//     rectangle, so the restored page has to re-derive the cropped
+//     image from the original capture.
 //
 // The restore handler is invoked directly through the SW test seam
 // (`self.SeeWhatISee.restoreLastCapture`) rather than the context
@@ -22,6 +25,7 @@
 import fs from 'node:fs';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
+import { clickMoreMenuItem } from './capture-drawing-helpers';
 import { waitForDownloadPath } from '../fixtures/files';
 import {
   CONTENTS_PATTERN,
@@ -366,5 +370,53 @@ test('restore-last-capture: round-trip with no edits reuses filenames; with edit
   // doesn't already end in one — see `src/capture/downloads.ts`.
   expect(fs.readFileSync(aMd, 'utf8')).toBe(`${EDITED_SEL_A}\n`);
 
+  await openerPage.close();
+});
+
+test('restore-last-capture: a View-cropped image comes back cropped', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await sw0.evaluate(() => chrome.storage.session.clear());
+
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  const fullWidth = await capturePage.evaluate(
+    () => (document.getElementById('preview') as HTMLImageElement).naturalWidth,
+  );
+
+  // Crop to the middle half of each axis and re-frame the image
+  // around it. The snapshot pushed to the SW carries the cumulative
+  // crop rectangle, not the cropped pixels — the restored page has to
+  // re-derive them from the original capture.
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  await capturePage.waitForFunction(
+    (w) => (document.getElementById('preview') as HTMLImageElement).naturalWidth < w,
+    fullWidth,
+  );
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+  });
+
+  const restored = await restoreAndWaitForCapturePage(
+    extensionContext,
+    getServiceWorker,
+  );
+  const restoredWidth = await restored.evaluate(
+    () => (document.getElementById('preview') as HTMLImageElement).naturalWidth,
+  );
+  expect(Math.abs(restoredWidth - fullWidth / 2)).toBeLessThanOrEqual(1);
+
+  await restored.close();
   await openerPage.close();
 });

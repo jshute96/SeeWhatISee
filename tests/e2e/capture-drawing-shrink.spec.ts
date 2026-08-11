@@ -1,5 +1,6 @@
 // E2E coverage for the Shrink-tool operator on the Capture page —
-// the "tighten the rect around its content" button (`#shrink`).
+// the "tighten the rect around its content" item (`#shrink`, in the
+// More menu).
 //
 // `shrink-target.html` is a grey page with a single black block
 // from 25%–75% horizontally and vertically. That gives the algorithm
@@ -19,6 +20,7 @@
 import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
 import {
+  clickMoreMenuItem,
   readEffectiveCrop,
   readLastBounds,
 } from './capture-drawing-helpers';
@@ -55,6 +57,42 @@ test('shrink: button is enabled in Crop mode and disabled for Line / Arrow', asy
   await openerPage.close();
 });
 
+test('shrink: the menu item names the target it would shrink', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const item = capturePage.locator('#shrink');
+
+  // Box tool with nothing drawn: no target, so the label stays
+  // generic (and the item is disabled).
+  await expect(item).toHaveText('Shrink last box or crop to fit content');
+
+  // A drawn Box becomes the target.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
+  await expect(item).toHaveText('Shrink last box to fit content');
+
+  // Redact mode names the redaction it would tighten, and reverts to
+  // the generic pairing when there's no redaction on the stack.
+  await capturePage.locator('#tool-redact').click();
+  await expect(item).toHaveText('Shrink last box or crop to fit content');
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await expect(item).toHaveText('Shrink last redaction to fit content');
+
+  // Crop mode always has a target — the active crop, or the full
+  // image when no crop exists yet.
+  await capturePage.locator('#tool-crop').click();
+  await expect(item).toHaveText('Shrink last crop to fit content');
+
+  await openerPage.close();
+});
+
 test('shrink: Crop with no active crop commits a tighter crop, Undo restores', async ({
   extensionContext,
   fixtureServer,
@@ -70,7 +108,7 @@ test('shrink: Crop with no active crop commits a tighter crop, Undo restores', a
   await capturePage.locator('#tool-crop').click();
   expect(await readEffectiveCrop(capturePage)).toBeNull();
 
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const crop = await readEffectiveCrop(capturePage);
   expect(crop).not.toBeNull();
   // The grey margins around the black block (25%/75% bounds in CSS)
@@ -118,7 +156,7 @@ test('shrink: tightens the most recent Box, Undo restores, and a second click is
   expect(before!.w).toBeGreaterThan(70);
   expect(before!.h).toBeGreaterThan(70);
 
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const after = await readLastBounds(capturePage, 'rect');
   expect(after).not.toBeNull();
   // After shrinking, the rect should be much tighter than the
@@ -136,7 +174,7 @@ test('shrink: tightens the most recent Box, Undo restores, and a second click is
   // would fire unconditionally — clicks would either pulse (clean
   // content) or grow the box by 1 each time (noisy content), both
   // observable as a regression here.
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterTwice = await readLastBounds(capturePage, 'rect');
   expect(afterTwice).not.toBeNull();
   expect(afterTwice!.x).toBeCloseTo(after!.x, 6);
@@ -187,7 +225,7 @@ test('shrink: a second Box click drills further when click 1 lands on a uniform 
     { xPct: 0.95, yPct: 0.95 },
   );
 
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterFirst = await readLastBounds(capturePage, 'rect');
   expect(afterFirst).not.toBeNull();
   // First click wraps the blue card with a 1-pixel margin
@@ -197,7 +235,7 @@ test('shrink: a second Box click drills further when click 1 lands on a uniform 
   expect(afterFirst!.w).toBeGreaterThan(70);
   expect(afterFirst!.w).toBeLessThan(90);
 
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterSecond = await readLastBounds(capturePage, 'rect');
   expect(afterSecond).not.toBeNull();
   // Second click drills past the uniform blue band to wrap the
@@ -211,7 +249,7 @@ test('shrink: a second Box click drills further when click 1 lands on a uniform 
   // content with a 1-pixel margin must be idempotent — the
   // contracted retry can't drill any further once the rect's
   // inside is solid red.
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterThird = await readLastBounds(capturePage, 'rect');
   expect(afterThird).not.toBeNull();
   expect(afterThird!.x).toBeCloseTo(afterSecond!.x, 6);
@@ -257,7 +295,7 @@ test('shrink: never grows the box on any edge (partial-advance)', async ({
     { xPct: 0.1, yPct: 0.1 },
     { xPct: 0.9, yPct: 0.9 },
   );
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const tight = await readLastBounds(capturePage, 'rect');
   expect(tight).not.toBeNull();
 
@@ -278,7 +316,7 @@ test('shrink: never grows the box on any edge (partial-advance)', async ({
   const before = await readLastBounds(capturePage, 'rect');
   expect(before).not.toBeNull();
 
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const after = await readLastBounds(capturePage, 'rect');
   expect(after).not.toBeNull();
 
@@ -321,7 +359,7 @@ test('shrink: a second Crop click drills further when click 1 lands on a uniform
   await capturePage.locator('#tool-crop').click();
 
   // First click: grey → blue card.
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterFirst = await readEffectiveCrop(capturePage);
   expect(afterFirst).not.toBeNull();
   expect(afterFirst!.x).toBeGreaterThan(5);
@@ -330,7 +368,7 @@ test('shrink: a second Crop click drills further when click 1 lands on a uniform
   expect(afterFirst!.w).toBeLessThan(90);
 
   // Second click: blue band → red inner block.
-  await capturePage.locator('#shrink').click();
+  await clickMoreMenuItem(capturePage, '#shrink');
   const afterSecond = await readEffectiveCrop(capturePage);
   expect(afterSecond).not.toBeNull();
   expect(afterSecond!.x).toBeGreaterThan(20);

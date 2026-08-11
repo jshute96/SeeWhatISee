@@ -26,6 +26,9 @@
 //     (no premature narrowing).
 //   - Fit shrinkage well below half-size: stroke narrows per the
 //     piecewise formula and ends up < 3.
+//   - Zoom popover dismissal: the button toggles it, and a click
+//     anywhere else closes it — shared with the More… menu through
+//     `menu-popover.ts`.
 //   - Arrow-key fine pan: while a pan drag is held, each arrow moves
 //     `.image-box`'s scroll by one *image* pixel against the arrow
 //     direction (the image moves *with* it), snapping that axis onto
@@ -830,5 +833,41 @@ test('pan: an arrow-key nudge drops the snap and keeps the other axis\'s escape 
   expect(Math.abs(nudged.top - target.top)).toBeGreaterThan(1);
 
   await capturePage.mouse.up({ button: 'middle' });
+  await openerPage.close();
+});
+
+test('zoom menu: the button toggles it and a click elsewhere closes it', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const zoomBtn = capturePage.locator('#zoom');
+  const menu = capturePage.locator('.zoom-menu');
+
+  // Built lazily, so it doesn't exist at all until the first open.
+  await expect(menu).toHaveCount(0);
+
+  await zoomBtn.click();
+  await expect(menu).toBeVisible();
+  // The button still owns the toggle — the outside-click closer must
+  // not swallow this press and leave the menu reopening.
+  await zoomBtn.click();
+  await expect(menu).toBeHidden();
+
+  await zoomBtn.click();
+  await expect(menu).toBeVisible();
+  await capturePage.locator('#prompt-text').click();
+  await expect(menu).toBeHidden();
+
+  await zoomBtn.click();
+  await expect(menu).toBeVisible();
+  await capturePage.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+
   await openerPage.close();
 });

@@ -21,7 +21,13 @@ import { openDetailsFlow } from './details-helpers';
 // is the precondition for the measurement to raise a page scrollbar —
 // the `noSlack` assertion below fails loudly if a layout change ever
 // moves them out of that band.
-const VIEWPORT_HEIGHTS = [760, 780];
+//
+// The band's floor is the shortest viewport where the page still
+// fits with the prompt grown to its cap, so it moves whenever the
+// tool palette gets taller — the palette column, not the image, sets
+// the page's minimum height. The More button's cluster gap raised it
+// by 14px (760 → 774), so both heights step up by the same amount.
+const VIEWPORT_HEIGHTS = [774, 794];
 
 type Sample = {
   len: number;
