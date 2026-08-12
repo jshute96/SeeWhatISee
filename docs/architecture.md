@@ -42,6 +42,7 @@ Topic-specific design notes live in companion docs:
                                 |    - downloads.ts           |
                                 |    - log-store.ts           |
                                 |    - recompress.ts          |
+                                |    - packed-text.ts         |
                                 |    - image-source.ts        |
                                 +---------------------------+
 ```

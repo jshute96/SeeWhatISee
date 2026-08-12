@@ -198,7 +198,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/background/tooltip.ts` | Pure toolbar-tooltip layout — single-line `Save X or Y` row collapse + `saveDefaultsMenuTitle` shared with the menu side |
 | `src/background/menu-hint.ts` | Pure menu-hint composition — `rowScope`, `buildRowGroup`, `buildMenuHint`; extracted for unit-testability without the chrome.* import chain |
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
-| `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, HTML byte-size cap, `runtime.onMessage` handlers |
+| `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, HTML compression + size caps, `runtime.onMessage` handlers |
 | `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
@@ -222,6 +222,7 @@ Own `package.json` (npm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
+| `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete` |
 | `src/capture/log-store.ts` | Capture log + on-disk `log.json` sidecar — `LOG_STORAGE_KEY`, `clearCaptureLog`/`appendToLog`/`writeJsonFile`/`serializeRecord`/`serializeWrite`, `compactTimestamp` |
@@ -232,7 +233,7 @@ Own `package.json` (npm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `src/capture-page/paste.ts` | Capture-page rich-text paste — `attachHtmlAwarePaste` (text/html → markdown or HTML-source), highlighter / markdown detection, nbsp normalization |
-| `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guard, cross-tab storage listener |
+| `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guards (destination kinds/count, text size), cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: fit/Nx sizing, zoom menu, wheel + key zoom, drag / scrollbar pan with box snap + arrow-key fine nudge |
 | `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped + annotation Copy / Paste / Import (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
 | `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
@@ -306,7 +307,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML byte-size cap — capture-time rejection, under-cap pass-through, edit-save rejection, error-page hint italics |
+| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML size caps + compression — stored/raw cap rejections, multi-MB compressible round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
@@ -317,7 +318,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
 | `tests/e2e/options-refresh.spec.ts` | E2E test for the Options-page hotkey-refresh hook — opening Options resyncs the toolbar tooltip when shortcut bindings have changed |
 | `tests/e2e/restore-last-capture.spec.ts` | E2E for "Restore last capture" — slot lifecycle, prompt restore, bump round-trip (reused filenames with no edits, `-N` suffix after edits), View-cropped image re-derived on restore then cleared by Reset |
-| `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload guard, inject runtime, Alt+A keyboard binding |
+| `tests/e2e/ask.spec.ts` | E2E tests for the Ask AI flow — menu rendering, exclude patterns, empty-payload + text-size guards, inject runtime, Alt+A keyboard binding |
 | `tests/e2e/ask-pinned-tabs.spec.ts` | E2E tests for target-window pinning — pin lifecycle, dead/navigated/disabled-provider invalidation, plain-Ask reuse |
 | `tests/e2e/ask-toolbar-pin.spec.ts` | E2E tests for the toolbar context-menu Set/Unset entry — eligibility, "Set"/"Unset" title flip, toggle behavior |
 | `tests/e2e/ask-url-variants.spec.ts` | E2E tests for `urlVariants` — pre-send guard refuses unsupported kinds; Claude Code happy path (image + prompt) sends end-to-end |
@@ -346,6 +347,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
+| `tests/unit/packed-text.test.mjs` | Unit tests for `src/capture/packed-text.ts` — pack/skip thresholds, declining incompressible bodies, UTF-8 round-trip, size helpers |
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
 | `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
 | `tests/unit/last-capture.test.mjs` | Unit tests for `src/background/last-capture.ts` — denylist contents, round-trip, `bases` regression, auto-carry of future fields, quota-swallow |

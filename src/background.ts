@@ -71,6 +71,7 @@ import {
   refreshRestoreLastCaptureMenuState,
 } from './background/context-menu.js';
 import {
+  _setHtmlRawCapForTest,
   _setHtmlSizeCapForTest,
   ensureHtmlDownloaded,
   ensureScreenshotDownloaded,
@@ -464,7 +465,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Lets e2e lower the "PNG too big → try JPEG" threshold so a
   // small fixture can exercise the capture-time recompress path.
   _setLargeScreenshotThresholdForTest,
-  // Lets e2e lower the "HTML > 2 MiB → drop" cap so small fixtures
-  // can exercise the capture-time + edit-save rejection paths.
+  // Lets e2e lower the "stored HTML > 4 MiB → drop" cap so small
+  // fixtures can exercise the capture-time + edit-save rejection
+  // paths, and the raw cap that fires before compression is tried.
   _setHtmlSizeCapForTest,
+  _setHtmlRawCapForTest,
 };

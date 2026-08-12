@@ -630,47 +630,142 @@ fidelity for a marginal saving.
 producing an actual 2 MB capture (see
 `tests/e2e/large-screenshot-recompress.spec.ts`).
 
-### HTML byte-size cap at capture + edit-save
+### HTML compression in session storage
 
 `chrome.storage.session` is 10 MiB total, shared with the Ask
 widget. The image is handled by the JPEG recompress above. The
 remaining sharp edge is page HTML: heavy SPAs can inline 5–15 MB
-of CSS / fonts / base64 assets into `documentElement.outerHTML`
-and blow the cap on a single capture before the screenshot adds
-its share.
+of CSS / fonts / base64 assets into `documentElement.outerHTML`.
 
-The cap:
+HTML is also extremely repetitive, so it is **gzipped before it
+goes into storage** — `src/capture/packed-text.ts`.
 
-- **2 MiB UTF-8 bytes** of HTML, measured via `TextEncoder`.
-- Applied at the storage boundary in `openCapturePageWithSession`
-  (`applyHtmlSizeCap`) and in the `updateArtifact` handler for
-  `kind: 'html'`.
-- Over the cap → HTML is dropped (`capture.html = ''`,
-  `capture.htmlError`), with a two-line message:
-  - *"Content too large for Capture page: 12 MB (limit 2 MB)."*
-  - a hint that the content can still be saved via the context-menu
-    `'Save'` actions (which skip session storage). "Save" is quoted —
-    it shows in the native row tooltip, which can't render italics.
-- The Capture page's existing `htmlError` path takes over: Save
-  HTML row greyed-out, error icon with the message, size badge
-  hidden. Rest of the capture (image, URL, prompt, selection)
-  proceeds normally.
+- Stored as `PackedText` — `{ z: 'gzip', d: <base64>, n: <raw
+  bytes> }` — because session storage only takes JSON.
+- Base64 hands back a third of what gzip saved, so the realistic
+  end-to-end win is ~3:1 rather than the raw gzip ratio.
+- `n` is carried so size readouts and cap checks never have to
+  decompress.
 
-Edit-dialog saves run the same byte-length check on the incoming
+Two rules stop it ever being a pessimization:
+
+- Bodies **≤ 64 KiB** stay plain — the saving is irrelevant and a
+  plain string is far easier to read in a storage dump.
+- The packed form is kept only if its *stored* cost beats the plain
+  string's. High-entropy bodies (already-compressed inline assets)
+  fail this and ride through unpacked.
+
+So `InMemoryCapture.html` is a `MaybePackedText`, and every reader
+goes through `unpackText()` / `originalByteLength()` /
+`isEmptyText()`. A bare `if (capture.html)` is wrong now — it
+passes for *any* packed object, empty included.
+
+#### Where compression starts and stops
+
+- **Starts** at `packCaptureHtml` (capture-page open) and in the
+  `updateArtifact` handler for `kind: 'html'` (Edit-dialog save).
+- **Stops** at `getDetailsData`, which unpacks before the body
+  crosses to the Capture page.
+  - The page mirrors it into `captured.html` for the Edit dialog,
+    Copy, Save-as and the size pill — all of which want plain text.
+  - A page holding a few MB in a JS string is unremarkable; it's
+    *storage* that's scarce.
+  - A decompression failure there degrades to the ordinary
+    `htmlError` path rather than blanking the whole capture.
+- **Stops** at `downloadHtml`, so the `.html` on disk is always
+  plain — an agent shouldn't have to gunzip a snapshot.
+- Never applies to selections (much smaller) or to the
+  context-menu Save paths (they stream straight to disk, never
+  touching storage).
+
+Restore re-uses the already-packed body: `packCaptureHtml` skips
+anything that isn't a plain string, so it's idempotent.
+
+### Ask text cap
+
+Compression stops at the Capture page, so a body that clears the
+4 MiB stored cap can still be hopeless as an Ask attachment: Ask
+stages a second, *uncompressed* copy in its own session record.
+
+`ASK_TEXT_BYTES_CAP` (2 MiB, `src/capture-page/ask.ts`) is a
+pre-send guard on the total uncompressed text one Ask may carry.
+
+- Sums the text rows `buildAskAttachments` would actually send
+  (HTML + the chosen selection format), so the quoted figure is what
+  would have gone over the wire.
+- Refuses in the same voice as the destination guards beside it —
+  naming the offending rows and pointing at Capture, which writes
+  the file to disk with no such limit.
+- Runs before any SW round-trip, so nothing opens a tab first.
+- The SW's quota pre-flight stays the backstop for anything that
+  slips past (a stale page, a near-full session).
+
+Without it, the compression change would have turned a clean
+up-front refusal into a late "Not enough extension storage to send
+this Ask" — arriving only after the user had written a prompt.
+
+### HTML size caps at capture + edit-save
+
+Two caps, checked cheapest-first in `packHtmlForStorage`:
+
+- **Stored cap — 4 MiB**, measured on the packed form with the same
+  `JSON.stringify(...).length` accounting `getBytesInUse` uses.
+  - That's the figure that actually competes for the session
+    budget; a typical page can be ~3× larger in raw terms.
+  - Deliberately a large slice of the 10 MiB budget — holding the
+    whole snapshot is the Capture page's job, and the pre-flight
+    quota check still refuses what won't fit beside the screenshot.
+- **Raw cap — 24 MiB**, checked before compressing. Not a storage
+  guard: it bounds bodies that would take seconds to gzip, wedge
+  the Edit dialog's syntax highlighter, and overflow the `data:`
+  URL `chrome.downloads` accepts. In practice only the stored cap
+  fires.
+
+Over either cap → HTML is dropped (`capture.html = ''`,
+`capture.htmlError`), with a two-line message:
+
+- *"Content too large for Capture page: 26 MB (limit 24 MB)."*, or
+  *"… 18 MB (5.2 MB compressed; limit 4 MB)."* — without the second
+  figure the arithmetic looks absurd.
+  - The clause appears only when the compressed figure is *smaller
+    than the raw one*, which is not the same as "the body got
+    packed": `packText` compares stored-cost against stored-cost,
+    so an escape-heavy body can be a real storage win while still
+    stringifying larger than its own source.
+- a hint that the content can still be saved via the context-menu
+  `'Save'` actions (which skip session storage). "Save" is quoted —
+  it shows in the native row tooltip, which can't render italics.
+
+The Capture page's existing `htmlError` path takes over: Save HTML
+row greyed-out, error icon with the message, size badge hidden.
+Rest of the capture (image, URL, prompt, selection) proceeds
+normally.
+
+Edit-dialog saves run the same `packHtmlForStorage` on the incoming
 value before mutating the session; over-cap pastes return the
-"Content too large for Capture page" message (without the
-context-menu hint — it's an edit, not the live page) to the page
-without touching the body. Both wordings come from the shared
+message (without the context-menu hint — it's an edit, not the live
+page) without touching the body. Both wordings come from the shared
 `htmlTooLargeMessage` helper.
 
-`_setHtmlSizeCapForTest(bytes | null)` is exposed on
-`self.SeeWhatISee` so e2e can exercise both branches without
-authoring a multi-MB fixture (see
-`tests/e2e/html-size-cap.spec.ts`).
+`_setHtmlSizeCapForTest(bytes | null)` and
+`_setHtmlRawCapForTest(bytes | null)` are exposed on
+`self.SeeWhatISee` so e2e can exercise the branches without
+authoring a 24 MB fixture (see `tests/e2e/html-size-cap.spec.ts`).
 
-Selection content is not capped in this version — it's typically
-much smaller than HTML and would need its own scoping decision
-(per-format vs bundled).
+Selection content is neither capped nor compressed in this version —
+it's typically much smaller than HTML and would need its own
+scoping decision (per-format vs bundled).
+
+#### Not compressed yet
+
+- **Ask attachments.** The Ask flow stages the *unpacked* body in a
+  per-destination-tab `AskWidgetRecord`, so a big HTML Ask would
+  cost two full uncompressed copies. Bounded by the Ask text cap
+  below rather than by compression.
+- **The page-side mirror.** `getDetailsData` ships the whole body
+  on load. Sending only `htmlBytes` and fetching the body on demand
+  (Edit / Copy / Save-as) would cut that, but `captured.html` is
+  read synchronously in several places today.
 
 ### Routing summary
 

@@ -10,6 +10,7 @@
 // What this spec covers, top to bottom:
 //   - Menu rendering (sections, separators, exclude-pattern filter).
 //   - The empty-payload guard ("Nothing to send…").
+//   - The text-size guard (HTML too big to stage as an attachment).
 //   - Attachment matrix: every Save-checkbox combination produces
 //     the right files with the right names + MIME types.
 //   - Edit flows: editing HTML or selection in the edit dialog
@@ -197,6 +198,92 @@ test('ask: "Nothing to send" guard fires before any SW round-trip', async ({
   const pages = extensionContext.pages();
   expect(pages.some((p) => p.url().endsWith('/fake-claude.html'))).toBe(false);
 
+  await openerPage.close();
+});
+
+// ─── Text-size guard ──────────────────────────────────────────────
+
+test('ask: oversized HTML is refused up-front, before any SW round-trip', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Page HTML is gzipped in session storage, so a compressible page
+  // can clear the Capture-page cap by a wide margin. Ask stages a
+  // second, *uncompressed* copy — so past a point the send can't fit
+  // the shared budget no matter how well the page compresses. The
+  // guard has to catch that before the user writes a prompt and
+  // clicks, not via a late quota refusal.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    async (page) => {
+      await page.evaluate(() => {
+        const chunk =
+          '<div class="row item"><span class="label">Name</span>'
+          + '<span class="value">Value</span></div>\n';
+        const div = document.createElement('div');
+        // ~3 MB — over the 2 MiB Ask text cap, but well under the
+        // 4 MiB stored cap once gzipped, so the capture itself keeps
+        // the HTML and the Save HTML row stays live.
+        div.textContent = chunk.repeat(Math.ceil(3_000_000 / chunk.length));
+        document.body.appendChild(div);
+      });
+    },
+  );
+  const sw = await getServiceWorker();
+  await overrideAskProviders(sw, fixtureServer.baseUrl);
+
+  // The HTML survived the capture — otherwise this would be testing
+  // the Capture-page cap, not the Ask cap.
+  await expect(capturePage.locator('#cap-html')).toBeEnabled();
+  await expect(capturePage.locator('#row-html')).not.toHaveClass(/has-error/);
+
+  await configureCapture(capturePage, {
+    saveScreenshot: false,
+    saveHtml: true,
+    prompt: 'summarize this',
+  });
+
+  await capturePage.locator('#ask-menu-btn').click();
+  await waitForAskMenuReady(capturePage);
+  await clickNewClaudeItem(capturePage);
+
+  // Regex on the number: the page-side `formatBytes` (pills.ts)
+  // keeps a trailing `.0`, unlike the SW's same-named helper.
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    /Ask can carry at most 2(\.0)? MB of text; Save HTML is \d/,
+  );
+  // Names the alternative that has no such limit.
+  await expect(capturePage.locator('#ask-status')).toContainText(
+    'use Capture to save the file instead',
+  );
+  // Refused before any tab opened.
+  const pages = extensionContext.pages();
+  expect(pages.some((p) => p.url().endsWith('/fake-claude.html'))).toBe(false);
+
+  // Unchecking the offending row clears the block — the guard sums
+  // only what would actually be sent.
+  await configureCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'summarize this',
+  });
+  await capturePage.locator('#ask-menu-btn').click();
+  await waitForAskMenuReady(capturePage);
+  await clickNewClaudeItem(capturePage);
+  await expect(capturePage.locator('#ask-status')).toHaveText('Sent.', {
+    timeout: 15_000,
+  });
+
+  // Close the destination this send opened — a leaked fake-Claude
+  // tab becomes an *existing* target for the next test in the file,
+  // which changes what its menu offers.
+  for (const p of extensionContext.pages()) {
+    if (p.url().endsWith('/fake-claude.html')) await p.close();
+  }
   await openerPage.close();
 });
 

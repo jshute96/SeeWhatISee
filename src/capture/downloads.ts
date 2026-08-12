@@ -10,6 +10,7 @@ import {
   type SelectionFormat,
   noSelectionContentMessage,
 } from './types.js';
+import { unpackText } from './packed-text.js';
 
 /**
  * Subdirectory under the user's download root where every capture
@@ -69,9 +70,15 @@ export async function downloadScreenshot(
  * the user saves an edit in the Edit HTML dialog — callers cache the
  * result and rely on the `updateArtifact` handler to drop the cache
  * when the body changes (see `ensureHtmlDownloaded`).
+ *
+ * The file on disk is always the plain HTML, whatever form the
+ * capture was holding: a `.html` an agent has to gunzip before
+ * reading would defeat the point. Compression is a storage detail
+ * and stops at this boundary.
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
-  return downloadArtifact(capture.contentsFilename, htmlDataUrl(capture.html));
+  const html = await unpackText(capture.html);
+  return downloadArtifact(capture.contentsFilename, htmlDataUrl(html));
 }
 
 /**

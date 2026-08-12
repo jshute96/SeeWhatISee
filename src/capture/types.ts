@@ -5,6 +5,9 @@
 // `capture.ts` hub — avoids cycles in the runtime import graph and
 // keeps the type contract in one obvious place.
 
+// Type-only, so this stays a leaf at runtime.
+import type { MaybePackedText } from './packed-text.js';
+
 /**
  * A saved file the capture flow wants to surface in `log.json`.
  * Wraps the bare basename (no directory; the downloads root sits
@@ -262,8 +265,19 @@ export interface InMemoryCapture {
    * — `htmlError` is then set with the reason. The Capture page uses
    * the error field (not the empty string) to decide whether to
    * grey out the Save HTML checkbox.
+   *
+   * May arrive as a `PackedText` (gzip + base64) rather than a plain
+   * string: everything that goes into `chrome.storage.session` is
+   * packed first, so large pages cost a fraction of the shared
+   * 10 MiB budget. Fresh scrapes and the context-menu Save paths
+   * never touch storage and stay plain. Read it through
+   * `unpackText()`, test emptiness with `isEmptyText()` — a bare
+   * truthiness test passes for *any* packed object, including an
+   * empty one — and measure it with `storedLength()` (what storage
+   * charges) or `originalByteLength()` (source bytes, for anything
+   * user-facing). See `packed-text.ts`.
    */
-  html: string;
+  html: MaybePackedText;
   url: string;
   /**
    * Title of the captured tab (`chrome.tabs.Tab.title`) at capture

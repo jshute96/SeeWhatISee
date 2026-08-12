@@ -16,6 +16,15 @@ import {
 } from '../capture/downloads.js';
 import { compactTimestamp } from '../capture/log-store.js';
 import {
+  type MaybePackedText,
+  isEmptyText,
+  isPackedText,
+  packText,
+  storedLength,
+  unpackText,
+  utf8ByteLength,
+} from '../capture/packed-text.js';
+import {
   captureImageToMemory,
   imageExtensionFor,
 } from '../capture/image-source.js';
@@ -45,34 +54,56 @@ import {
 } from './annotation-clipboard.js';
 
 /**
- * Hard cap on HTML byte size. Heavy SPAs frequently inline
+ * Hard cap on what one capture's HTML may cost in
+ * `chrome.storage.session`. Heavy SPAs frequently inline
  * 5–15 MB of CSS / fonts / base64 assets into the page HTML, which
- * can blow the 10 MiB `chrome.storage.session` cap on a single
- * capture before the screenshot even adds its share — and there's
- * no fix at the user end other than "capture a different page."
- * Refusing the HTML up-front lets the rest of the capture (image,
- * URL, prompt, selection) still go through, with the Save HTML row
- * greyed-out and explained.
+ * can blow the 10 MiB session budget on a single capture before the
+ * screenshot even adds its share — and there's no fix at the user
+ * end other than "capture a different page." Refusing the HTML
+ * up-front lets the rest of the capture (image, URL, prompt,
+ * selection) still go through, with the Save HTML row greyed-out
+ * and explained.
  *
- * Compared against the UTF-8 byte length of the scraped HTML so
- * the user-facing number matches what they'd see if they viewed
- * the source. Storage cost includes some JSON-stringify overhead
- * on top, but the difference is sub-percent at multi-MB scale.
+ * Measured on the *stored* form — after `packText` has had its go —
+ * using the same `JSON.stringify(...).length` accounting
+ * `getBytesInUse` uses. That's the number that actually competes
+ * for the budget, so it's the number worth capping. HTML gzips
+ * around 4:1 and base64 gives a third of that back, so at this cap
+ * a typical page can be ~3× larger than the raw figure suggests.
+ *
+ * 4 MiB is deliberately a large slice of the 10 MiB budget: the
+ * Capture page is the one flow where holding the whole snapshot is
+ * the point, and the pre-flight quota check still refuses anything
+ * that genuinely won't fit alongside the screenshot. Flows that
+ * need a *second* copy (an Ask, which stages its own attachment
+ * record) will hit that check rather than this cap.
  */
-const HTML_SIZE_CAP_BYTES_DEFAULT = 2 * 1024 * 1024;
-let htmlSizeCapBytes = HTML_SIZE_CAP_BYTES_DEFAULT;
+const HTML_STORED_CAP_BYTES_DEFAULT = 4 * 1024 * 1024;
+let htmlStoredCapBytes = HTML_STORED_CAP_BYTES_DEFAULT;
+
+/**
+ * Secondary cap on the *raw* HTML, checked before we spend time
+ * compressing. Not a storage guard — the stored cap above is that —
+ * but a "don't even try" bound: a body this size would take seconds
+ * to gzip, wedge the Edit HTML dialog's syntax highlighter solid,
+ * and produce a `data:` URL beyond what `chrome.downloads` will
+ * accept. Set far above any page a user would plausibly want, so in
+ * practice only the stored cap ever fires.
+ */
+const HTML_RAW_CAP_BYTES_DEFAULT = 24 * 1024 * 1024;
+let htmlRawCapBytes = HTML_RAW_CAP_BYTES_DEFAULT;
 
 /** Test-only setter (mirrors `_setLargeScreenshotThresholdForTest`).
  *  Pass `null` to restore the production default. Exposed on
  *  `self.SeeWhatISee`. */
 export function _setHtmlSizeCapForTest(bytes: number | null): void {
-  htmlSizeCapBytes = bytes === null ? HTML_SIZE_CAP_BYTES_DEFAULT : bytes;
+  htmlStoredCapBytes = bytes === null ? HTML_STORED_CAP_BYTES_DEFAULT : bytes;
 }
 
-/** UTF-8 byte length of `s`. Not `.length` (which counts UTF-16
- *  code units and mis-sizes CJK / emoji pages by ~2×). */
-function utf8ByteLength(s: string): number {
-  return new TextEncoder().encode(s).length;
+/** Test-only setter for the raw-size cap. See
+ *  `_setHtmlSizeCapForTest`. */
+export function _setHtmlRawCapForTest(bytes: number | null): void {
+  htmlRawCapBytes = bytes === null ? HTML_RAW_CAP_BYTES_DEFAULT : bytes;
 }
 
 /**
@@ -92,32 +123,107 @@ function utf8ByteLength(s: string): number {
 const CAPTURE_DIRECTLY_HINT =
   "Content can still be captured directly using 'Save' actions (on the extension's context menu).";
 
-/** User-facing "HTML over the byte cap" line, shared by the
- *  capture-open path (`applyHtmlSizeCap`) and the `updateArtifact`
- *  edit-save guard so the wording stays in lock-step. */
-function htmlTooLargeMessage(bytes: number): string {
-  return `Content too large for Capture page: ${formatBytes(bytes)} (limit ${formatBytes(htmlSizeCapBytes)}).`;
+/**
+ * User-facing "HTML over the cap" line, shared by the capture-open
+ * path (`packCaptureHtml`) and the `updateArtifact` edit-save guard
+ * so the wording stays in lock-step.
+ *
+ * Invariant: the reader must be able to see why this was refused.
+ * So whichever figure was actually compared against `limitBytes` is
+ * always on the line — as `headBytes` when there's only one number,
+ * or as the `storedBytes` "compressed" clause when quoting the raw
+ * size alone would look absurd (9 MB next to a 4 MB limit).
+ *
+ * Getting this wrong produces *"Content too large: 4 MB (limit
+ * 4 MB)"* — a raw size that rounds under a cap the stored size
+ * cleared. See `packHtmlForStorage` for which figure goes where.
+ */
+function htmlTooLargeMessage(
+  headBytes: number,
+  limitBytes: number,
+  storedBytes?: number,
+): string {
+  const head = `Content too large for Capture page: ${formatBytes(headBytes)}`;
+  const limit = `limit ${formatBytes(limitBytes)}`;
+  if (storedBytes === undefined) return `${head} (${limit}).`;
+  return `${head} (${formatBytes(storedBytes)} compressed; ${limit}).`;
 }
 
 /**
- * Apply the HTML byte-size cap to an `InMemoryCapture` in place.
- * If `capture.html` exceeds the cap, drops the body and sets
- * `htmlError` to the user-facing "Content too large for Capture
- * page: …" message plus the capture-directly hint.
- * Mutates `capture`. Idempotent — once `html === ''` and `htmlError`
- * is set, a re-run is a no-op.
+ * Compress a fresh HTML body for storage, or reject it as too large.
+ * Returns the value to store, or an `error` message.
  *
- * Called at every storage boundary that takes a fresh
- * `InMemoryCapture` (capture-page open, upload session init).
- * The `updateArtifact` html branch runs its own check against the
- * incoming edit value before mutating.
+ * Two gates, cheapest first:
+ *   - raw size against `htmlRawCapBytes`, before paying for a gzip
+ *     of something we're going to refuse anyway;
+ *   - stored size (post-`packText`) against `htmlStoredCapBytes` —
+ *     the figure that actually competes for the session budget.
  */
-function applyHtmlSizeCap(capture: InMemoryCapture): void {
-  if (!capture.html) return;
-  const bytes = utf8ByteLength(capture.html);
-  if (bytes <= htmlSizeCapBytes) return;
-  capture.html = '';
-  capture.htmlError = `${htmlTooLargeMessage(bytes)}\n${CAPTURE_DIRECTLY_HINT}`;
+async function packHtmlForStorage(
+  html: string,
+): Promise<{ value: MaybePackedText; error?: undefined } | { error: string }> {
+  const rawBytes = utf8ByteLength(html);
+  if (rawBytes > htmlRawCapBytes) {
+    return { error: htmlTooLargeMessage(rawBytes, htmlRawCapBytes) };
+  }
+  const value = await packText(html, rawBytes);
+  const storedBytes = storedLength(value);
+  if (storedBytes > htmlStoredCapBytes) {
+    // Which figures to print. `rawBytes` (source UTF-8) and
+    // `storedBytes` (JSON-stringified stored cost) are different
+    // measures, and only the latter was compared against the cap.
+    //
+    // Compression is a real win here → lead with the raw size the
+    // user recognizes and let the clause carry the measured one.
+    // "18 MB (5.2 MB compressed; limit 4 MB)" explains itself.
+    //
+    // Otherwise lead with the measured figure. Leading with raw
+    // would print "4 MB (limit 4 MB)" for a body whose JSON form —
+    // HTML is dense with attribute quotes, each costing an escape —
+    // crept a percent or two over a cap the raw size rounds under.
+    //
+    // The guard is `storedBytes < rawBytes`, not `isPackedText`
+    // alone: `packText` compares stored-against-stored, so an
+    // escape-inflated body can pack as a genuine saving while still
+    // stringifying larger than its own source. That case reads as
+    // "110 KB (112 KB compressed)" and looks broken, so it takes
+    // the single-figure branch too.
+    const packedWins = isPackedText(value) && storedBytes < rawBytes;
+    return {
+      error: packedWins
+        ? htmlTooLargeMessage(rawBytes, htmlStoredCapBytes, storedBytes)
+        : htmlTooLargeMessage(storedBytes, htmlStoredCapBytes),
+    };
+  }
+  return { value };
+}
+
+/**
+ * Pack an `InMemoryCapture`'s HTML for storage in place, or drop it
+ * when it's over a cap — setting `htmlError` to the user-facing
+ * "Content too large for Capture page: …" message plus the
+ * capture-directly hint.
+ *
+ * Mutates `capture`. Idempotent: a re-run sees either an already-
+ * packed body (skipped — only a plain string needs packing) or the
+ * `html === ''` + `htmlError` rejection state.
+ *
+ * Called from `openCapturePageWithSession`, the one storage boundary
+ * that takes an `InMemoryCapture` carrying scraped HTML. (The upload
+ * session builds its own capture with `html: ''` — there's no page
+ * to scrape — so it has nothing to pack.) The `updateArtifact` html
+ * branch runs `packHtmlForStorage` itself against the incoming edit
+ * value before mutating.
+ */
+async function packCaptureHtml(capture: InMemoryCapture): Promise<void> {
+  if (typeof capture.html !== 'string' || capture.html === '') return;
+  const result = await packHtmlForStorage(capture.html);
+  if (result.error !== undefined) {
+    capture.html = '';
+    capture.htmlError = `${result.error}\n${CAPTURE_DIRECTLY_HINT}`;
+    return;
+  }
+  capture.html = result.value;
 }
 
 /**
@@ -140,8 +246,11 @@ function captureBreakdown(capture: InMemoryCapture): QuotaBreakdownPart[] {
       bytes: JSON.stringify(capture.screenshotDataUrl).length,
     });
   }
-  if (capture.html) {
-    parts.push({ label: 'HTML', bytes: JSON.stringify(capture.html).length });
+  if (!isEmptyText(capture.html)) {
+    // `storedLength`, so a packed body is charged what it actually
+    // costs rather than what it would have cost plain — otherwise
+    // the breakdown wouldn't add up to the total it sits beside.
+    parts.push({ label: 'HTML', bytes: storedLength(capture.html) });
   }
   // `selections` is undefined when no selection was captured. Even
   // when present, all three bodies can be empty strings (e.g. a
@@ -567,10 +676,11 @@ async function openCapturePageWithSession(
   // `docs/capture-page.md` "Restore last capture".
   await clearLastCapture();
 
-  // Drop over-cap HTML before it can blow the session-storage quota.
-  // The Capture page's existing `htmlError` path takes over from here
+  // Compress the HTML — or drop it, if it's over-cap even
+  // compressed — before it can blow the session-storage quota. The
+  // Capture page's existing `htmlError` path takes over from a drop
   // (Save HTML row greyed-out with an error icon and the message).
-  applyHtmlSizeCap(data);
+  await packCaptureHtml(data);
 
   // Build the prospective session up-front so the pre-flight quota
   // check (and the per-tab `set` below) operate on the same value.
@@ -1335,17 +1445,28 @@ export async function ensureSelectionDownloaded(
  * surrounding session bookkeeping stay untouched.
  */
 interface EditableArtifactSpec {
-  /** Write the edited body into the right slot on the session. */
-  write: (session: DetailsSession, value: string) => void;
+  /** Write the edited body into the right slot on the session.
+   *  `value` arrives storage-ready — for HTML that means already
+   *  run through `packHtmlForStorage`. */
+  write: (session: DetailsSession, value: MaybePackedText) => void;
   /** Drop the matching `session.downloads` entry so the next
    *  materialization re-downloads with the edited body. */
   dropDownload: (session: DetailsSession) => void;
 }
 
+/** Selection bodies are never packed — only page HTML gets large
+ *  enough to be worth compressing — so their `write` can insist on
+ *  a plain string rather than widening `selections` to hold either
+ *  form. A throw here means a caller broke that invariant. */
+function requirePlainText(v: MaybePackedText): string {
+  if (typeof v !== 'string') throw new Error('Expected an uncompressed body');
+  return v;
+}
+
 function selectionEditableSpec(format: SelectionFormat): EditableArtifactSpec {
   return {
     write: (s, v) => {
-      if (s.capture.selections) s.capture.selections[format] = v;
+      if (s.capture.selections) s.capture.selections[format] = requirePlainText(v);
       s.selectionEdited = { ...(s.selectionEdited ?? {}), [format]: true };
       // Bump the per-format revision so a subsequent save can tell
       // the body has changed since the last `recordDetailedCapture`
@@ -1431,7 +1552,7 @@ const EDIT_GUARD_ERROR: Record<EditableArtifactKind, 'htmlError' | 'selectionErr
 function applyArtifactEdit(
   session: DetailsSession,
   kind: EditableArtifactKind,
-  value: string,
+  value: MaybePackedText,
 ): void {
   // Image-flow sessions never scrape page HTML, so a stray
   // `updateArtifact { kind: 'html' }` would otherwise quietly seed
@@ -1524,9 +1645,41 @@ export function installDetailsMessageHandlers(): void {
         const capturePageDefaults = session.capture.useImageFlowDefaults
           ? imageFlowDefaults(userDefaults)
           : userDefaults;
+        // The page mirrors the HTML body into `captured.html` for the
+        // Edit dialog, Copy, Save-as and the size pill — all of which
+        // want plain text — so compression stops at this boundary.
+        // A page holding a few MB in a JS string is unremarkable;
+        // it's *storage* that's scarce, and the packed copy stays in
+        // the session record either way.
+        //
+        // A decompression failure shouldn't cost the user the whole
+        // capture, so it degrades to the same `htmlError` path a
+        // failed scrape uses: Save HTML greyed out and explained,
+        // image / URL / prompt / selection untouched.
+        //
+        // Recorded *on the capture* and persisted, not just placed in
+        // this response. Every other "HTML is unusable" state lives
+        // on the session, and `ensureHtmlDownloaded`'s precondition
+        // reads `capture.htmlError` — leave it unset and a stale page
+        // message could still reach `downloadHtml`, where the same
+        // decode would fail again and surface a raw `atob` error
+        // instead of the friendly row message.
+        let html = '';
+        try {
+          html = await unpackText(session.capture.html);
+        } catch (err) {
+          // Handled: surfaced to the user on the Save HTML row.
+          console.info('[SeeWhatISee] HTML decompress failed:', err);
+          session.capture.html = '';
+          // Phrased to read correctly after the page's
+          // "Unable to capture HTML contents: " prefix.
+          session.capture.htmlError =
+            `the stored copy could not be decompressed.\n${CAPTURE_DIRECTLY_HINT}`;
+          await saveDetailsSession(tabId, session);
+        }
         sendResponse({
           screenshotDataUrl: session.capture.screenshotDataUrl,
-          html: session.capture.html,
+          html,
           selections: session.capture.selections,
           url: session.capture.url,
           title: session.capture.title,
@@ -1594,21 +1747,24 @@ export function installDetailsMessageHandlers(): void {
       void (async () => {
         try {
           const session = await requireDetailsSession(tabId);
-          // Refuse an HTML edit-save that would exceed the cap up-
-          // front. Without this, the bytes would land on the in-
-          // memory capture and the next `chrome.storage.session.set`
-          // would either succeed (silently consuming most of the
-          // session quota) or fail with a generic "values were not
-          // stored." We only check the HTML kind here — selection
-          // edit-saves stay uncapped in this version.
+          // Compress an HTML edit-save, and refuse it up-front if
+          // it's over-cap even compressed. Without this, the bytes
+          // would land on the in-memory capture and the next
+          // `chrome.storage.session.set` would either succeed
+          // (silently consuming most of the session quota) or fail
+          // with a generic "values were not stored." We only handle
+          // the HTML kind here — selection edit-saves stay both
+          // uncapped and uncompressed in this version.
+          let value: MaybePackedText = msg.value;
           if (msg.kind === 'html') {
-            const bytes = utf8ByteLength(msg.value);
-            if (bytes > htmlSizeCapBytes) {
-              sendResponse({ error: htmlTooLargeMessage(bytes) });
+            const packed = await packHtmlForStorage(msg.value);
+            if (packed.error !== undefined) {
+              sendResponse({ error: packed.error });
               return;
             }
+            value = packed.value;
           }
-          applyArtifactEdit(session, msg.kind, msg.value);
+          applyArtifactEdit(session, msg.kind, value);
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });
         } catch (err) {

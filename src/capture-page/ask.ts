@@ -40,6 +40,34 @@
 
 import type { AskProviderId } from '../ask/providers.js';
 import { excludedSuffix } from '../url-helpers.js';
+import { formatBytes } from './pills.js';
+
+/**
+ * Cap on the total *uncompressed* text one Ask may carry.
+ *
+ * Ask stages a second copy of every attachment in its own
+ * `chrome.storage.session` record, and — unlike the Capture-page
+ * session — that copy is not gzipped. So a big HTML body is charged
+ * to the shared 10 MiB budget twice at full size, and the SW's quota
+ * pre-flight refuses the send.
+ *
+ * That refusal is a poor place to find out: it lands after the user
+ * has written a prompt and clicked. Since HTML is stored compressed,
+ * a page can now clear the Capture-page cap by a wide margin and
+ * still be hopeless as an Ask attachment — so this guard catches it
+ * up-front, in the same voice as the destination guards below.
+ *
+ * 2 MiB is well clear of anything a chat composer handles gracefully;
+ * pasting more than that into a web form isn't useful anyway. The
+ * SW's quota check remains the backstop for whatever slips past.
+ */
+const ASK_TEXT_BYTES_CAP = 2 * 1024 * 1024;
+
+/** UTF-8 byte length, matching the figure the size pills already
+ *  show the user for these same bodies. */
+function textBytes(s: string): number {
+  return new Blob([s]).size;
+}
 
 // `SelectionFormat` and `EditableArtifactKind` are inlined here for
 // the same reason capture-page.ts inlines them: keeping the page's
@@ -918,6 +946,7 @@ async function runAskDefault(closeAfter: boolean): Promise<void> {
       currentDefaultDisplayName,
     )
   ) return;
+  if (!checkAskTextSize()) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAiDefault', payload }, closeAfter);
@@ -939,6 +968,7 @@ async function runAskFor(
 ): Promise<void> {
   if (!checkDestinationAcceptsCheckedBoxes(acceptedKinds, displayName)) return;
   if (!checkDestinationAttachmentCount(maxAttachmentCount, displayName)) return;
+  if (!checkAskTextSize()) return;
   const payload = buildAskPayload();
   if (!payload) return;
   await runAskWithMessage({ action: 'askAi', destination, payload }, closeAfter);
@@ -1036,6 +1066,44 @@ function checkDestinationAttachmentCount(
   ctx.setStatusMessage(
     `${name} accepts at most ${max} attachment${max === 1 ? '' : 's'} `
       + `per turn; you have ${count}. Uncheck a Save row.`,
+    'error',
+  );
+  return false;
+}
+
+/**
+ * Pre-send size guard: refuse when the checked text rows add up to
+ * more than `ASK_TEXT_BYTES_CAP`.
+ *
+ * Sums the same rows `buildAskAttachments` would actually send, so
+ * the figure quoted matches what would have gone over the wire — an
+ * unchecked or empty row can't push the total over.
+ *
+ * Names the offending rows and the alternative (Capture writes the
+ * file to disk, which has no such limit and is what the user
+ * probably wants for a body this size).
+ */
+function checkAskTextSize(): boolean {
+  const parts: { label: string; bytes: number }[] = [];
+  if (ctx.htmlBox.checked && !ctx.htmlBox.disabled && ctx.captured.html) {
+    parts.push({ label: 'Save HTML', bytes: textBytes(ctx.captured.html) });
+  }
+  const fmt = ctx.selectedSelectionFormat();
+  if (fmt) {
+    const body = ctx.captured[ctx.selectionWireKind[fmt]];
+    if (body && body.trim().length > 0) {
+      parts.push({ label: 'Save selection', bytes: textBytes(body) });
+    }
+  }
+  const total = parts.reduce((sum, p) => sum + p.bytes, 0);
+  if (total <= ASK_TEXT_BYTES_CAP) return true;
+  const list = parts.length === 1
+    ? `${parts[0]!.label} is ${formatBytes(parts[0]!.bytes)}`
+    : `${parts.map((p) => p.label).join(' + ')} are ${formatBytes(total)}`;
+  ctx.setStatusMessage(
+    `Ask can carry at most ${formatBytes(ASK_TEXT_BYTES_CAP)} of text; `
+      + `${list}. Uncheck ${parts.length === 1 ? 'it' : 'one'}, or use `
+      + `Capture to save the file instead.`,
     'error',
   );
   return false;
