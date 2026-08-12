@@ -1,0 +1,567 @@
+<!doctype html>
+<!--
+  Mouse-wheel / trackpad-pinch zoom lab — a manual test page. Open it
+  directly (file:// works; it is fully self-contained, no network).
+
+  Why it exists: the Capture page's Ctrl+wheel zoom has to feel right
+  on hardware that reports wildly different wheel signals — a mouse
+  detent, a Chromebook trackpad pinch, a high-resolution free-spin
+  wheel. This page shows the raw `wheel` events a device produces and
+  runs candidate zoom heuristics over them side by side, so a change
+  can be tuned on real hardware instead of guessed at.
+
+  What it shows:
+    - Every `wheel` event: deltaMode, deltaX/Y, wheelDeltaY, modifier
+      state, whether Ctrl was physically held or synthesized by the
+      browser for a pinch, and the inter-event timing.
+    - Gestures, grouped by idle gap, with the per-event delta
+      distribution — the numbers you actually tune constants against.
+    - Three engines fed the same event stream, each with live
+      parameters and its own preview: the original discretized
+      ladder, the continuous exponential mapping that shipped, and a
+      carry-remainder accumulator that was considered and dropped.
+
+  The shipping behaviour is engine B (continuous), whose defaults here
+  match the constants in `src/capture-page/zoom.ts`. Engines A and C
+  are kept for comparison when re-tuning on new hardware.
+
+  See "Wheel + keyboard zoom + middle-click pan" in
+  docs/capture-page.md for the design this validated.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wheel / pinch zoom lab</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c2027; --panel2: #232833; --line: #333a47;
+    --fg: #e6e9ef; --dim: #9aa4b5; --accent: #6fb3ff; --in: #7ddc8a; --out: #ff8f7a;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-size: 13px; }
+  h1 { font-size: 15px; margin: 0; }
+  h2 { font-size: 12px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); }
+  header { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+  header .hint { color: var(--dim); }
+  .wrap { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(420px, 1fr); gap: 12px; padding: 12px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  /* ── pad ── */
+  #pad {
+    height: 260px; border: 1px dashed #48506244; border-radius: 8px; background: var(--panel2);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    touch-action: none; user-select: none; cursor: crosshair; position: relative;
+  }
+  #pad.live { border-color: var(--accent); }
+  #padHint { position: absolute; top: 8px; left: 10px; color: var(--dim); pointer-events: none; }
+  #padImg { transform-origin: center center; will-change: transform; }
+  /* ── engines ── */
+  .engine { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: var(--panel2); }
+  .engine header { padding: 0; border: 0; margin-bottom: 6px; gap: 8px; }
+  .engine .name { font-weight: 600; }
+  .engine .readout { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--dim); }
+  .engine .readout b { color: var(--fg); }
+  .params { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .params label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
+  input[type=number], input[type=text] {
+    background: #10131a; color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+    padding: 2px 4px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  input[type=number] { width: 62px; }
+  input#ladder { width: 150px; }
+  button {
+    background: #2a3140; color: var(--fg); border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 9px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #333c4e; }
+  .bar { height: 6px; background: #10131a; border-radius: 3px; overflow: hidden; margin-top: 6px; position: relative; }
+  .bar i { position: absolute; top: 0; bottom: 0; left: 50%; background: var(--accent); }
+  .mini { display: inline-block; vertical-align: middle; width: 46px; height: 30px; overflow: hidden;
+          border: 1px solid var(--line); border-radius: 3px; background: #10131a; position: relative; }
+  .mini i { position: absolute; inset: 0; margin: auto; width: 8px; height: 8px; background: var(--accent); border-radius: 1px; }
+  /* ── tables ── */
+  .tables { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 0 12px 12px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12px; }
+  th, td { text-align: right; padding: 2px 6px; border-bottom: 1px solid #262c37; white-space: nowrap; }
+  th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+  td.l, th.l { text-align: left; }
+  .scroller { max-height: 300px; overflow: auto; }
+  .zin { color: var(--in); } .zout { color: var(--out); }
+  .tag { padding: 0 5px; border-radius: 3px; background: #2a3140; color: var(--dim); }
+  .tag.notch { color: #ffd479; } .tag.pixel { color: #9aa4b5; } .tag.pinch { color: #b39aff; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  code { background: #10131a; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wheel / pinch zoom lab</h1>
+  <span class="hint">Hover the pad and <b>Ctrl/Cmd + wheel</b>, or <b>pinch</b> the trackpad. Every wheel event is fed to all three heuristics at once.</span>
+</header>
+
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <h2>Gesture pad — previews the selected engine</h2>
+      <div id="pad">
+        <span id="padHint">no events yet</span>
+        <svg id="padImg" width="200" height="140" viewBox="0 0 200 140">
+          <defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse">
+            <path d="M20 0H0V20" fill="none" stroke="#3a465c" stroke-width="1"/></pattern></defs>
+          <rect width="200" height="140" fill="#1a1f29"/>
+          <rect width="200" height="140" fill="url(#g)"/>
+          <rect x="0.5" y="0.5" width="199" height="139" fill="none" stroke="#6fb3ff" stroke-width="1"/>
+          <circle cx="100" cy="70" r="24" fill="none" stroke="#7ddc8a" stroke-width="2"/>
+          <text x="100" y="75" text-anchor="middle" fill="#e6e9ef" font-size="14" font-family="system-ui">zoom me</text>
+        </svg>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <label>Preview engine
+          <select id="previewEngine">
+            <option value="A">A — original</option>
+            <option value="B" selected>B — continuous (current)</option>
+            <option value="C">C — carry accumulator</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="logPlain"> log plain (non-ctrl) wheel too</label>
+        <span id="devInfo" class="hint" style="color:var(--dim)"></span>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2>Shared classification</h2>
+      <div class="params">
+        <label title="How an event is decided to be a trackpad pinch (which gets the pinch gain)">
+          pinch test
+          <select id="pinchTest">
+            <option value="mag">magnitude only — |Δy| &lt; notch min</option>
+            <option value="key" selected>synthesized ctrl — no physical Ctrl held</option>
+            <option value="both">both — synthesized AND small</option>
+          </select></label>
+        <label title="deltaMode!=0, or |deltaY| >= this → treated as one discrete mouse notch">
+          notch |deltaY| ≥ <input type="number" id="notchMin" value="40" step="1"></label>
+        <span class="hint" id="keyState" style="color:var(--dim)">physical Ctrl: up</span>
+        <label title="Zoom ladder used by the stepping engines">
+          ladder <input type="text" id="ladder" value="1,2,4,8"></label>
+        <label title="Gesture grouping only — events further apart than this start a new gesture row">
+          gesture gap (ms) <input type="number" id="gestureGap" value="250" step="10"></label>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <!-- Engine A: what ships today -->
+    <div class="engine" id="engA">
+      <header><span class="name" title="Approximates the replaced heuristic: same accumulator, notch shortcut, and resets, but its ladder has no 'fit' rung and no fit-to-1x skip, so step counts can differ by one at the bottom">A — original heuristic (discretized ladder, replaced)</span>
+        <span class="readout"><span class="mini"><i></i></span> <b class="scale">1.00×</b> · steps <b class="steps">0</b> · accum <b class="accum">0</b></span></header>
+      <div class="params">
+        <label>threshold <input type="number" id="A_thresh" value="100" step="5"></label>
+        <label>idle reset (ms) <input type="number" id="A_idle" value="200" step="10"></label>
+        <label><input type="checkbox" id="A_notch" checked> notch shortcut</label>
+        <label><input type="checkbox" id="A_dirReset" checked> reset on direction change</label>
+        <label><input type="checkbox" id="A_zeroOnStep" checked> zero accum on step</label>
+      </div>
+      <div class="bar"><i></i></div>
+    </div>
+
+    <!-- Engine B: continuous exponential, no ladder -->
+    <div class="engine" id="engB">
+      <header><span class="name">B — continuous exponential (current) — scale = e<sup>−kΔ</sup></span>
+        <span class="readout"><span class="mini"><i></i></span> <b class="scale">1.00×</b> · log₂ <b class="steps">0.00</b></span></header>
+      <div class="params">
+        <label title="Log-scale units per px of deltaY. 0.0025 → a 100px notch = 1.28x. Ships as WHEEL_ZOOM_K in src/capture-page/zoom.ts">
+          k <input type="number" id="B_k" value="0.0025" step="0.0005"></label>
+        <label title="Multiplier on k for pinch-classified events. k * gain ships as PINCH_ZOOM_K (0.0025 * 8 = 0.02)">
+          pinch gain <input type="number" id="B_pinchGain" value="8" step="0.5"></label>
+        <label title="Ships as ZOOM_MIN">min <input type="number" id="B_min" value="0.125" step="0.125"></label>
+        <label title="Ships as ZOOM_MAX">max <input type="number" id="B_max" value="8" step="1"></label>
+      </div>
+      <div class="bar"><i></i></div>
+    </div>
+
+    <!-- Engine C: signed accumulator with carry-over -->
+    <div class="engine" id="engC">
+      <header><span class="name">C — signed accumulator, carry remainder (not shipped)</span>
+        <span class="readout"><span class="mini"><i></i></span> <b class="scale">1.00×</b> · steps <b class="steps">0</b> · accum <b class="accum">0</b></span></header>
+      <div class="params">
+        <label title="accumulated |deltaY| per zoom step">
+          threshold <input type="number" id="C_thresh" value="100" step="5"></label>
+        <label title="0 = never reset on idle (recommended); otherwise ms">
+          idle reset (ms) <input type="number" id="C_idle" value="0" step="50"></label>
+        <label title="a notch event jumps straight to a step, discarding remainder">
+          <input type="checkbox" id="C_notch"> notch shortcut</label>
+        <label><input type="checkbox" id="C_dirReset" checked> clear accum on direction change</label>
+        <label title="multiply deltaY of trackpad-class events">
+          pinch gain <input type="number" id="C_pinchGain" value="8" step="0.5"></label>
+        <label title="max zoom steps a single event may emit">
+          max steps/event <input type="number" id="C_maxPer" value="1" step="1"></label>
+      </div>
+      <div class="bar"><i></i></div>
+    </div>
+
+    <div class="toolbar">
+      <button id="reset">Reset engines</button>
+      <button id="clear">Clear log</button>
+      <button id="copy">Copy data (JSON)</button>
+      <button id="download">Download JSON</button>
+      <span id="copied" style="color:var(--in);display:none">copied</span>
+    </div>
+  </div>
+</div>
+
+<div class="tables">
+  <div class="panel">
+    <h2>Gestures (grouped by idle gap) — newest first</h2>
+    <div class="scroller"><table id="gestTable">
+      <thead><tr>
+        <th class="l">#</th><th class="l">kind</th><th>events</th><th>ms</th><th>Hz</th>
+        <th>Σ|Δy|</th><th>min</th><th>med</th><th>max</th>
+        <th>A steps</th><th>B log₂</th><th>C steps</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+  </div>
+
+  <div class="panel">
+    <h2>Raw wheel events — newest first (last 400)</h2>
+    <div class="scroller"><table id="evTable">
+      <thead><tr>
+        <th class="l">t (ms)</th><th>Δt</th><th class="l">class</th><th>mode</th>
+        <th>deltaY</th><th>deltaX</th><th>wheelDeltaY</th><th class="l">mods</th><th class="l">key</th>
+        <th class="l">A</th><th class="l">B</th><th class="l">C</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const num = (id) => parseFloat($('#' + id).value);
+const chk = (id) => $('#' + id).checked;
+
+// ── zoom ladder ───────────────────────────────────────────────────
+let ladder = [1, 2, 4, 8];
+function parseLadder() {
+  const v = $('#ladder').value.split(',').map(s => parseFloat(s.trim())).filter(n => n > 0);
+  ladder = v.length ? v.sort((a, b) => a - b) : [1, 2, 4, 8];
+}
+$('#ladder').addEventListener('change', () => { parseLadder(); resetEngines(); });
+parseLadder();
+
+// Normalize line / page deltas to pixels, mirroring `wheelDeltaPixels`
+// in src/capture-page/zoom.ts. Without this the lab would be 40x off
+// from the shipping code on line-mode devices — exactly the hardware
+// class this page exists to characterize.
+function deltaPixels(e) {
+  if (e.deltaMode === 1) return e.deltaY * 40;    // DOM_DELTA_LINE
+  if (e.deltaMode === 2) return e.deltaY * 200;   // DOM_DELTA_PAGE
+  return e.deltaY;
+}
+
+// ── physical modifier tracking ────────────────────────────────────
+// Chrome synthesizes a trackpad pinch as a wheel event with
+// `ctrlKey: true` even though no Ctrl key is down. Tracking the real
+// key state lets us tell a genuine pinch from Ctrl+wheel on any
+// device — which a |deltaY| threshold cannot do (a high-resolution
+// mouse wheel also emits small fractional deltas).
+//
+// Blur clears the state: if the user alt-tabs with Ctrl held, our
+// keyup never arrives and we'd otherwise stay stuck "down".
+let physCtrl = false, physMeta = false;
+function syncKeys(e) {
+  physCtrl = e.ctrlKey; physMeta = e.metaKey;
+  $('#keyState').textContent = 'physical Ctrl: ' + (physCtrl || physMeta ? 'DOWN' : 'up');
+}
+addEventListener('keydown', syncKeys, true);
+addEventListener('keyup', syncKeys, true);
+addEventListener('blur', () => {
+  physCtrl = physMeta = false;
+  $('#keyState').textContent = 'physical Ctrl: up';
+});
+
+// ── classification (shared by all engines) ────────────────────────
+// `magClass` mirrors the extension's current rule: a line/page-mode
+// event, or a pixel event with a large |deltaY|, is one complete
+// mouse-wheel notch. Everything else looks like a trackpad sample.
+// The `pinch test` selector decides which signal actually promotes an
+// event to 'pinch' (the class the pinch gain applies to).
+function classify(e) {
+  const mag = e.deltaMode !== 0 ? 'notch'
+    : Math.abs(e.deltaY) >= num('notchMin') ? 'pixel-notch' : 'pinch';
+  const mode = $('#pinchTest').value;
+  if (mode === 'mag') return mag;
+  // Ctrl/Cmd reported by the event but not held on the keyboard →
+  // the browser fabricated it for a pinch gesture.
+  const synth = (e.ctrlKey && !physCtrl) || (e.metaKey && !physMeta);
+  if (mode === 'both') return synth && mag === 'pinch' ? 'pinch' : mag;
+  // 'key': trust the key state alone. A small-delta event with Ctrl
+  // genuinely held is wheel-class, so it never gets the pinch gain.
+  if (synth) return 'pinch';
+  return mag === 'pinch' ? 'pixel-notch' : mag;
+}
+const isNotch = (c) => c === 'notch' || c === 'pixel-notch';
+
+// ── engines ───────────────────────────────────────────────────────
+// Each engine consumes the same wheel stream and reports:
+//   { steps, scale, accum, note }  (steps = zoom steps emitted now)
+
+const A = { idx: 0, accum: 0, lastDir: 1, lastTime: 0, steps: 0 };
+const B = { logScale: 0, steps: 0 };            // logScale in log2 units
+const C = { idx: 0, accum: 0, lastDir: 1, lastTime: 0, steps: 0 };
+
+function stepIdx(st, dir, n) {
+  let emitted = 0;
+  for (let i = 0; i < n; i++) {
+    const t = st.idx + dir;
+    if (t < 0 || t >= ladder.length) break;
+    st.idx = t; emitted++;
+  }
+  st.steps += emitted;
+  return emitted;
+}
+
+function runA(e, cls, now) {
+  const dir = e.deltaY < 0 ? 1 : -1;
+  if (chk('A_notch') && isNotch(cls)) {
+    A.accum = 0; A.lastDir = dir; A.lastTime = now;
+    return { steps: stepIdx(A, dir, 1) * dir, note: 'notch' };
+  }
+  const idle = num('A_idle');
+  if ((chk('A_dirReset') && dir !== A.lastDir) || (idle > 0 && now - A.lastTime > idle)) {
+    A.accum = 0; A.lastDir = dir;
+  }
+  A.lastTime = now;
+  A.accum += Math.abs(e.deltaY);
+  if (A.accum < num('A_thresh')) return { steps: 0, note: '' };
+  if (chk('A_zeroOnStep')) A.accum = 0; else A.accum -= num('A_thresh');
+  return { steps: stepIdx(A, dir, 1) * dir, note: 'accum' };
+}
+
+function runB(e, cls) {
+  const gain = cls === 'pinch' ? num('B_pinchGain') : 1;
+  const k = num('B_k');
+  const before = B.logScale;
+  // scale *= exp(-k*Δ)  →  in log2 units: log2 += -k*Δ/ln2
+  B.logScale += (-deltaPixels(e) * gain * k) / Math.LN2;
+  const lo = Math.log2(num('B_min')), hi = Math.log2(num('B_max'));
+  B.logScale = Math.max(lo, Math.min(hi, B.logScale));
+  return { steps: 0, delta: B.logScale - before, note: '' };
+}
+
+function runC(e, cls, now) {
+  const dir = e.deltaY < 0 ? 1 : -1;
+  if (chk('C_notch') && isNotch(cls)) {
+    C.accum = 0; C.lastDir = dir; C.lastTime = now;
+    return { steps: stepIdx(C, dir, 1) * dir, note: 'notch' };
+  }
+  const idle = num('C_idle');
+  if (idle > 0 && now - C.lastTime > idle) C.accum = 0;
+  if (chk('C_dirReset') && dir !== C.lastDir) C.accum = 0;
+  C.lastDir = dir; C.lastTime = now;
+  const gain = cls === 'pinch' ? num('C_pinchGain') : 1;
+  C.accum += -e.deltaY * gain;                    // signed: + = zoom in
+  const T = Math.max(1, num('C_thresh'));
+  const want = Math.trunc(C.accum / T);
+  if (!want) return { steps: 0, note: '' };
+  const n = Math.min(Math.abs(want), Math.max(1, num('C_maxPer')));
+  const d = want > 0 ? 1 : -1;
+  C.accum -= d * n * T;                           // carry the remainder
+  return { steps: stepIdx(C, d, n) * d, note: 'accum' };
+}
+
+function resetEngines() {
+  A.idx = B.steps = C.idx = 0;
+  A.accum = C.accum = A.steps = C.steps = 0;
+  A.lastDir = C.lastDir = 1; A.lastTime = C.lastTime = 0;
+  B.logScale = 0;
+  paint();
+}
+
+// ── UI paint ──────────────────────────────────────────────────────
+const scaleA = () => ladder[A.idx];
+const scaleB = () => Math.pow(2, B.logScale);
+const scaleC = () => ladder[C.idx];
+
+function setEngine(sel, scale, steps, accum, accumFrac) {
+  const el = $(sel);
+  $('.scale', el).textContent = scale.toFixed(2) + '×';
+  $('.steps', el).textContent = steps;
+  const a = $('.accum', el); if (a) a.textContent = Math.round(accum);
+  const bar = $('.bar i', el);
+  const f = Math.max(-1, Math.min(1, accumFrac));
+  bar.style.left = (f < 0 ? 50 + f * 50 : 50) + '%';
+  bar.style.width = Math.abs(f) * 50 + '%';
+  const mini = $('.mini i', el);
+  mini.style.transform = 'scale(' + Math.max(0.05, Math.min(6, scale)) + ')';
+}
+
+function paint() {
+  setEngine('#engA', scaleA(), A.steps, A.accum, A.accum / Math.max(1, num('A_thresh')));
+  const el = $('#engB');
+  $('.scale', el).textContent = scaleB().toFixed(3) + '×';
+  $('.steps', el).textContent = B.logScale.toFixed(2);
+  $('.bar i', el).style.left = '50%';
+  $('.bar i', el).style.width = Math.min(50, Math.abs(B.logScale) * 16) + '%';
+  $('.mini i', el).style.transform = 'scale(' + Math.max(0.05, Math.min(6, scaleB())) + ')';
+  setEngine('#engC', scaleC(), C.steps, C.accum, C.accum / Math.max(1, num('C_thresh')));
+
+  const which = $('#previewEngine').value;
+  const s = which === 'A' ? scaleA() : which === 'B' ? scaleB() : scaleC();
+  $('#padImg').style.transform = 'scale(' + s + ')';
+}
+
+// ── event capture ─────────────────────────────────────────────────
+const events = [];      // raw records
+const gestures = [];     // grouped
+let t0 = null, lastT = 0;
+
+function onWheel(e) {
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (!ctrl && !chk('logPlain')) return;
+  e.preventDefault();                       // stop browser page zoom / scroll
+  const now = e.timeStamp;
+  if (t0 === null) t0 = now;
+  const dt = events.length ? now - lastT : 0;
+  lastT = now;
+
+  const cls = classify(e);
+  let a = { steps: 0, note: '' }, b = { delta: 0 }, c = { steps: 0, note: '' };
+  if (ctrl) {                                // only ctrl-wheel drives zoom
+    a = runA(e, cls, now); b = runB(e, cls); c = runC(e, cls, now);
+  }
+
+  const rec = {
+    t: +(now - t0).toFixed(1), dt: +dt.toFixed(1), cls,
+    mode: e.deltaMode, dy: e.deltaY, dx: e.deltaX,
+    wheelDeltaY: e.wheelDeltaY, ctrl: !!e.ctrlKey, meta: !!e.metaKey,
+    shift: !!e.shiftKey, alt: !!e.altKey,
+    // Was a modifier physically held when the event arrived? ctrl
+    // reported without this means the browser synthesized a pinch.
+    phys: physCtrl || physMeta,
+    a: a.steps, aAccum: Math.round(A.accum), aNote: a.note,
+    b: +(b.delta || 0).toFixed(3), bLog: +B.logScale.toFixed(3),
+    c: c.steps, cAccum: Math.round(C.accum), cNote: c.note,
+  };
+  events.push(rec);
+  addToGesture(rec, ctrl);
+  $('#pad').classList.add('live');
+  $('#padHint').textContent = cls + ' · Δy ' + e.deltaY.toFixed(2) + ' · mode ' + e.deltaMode;
+  paint(); scheduleRender();
+}
+
+function addToGesture(rec, ctrl) {
+  const gap = num('gestureGap');
+  let g = gestures[gestures.length - 1];
+  if (!g || rec.t - g.tEnd > gap) {
+    g = { n: gestures.length + 1, tStart: rec.t, tEnd: rec.t, deltas: [], kinds: {},
+          modes: {}, a: 0, b: 0, c: 0, ctrl };
+    gestures.push(g);
+  }
+  g.tEnd = rec.t;
+  g.deltas.push(Math.abs(rec.dy));
+  g.kinds[rec.cls] = (g.kinds[rec.cls] || 0) + 1;
+  g.modes[rec.mode] = (g.modes[rec.mode] || 0) + 1;
+  g.a += Math.abs(rec.a); g.b += rec.b; g.c += Math.abs(rec.c);
+}
+
+// ── rendering (throttled to animation frames) ─────────────────────
+let pending = false;
+function scheduleRender() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(() => { pending = false; renderTables(); });
+}
+
+const med = (arr) => { const s = [...arr].sort((x, y) => x - y); return s[s.length >> 1] ?? 0; };
+const fmt = (n, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toString();
+
+function renderTables() {
+  const eb = $('#evTable tbody');
+  eb.innerHTML = events.slice(-400).reverse().map(r => {
+    const mods = [r.ctrl && 'ctrl', r.meta && 'meta', r.shift && 'shift', r.alt && 'alt'].filter(Boolean).join('+') || '—';
+    const stepTxt = (n, note) => n === 0 ? '' :
+      `<span class="${n > 0 ? 'zin' : 'zout'}">${n > 0 ? '▲ in' : '▼ out'} ${Math.abs(n) > 1 ? '×' + Math.abs(n) : ''}</span> <span class="tag">${note}</span>`;
+    const clsTag = r.cls === 'pinch' ? 'pinch' : r.cls === 'notch' ? 'notch' : 'pixel';
+    return `<tr>
+      <td class="l">${fmt(r.t)}</td><td>${fmt(r.dt)}</td>
+      <td class="l"><span class="tag ${clsTag}">${r.cls}</span></td><td>${r.mode}</td>
+      <td>${fmt(r.dy, 2)}</td><td>${fmt(r.dx, 2)}</td><td>${r.wheelDeltaY ?? ''}</td>
+      <td class="l">${mods}</td>
+      <td class="l">${
+        !(r.ctrl || r.meta) ? '—'
+        : r.phys ? 'held'
+        : '<span class="tag pinch">synth</span>'
+      }</td>
+      <td class="l">${stepTxt(r.a, r.aNote)}<span class="tag">${r.aAccum}</span></td>
+      <td class="l">${r.b >= 0 ? '+' : ''}${fmt(r.b, 3)} → ${fmt(r.bLog, 2)}</td>
+      <td class="l">${stepTxt(r.c, r.cNote)}<span class="tag">${r.cAccum}</span></td>
+    </tr>`;
+  }).join('');
+
+  const gb = $('#gestTable tbody');
+  gb.innerHTML = gestures.slice(-60).reverse().map(g => {
+    const ms = g.tEnd - g.tStart;
+    const hz = ms > 0 ? (g.deltas.length - 1) / (ms / 1000) : 0;
+    const sum = g.deltas.reduce((a, b) => a + b, 0);
+    const kind = Object.entries(g.kinds).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(' ');
+    return `<tr>
+      <td class="l">${g.n}${g.ctrl ? '' : ' <span class="tag">plain</span>'}</td>
+      <td class="l">${kind}</td><td>${g.deltas.length}</td><td>${fmt(ms)}</td><td>${fmt(hz)}</td>
+      <td>${fmt(sum)}</td><td>${fmt(Math.min(...g.deltas), 2)}</td><td>${fmt(med(g.deltas), 2)}</td>
+      <td>${fmt(Math.max(...g.deltas), 2)}</td>
+      <td>${g.a}</td><td>${fmt(g.b, 2)}</td><td>${g.c}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── wiring ────────────────────────────────────────────────────────
+$('#pad').addEventListener('wheel', onWheel, { passive: false });
+// Safari trackpad pinch arrives as gesture events instead of ctrl+wheel.
+for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+  $('#pad').addEventListener(type, (e) => {
+    e.preventDefault();
+    $('#padHint').textContent = `${type} scale=${e.scale?.toFixed(3)} rotation=${e.rotation}`;
+  });
+}
+$('#previewEngine').addEventListener('change', paint);
+$('#reset').addEventListener('click', resetEngines);
+$('#clear').addEventListener('click', () => {
+  events.length = 0; gestures.length = 0; t0 = null; renderTables();
+});
+function snapshot() {
+  const params = {};
+  document.querySelectorAll('input[id], select[id]').forEach(i => {
+    params[i.id] = i.type === 'checkbox' ? i.checked : i.value;
+  });
+  return JSON.stringify({
+    ua: navigator.userAgent, platform: navigator.platform,
+    dpr: devicePixelRatio, touchPoints: navigator.maxTouchPoints,
+    params, gestures: gestures.map(g => ({
+      n: g.n, ctrl: g.ctrl, kinds: g.kinds, modes: g.modes,
+      events: g.deltas.length, ms: +(g.tEnd - g.tStart).toFixed(1),
+      sum: +g.deltas.reduce((a, b) => a + b, 0).toFixed(2),
+      min: +Math.min(...g.deltas).toFixed(2), med: +med(g.deltas).toFixed(2),
+      max: +Math.max(...g.deltas).toFixed(2), a: g.a, b: +g.b.toFixed(2), c: g.c,
+    })), events,
+  }, null, 1);
+}
+$('#copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(snapshot()); } catch { /* fall through to download */ }
+  $('#copied').style.display = 'inline';
+  setTimeout(() => { $('#copied').style.display = 'none'; }, 1200);
+});
+$('#download').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([snapshot()], { type: 'application/json' }));
+  a.download = 'wheel-zoom-lab.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+document.querySelectorAll('input').forEach(i => i.addEventListener('input', paint));
+$('#devInfo').textContent =
+  `DPR ${devicePixelRatio} · touchPoints ${navigator.maxTouchPoints} · ${navigator.platform}`;
+paint();
+</script>
+</body>
+</html>

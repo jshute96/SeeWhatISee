@@ -432,7 +432,7 @@ fresh edit.
   nudges can't walk the cursor past the visible edge either.
 - In Fit mode the image fits the viewport and visible-pane equals
   the image rect, so clamping is a no-op.
-- In Nx zoom modes the image extends past the box. Without the
+- When zoomed past the viewport the image extends past the box. Without the
   clamp, a drag that strays past the viewport would commit
   endpoints in scrolled-out regions the user can't see; with it,
   shapes pin to the visible edge instead. Same applies to each
@@ -1858,19 +1858,26 @@ programmatic dispatch for).
 
 ## Image fit-to-viewport + Zoom
 
-- Zoom modes: Fit (default), 1×, 2×, 4×, 8×.
-- Switched via:
-  - The **Zoom** button (popover menu with the current mode checked).
-  - **Ctrl + wheel** over the image-box (Cmd + wheel on macOS — the
-    wheel handler accepts both `ctrlKey` and `metaKey`; the Zoom
-    button's `title` is rewritten on init for Mac UAs so the visible
-    hint matches the platform).
+- Zoom is **continuous**: either Fit (default) or any scale factor in
+  `[ZOOM_MIN, ZOOM_MAX]` = `[0.125, 8]`.
+  - Fit is a *mode*, not a scale — it re-fits on every resize /
+    prompt grow, so it can't collapse to the number it currently
+    renders at.
+  - 1×, 2×, 4×, 8× survive only as **menu presets**. They are not the
+    set of reachable zooms.
+- Changed via:
+  - The **Zoom** button (popover menu; a preset is checked only when
+    the current scale is within 0.5% of it, otherwise nothing is).
+  - **Ctrl + wheel** or **trackpad pinch** over the image-box (Cmd +
+    wheel on macOS — the wheel handler accepts both `ctrlKey` and
+    `metaKey`; the Zoom button's `title` is rewritten on init for Mac
+    UAs so the visible hint matches the platform).
   - **Alt+−** zoom out, **Alt++** zoom in (plus a quiet **Alt+=**
     alias that doesn't require Shift).
 - Plain wheel / trackpad swipe falls through to native `.image-box`
-  scroll — important for panning a tall image at 4× / 8× and avoids
-  the trackpad runaway where a continuous swipe with momentum tail
-  flies through every level.
+  scroll — important for panning a tall image while zoomed in.
+- Button label reads `Zoom: Fit`, `Zoom: 2×` at (or within 0.5% of) a
+  preset, else a percentage like `Zoom: 137%`.
 
 ### Modes
 
@@ -1886,8 +1893,9 @@ programmatic dispatch for).
     px more than its content height in `.image-box`'s line box,
     pushing past the JS-set `max-height` and producing a phantom
     vertical scrollbar even when the math fits exactly.
-- **1× / 2× / 4× / 8×** — image renders at `targetCssSize × N` CSS
-  pixels (`max-width / max-height: none`). `.image-box` has
+- **Scale-factor mode** (any N in `[0.125, 8]`, not just the menu
+  presets) — image renders at `targetCssSize × N` CSS pixels
+  (`max-width / max-height: none`). `.image-box` has
   `overflow: auto` so it scrolls when the wrap overflows.
   - `targetCssSize()` returns `naturalSize / window.devicePixelRatio`
     — the source-page CSS dimensions.
@@ -1955,48 +1963,70 @@ programmatic dispatch for).
 
 ### Wheel + keyboard zoom + middle-click pan
 
-- Wheel up / Alt++ zoom in; wheel down / Alt+− zoom out. Steps
-  through `['fit', 1, 2, 4, 8]`, skipping the fit ↔ 1× hop when
-  fit-mode already renders at native pixels (small image / large
-  viewport) so two ticks don't produce one visible change.
+- Wheel up / pinch open / Alt++ zoom in; the reverse zooms out. Zoom
+  is a continuous scale — there is no ladder and no accumulator.
 - **Ctrl/Cmd-required for wheel.**
   - Plain wheel / trackpad gestures pass through to native
     `.image-box` scroll.
   - Ctrl+wheel is swallowed unconditionally — otherwise the browser's
     page-zoom would fire alongside the app zoom.
-- **Discrete-notch shortcut.** Mouse wheels emit one notch per turn:
-  either with `deltaMode` in line/page mode, or pixel mode with a
-  large per-event `|deltaY|` (typically 53 / 100 / 120 — quantized by
-  the browser/OS even when reported as pixels).
-  - Treat an event as a complete notch when `deltaMode !== PIXEL` or
-    `|deltaY| >= 40` (the per-event ceiling for trackpad swipes — they
-    sample at 1–30 pixels even at full speed).
-  - Each such event steps zoom by one, immediately, bypassing the
-    accumulator. Independent of inter-event timing — slow mouse-wheel
-    turns work the same as fast ones.
-  - Reset the accumulator on these so a follow-up trackpad gesture
-    starts from a clean slate.
-- **Trackpad accumulator.** Trackpads emit a continuous stream of
-  small-deltaY events during a swipe (and through the OS-level
-  momentum tail), so a one-event-per-step mapping flies through every
-  level.
-  - For events that *don't* match the notch shortcut above, sum
-    `|deltaY|` and step zoom when it crosses ~100.
-  - Cap at one step per event, regardless of accumulated delta.
-  - Direction change or 200 ms idle gap resets the accumulator so a
-    fresh gesture doesn't carry leftover delta.
-  - Net effect: mouse-wheel users see one step per detent at any
-    speed; trackpad users get deliberate-feeling steps instead of
-    flying through.
+  - Chrome delivers a trackpad pinch *as* a Ctrl+wheel event, so
+    pinch arrives on the same path.
+- **Exponential mapping.** `scale *= exp(-deltaPixels * k)`.
+  - Exponential so the same gesture multiplies zoom by the same
+    factor at every level: 1× → 2× costs exactly what 4× → 8× does.
+  - `WHEEL_ZOOM_K` = 0.0025 → one 100 px detent ≈ 1.28×, ~2.8 detents
+    per doubling.
+  - `PINCH_ZOOM_K` = 0.02 (8× larger). Not a different rule — Chrome
+    reports pinch deltas ~8× smaller per unit of finger travel than a
+    wheel detent. Measured on ChromeOS.
+  - `deltaMode` line / page deltas are normalized to pixels first
+    (`wheelDeltaPixels`) so `k` means one thing. Chrome only ever
+    sends pixels here; the branch is defensive.
+- **Telling pinch from Ctrl+wheel.** Chrome sets `ctrlKey` on a
+  synthesized pinch even though no key is down, so `zoom.ts` tracks
+  the real key state (`physicalZoomModifierDown`, window keydown /
+  keyup in capture phase, cleared on blur).
+  - `isSynthesizedPinch(e)` = event reports Ctrl/Cmd **and** no
+    physical modifier is held.
+  - Magnitude can't substitute: high-resolution scroll wheels emit
+    the same small fractional deltas a pinch does, and handing those
+    the 8× pinch constant would send the zoom flying. The reverse
+    error (a pinch read as a wheel) is merely slow.
+- **Why not the old ladder.** Zoom used to step `['fit',1,2,4,8]` via
+  an accumulator with a notch shortcut, idle reset, and
+  direction-change reset.
+  - Every step was a doubling, so each one overshot.
+  - The accumulator needed device-dependent thresholds to stop a
+    trackpad swipe flying through every level in one gesture, and
+    those thresholds never fit all hardware.
+  - Nothing in the current path is device-dependent except `k`, and a
+    mis-tuned `k` only makes zoom fast or slow — it can't skip levels.
+  - `tests/manual/mouse-wheel-zoom-lab.html` is the interactive
+    harness this was tuned with; it still runs the old heuristic
+    side-by-side for comparison.
 - **Cursor-centered** zoom funnels both wheel and keyboard paths
-  through `cursorCenteredZoomStep(dir, focalX, focalY)`.
+  through `cursorCenteredZoomBy(factor, focalX, focalY)`, which
+  resolves the current scale (measured via `renderedScale()` in Fit
+  mode, read directly otherwise) and defers to
+  `cursorCenteredZoomTo(scale, …)`.
+  - Measuring is what lets a wheel gesture leave Fit smoothly: the
+    first event continues from exactly where Fit had landed.
+  - Alt+± reuses the same path with `KEY_ZOOM_FACTOR`, one detent's
+    worth of zoom, so keyboard and wheel agree on a "step".
   - The image-fraction the focal point was over pre-zoom is preserved
     post-zoom by setting `imageBox.scrollLeft / scrollTop` to
     `boxRect.left + fx * newWidth - focalX` (similarly for Y).
   - Browser clamps to the new content bounds, so a focal near an edge
     scrolls maximally that way.
   - Focal outside the visible image (or unknown — pre-mousemove)
-    falls back to a level change without re-scrolling.
+    falls back to a scale change without re-scrolling.
+  - A scale already parked against a clamp bound is a no-op, so
+    holding the wheel at the limit doesn't keep rewriting scroll.
+  - The lower bound is `min(ZOOM_MIN, current scale)`, not `ZOOM_MIN`
+    flat: Fit is height-bounded, so a squashed window can render
+    below `ZOOM_MIN`, and a flat clamp would make the first zoom-out
+    step jump the image *bigger*.
 - **Keyboard listener** is separate from the page-wide alt-hotkey
   handler because that one early-returns on `shiftKey`, and Alt++
   needs Shift on most layouts. We accept `+`, `=` (no-shift alias),

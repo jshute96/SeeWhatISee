@@ -29,6 +29,19 @@
 //   - Zoom popover dismissal: the button toggles it, and a click
 //     anywhere else closes it — shared with the More… menu through
 //     `menu-popover.ts`.
+//   - Continuous wheel zoom: one 100 px detent multiplies the scale by
+//     exp(0.25) ≈ 1.28 (not a jump to the next old ladder rung), two
+//     detents compound, and reversing returns to the start.
+//   - Pinch vs wheel: the same small deltaY zooms 8× harder when the
+//     browser synthesized the Ctrl (a trackpad pinch) than when Ctrl is
+//     genuinely held (a high-resolution mouse wheel).
+//   - Leaving Fit: the first wheel event continues from the scale Fit
+//     was rendering at, and a zero-delta Ctrl+wheel leaves Fit *intact*
+//     so it still re-fits on resize.
+//   - Alt+± steps by one detent's worth through the same path.
+//   - Button label: Fit / a preset as "2×" / off-preset as a
+//     percentage, clamped at both ends, with the menu's radio checked
+//     only when the scale is actually on a preset.
 //   - Arrow-key fine pan: while a pan drag is held, each arrow moves
 //     `.image-box`'s scroll by one *image* pixel against the arrow
 //     direction (the image moves *with* it), snapping that axis onto
@@ -49,7 +62,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { openDetailsFlow, dragRect } from './details-helpers';
 
-type ZoomMode = 'fit' | 1 | 2 | 4 | 8;
+type ZoomMode = 'fit' | number;
 
 interface SeeStateZoom {
   setZoom: (m: ZoomMode) => void;
@@ -868,6 +881,255 @@ test('zoom menu: the button toggles it and a click elsewhere closes it', async (
   await expect(menu).toBeVisible();
   await capturePage.keyboard.press('Escape');
   await expect(menu).toBeHidden();
+
+  await openerPage.close();
+});
+
+// ── Continuous wheel / pinch zoom ─────────────────────────────────
+//
+// `scale *= exp(-deltaPixels * k)`, with two constants: WHEEL_ZOOM_K
+// (0.0025) for a real wheel and PINCH_ZOOM_K (0.02) for a trackpad
+// pinch, told apart by whether a Ctrl/Cmd key is *physically* down.
+// The pinch case can't be produced by `mouse.wheel` — Playwright has
+// no pinch primitive and a real keypress would make it a wheel — so
+// it's dispatched as the synthetic event Chrome itself sends.
+const WHEEL_ZOOM_K = 0.0025;
+const PINCH_ZOOM_K = 0.02;
+
+async function dispatchSynthesizedPinch(
+  page: Page,
+  deltaY: number,
+): Promise<void> {
+  await page.evaluate((dy) => {
+    document.querySelector('.image-box')!.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: dy,
+        deltaMode: 0,
+        ctrlKey: true,      // Chrome sets this for pinch with no key down
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, deltaY);
+}
+
+test('zoom: Ctrl+wheel scales continuously by exp(-deltaY · k)', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 1);
+
+  const box = await capturePage.locator('.image-box').boundingBox();
+  await capturePage.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+
+  // One 100 px detent up = e^0.25 ≈ 1.284×, not a jump to the next
+  // rung of the old 1 / 2 / 4 / 8 ladder.
+  await capturePage.keyboard.down('Control');
+  // `mouse.wheel` resolves after the event is dispatched and the
+  // handler runs synchronously on dispatch, so the scale is settled by
+  // the time the call returns — `expect.poll` only guards against a
+  // slow round-trip, it isn't papering over an async zoom.
+  await capturePage.mouse.wheel(0, -100);
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(Math.exp(WHEEL_ZOOM_K * 100), 2);
+
+  // A second detent multiplies again — the factor is scale-invariant.
+  await capturePage.mouse.wheel(0, -100);
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(Math.exp(WHEEL_ZOOM_K * 200), 2);
+
+  // Reversing returns to where it started.
+  await capturePage.mouse.wheel(0, 200);
+  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(1, 2);
+  await capturePage.keyboard.up('Control');
+
+  await openerPage.close();
+});
+
+test('zoom: a synthesized pinch uses the larger pinch constant', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 1);
+
+  // Ctrl reported by the event but no key held → pinch: 8× the wheel
+  // sensitivity, so a 10 px delta moves the scale as much as an 80 px
+  // wheel delta would.
+  await dispatchSynthesizedPinch(capturePage, -10);
+  expect(await readDisplayScale(capturePage)).toBeCloseTo(
+    Math.exp(PINCH_ZOOM_K * 10),
+    2,
+  );
+
+  // Same event with Ctrl genuinely held is a wheel, not a pinch — the
+  // magnitude is identical, only the key state differs. A
+  // high-resolution mouse wheel is exactly this case, and must not
+  // get the 8× constant.
+  await applyZoomMode(capturePage, 1);
+  await capturePage.keyboard.down('Control');
+  // A mousemove also re-syncs the physical-modifier flag, so this
+  // covers the same path a real user's hand takes to the wheel.
+  await capturePage.mouse.move(200, 200);
+  await dispatchSynthesizedPinch(capturePage, -10);
+  expect(await readDisplayScale(capturePage)).toBeCloseTo(
+    Math.exp(WHEEL_ZOOM_K * 10),
+    3,
+  );
+  await capturePage.keyboard.up('Control');
+
+  await openerPage.close();
+});
+
+test('zoom: wheel leaves Fit from the scale Fit was rendering at', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 'fit');
+  const fitScale = await readDisplayScale(capturePage);
+
+  const box = await capturePage.locator('.image-box').boundingBox();
+  await capturePage.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.wheel(0, -100);
+  await capturePage.keyboard.up('Control');
+
+  // Continues from Fit's own scale rather than snapping to a nominal
+  // level — the seam the old fit ↔ 1× skip logic existed to paper over.
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(fitScale * Math.exp(WHEEL_ZOOM_K * 100), 2);
+
+  await openerPage.close();
+});
+
+test('zoom: the button label reads presets as ×, off-preset as %', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  const zoomBtn = capturePage.locator('#zoom');
+
+  await expect(zoomBtn).toHaveText('Zoom: Fit');
+  await applyZoomMode(capturePage, 2);
+  await expect(zoomBtn).toHaveText('Zoom: 2×');
+  await applyZoomMode(capturePage, 1.37);
+  await expect(zoomBtn).toHaveText('Zoom: 137%');
+
+  // Clamped at both ends.
+  await applyZoomMode(capturePage, 99);
+  await expect(zoomBtn).toHaveText('Zoom: 8×');
+  await applyZoomMode(capturePage, 0.001);
+  await expect(zoomBtn).toHaveText('Zoom: 13%');
+
+  // A preset is checked only when the scale is actually at it.
+  await applyZoomMode(capturePage, 2);
+  await zoomBtn.click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[data-zoom="2"]'),
+  ).toHaveAttribute('aria-checked', 'true');
+  await capturePage.keyboard.press('Escape');
+  await applyZoomMode(capturePage, 1.37);
+  await zoomBtn.click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[aria-checked="true"]'),
+  ).toHaveCount(0);
+
+  await openerPage.close();
+});
+
+test('zoom: a zero-delta Ctrl+wheel leaves Fit mode intact', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 'fit');
+
+  // Ctrl + horizontal two-finger scroll: deltaX only. Zoom factor is
+  // exp(0) = 1, so nothing should change — and critically, Fit must
+  // not quietly resolve to the equal number, because a frozen number
+  // stops re-fitting on resize with no visible symptom at the time.
+  await capturePage.evaluate(() => {
+    document.querySelector('.image-box')!.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaX: -40,
+        deltaY: 0,
+        deltaMode: 0,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(capturePage.locator('#zoom')).toHaveText('Zoom: Fit');
+
+  // Still sticky: a viewport change re-fits rather than holding a size.
+  const before = await readDisplayScale(capturePage);
+  await capturePage.setViewportSize({ width: 700, height: 500 });
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .not.toBeCloseTo(before, 2);
+  await expect(capturePage.locator('#zoom')).toHaveText('Zoom: Fit');
+
+  await openerPage.close();
+});
+
+test('zoom: Alt+± steps by one detent worth through the same path', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 1);
+
+  // KEY_ZOOM_FACTOR = exp(WHEEL_ZOOM_K · 100) — the same amount one
+  // mouse detent moves, so the two input paths agree on "a step".
+  await capturePage.keyboard.press('Alt+Equal');
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(Math.exp(WHEEL_ZOOM_K * 100), 2);
+
+  await capturePage.keyboard.press('Alt+Minus');
+  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(1, 2);
 
   await openerPage.close();
 });

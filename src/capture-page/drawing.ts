@@ -457,8 +457,9 @@ export function imgRect(): DOMRect {
 // The *visible* image pane, in viewport coords: the intersection of
 // the image's bounding rect and the image-box's content area
 // (`clientWidth/Height` to exclude scrollbars). In Fit mode this
-// equals `imgRect`. In Nx zoom modes the image extends past the
-// box and only a smaller scroll-window is on screen — clamping to
+// equals `imgRect`. When zoomed past the viewport the image extends
+// past the box and only a smaller scroll-window is on screen —
+// clamping to
 // this rect (rather than the raw image) keeps drag previews and
 // polyline segments from drifting into scrolled-out regions the
 // user can't see.
