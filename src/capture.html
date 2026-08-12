@@ -607,6 +607,130 @@
     background: #f5f5f5;
     cursor: pointer;
   }
+  /*
+   * Format & Size dialog — narrower than the editor dialogs since
+   * its content is just a few rows of controls, not a code editor.
+   */
+  dialog.format-size-dialog {
+    width: min(440px, 90vw);
+  }
+  .format-size-dialog .fs-heading {
+    margin: 12px 0 4px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+  }
+  /* First heading sits flush with the title row's bottom margin. */
+  .format-size-dialog .fs-heading:first-of-type {
+    margin-top: 0;
+  }
+  .format-size-dialog .fs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* Pill always hugs the right end of whichever row hosts it (the
+     Image-size row by default, moved into the Crop-size row at
+     runtime when a crop is active). */
+  .format-size-dialog .fs-output-pill {
+    margin-left: auto;
+  }
+  /* Crop-size row: the <p> shouldn't carry its default top/bottom
+     margins now that it lives inside a flex row alongside the
+     pill. */
+  .format-size-dialog .fs-row-crop p {
+    margin: 0;
+  }
+  /*
+   * PNG / JPG split-button group. Visual model matches the
+   * Edit/Preview segmented toggle in the editor dialogs: shared
+   * outer border, inset divider, "selected" face for the active
+   * face. Allows neither to be selected when the source format is
+   * neither (per spec).
+   */
+  .format-size-dialog .fs-format-toggle {
+    display: inline-flex;
+    border: 1px solid #555;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .format-size-dialog .fs-format-btn {
+    padding: 4px 14px;
+    font-size: 13px;
+    border: none;
+    background: #f5f5f5;
+    color: #000;
+    cursor: pointer;
+  }
+  .format-size-dialog .fs-format-btn + .fs-format-btn {
+    border-left: 1px solid #555;
+  }
+  .format-size-dialog .fs-format-btn.selected {
+    background: #555;
+    color: #fff;
+    cursor: default;
+  }
+  .format-size-dialog .fs-orig-size,
+  .format-size-dialog .fs-crop-size {
+    margin: 0 0 4px 0;
+    font-size: 13px;
+    color: #444;
+  }
+  .format-size-dialog .fs-img-w,
+  .format-size-dialog .fs-img-h {
+    width: 80px;
+    padding: 4px 6px;
+    font-size: 13px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    box-sizing: border-box;
+  }
+  .format-size-dialog .fs-x {
+    color: #666;
+  }
+  /*
+   * Lock toggle. `.lock-open` is added when the user unlocks; we
+   * swap the glyph in the controller. Slight border so it reads as
+   * a button rather than a static emoji.
+   */
+  .format-size-dialog .fs-lock-btn {
+    margin-left: 4px;
+    padding: 2px 6px;
+    font-size: 14px;
+    line-height: 1;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+  }
+  .format-size-dialog .fs-lock-btn:hover {
+    background: #eee;
+  }
+  .format-size-dialog .fs-row-slider {
+    margin-top: 8px;
+  }
+  .format-size-dialog .fs-slider {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* ~2/3 of the row's usable width — wider felt unnecessary now
+       that the pill no longer competes for space in this row. */
+    max-width: 200px;
+  }
+  .format-size-dialog .fs-ratio-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #444;
+  }
+  .format-size-dialog .fs-ratio {
+    width: 64px;
+    padding: 4px 6px;
+    font-size: 13px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    box-sizing: border-box;
+  }
   /* "Prompt:" label lives in `.prompt-row` to the left of the
    * textarea. The padding-top alignment trick lives on the
    * `.prompt-row > label` rule inside the .controls block above. */
@@ -1750,6 +1874,14 @@
                 title="Copy screenshot to clipboard">Copy</button>
         <button id="download-image-btn" type="button" class="btn"
                 title="Save screenshot">Save</button>
+        <!--
+          Format & Size: opens a modal that lets the user choose the
+          output format (PNG / JPG) and target dimensions for the
+          per-image Save button + the image-size pill. Choices are
+          sticky for the current capture (reset by `loadData`).
+        -->
+        <button id="format-image-btn" type="button" class="btn"
+                title="Choose output format and size">Format</button>
       </div>
     </div>
     <div class="image-box">
@@ -1855,6 +1987,78 @@
         <button type="button" class="edit-dialog-cancel btn">Cancel</button>
         <button type="button" class="edit-dialog-save btn"
                 title="Commit these changes">Save</button>
+      </div>
+    </dialog>
+  </template>
+
+  <!--
+    Format & Size dialog. Reuses `.edit-dialog` chrome (border /
+    backdrop / dialog-actions row) so the visual weight matches the
+    Edit HTML / Edit Selection dialogs. Specific layout for the
+    format toggle, dim inputs, and slider lives under
+    `.format-size-dialog` rules in capture.html's <style>.
+  -->
+  <template id="format-size-dialog-template">
+    <dialog id="format-size-dialog" class="edit-dialog format-size-dialog"
+            aria-labelledby="format-size-title">
+      <div class="edit-dialog-titlebar">
+        <h2 id="format-size-title" class="edit-dialog-title">Format and Size</h2>
+      </div>
+
+      <h3 class="fs-heading">Format</h3>
+      <div class="fs-format-toggle" role="group"
+           aria-label="Output format">
+        <button type="button" class="fs-format-btn fs-format-png"
+                data-format="png" aria-pressed="false">PNG</button>
+        <button type="button" class="fs-format-btn fs-format-jpg"
+                data-format="jpg" aria-pressed="false">JPG</button>
+      </div>
+
+      <h3 class="fs-heading">Original image size</h3>
+      <p class="fs-orig-size"></p>
+
+      <h3 class="fs-heading">Image size</h3>
+      <!--
+        Output-size pill (just bytes — no dims; the W / H boxes and
+        the optional Crop size row already display dims) lives at
+        the right end of either the Image-size or Crop-size row.
+        `refreshFormatSizeDialog` moves the same node between the
+        two parents based on whether a crop is active, so the pill
+        always reads the geometry the user is actually saving.
+      -->
+      <div class="fs-row fs-row-dims">
+        <input type="number" class="fs-img-w" min="1" step="1"
+               aria-label="Image width">
+        <span class="fs-x">×</span>
+        <input type="number" class="fs-img-h" min="1" step="1"
+               aria-label="Image height">
+        <button type="button" class="fs-lock-btn"
+                aria-pressed="true"
+                title="Lock aspect ratio">🔒</button>
+        <span class="fs-output-pill capture-card-badge"></span>
+      </div>
+
+      <div class="fs-crop-block" hidden>
+        <h3 class="fs-heading">Crop size</h3>
+        <div class="fs-row fs-row-crop">
+          <p class="fs-crop-size"></p>
+        </div>
+      </div>
+
+      <div class="fs-row fs-row-slider">
+        <input type="range" class="fs-slider" min="0" max="1000"
+               value="1000" aria-label="Resize">
+        <label class="fs-ratio-label">
+          Ratio
+          <input type="number" class="fs-ratio" step="0.01" min="0.001"
+                 aria-label="Scale ratio">
+        </label>
+      </div>
+
+      <p class="fs-error dialog-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="fs-cancel btn">Cancel</button>
+        <button type="button" class="fs-save btn">Save</button>
       </div>
     </dialog>
   </template>

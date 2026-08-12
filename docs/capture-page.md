@@ -822,6 +822,84 @@ If the user has any edits *and* is saving the screenshot:
     cached PNG stays the truth for the on-disk file, so the
     filename keeps its `.png` ext.
 
+## Format & Size dialog
+
+A `Format` button in the highlight palette (below `Save`) opens a
+modal that lets the user pick the output format and / or resize
+the saved screenshot. Choices are sticky for the current capture
+and reset by `loadData` on a new screenshot.
+
+### Scope (V1)
+
+The dialog choice is read by:
+
+- The image-size pill (`#image-size-badge`) — shows the bytes /
+  dims that would be saved.
+- The per-image `Save` button — `screenshot.<ext>` follows the
+  chosen format.
+- The per-image `Copy` button — clipboard MIME flips to
+  `image/jpeg` when JPG is selected.
+
+The dialog choice is intentionally **not** read by:
+
+- The main `Capture` button (writes via the SW; SW path always
+  wants natural-PNG bytes).
+- The Copy-filename buttons (read the SW's on-disk artifact).
+- `Ask` (always sends a natural-resolution PNG to providers).
+
+### Layout
+
+- **Format** — heading with the `PNG` / `JPG` split-button below
+  it. Either face can be deselected by clicking it again,
+  restoring the "follow source format" mode.
+- **Output-size pill** — single span (just bytes — no dims, since
+  the W/H boxes and the optional Crop size row already display
+  them). Lives at the right end of the Image-size row by default;
+  `refreshFormatSizeDialog` reparents it into the Crop-size row
+  whenever a crop is active so the pill always reads the bytes of
+  the geometry the user is actually saving. The pill keeps its
+  previous value while a new one is being computed, so dragging
+  the slider doesn't flash a placeholder.
+- **Original image size** — natural source dims, read-only.
+- **Image size** — `[w] × [h]` text boxes plus a 🔒 lock toggle.
+  When locked (default), editing one dim updates the other to
+  preserve the current aspect. When unlocked, dims are
+  independent.
+- **Crop size** — hidden when there's no active crop; otherwise
+  shows post-crop dims at the current image size (this is what
+  actually gets saved).
+- **Slider + Ratio** — log-scaled horizontal slider; ratio number
+  box on the right. Both scale `width` + `height` uniformly,
+  preserving the *current* aspect (so unlocking + stretching
+  fixes the new aspect on subsequent slider drags).
+  - Right end = `max(1.0, current ratio)`. Scaling above 100%
+    via the boxes pushes the right end out so the thumb stays
+    on-scale.
+  - Left end = the ratio at which `min(currentW, currentH) = 16`.
+  - "Ratio" axis is `(W + H) / (origW + origH)` — gives a
+    sensible single number when an unlocked stretch makes W and
+    H scale by different factors.
+
+### Format auto-pick on resize
+
+Resizing forces a re-encode through `<canvas>`, which can only
+emit PNG or JPEG. If the user resizes without picking a format,
+PNG is auto-selected (lossless safe default). No-op once a
+format is set.
+
+### State + plumbing
+
+- `chosenFormat: 'png' | 'jpg' | null` and
+  `chosenSize: {width, height} | null` are module-level state in
+  `capture-page.ts`. `null` means "use source / natural".
+- `formatSizeVersion` bumps on commit and feeds the
+  `updateImageSizeBadge` cache key so the pill re-bakes.
+- `renderHighlightedImage(opts)` is the generalized bake;
+  `renderHighlightedPng()` is now a thin wrapper that picks up
+  the dialog choice. Callers wanting natural-PNG (regardless of
+  the dialog) call `renderHighlightedImage({ format: 'png',
+  frameSize: null })` explicitly.
+
 ## `isEdited` sidecar flag
 
 - Emitted inside `contents` / `selection` artifact objects in

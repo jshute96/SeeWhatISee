@@ -148,6 +148,42 @@ interface DetailsData {
 let editVersion = 0;
 
 /**
+ * Output-format choice from the Format & Size dialog. `null` means
+ * "use the source format" — the same fast-path the bake has always
+ * used (no canvas re-encode when there are no edits). When the user
+ * resizes or picks PNG/JPG explicitly, this drops to the chosen
+ * format and we route through a re-encode.
+ *
+ * Sticky for the lifetime of the current capture; reset by
+ * `loadData` so a fresh screenshot starts from the source format.
+ */
+type OutputFormat = 'png' | 'jpg';
+let chosenFormat: OutputFormat | null = null;
+
+/**
+ * Output dimensions in *natural source pixels* (pre-crop). When set,
+ * the bake renders into a canvas of this size and lets `drawImage`
+ * scale on the way in; an active crop's percent-space rect is
+ * applied within that resized frame. `null` means "use the natural
+ * size of the source image". Sticky like `chosenFormat`.
+ *
+ * The dialog edits this in *output* terms (post-crop), but commits
+ * the equivalent uncropped frame so the rest of the bake continues
+ * to think in natural-frame coordinates and the existing percent-
+ * space crop math (`pctRectToPixels`) keeps working unchanged.
+ */
+let chosenSize: { width: number; height: number } | null = null;
+
+/** Bumps when a chosen format/size commits, so the image-size pill
+ *  cache (keyed in part on `editVersion`) re-bakes — otherwise the
+ *  pill would keep showing the previous bytes. */
+let formatSizeVersion = 0;
+
+/** JPEG quality for re-encodes. 0.92 matches Chromium's default for
+ *  HTMLCanvasElement.toDataURL when the second argument is omitted. */
+const JPEG_QUALITY = 0.92;
+
+/**
  * Set true by `loadData` when the SW returns no session for this
  * tab (direct load of `capture.html`, e.g. an old bookmark, or an
  * SW-opened error tab). When set, the page is showing only the
@@ -437,7 +473,13 @@ function updateImageSizeBadge(): void {
     refreshPillsCompactness();
     return;
   }
-  const key = `${editVersion}|${previewImg.naturalWidth}|${previewImg.naturalHeight}`;
+  // Cache key includes `formatSizeVersion` so the pill re-bakes
+  // when the user commits a new Format & Size choice — without
+  // this, the cached parts (label + bytes) from the previous
+  // format / size linger and the pill misreports.
+  const key =
+    `${editVersion}|${formatSizeVersion}|` +
+    `${previewImg.naturalWidth}|${previewImg.naturalHeight}`;
   if (lastImageBadgeKey === key && !imageSizeBadge.hidden) return;
   lastImageBadgeKey = key;
   // `renderHighlightedPng` short-circuits to `previewImg.src` when
@@ -501,12 +543,16 @@ function savedImageDimensions(): { width: number; height: number } | null {
   const natW = previewImg.naturalWidth;
   const natH = previewImg.naturalHeight;
   if (!natW || !natH) return null;
+  // Resolved frame is the user's chosen output size when set, else
+  // natural; the crop is applied within that frame.
+  const frameW = chosenSize ? chosenSize.width : natW;
+  const frameH = chosenSize ? chosenSize.height : natH;
   const crop = activeCrop();
   if (crop) {
-    const px = pctRectToPixels(crop, natW, natH);
+    const px = pctRectToPixels(crop, frameW, frameH);
     return { width: px.w, height: px.h };
   }
-  return { width: natW, height: natH };
+  return { width: frameW, height: frameH };
 }
 
 /**
@@ -530,6 +576,11 @@ function liveCropDimensions(): { width: number; height: number } | null {
   const natW = previewImg.naturalWidth;
   const natH = previewImg.naturalHeight;
   if (!natW || !natH) return null;
+  // Mirror `savedImageDimensions`: the chosen output size (if any)
+  // is the frame the live drag is laid out in, so the pill stays
+  // consistent with what the eventual bake would produce.
+  const frameW = chosenSize ? chosenSize.width : natW;
+  const frameH = chosenSize ? chosenSize.height : natH;
   // Both branches build a percent-space rect mirroring what would
   // commit on mouseup, then route through `pctRectToPixels` so the
   // live preview uses the same integer derivation as the eventual
@@ -537,8 +588,8 @@ function liveCropDimensions(): { width: number; height: number } | null {
   if (boxDrag && boxDrag.kind === 'crop') {
     const px = pctRectToPixels(
       { x: boxDrag.curX, y: boxDrag.curY, w: boxDrag.curW, h: boxDrag.curH },
-      natW,
-      natH,
+      frameW,
+      frameH,
     );
     return { width: px.w, height: px.h };
   }
@@ -556,7 +607,7 @@ function liveCropDimensions(): { width: number; height: number } | null {
     const y = (Math.min(dragStart.y, dragCurrent.y) / r.height) * 100;
     const w = (Math.abs(dragCurrent.x - dragStart.x) / r.width) * 100;
     const h = (Math.abs(dragCurrent.y - dragStart.y) / r.height) * 100;
-    const px = pctRectToPixels({ x, y, w, h }, natW, natH);
+    const px = pctRectToPixels({ x, y, w, h }, frameW, frameH);
     return { width: px.w, height: px.h };
   }
   return null;
@@ -584,6 +635,436 @@ function formatImageDataUrl(
   const bytes = Math.floor((b64.length * 3) / 4) - padding;
   return { label, bytes };
 }
+
+/**
+ * What format will the per-image Save / Copy buttons emit right now?
+ *
+ *   - User picked PNG / JPG in the Format & Size dialog → that.
+ *   - Bake-able edits exist (red rects, redactions, an active crop)
+ *     → PNG (canvas re-encode is always PNG by default).
+ *   - Otherwise → 'source' (no re-encode; bytes match `previewImg.src`).
+ *
+ * Used both to decide the clipboard MIME (`copyImageToClipboard`)
+ * and to compose the Save filename's extension.
+ */
+function effectiveOutputFormat(): 'png' | 'jpg' | 'source' {
+  if (chosenFormat) return chosenFormat;
+  return hasBakeableEdits() ? 'png' : 'source';
+}
+
+/**
+ * File extension (no leading dot) for the per-image Save button's
+ * default filename. Mirrors `effectiveOutputFormat`: explicit
+ * dialog choice → png/jpg, otherwise inherit the source's MIME
+ * subtype (so a WebP source saves as `screenshot.webp` etc.).
+ * Falls back to `png` when the source URL isn't a recognizable
+ * `data:image/...` (e.g. an empty-string previewImg).
+ */
+function screenshotFilenameExtension(): string {
+  const fmt = effectiveOutputFormat();
+  if (fmt === 'png') return 'png';
+  if (fmt === 'jpg') return 'jpg';
+  // 'source' — read the subtype from the previewImg's data URL.
+  const meta = formatImageDataUrl(previewImg.src);
+  if (!meta) return 'png';
+  // `formatImageDataUrl` already maps 'jpeg' to 'JPG'.
+  return meta.label.toLowerCase();
+}
+
+// ---------------------------------------------------------------------
+// Format & Size dialog
+// ---------------------------------------------------------------------
+//
+// Lazily instantiated on first open. The dialog edits a *pending*
+// state object — { format, width, height, locked } — derived from
+// the committed `chosenFormat` / `chosenSize` (or the natural size
+// when nothing is committed yet). Cancel discards; Save copies the
+// pending state back to the committed state, bumps
+// `formatSizeVersion`, and re-renders the image-size pill.
+//
+// Width / height are kept in *natural-frame* pixels (pre-crop) so
+// the rest of the bake (which thinks in natural-frame coordinates)
+// stays unchanged. The dialog still *displays* the post-crop size
+// in the "Crop size" row so the user sees what bytes they'll
+// actually save.
+
+interface FormatSizeDialogParts {
+  dialog: HTMLDialogElement;
+  pngBtn: HTMLButtonElement;
+  jpgBtn: HTMLButtonElement;
+  outputPill: HTMLSpanElement;
+  origSize: HTMLParagraphElement;
+  imgW: HTMLInputElement;
+  imgH: HTMLInputElement;
+  lockBtn: HTMLButtonElement;
+  // Default home for the pill — Image-size row.
+  dimsRow: HTMLDivElement;
+  cropBlock: HTMLDivElement;
+  // Crop-size row — pill moves here when a crop is active so it
+  // sits next to the dims it actually represents.
+  cropRow: HTMLDivElement;
+  cropSize: HTMLParagraphElement;
+  slider: HTMLInputElement;
+  ratio: HTMLInputElement;
+  cancelBtn: HTMLButtonElement;
+  saveBtn: HTMLButtonElement;
+}
+
+interface FormatSizePending {
+  format: OutputFormat | null;
+  width: number;   // natural-frame width in px
+  height: number;  // natural-frame height in px
+  locked: boolean; // aspect ratio lock
+}
+
+let formatSizeDialogParts: FormatSizeDialogParts | null = null;
+let pendingFormatSize: FormatSizePending | null = null;
+// Original (natural) dimensions captured at dialog-open time. The
+// "Original image size" row reads from these; the slider's left-end
+// "min dim = 16" is derived from min(origW, origH).
+let formatSizeOrigW = 0;
+let formatSizeOrigH = 0;
+// Debounce token for the live "what will the bytes be?" pill recalc.
+let formatSizePillTimer: number | null = null;
+
+function ensureFormatSizeDialog(): FormatSizeDialogParts {
+  if (formatSizeDialogParts) return formatSizeDialogParts;
+  const tpl = document.getElementById(
+    'format-size-dialog-template',
+  ) as HTMLTemplateElement;
+  const frag = tpl.content.cloneNode(true) as DocumentFragment;
+  const dialog = frag.querySelector('.format-size-dialog') as HTMLDialogElement;
+  const parts: FormatSizeDialogParts = {
+    dialog,
+    pngBtn: dialog.querySelector('.fs-format-png') as HTMLButtonElement,
+    jpgBtn: dialog.querySelector('.fs-format-jpg') as HTMLButtonElement,
+    outputPill: dialog.querySelector('.fs-output-pill') as HTMLSpanElement,
+    origSize: dialog.querySelector('.fs-orig-size') as HTMLParagraphElement,
+    imgW: dialog.querySelector('.fs-img-w') as HTMLInputElement,
+    imgH: dialog.querySelector('.fs-img-h') as HTMLInputElement,
+    lockBtn: dialog.querySelector('.fs-lock-btn') as HTMLButtonElement,
+    dimsRow: dialog.querySelector('.fs-row-dims') as HTMLDivElement,
+    cropBlock: dialog.querySelector('.fs-crop-block') as HTMLDivElement,
+    cropRow: dialog.querySelector('.fs-row-crop') as HTMLDivElement,
+    cropSize: dialog.querySelector('.fs-crop-size') as HTMLParagraphElement,
+    slider: dialog.querySelector('.fs-slider') as HTMLInputElement,
+    ratio: dialog.querySelector('.fs-ratio') as HTMLInputElement,
+    cancelBtn: dialog.querySelector('.fs-cancel') as HTMLButtonElement,
+    saveBtn: dialog.querySelector('.fs-save') as HTMLButtonElement,
+  };
+  document.body.appendChild(dialog);
+  bindFormatSizeDialog(parts);
+  formatSizeDialogParts = parts;
+  return parts;
+}
+
+function bindFormatSizeDialog(parts: FormatSizeDialogParts): void {
+  // Format toggle. PNG / JPG are mutually exclusive when one is
+  // selected; clicking the currently-selected face deselects it
+  // (so the user can drop back to "follow source format").
+  const pickFormat = (fmt: OutputFormat) => {
+    if (!pendingFormatSize) return;
+    pendingFormatSize.format = pendingFormatSize.format === fmt ? null : fmt;
+    refreshFormatSizeDialog();
+  };
+  parts.pngBtn.addEventListener('click', () => pickFormat('png'));
+  parts.jpgBtn.addEventListener('click', () => pickFormat('jpg'));
+
+  // Lock toggle: switching the glyph and the aria-pressed state is
+  // entirely cosmetic — dimension-edit handlers branch on the
+  // pending.locked flag.
+  parts.lockBtn.addEventListener('click', () => {
+    if (!pendingFormatSize) return;
+    pendingFormatSize.locked = !pendingFormatSize.locked;
+    refreshFormatSizeDialog();
+  });
+
+  // W / H text boxes. Locked → uniform scale by the current aspect
+  // (which IS the original aspect until the user has unlocked and
+  // stretched). Unlocked → independent edit, the other field is
+  // left as-is.
+  const onWChange = () => {
+    if (!pendingFormatSize) return;
+    const v = clampDim(parts.imgW.valueAsNumber);
+    if (pendingFormatSize.locked) {
+      const aspect = pendingFormatSize.width / pendingFormatSize.height;
+      pendingFormatSize.width = v;
+      pendingFormatSize.height = Math.max(1, Math.round(v / aspect));
+    } else {
+      pendingFormatSize.width = v;
+    }
+    pendingFormatSizeAutoFormat();
+    refreshFormatSizeDialog();
+  };
+  const onHChange = () => {
+    if (!pendingFormatSize) return;
+    const v = clampDim(parts.imgH.valueAsNumber);
+    if (pendingFormatSize.locked) {
+      const aspect = pendingFormatSize.width / pendingFormatSize.height;
+      pendingFormatSize.height = v;
+      pendingFormatSize.width = Math.max(1, Math.round(v * aspect));
+    } else {
+      pendingFormatSize.height = v;
+    }
+    pendingFormatSizeAutoFormat();
+    refreshFormatSizeDialog();
+  };
+  parts.imgW.addEventListener('change', onWChange);
+  parts.imgH.addEventListener('change', onHChange);
+
+  // Slider drag → uniform scale by the current aspect (preserves
+  // whatever aspect the unlocked-stretch may have applied). Logged
+  // by `applyRatio`. `input` (not `change`) so the dialog feels
+  // live as the user drags the thumb.
+  parts.slider.addEventListener('input', () => {
+    if (!pendingFormatSize) return;
+    const r = sliderToRatio(Number(parts.slider.value));
+    applyRatioToPending(r);
+    pendingFormatSizeAutoFormat();
+    refreshFormatSizeDialog({ skipSlider: true });
+  });
+
+  parts.ratio.addEventListener('change', () => {
+    if (!pendingFormatSize) return;
+    const r = parts.ratio.valueAsNumber;
+    if (!Number.isFinite(r) || r <= 0) {
+      refreshFormatSizeDialog();
+      return;
+    }
+    applyRatioToPending(r);
+    pendingFormatSizeAutoFormat();
+    refreshFormatSizeDialog();
+  });
+
+  parts.cancelBtn.addEventListener('click', () => {
+    parts.dialog.close();
+  });
+  parts.saveBtn.addEventListener('click', () => {
+    commitFormatSize();
+    parts.dialog.close();
+  });
+}
+
+function clampDim(v: number): number {
+  if (!Number.isFinite(v) || v < 1) return 1;
+  return Math.round(v);
+}
+
+/**
+ * Per the spec: any resize forces PNG or JPG (we can only re-encode
+ * via canvas, which is one of those two). If the user resized and
+ * hasn't picked a format, default to PNG (lossless). No-op once a
+ * format is set.
+ */
+function pendingFormatSizeAutoFormat(): void {
+  if (!pendingFormatSize) return;
+  if (pendingFormatSize.format !== null) return;
+  if (
+    pendingFormatSize.width !== formatSizeOrigW ||
+    pendingFormatSize.height !== formatSizeOrigH
+  ) {
+    pendingFormatSize.format = 'png';
+  }
+}
+
+/**
+ * The "ratio" axis is sum-of-dimensions / sum-of-original-dimensions.
+ * That gives a sensible single number when the user has unlocked and
+ * stretched (W and H scale by different factors); when locked, it's
+ * equivalent to the per-dim ratio.
+ */
+function ratioFromDims(w: number, h: number): number {
+  return (w + h) / (formatSizeOrigW + formatSizeOrigH);
+}
+
+/** Slider left-end ratio: scale current shape down until the smaller
+ *  dim hits 16. Computed from the *pending* shape so an unlocked-
+ *  stretch updates the floor. */
+function pendingMinRatio(): number {
+  if (!pendingFormatSize) return 1;
+  const w = pendingFormatSize.width;
+  const h = pendingFormatSize.height;
+  const minDim = Math.min(w, h);
+  if (minDim <= 16) return ratioFromDims(w, h);
+  const f = 16 / minDim;
+  return ratioFromDims(w * f, h * f);
+}
+
+/** Slider right-end ratio: max(1.0, current). Makes the slider
+ *  expand to the right whenever the user has scaled up. */
+function pendingMaxRatio(): number {
+  if (!pendingFormatSize) return 1;
+  return Math.max(1, ratioFromDims(pendingFormatSize.width, pendingFormatSize.height));
+}
+
+function sliderToRatio(sliderVal: number): number {
+  const lo = pendingMinRatio();
+  const hi = pendingMaxRatio();
+  if (lo >= hi) return hi;
+  const t = Math.max(0, Math.min(1000, sliderVal)) / 1000;
+  // Logarithmic mapping — linear feels awful when the range
+  // straddles 100× of size variation (e.g. 16-px min on a 1920×1080
+  // capture).
+  return lo * Math.pow(hi / lo, t);
+}
+
+function ratioToSlider(r: number): number {
+  const lo = pendingMinRatio();
+  const hi = pendingMaxRatio();
+  if (lo >= hi) return 1000;
+  const clamped = Math.max(lo, Math.min(hi, r));
+  return Math.round(1000 * (Math.log(clamped / lo) / Math.log(hi / lo)));
+}
+
+/** Scale current pending shape uniformly so its sum-of-dims matches
+ *  the requested ratio. Preserves the current aspect (which equals
+ *  the original aspect when locked). */
+function applyRatioToPending(targetRatio: number): void {
+  if (!pendingFormatSize) return;
+  const cur = ratioFromDims(pendingFormatSize.width, pendingFormatSize.height);
+  if (cur <= 0) return;
+  const f = targetRatio / cur;
+  pendingFormatSize.width = Math.max(1, Math.round(pendingFormatSize.width * f));
+  pendingFormatSize.height = Math.max(1, Math.round(pendingFormatSize.height * f));
+}
+
+function openFormatSizeDialog(): void {
+  const natW = previewImg.naturalWidth;
+  const natH = previewImg.naturalHeight;
+  if (!natW || !natH) return; // image hasn't decoded yet
+  formatSizeOrigW = natW;
+  formatSizeOrigH = natH;
+  pendingFormatSize = {
+    format: chosenFormat,
+    width: chosenSize ? chosenSize.width : natW,
+    height: chosenSize ? chosenSize.height : natH,
+    locked: true,
+  };
+  const parts = ensureFormatSizeDialog();
+  refreshFormatSizeDialog();
+  parts.dialog.showModal();
+}
+
+function commitFormatSize(): void {
+  if (!pendingFormatSize) return;
+  chosenFormat = pendingFormatSize.format;
+  // Treat "natural size" as null so the no-resize fast path
+  // (renderHighlightedImage's byte-identity branch) stays available.
+  if (
+    pendingFormatSize.width === formatSizeOrigW &&
+    pendingFormatSize.height === formatSizeOrigH
+  ) {
+    chosenSize = null;
+  } else {
+    chosenSize = {
+      width: pendingFormatSize.width,
+      height: pendingFormatSize.height,
+    };
+  }
+  formatSizeVersion++;
+  // Force the badge to recompute even if the cache key would
+  // otherwise be considered fresh.
+  lastImageBadgeKey = '';
+  updateImageSizeBadge();
+}
+
+/**
+ * Push the pending state into the dialog's controls. The slider
+ * branch can be skipped while the user is dragging it (otherwise
+ * we'd fight the thumb position).
+ */
+function refreshFormatSizeDialog(opts?: { skipSlider?: boolean }): void {
+  const parts = formatSizeDialogParts;
+  const p = pendingFormatSize;
+  if (!parts || !p) return;
+
+  // Format toggle.
+  parts.pngBtn.classList.toggle('selected', p.format === 'png');
+  parts.jpgBtn.classList.toggle('selected', p.format === 'jpg');
+  parts.pngBtn.setAttribute('aria-pressed', p.format === 'png' ? 'true' : 'false');
+  parts.jpgBtn.setAttribute('aria-pressed', p.format === 'jpg' ? 'true' : 'false');
+
+  // Original size + image size + crop size (post-crop dims =
+  // crop% × current frame).
+  parts.origSize.textContent = `${formatSizeOrigW} × ${formatSizeOrigH}`;
+  parts.imgW.value = String(p.width);
+  parts.imgH.value = String(p.height);
+  const crop = activeCrop();
+  if (crop) {
+    const cropPx = pctRectToPixels(crop, p.width, p.height);
+    parts.cropBlock.hidden = false;
+    parts.cropSize.textContent = `${cropPx.w} × ${cropPx.h}`;
+    // Move the pill into the Crop row so it reads as the byte
+    // count for the cropped output. `appendChild` is a no-op when
+    // the pill is already there.
+    if (parts.outputPill.parentElement !== parts.cropRow) {
+      parts.cropRow.appendChild(parts.outputPill);
+    }
+  } else {
+    parts.cropBlock.hidden = true;
+    if (parts.outputPill.parentElement !== parts.dimsRow) {
+      parts.dimsRow.appendChild(parts.outputPill);
+    }
+  }
+
+  // Lock glyph / aria-pressed.
+  parts.lockBtn.textContent = p.locked ? '🔒' : '🔓';
+  parts.lockBtn.setAttribute('aria-pressed', p.locked ? 'true' : 'false');
+  parts.lockBtn.title = p.locked
+    ? 'Aspect ratio locked — click to edit dimensions independently'
+    : 'Aspect ratio unlocked — click to relock';
+
+  // Ratio number + slider position. Always display 3 decimal
+  // places; the input still accepts arbitrary precision.
+  const r = ratioFromDims(p.width, p.height);
+  parts.ratio.value = r.toFixed(3);
+  if (!opts?.skipSlider) {
+    parts.slider.value = String(ratioToSlider(r));
+  }
+
+  // Output pill — debounced re-encode for byte readout. Dimensions
+  // come straight from the pending state so the W×H part is live
+  // even before the bytes resolve.
+  schedulePendingPillRefresh(parts, p);
+}
+
+/**
+ * Re-encode at the pending format/size and write the resulting byte
+ * count into the dialog's output pill. Debounced (~120 ms) so
+ * dragging the slider doesn't block the UI on a JPEG
+ * canvas.toDataURL. The pill keeps its previous value while the
+ * debounce is pending — no placeholder flash mid-drag — so the user
+ * sees a stable last-known size until the new one is ready.
+ *
+ * Dimensions are intentionally omitted: the W / H text boxes and
+ * the optional Crop size row already display the full geometry, so
+ * repeating dims here was just noise.
+ */
+function schedulePendingPillRefresh(
+  parts: FormatSizeDialogParts,
+  p: FormatSizePending,
+): void {
+  if (formatSizePillTimer != null) {
+    clearTimeout(formatSizePillTimer);
+  }
+  formatSizePillTimer = window.setTimeout(() => {
+    formatSizePillTimer = null;
+    try {
+      const dataUrl = renderHighlightedImage({
+        format: p.format ?? 'png',
+        frameSize: { width: p.width, height: p.height },
+      });
+      const meta = formatImageDataUrl(dataUrl);
+      if (meta) {
+        parts.outputPill.textContent = formatBytes(meta.bytes);
+      }
+    } catch (err) {
+      // Dialog-local recovery: the pill's stale value stays put;
+      // we don't need a separate error slot for this preview hiccup.
+      console.warn('[SeeWhatISee] format-size preview failed:', err);
+    }
+  }, 120);
+}
 // `getElementById` returns `HTMLElement | null`. SVG elements are
 // `SVGElement`, which sits on a sibling branch of the DOM type
 // hierarchy — TypeScript won't let us cast directly across the
@@ -599,6 +1080,7 @@ const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
 const downloadImageBtn = document.getElementById('download-image-btn') as HTMLButtonElement;
+const formatImageBtn = document.getElementById('format-image-btn') as HTMLButtonElement;
 const toolButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('.tool-btn'),
 );
@@ -3188,6 +3670,12 @@ async function loadData(): Promise<void> {
       return;
     }
     previewImg.src = response.screenshotDataUrl;
+    // New screenshot → drop any sticky Format & Size choice from a
+    // prior capture so the per-image Save / Copy buttons start in
+    // "source format, natural size" mode again.
+    chosenFormat = null;
+    chosenSize = null;
+    formatSizeVersion++;
     capturedUrl = response.url;
     // Title falls back to the URL when no title was captured (covers
     // restricted pages, scrape failures, and the rare untitled tab).
@@ -3230,6 +3718,8 @@ async function loadData(): Promise<void> {
       // without a successful capture either.
       copyImageBtn.disabled = true;
       downloadImageBtn.disabled = true;
+      // Format & Size dialog needs a real image to operate on.
+      formatImageBtn.disabled = true;
       screenshotRow.classList.add('has-error');
       screenshotErrorIcon.title = `Unable to capture screenshot: ${response.screenshotError}`;
       // Latched flag read by `updateImageSizeBadge` so resize-driven
@@ -3524,6 +4014,9 @@ copyImageBtn.addEventListener('click', () => {
 downloadImageBtn.addEventListener('click', () => {
   void downloadAs('screenshot');
 });
+formatImageBtn.addEventListener('click', () => {
+  openFormatSizeDialog();
+});
 
 async function copyImageToClipboard(): Promise<void> {
   // `renderHighlightedPng` short-circuits to the original
@@ -3532,7 +4025,13 @@ async function copyImageToClipboard(): Promise<void> {
   // output or a freshly-baked render — never a re-fetch from the
   // source page. The `fetch()` call is on the data URL (local
   // base64 decode), not a network request.
+  //
+  // Format follows the user's Format & Size dialog choice (sticky
+  // for the current capture). Clipboard MIME has to match the
+  // bytes — `image/jpeg` for the JPG branch, `image/png` otherwise.
   const url = renderHighlightedPng();
+  const clipboardMime = effectiveOutputFormat() === 'jpg'
+    ? 'image/jpeg' : 'image/png';
   try {
     // Wrap the fetch in a Promise passed directly to ClipboardItem.
     // navigator.clipboard.write must be called synchronously within the
@@ -3540,7 +4039,7 @@ async function copyImageToClipboard(): Promise<void> {
     // revoking clipboard access. The browser resolves the promise to
     // read the blob bytes.
     const blobPromise = fetch(url).then((r) => r.blob());
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
+    await navigator.clipboard.write([new ClipboardItem({ [clipboardMime]: blobPromise })]);
   } catch (err) {
     // Same `NotAllowedError` ("Document is not focused") path as
     // `writeClipboardText` — `navigator.clipboard.write` rejects the
@@ -3579,11 +4078,16 @@ async function downloadAs(
   if (kind === 'screenshot') {
     // `renderHighlightedPng` short-circuits to the original capture's
     // data URL when no edits need baking — see its docstring.
+    // Filename extension follows the effective output format: PNG by
+    // default, JPG when the dialog forced it, or `screenshotExtension()`
+    // for the source-format passthrough (covers WebP / GIF / etc.
+    // without round-tripping through PNG).
     const url = renderHighlightedPng();
+    const filename = `screenshot.${screenshotFilenameExtension()}`;
     // Screenshot is a data: URL — nothing to revoke. The other kinds
     // use blob URLs (built from the editable body) and route through
     // `downloadEditableAs`, which handles its own revocation.
-    await runSaveAsDialog(url, 'screenshot.png', null);
+    await runSaveAsDialog(url, filename, null);
     return;
   }
   await downloadEditableAs(kind, captured[kind]);
@@ -4216,7 +4720,14 @@ async function copyArtifactPath(
     kind === 'screenshot' &&
     hasBakeableEdits() &&
     editVersion !== lastSentScreenshotEditVersion;
-  const screenshotOverride = needsBake ? renderHighlightedPng() : undefined;
+  // SW path always wants the natural-resolution PNG: it's the
+  // canonical artifact byte format the cache is keyed on, and the
+  // SW writes `.png` for the on-disk filename. The Format & Size
+  // dialog only affects the page-side Save / Copy buttons; opt out
+  // explicitly so the SW round-trip is unchanged.
+  const screenshotOverride = needsBake
+    ? renderHighlightedImage({ format: 'png', frameSize: null })
+    : undefined;
   const response = (await chrome.runtime.sendMessage({
     action: 'ensureDownloaded',
     kind,
@@ -4259,44 +4770,110 @@ async function copyArtifactPath(
 // with the original capture. Callers can therefore always invoke
 // this without first guarding on `hasBakeableEdits()`.
 function renderHighlightedPng(): string {
-  if (!hasBakeableEdits()) return previewImg.src;
+  // Thin wrapper that honours the user's Format & Size choice (if
+  // any). The "options" path is the same code; opts default to
+  // `{ format: chosenFormat, size: chosenSize }` so callers that
+  // don't care (Copy, Ask, the SW's screenshotOverride channel)
+  // implicitly pick up the choice. To opt OUT (always-PNG, natural-
+  // size), call `renderHighlightedImage({ format: 'png', size: null })`
+  // explicitly.
+  return renderHighlightedImage();
+}
+
+/**
+ * Bake the current edits into a self-contained data URL, optionally
+ * re-encoded as JPEG and / or scaled to a target frame size.
+ *
+ * `opts.format`:
+ *   - `'png'` / `'jpg'` — force that encoder (lossy for jpg).
+ *   - `undefined` — use `chosenFormat` if set, else the original
+ *     format (fast path: returns `previewImg.src` verbatim when
+ *     there's no other reason to re-encode).
+ *
+ * `opts.frameSize`:
+ *   - `{width, height}` — render into a canvas of that natural-frame
+ *     size, scaling the source on the way in. The active crop
+ *     (still in percent space) is applied within this resized frame.
+ *   - `undefined` — use `chosenSize` if set, else natural size.
+ *
+ * The fast-path "no re-encode" branch only fires when no format /
+ * size choice forces our hand AND `hasBakeableEdits()` is false.
+ */
+function renderHighlightedImage(opts?: {
+  format?: OutputFormat;
+  frameSize?: { width: number; height: number } | null;
+}): string {
+  const formatChoice =
+    opts?.format ?? chosenFormat ?? null;
+  const sizeChoice =
+    opts?.frameSize !== undefined ? opts.frameSize : chosenSize;
   const natW = previewImg.naturalWidth;
   const natH = previewImg.naturalHeight;
-  const crop = activeCrop();
 
-  // Source rectangle on the natural-resolution image. For an
-  // un-cropped save this is the whole image; for a cropped save
-  // we route through `pctRectToPixels` so the integer dimensions
-  // line up exactly with what the Image-size pill displays
-  // (`savedImageDimensions` uses the same helper). Earlier this
-  // computed `(crop.w/100)*natW` directly and let
-  // `canvas.width = <float>` truncate — which produced an
-  // occasional 1-pixel mismatch between the pill ("PNG ·
-  // 800×600") and `file <saved>.png` ("PNG image data, 799 x 600").
-  const cropPx = crop ? pctRectToPixels(crop, natW, natH) : null;
-  const sx = cropPx ? cropPx.x : 0;
-  const sy = cropPx ? cropPx.y : 0;
-  const sw = cropPx ? cropPx.w : natW;
-  const sh = cropPx ? cropPx.h : natH;
+  // Fast path: nothing to bake AND no override forces a re-encode →
+  // hand back the original capture's bytes verbatim. Preserves byte
+  // identity with the SW-side artifact (matters for the .jpg-source
+  // round-trip tests).
+  if (
+    !hasBakeableEdits() &&
+    formatChoice === null &&
+    sizeChoice === null
+  ) {
+    return previewImg.src;
+  }
+
+  // Resolve the natural-frame size we render into. A null size
+  // choice keeps the natural source dims so `pctRectToPixels` math
+  // (and existing crop tests) is unchanged.
+  const frameW = sizeChoice ? sizeChoice.width : natW;
+  const frameH = sizeChoice ? sizeChoice.height : natH;
+  const crop = activeCrop();
+  const cropPx = crop ? pctRectToPixels(crop, frameW, frameH) : null;
+  const sw = cropPx ? cropPx.w : frameW;
+  const sh = cropPx ? cropPx.h : frameH;
 
   const canvas = document.createElement('canvas');
   canvas.width = sw;
   canvas.height = sh;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Failed to get 2D context for highlight rendering');
-  ctx.drawImage(previewImg, sx, sy, sw, sh, 0, 0, sw, sh);
 
-  // Default stroke width in natural pixels — same value the overlay
-  // uses at 1× zoom. Held constant on the bake so the saved PNG
-  // doesn't get fat lines just because the preview was zoomed out.
+  // Two-step approach for correctness when frame size != natural:
+  // we draw the source image scaled to `frameW × frameH` while
+  // also applying the crop offset/size in one drawImage call. The
+  // source rect is in *natural* pixels (`drawImage`'s sw/sh), the
+  // dest rect is on the `sw × sh` canvas. When un-cropped this is
+  // a single full-image scale.
+  if (cropPx) {
+    // Map the destination crop rect (in resized-frame pixels) back
+    // to source coordinates via the resize ratio. Float math here
+    // is fine — `drawImage` accepts floats.
+    const rx = natW / frameW;
+    const ry = natH / frameH;
+    const srcX = cropPx.x * rx;
+    const srcY = cropPx.y * ry;
+    const srcW = cropPx.w * rx;
+    const srcH = cropPx.h * ry;
+    ctx.drawImage(previewImg, srcX, srcY, srcW, srcH, 0, 0, sw, sh);
+  } else {
+    ctx.drawImage(previewImg, 0, 0, natW, natH, 0, 0, sw, sh);
+  }
+
+  // Default stroke width in resized-frame pixels — same value the
+  // overlay uses at 1× zoom. Held constant on the bake so the
+  // saved PNG doesn't get fat lines just because the preview was
+  // zoomed out. Note: when the user resizes the saved frame down,
+  // strokes stay at 3 source-pixel-equivalent widths in the
+  // resized frame (i.e. they still read at the same visual
+  // weight); this is a deliberate tradeoff against scaling them to
+  // sub-pixel widths at small output sizes.
   const strokePx = 3;
+  const sx = cropPx ? cropPx.x : 0;
+  const sy = cropPx ? cropPx.y : 0;
 
   // Clip every highlight to the canvas bounds so edits that extend
-  // past the crop don't paint onto the un-cropped neighbors (the
-  // crop rectangle already imposes a coordinate system; without the
-  // clip, a redaction that poked outside the crop would bleed into
-  // the saved image's margin). Un-cropped save: clip is the whole
-  // image, which is a no-op.
+  // past the crop don't paint onto the un-cropped neighbors. Un-
+  // cropped save: clip is the whole image, which is a no-op.
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, sw, sh);
@@ -4305,10 +4882,10 @@ function renderHighlightedPng(): string {
   for (const e of edits) {
     if (e.kind === 'crop') continue; // the crop is realized by the canvas size itself
     if (e.kind === 'line' || e.kind === 'arrow') {
-      const x1 = (e.x1 / 100) * natW - sx;
-      const y1 = (e.y1 / 100) * natH - sy;
-      const x2 = (e.x2 / 100) * natW - sx;
-      const y2 = (e.y2 / 100) * natH - sy;
+      const x1 = (e.x1 / 100) * frameW - sx;
+      const y1 = (e.y1 / 100) * frameH - sy;
+      const x2 = (e.x2 / 100) * frameW - sx;
+      const y2 = (e.y2 / 100) * frameH - sy;
       ctx.strokeStyle = 'red';
       ctx.lineWidth = strokePx;
       ctx.lineCap = 'round';
@@ -4317,8 +4894,6 @@ function renderHighlightedPng(): string {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       if (e.kind === 'arrow') {
-        // Default head cap (no display-scale multiplier) so the
-        // baked arrowhead matches the default 3 px stroke above.
         const b = arrowBarbs(x1, y1, x2, y2, ARROW_HEAD_MAX_PX);
         if (b) {
           ctx.moveTo(b.ax, b.ay);
@@ -4331,23 +4906,31 @@ function renderHighlightedPng(): string {
       ctx.strokeStyle = 'red';
       ctx.lineWidth = strokePx;
       ctx.strokeRect(
-        (e.x / 100) * natW - sx,
-        (e.y / 100) * natH - sy,
-        (e.w / 100) * natW,
-        (e.h / 100) * natH,
+        (e.x / 100) * frameW - sx,
+        (e.y / 100) * frameH - sy,
+        (e.w / 100) * frameW,
+        (e.h / 100) * frameH,
       );
     } else if (e.kind === 'redact') {
       ctx.fillStyle = 'black';
       ctx.fillRect(
-        (e.x / 100) * natW - sx,
-        (e.y / 100) * natH - sy,
-        (e.w / 100) * natW,
-        (e.h / 100) * natH,
+        (e.x / 100) * frameW - sx,
+        (e.y / 100) * frameH - sy,
+        (e.w / 100) * frameW,
+        (e.h / 100) * frameH,
       );
     }
   }
   ctx.restore();
 
+  // Format selection: explicit override wins, then the dialog
+  // choice, then PNG by default. JPEG flattens transparency to
+  // black on Chromium; not a concern here (`previewImg` never
+  // contains an alpha channel post-bake) but worth noting.
+  const outFormat = formatChoice ?? 'png';
+  if (outFormat === 'jpg') {
+    return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+  }
   return canvas.toDataURL('image/png');
 }
 
@@ -4411,7 +4994,13 @@ captureBtn.addEventListener('click', (e) => {
     // changes the pixels that end up on disk.
     const hasEdits = hasBakeableEdits();
     const bakeIn = hasEdits && screenshotBox.checked;
-    const screenshotOverride = bakeIn ? renderHighlightedPng() : undefined;
+    // Same opt-out reasoning as `copyArtifactPath`'s SW round-trip:
+    // the Capture-button flow writes via the SW, which always wants
+    // a natural-size PNG. The Format & Size dialog is page-side
+    // only for V1 (Save / Copy buttons + the image-size pill).
+    const screenshotOverride = bakeIn
+      ? renderHighlightedImage({ format: 'png', frameSize: null })
+      : undefined;
     // Per-kind flags only matter when we're actually saving the
     // screenshot — they describe what's baked into the PNG, so
     // there's nothing for the SW to flag on a record that doesn't
@@ -5193,7 +5782,13 @@ function buildAskAttachments(): AskAttachment[] {
     // Capture button's bake-on-save policy. `renderHighlightedPng`
     // short-circuits to the original capture's data URL when no
     // edits need baking.
-    const data = renderHighlightedPng();
+    //
+    // Ask explicitly opts out of the Format & Size dialog choice for
+    // V1: providers expect a `image/png` mime, and shrinking the
+    // image upload would be surprising without a clear "do this"
+    // signal at send time. Revisit if the dialog grows a
+    // "use for everything" affordance.
+    const data = renderHighlightedImage({ format: 'png', frameSize: null });
     out.push({
       data,
       kind: 'image',
