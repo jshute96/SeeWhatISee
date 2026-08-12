@@ -749,6 +749,14 @@
     color: #999;
     cursor: default;
   }
+  /* Rule between the menu's groups (picture-rewriting actions above,
+   * image-edit transfer below). Margins match the menu's own 4px
+   * vertical padding so the groups sit evenly apart. */
+  .palette-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: #ddd;
+  }
   /* Narrower left padding for the ✓ gutter, which `.palette-menu` (no
    * check column) doesn't have. */
   .zoom-menu-item {
@@ -1278,6 +1286,22 @@
         <button id="view-cropped" class="palette-menu-item" type="button"
                 role="menuitem" disabled
                 title="Replace the image with just the cropped region, as if that was the captured screenshot">Replace with cropped image</button>
+        <div class="palette-menu-sep" role="separator"></div>
+        <!-- Image-edit transfer: copy this capture's drawings + crop
+             onto another capture of the same size, so a before/after
+             pair lines up exactly. Titles (including the disabled
+             "Unavailable: …" second line) are rewritten by the drawing
+             module's `render()`; the ones here are just the pre-init
+             state. -->
+        <button id="copy-annotations" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                title="Copy this capture's image edits so they can be pasted onto another capture">Copy image edits</button>
+        <button id="paste-annotations" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                title="Replace current image edits with those last copied">Paste image edits</button>
+        <button id="import-annotations" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                title="Replace current image edits with those from the last capture page that was closed">Import image edits from last capture</button>
       </div>
     </div>
     <div class="image-box">

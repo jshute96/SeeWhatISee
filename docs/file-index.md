@@ -200,6 +200,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/background/context-menu.ts` | Right-click menu: `installContextMenu`, hotkey-aware title refresh, More-submenu utilities (copy-last, snapshots dir, offscreen clipboard) |
 | `src/background/capture-details.ts` | Capture-page flow — per-tab session, `ensure*Downloaded` cache, multi-capture bump, HTML byte-size cap, `runtime.onMessage` handlers |
 | `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
+| `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
@@ -233,7 +234,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/capture-page/paste.ts` | Capture-page rich-text paste — `attachHtmlAwarePaste` (text/html → markdown or HTML-source), highlighter / markdown detection, nbsp normalization |
 | `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guard, cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: fit/Nx sizing, zoom menu, wheel + key zoom, drag / scrollbar pan with box snap + arrow-key fine nudge |
-| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
+| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped + annotation Copy / Paste / Import (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
 | `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour for the Capture column's Zoom and More… popovers |
@@ -292,6 +293,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
+| `tests/e2e/capture-annotation-transfer.spec.ts` | E2E for annotation Copy / Paste / Import — cross-capture round-trip, re-derived applied crop, overwrite + per-edit Undo, disabled-state tooltips |
 | `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo, Reset and undoing it, More-menu dismissal |
 | `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom-mode sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width ladder + DPR-stub regressions, arrow-key fine pan (drag + scrollbar), pan snap to a box edit, and Zoom-popover dismissal |

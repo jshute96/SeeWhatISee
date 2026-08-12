@@ -486,13 +486,19 @@ fresh edit.
   column allowed ("Shrink last … to fit content", "Replace with
   cropped image"); ids, tooltips and enable rules are the same ones
   they had as buttons.
+- Below a `.palette-menu-sep` rule, a second group: the annotation
+  Copy / Paste / Import items (see the Annotation transfer section).
+  Their tooltips are rewritten by `render()` too, and gain an
+  "Unavailable: …" line when disabled.
 - The Shrink item names its target: `render()` rewrites the label
   to "box", "redaction" or "crop" depending on what the next click
   would tighten, and falls back to "box or crop" when there's
   nothing to shrink (the disabled state).
 - Markup is static (`#more-menu` in `capture.html`), not built
-  lazily like the Zoom menu: the drawing module looks both items up
+  lazily like the Zoom menu: the drawing module looks the items up
   by id at init and drives their `disabled` state from `render()`.
+  `onBeforeOpen` is still used — to re-read the two annotation
+  slots, whose contents `render()` can't await.
 - Mechanics come from `menu-popover.ts`, shared with the Zoom menu
   — see the Column popover menus section.
 - Labelled "More…". Neither column menu opener carries a caret —
@@ -839,7 +845,7 @@ fresh edit.
   in-memory `viewCropStack`, and a `viewCrop` marker onto
   `editHistory`. One Undo click pops both and restores the whole
   state, image included.
-- Reset moves the whole stack aside onto `resetStack` and puts the
+- Reset moves the whole stack aside onto `wholeStateStack` and puts the
   original capture back as the base image — so one Undo after a
   Reset brings a whole drill-down series back at once, and further
   Undos then peel it one level at a time (see below).
@@ -908,6 +914,100 @@ fresh edit.
 - `viewCrop` history markers are dropped on restore — their undo
   state didn't survive, and an Undo button that can't do what it
   says is worse than one op fewer.
+
+### Annotation transfer (Copy / Paste / Import)
+
+Three More-menu items, below a separator, that carry one capture's
+annotations onto another — the before/after workflow, where the same
+crop and the same highlights have to land in the same place on two
+screenshots.
+
+- **Copy image edits** — snapshots the current edits + applied crop
+  into a private clipboard slot.
+- **Paste image edits** — replaces the current image edits with the
+  copied ones.
+- **Import image edits from last capture** — the same paste, sourced
+  from the last Capture page that closed instead of an explicit copy.
+
+#### Payload
+
+- `edits` (percentages, verbatim — including edits hidden under an
+  unapplied crop), `viewCropPct`, `source` (pixel size of the
+  *original* capture), and a `label` for the tooltip.
+  - Edits outside an *applied* crop aren't in the payload: applying
+    the crop dropped them on the source page
+    (`remapEditsIntoRegion`), long before the copy.
+- Not carried: `editHistory` (the paste builds its own — see below),
+  the selected tool, prompt, save checkboxes, zoom.
+- Edit ids are re-assigned from the target's `nextEditId`, so pasted
+  edits can't collide with ids the target's history already
+  references.
+- Geometry only, no image bytes — a few hundred bytes, so neither
+  slot participates in quota relief.
+
+#### Two slots, both in `chrome.storage.session`
+
+- `annotationClipboard` — written by a Copy click.
+- `lastCaptureAnnotations` — written on every Capture-page close,
+  alongside the `lastCapture` promote.
+  - It has to be its own slot rather than a read of
+    `lastCapture.uiState`: opening a Capture page *clears*
+    `lastCapture` for quota relief, so by the time the new page could
+    import from it, it's gone.
+  - Write-or-clear: a last capture with no annotations leaves Import
+    disabled, rather than silently offering the one before it.
+- A private side channel, not the system clipboard, because Paste has
+  to be disabled *with a reason* before the user clicks — and reading
+  the system clipboard needs a user gesture, so it can't be polled to
+  drive a disabled state. It also avoids clobbering the real
+  clipboard and needs no extra permission.
+
+#### Enable rules and tooltips
+
+- Copy is enabled by `canReset()` — the same "is this picture in a
+  state other than as-captured" question — plus a known original size.
+- Paste / Import need a non-empty payload whose `source` matches this
+  capture's original size **exactly**.
+  - Exact-match on purpose: percentages would technically land at a
+    different size, but scaled and over content that doesn't
+    correspond. The feature is for two shots of the same thing.
+  - Sizes compare the *originals*, not what's on screen — a
+    transferred `viewCropPct` is expressed against the original, and
+    the target re-derives its cropped image from its own.
+- A disabled item's `title` gets a second line naming the blocker
+  (`Unavailable: Copied edits are for a 1920×1080 image; this one is
+  1440×900`), capitalised as its own sentence. The subject is
+  per-item — "Copied edits" for Paste, "The last capture's edits" for
+  Import — so each reads about what that item would actually paste.
+- Enabled paste-side items append `From: <label>`.
+- `render()` can't await storage (it runs on every drag mousemove), so
+  main re-reads both slots on each More-menu open and hands them to
+  the drawing module via `setAnnotationTransferSources`. A Copy
+  updates the clipboard source optimistically so Paste lights up
+  without waiting for the next open.
+
+#### Applying a paste
+
+Overwrite, not merge — two sets drawn against the same picture would
+otherwise double the crop and stack highlights on each other. Order:
+
+1. the pre-paste world goes onto `wholeStateStack`;
+2. everything is cleared back to the original capture, and the pasted
+   crop is applied;
+3. a `paste` marker is pushed — the bottom of the new history;
+4. each pasted edit is pushed with an ordinary `add` op above it.
+
+- So Undo peels the pasted annotations off one at a time, and only
+  the last click — the one that reaches the marker — restores the
+  pre-paste state, crop included.
+- The pasted crop sits *at* the marker rather than above it: it's the
+  frame the edits are expressed in, so peeling edits must not be able
+  to strand them on a re-framed image.
+- The crop is re-derived from an off-screen decode of this capture's
+  original, not from `previewImg` — which may still be showing the
+  target's own about-to-be-discarded cropped image.
+- All the fallible work (decode, crop, canvas) happens before any
+  mutation, so a failure leaves the page exactly as it was.
 
 ### Box-edge handles (drag-to-resize, drag-to-crop)
 
@@ -1022,29 +1122,38 @@ fresh edit.
     whole pre-crop state (base image, edits, history) from the
     in-memory `viewCropStack`; see the View cropped section.
   - `reset` markers — pushed by Reset. Undo restores the whole
-    pre-reset state from the in-memory `resetStack`.
+    pre-reset state from the in-memory `wholeStateStack`.
+  - `paste` markers — pushed by an annotation Paste / Import, which
+    discards the old world the same way Reset does. Same stack, same
+    restore. The pasted edits sit *above* the marker as ordinary
+    `add` ops; see the annotation-transfer section.
 
   Unbounded depth — nothing trims any of the stacks. Each
   `viewCropStack` entry holds the pre-crop image, but a drill-down
   series shrinks geometrically, so that stack costs on the order of
-  the original capture. `resetStack` is the exception — see below.
+  the original capture. `wholeStateStack` is the exception — see
+  below.
 - **Reset** — one click back to the capture as it was taken: the
   edits, history and `viewCropStack` are moved aside onto
-  `resetStack`, `viewCropPct` is cleared, and the base image is set
-  back to the original data URL.
+  `wholeStateStack`, `viewCropPct` is cleared, and the base image is
+  set back to the original data URL.
   - The original comes from main via `ctx.originalImageUrl()`, not
     from `previewImg.src` (View cropped replaced it) or the bottom
     of `viewCropStack` (empty in a restored session).
   - Undoable in one step: the discarded state goes onto
-    `resetStack` and a `reset` marker is pushed onto the
+    `wholeStateStack` and a `reset` marker is pushed onto the
     now-empty history, so Undo swaps the whole world back and the
     next Undo carries on through the restored history.
-  - `resetStack` is the one stack that *grows* what's held in
+  - `wholeStateStack` is the one stack that *grows* what's held in
     memory: a Reset would otherwise release the view-crop images,
     and its entry keeps them alive until its own Undo pops it.
     Nothing else drops an entry — a second Reset just pushes
     another — so a reset/draw/reset series accumulates one per
     click. Bounded by user gestures, so it isn't trimmed.
+    - An annotation Paste pushes an entry here too, and unlike Reset
+      it isn't gated on there being anything to discard — a paste
+      onto a pristine page still records one. Same bound (a user
+      gesture per entry), same no-trimming.
   - Enabled by `canReset()` — "is there anything to go back
     *from*", i.e. any edit or a view crop — not by whether the
     history is non-empty. The click handler guards on the same
@@ -1056,8 +1165,8 @@ fresh edit.
     - straight after a Reset the history holds that Reset's own
       marker, but the picture is already the original, so a second
       click would only stack an empty undo step.
-  - Restores drop `reset` markers along with `viewCrop` ones, and
-    empty both stacks — they're in-memory, so the state the markers
+  - Restores drop `reset` / `paste` markers along with `viewCrop`
+    ones, and empty both stacks — they're in-memory, so the state the markers
     point at doesn't survive the snapshot.
   - Earlier versions called this Clear and left a View cropped
     op applied while still dropping its undo entries — the crop
@@ -1616,14 +1725,19 @@ or prompt was still in flight. Lives in `last-capture.ts`.
   round-trip; opt-out by adding its key to the denylist.
 - `uiState` is what the page pushes via `pushUiState`: prompt
   text, save-checkbox + format-radio state, drawing edits + undo
-  history + `nextEditId` + `editVersion`, selected tool, and the
-  cumulative View-cropped region (`viewCropPct`). Zoom is
+  history + `nextEditId` + `editVersion`, selected tool, the
+  cumulative View-cropped region (`viewCropPct`), and the original
+  capture's pixel size (`sourceSize` — unused by Restore itself; it
+  is what lets the close-time promote hand a size to
+  `lastCaptureAnnotations`). Zoom is
   deliberately *not* carried — viewport size, scroll position, and
   DPR are page-local and aren't snapshotted, so reapplying a saved
   zoom against a possibly-different window would land at arbitrary
   sizing. Restore reverts to the page-init default (Fit).
 - Low-priority single-slot — every fresh capture / ask freely
-  drops it for quota relief.
+  drops it for quota relief. The annotations are mirrored into a
+  separate slot that *isn't* reclaimed, so the Capture page's
+  Import item survives the clear; see Annotation transfer.
 
 ### Save (promote-on-close)
 
@@ -2063,7 +2177,8 @@ Both column menus — Zoom and More… — run on `menu-popover.ts`
 
 - Zoom builds its items lazily on first open and refreshes its
   check marks through `onBeforeOpen`; More…'s items are static
-  markup owned by the drawing module.
+  markup owned by the drawing module, and its `onBeforeOpen`
+  refreshes the annotation-transfer sources instead.
 
 ### Stroke scaling
 

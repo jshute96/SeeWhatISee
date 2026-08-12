@@ -269,7 +269,12 @@ export async function readPolylineChainStart(
  */
 export async function clickMoreMenuItem(
   capturePage: Page,
-  selector: '#shrink' | '#view-cropped',
+  selector:
+    | '#shrink'
+    | '#view-cropped'
+    | '#copy-annotations'
+    | '#paste-annotations'
+    | '#import-annotations',
 ): Promise<void> {
   await capturePage.locator('#more').click();
   await capturePage.locator(selector).click();

@@ -36,6 +36,13 @@ import {
   getLastCapture,
   promoteSessionToLastCapture,
 } from './last-capture.js';
+import {
+  type AnnotationTransfer,
+  type AnnotationTransferSource,
+  getTransferableAnnotations,
+  isUsableAnnotationTransfer,
+  setAnnotationClipboard,
+} from './annotation-clipboard.js';
 
 /**
  * Hard cap on HTML byte size. Heavy SPAs frequently inline
@@ -810,6 +817,27 @@ interface InitializeUploadSessionMessage {
   filename: string;
   mimeType: string;
 }
+interface CopyAnnotationsMessage {
+  /**
+   * More-menu "Copy annotations": stash the page's current edit stack
+   * + applied crop in the private annotation clipboard so another
+   * Capture page can paste it. Replaces any previous copy.
+   */
+  action: 'copyAnnotations';
+  payload: AnnotationTransfer;
+}
+interface GetTransferableAnnotationsMessage {
+  /**
+   * Read one of the two annotation sources the More menu can paste
+   * from — the private clipboard, or the saved last capture. Called
+   * on every More-menu open (both sources at once) so the two menu
+   * items can compute their enabled state and tooltips synchronously
+   * from then on; the payloads are pure geometry, so re-reading them
+   * per open is cheaper than keeping a listener in sync.
+   */
+  action: 'getTransferableAnnotations';
+  source: AnnotationTransferSource;
+}
 type DetailsMessage =
   | GetDetailsMessage
   | EnsureDownloadedMessage
@@ -817,6 +845,8 @@ type DetailsMessage =
   | SaveDetailsMessage
   | CloseCapturePageMessage
   | PushUiStateMessage
+  | CopyAnnotationsMessage
+  | GetTransferableAnnotationsMessage
   | InitializeUploadSessionMessage;
 
 /**
@@ -1847,6 +1877,50 @@ export function installDetailsMessageHandlers(): void {
         // (`saveDetails` / `askAi`) — otherwise the two SW handlers
         // race and the close path might promote pre-push state.
         sendResponse({});
+      })();
+      return true;
+    }
+
+    if (msg.action === 'copyAnnotations') {
+      void (async () => {
+        // Validate here rather than trusting the sender: this slot is
+        // read by *other* Capture pages, and a malformed record would
+        // turn into a broken paste on a page the user can't connect
+        // to the copy. The page builds the payload from live state so
+        // a rejection means a bug, not user error — hence no error
+        // surface, just a refusal to store.
+        if (!isUsableAnnotationTransfer(msg.payload)) {
+          sendResponse({ ok: false });
+          return;
+        }
+        try {
+          await setAnnotationClipboard(msg.payload);
+          sendResponse({ ok: true });
+        } catch {
+          // Session-storage quota — vanishingly unlikely for a
+          // geometry-only payload, but the caller shows a status
+          // message on `ok: false` rather than silently doing nothing.
+          sendResponse({ ok: false });
+        }
+      })();
+      return true;
+    }
+
+    if (msg.action === 'getTransferableAnnotations') {
+      void (async () => {
+        // Validate the slot name rather than letting the resolver's
+        // ternary treat anything non-'clipboard' as 'lastCapture' —
+        // the sibling `copyAnnotations` handler checks its untrusted
+        // field too, and a typo'd source should read as empty rather
+        // than silently answering from the other slot.
+        if (msg.source !== 'clipboard' && msg.source !== 'lastCapture') {
+          sendResponse({ payload: null });
+          return;
+        }
+        const payload = await getTransferableAnnotations(msg.source);
+        // `null`, not `undefined`: `sendResponse(undefined)` and a
+        // dropped channel are indistinguishable on the page side.
+        sendResponse({ payload: payload ?? null });
       })();
       return true;
     }

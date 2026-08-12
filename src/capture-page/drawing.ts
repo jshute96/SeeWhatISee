@@ -119,23 +119,31 @@ export type Edit = RectEdit | LineEdit;
 //     so `id` is unused.
 //   - `reset` set — the op was a Reset click, which emptied the
 //     stack and put the original capture back. Undo restores the
-//     whole pre-reset state from `resetStack`; `id` is unused.
+//     whole pre-reset state from `wholeStateStack`; `id` is unused.
 //     Reset clears the history before pushing it, so the marker is
 //     always at the bottom — anything above it was drawn after the
 //     Reset and undoes normally first.
+//   - `paste` set — the op was an annotation Paste / Import, which
+//     discarded the existing state the same way Reset does and then
+//     installed the incoming crop. Undo restores the whole pre-paste
+//     state, also from `wholeStateStack`. The pasted *edits* are
+//     pushed above the marker as ordinary add-ops, so Undo peels them
+//     off one at a time and only the final click (on the marker)
+//     goes back to what was there before the paste.
 type HistoryOp = {
   id: number;
   prev?: { x: number; y: number; w: number; h: number };
   viewCrop?: true;
   reset?: true;
+  paste?: true;
 };
 
-// True for the whole-state markers (`viewCrop` / `reset`). They
-// carry `id: -1` and reference no edit, so every sweep that matches
-// history against the edit stack has to skip them. One predicate so
-// a third marker kind can't be half-handled.
+// True for the whole-state markers (`viewCrop` / `reset` / `paste`).
+// They carry `id: -1` and reference no edit, so every sweep that
+// matches history against the edit stack has to skip them. One
+// predicate so a further marker kind can't be half-handled.
 function isHistoryMarker(h: HistoryOp): boolean {
-  return h.viewCrop === true || h.reset === true;
+  return h.viewCrop === true || h.reset === true || h.paste === true;
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -369,6 +377,9 @@ export interface DrawingContext {
   edgesSvg: SVGSVGElement;
   shrinkBtn: HTMLButtonElement;
   viewCroppedBtn: HTMLButtonElement;
+  copyAnnotationsBtn: HTMLButtonElement;
+  pasteAnnotationsBtn: HTMLButtonElement;
+  importAnnotationsBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
   resetBtn: HTMLButtonElement;
   /** All `.tool-btn` elements in DOM order. Drawing reads
@@ -385,6 +396,24 @@ export interface DrawingContext {
    * in a restored session even when a view crop is in effect.
    */
   originalImageUrl(): string | null;
+
+  /**
+   * Natural pixel size of that original capture, or null before it
+   * has decoded (or when the capture has no screenshot at all).
+   * Measured once by main after the first decode rather than read
+   * off `previewImg`, whose natural size follows the *current* base
+   * image and so shrinks once a crop is applied.
+   *
+   * Only the annotation-transfer paths use it — it's the
+   * compatibility key that keeps a paste from landing on a
+   * differently-sized capture.
+   */
+  originalImageSize(): { w: number; h: number } | null;
+
+  /** Short human label for this capture (title, falling back to URL),
+   *  stamped onto a copied annotation payload so the target page's
+   *  menu tooltip can say where the annotations came from. */
+  captureLabel(): string | undefined;
 
   /** Re-derive the Image-size pill's bake-derived parts. Called
    *  from `render()` after every edit-stack change so the
@@ -405,6 +434,18 @@ export interface DrawingContext {
    * pushing the live preview would be expensive and pointless.
    */
   onEditCommit?(): void;
+
+  /** Hand a freshly-built payload to the SW's annotation clipboard.
+   *  Owned by main so all the messaging stays on one side of the
+   *  seam; resolves false if the write didn't land. */
+  onCopyAnnotations(payload: AnnotationTransfer): Promise<boolean>;
+
+  /** Surface a one-line message in the page's status area. Used by
+   *  the transfer actions for *failures* only: the status line sits
+   *  far from the menu and writing to it shifts the layout, which
+   *  isn't worth paying to confirm a success the menu state and the
+   *  picture already show. */
+  setStatusMessage(text: string, kind: 'ok' | 'error' | 'info'): void;
 }
 
 let ctx: DrawingContext;
@@ -1385,6 +1426,32 @@ export function render(): void {
     ctx.shrinkBtn.textContent = shrinkLabel;
   }
   setMenuItemDisabled(ctx.viewCroppedBtn, !viewCropTarget());
+
+  // Annotation transfer. Copy asks about live state, so it tracks
+  // every render; the two paste-side items read the payloads main
+  // last handed us (refreshed on each More-menu open).
+  const copyable = hasTransferableAnnotations() && !!ctx.originalImageSize();
+  setMenuItemDisabled(ctx.copyAnnotationsBtn, !copyable);
+  setMenuItemTitle(
+    ctx.copyAnnotationsBtn,
+    copyable
+      ? COPY_ANNOTATIONS_TITLE
+      : `${COPY_ANNOTATIONS_TITLE}\nUnavailable: This capture has no image edits`,
+  );
+  refreshTransferMenuItem(
+    ctx.pasteAnnotationsBtn,
+    transferSources.clipboard,
+    PASTE_ANNOTATIONS_TITLE,
+    'Copied edits',
+    'No image edits have been copied yet',
+  );
+  refreshTransferMenuItem(
+    ctx.importAnnotationsBtn,
+    transferSources.lastCapture,
+    IMPORT_ANNOTATIONS_TITLE,
+    'The last capture\'s edits',
+    'The last capture had no image edits',
+  );
   // Refresh the Image-size pill ("PNG · 1920×1080 · 312 KB").
   // `updateImageSizeBadge` is keyed on editVersion + natural dims
   // and short-circuits when nothing relevant changed — so the
@@ -1661,7 +1728,8 @@ let viewCropPct: RectPct | null = null;
 // Unbounded by depth, but each entry holds the image as it was
 // *before* that crop, so a drill-down series shrinks geometrically —
 // the whole stack costs on the order of the original capture, not a
-// multiple of it. Moved aside by Reset (onto `resetStack`), which
+// multiple of it. Moved aside by Reset / Paste (onto
+// `wholeStateStack`), which
 // is how one Undo can bring a whole drill-down series back.
 type ViewCropUndo = {
   src: string;
@@ -1671,9 +1739,12 @@ type ViewCropUndo = {
 };
 const viewCropStack: ViewCropUndo[] = [];
 
-// Pre-reset state for each Reset click, newest last — everything
-// the click threw away, so undoing it is a wholesale restore rather
-// than a step back through the discarded ops.
+// Pre-op state for each click of an operation that throws the whole
+// world away and puts a different one in its place — Reset and
+// annotation Paste. Newest last. Undoing one is a wholesale restore
+// rather than a step back through the discarded ops, so both share
+// this stack and the `reset` / `paste` history markers that index
+// into it.
 //
 // Also in-memory only, and the one stack that *grows* what's held:
 // a Reset would otherwise release the view-crop images, and an entry
@@ -1681,14 +1752,14 @@ const viewCropStack: ViewCropUndo[] = [];
 // drops one — a second Reset just pushes another — so a
 // reset/draw/reset series accumulates an entry per click. Bounded by
 // user gestures, so no trimming.
-type ResetUndo = {
+type WholeStateUndo = {
   src: string;
   edits: Edit[];
   editHistory: HistoryOp[];
   viewCropStack: ViewCropUndo[];
   viewCropPct: RectPct | null;
 };
-const resetStack: ResetUndo[] = [];
+const wholeStateStack: WholeStateUndo[] = [];
 
 // True between assigning a new base-image `src` and its `load`.
 // During that window `previewImg` still reports the *outgoing*
@@ -1746,7 +1817,7 @@ function cloneHistory(src: readonly HistoryOp[]): HistoryOp[] {
   return src.map((h) => ({ ...h, ...(h.prev ? { prev: { ...h.prev } } : {}) }));
 }
 // Clone-on-transfer, the same rule the two above follow: a
-// `viewCropStack` entry moved onto `resetStack` (or back) must not
+// `viewCropStack` entry moved onto `wholeStateStack` (or back) must not
 // share arrays with the live stack, or a later edit would rewrite
 // state a held snapshot still describes.
 function cloneViewCropUndo(v: ViewCropUndo): ViewCropUndo {
@@ -1879,17 +1950,26 @@ function remapEditsIntoRegion(region: RectPct): void {
   }
 }
 
-// Draw a region of the current base image into a fresh data URL, in
-// the sticky bake format (a JPG capture stays a JPG). `region` is in
+// Draw a region of a source image into a fresh data URL, in the
+// sticky bake format (a JPG capture stays a JPG). `region` is in
 // natural pixels. Returns null if the canvas isn't usable.
-function cropBaseImage(region: { x: number; y: number; w: number; h: number }): string | null {
+//
+// `source` defaults to the live preview — the only image the crop
+// paths have. The annotation-paste path passes an off-screen decode
+// of the *original* capture instead: it has to re-derive the pasted
+// crop from the original, and the preview may still be showing the
+// target page's own (about to be discarded) cropped image.
+function cropBaseImage(
+  region: { x: number; y: number; w: number; h: number },
+  source: CanvasImageSource = ctx.previewImg,
+): string | null {
   const canvas = document.createElement('canvas');
   canvas.width = region.w;
   canvas.height = region.h;
   const c2d = canvas.getContext('2d');
   if (!c2d) return null;
   c2d.drawImage(
-    ctx.previewImg,
+    source,
     region.x, region.y, region.w, region.h,
     0, 0, region.w, region.h,
   );
@@ -1975,26 +2055,32 @@ function canReset(): boolean {
 
 // Reset: throw away every edit and re-frame and go back to the
 // capture as it was taken. The discarded state goes onto
-// `resetStack` and a `reset` marker onto the (now empty)
+// `wholeStateStack` and a `reset` marker onto the (now empty)
 // `editHistory`, so one Undo click brings all of it back.
 //
 // The marker is pushed *after* the clear, which is what makes Reset
 // a single undoable step rather than a hole in the history: Undo
-// pops it, `undoReset` swaps the whole world back, and the next Undo
+// pops it, `undoWholeState` swaps the whole world back, and the next Undo
 // carries on through the restored history as if Reset never
 // happened.
-function applyReset(): void {
-  // Guard rather than trusting the button's `disabled` state, so the
-  // "is there anything to go back from" rule lives in one place —
-  // without it a no-op click would stack an empty undo step.
-  if (!canReset()) return;
-  resetStack.push({
+// Everything a `reset` / `paste` marker's Undo has to put back.
+// Taken *before* the op mutates anything.
+function pushWholeStateUndo(): void {
+  wholeStateStack.push({
     src: ctx.previewImg.src,
     edits: cloneEdits(edits),
     editHistory: cloneHistory(editHistory),
     viewCropStack: viewCropStack.map(cloneViewCropUndo),
     viewCropPct: viewCropPct ? { ...viewCropPct } : null,
   });
+}
+
+function applyReset(): void {
+  // Guard rather than trusting the button's `disabled` state, so the
+  // "is there anything to go back from" rule lives in one place —
+  // without it a no-op click would stack an empty undo step.
+  if (!canReset()) return;
+  pushWholeStateUndo();
   edits.length = 0;
   editHistory.length = 0;
   viewCropStack.length = 0;
@@ -2009,12 +2095,12 @@ function applyReset(): void {
   editHistory.push({ id: -1, reset: true });
 }
 
-// Undo of a Reset: put back everything the click discarded. Returns
-// false when the marker has no matching stack entry — only possible
-// for a restored session, whose markers `restoreDrawingSnapshot`
-// drops for exactly that reason.
-function undoReset(): boolean {
-  const prior = resetStack.pop();
+// Undo of a Reset or a Paste: put back everything the click
+// discarded. Returns false when the marker has no matching stack
+// entry — only possible for a restored session, whose markers
+// `restoreDrawingSnapshot` drops for exactly that reason.
+function undoWholeState(): boolean {
+  const prior = wholeStateStack.pop();
   if (!prior) return false;
   edits.length = 0;
   for (const e of cloneEdits(prior.edits)) edits.push(e);
@@ -2068,6 +2154,248 @@ export function applyRestoredViewCrop(region: RectPct): void {
   viewCropPct = { ...region };
   setBaseImage(url);
   render();
+}
+
+// ─── Annotation transfer (Copy / Paste / Import) ──────────────────
+//
+// Carries the annotation state of one capture onto another, so a
+// before/after pair can share the exact same crop and highlights.
+// The page-side half lives here (build / apply / menu state); the
+// storage slots it reads and writes are the SW's
+// `annotation-clipboard.ts`.
+//
+// Wire format mirrors `AnnotationTransfer` there, with the real
+// `Edit` types — the SW ferries `edits` as `unknown[]` because the
+// union is page-side, the same split `CapturePageUiState` uses.
+
+// Must match `ANNOTATION_TRANSFER_VERSION` / `AnnotationTransfer` in
+// `src/background/annotation-clipboard.ts` — the SW half of the same
+// contract, which declares `edits` as `unknown[]` because the `Edit`
+// union is page-side (the split `CapturePageUiState` already uses).
+// The two are unrelated at compile time: bump one and you must bump
+// the other, or Copy starts writing records the validator rejects.
+const ANNOTATION_TRANSFER_VERSION = 1;
+
+export interface AnnotationTransfer {
+  v: typeof ANNOTATION_TRANSFER_VERSION;
+  edits: Edit[];
+  viewCropPct: RectPct | null;
+  /** Pixel size of the original capture these were drawn against. */
+  source: { w: number; h: number };
+  label?: string;
+}
+
+/** The two slots the More menu can paste from, refreshed by main on
+ *  every menu open (see `setAnnotationTransferSources`). Read
+ *  synchronously by `render()`, which can't await anything — it runs
+ *  on every drag mousemove. */
+let transferSources: {
+  clipboard: AnnotationTransfer | null;
+  lastCapture: AnnotationTransfer | null;
+} = { clipboard: null, lastCapture: null };
+
+/** Install freshly-read transfer payloads and repaint the menu items'
+ *  enabled state / tooltips. */
+export function setAnnotationTransferSources(sources: {
+  clipboard: AnnotationTransfer | null;
+  lastCapture: AnnotationTransfer | null;
+}): void {
+  transferSources = sources;
+  render();
+}
+
+/** True when there's anything worth copying. Same question Reset
+ *  asks — "is this picture in a state other than as-captured" — so
+ *  the two share a predicate. */
+function hasTransferableAnnotations(): boolean {
+  return canReset();
+}
+
+/**
+ * Snapshot the current annotations for the clipboard. Returns null
+ * when there's nothing to copy, or when the original capture's size
+ * isn't known yet (no screenshot, or the page is still loading) —
+ * without it the target has no way to check compatibility.
+ *
+ * The edit stack goes over verbatim, *including* edits hidden under
+ * the crop: they're part of the state, and the target's crop is
+ * about to be the same one anyway.
+ */
+function buildAnnotationTransfer(): AnnotationTransfer | null {
+  if (!hasTransferableAnnotations()) return null;
+  const source = ctx.originalImageSize();
+  if (!source) return null;
+  return {
+    v: ANNOTATION_TRANSFER_VERSION,
+    edits: cloneEdits(edits),
+    viewCropPct: getViewCropPct(),
+    source,
+    label: ctx.captureLabel(),
+  };
+}
+
+// Tooltips don't wrap, and a label falls back to the capture URL —
+// which can be hundreds of characters. Clipped at display time
+// rather than when the payload is built, so it covers the
+// import-from-last-capture labels the SW composes too.
+const MAX_TRANSFER_LABEL = 60;
+function truncateLabel(label: string): string {
+  return label.length <= MAX_TRANSFER_LABEL
+    ? label
+    : `${label.slice(0, MAX_TRANSFER_LABEL - 1)}…`;
+}
+
+/**
+ * Why `payload` can't be pasted onto this capture, phrased to finish
+ * the sentence "Unavailable: …", or null when it can.
+ *
+ * The size gate is deliberately exact-match. Edit geometry is stored
+ * in percentages, so a paste across differently-sized captures would
+ * technically land — but scaled, and against content that doesn't
+ * correspond. The feature exists to line annotations up between two
+ * shots of the same thing; anything else is a mistake worth blocking.
+ *
+ * Sizes compare the *original* captures, not what's on screen: a
+ * pasted `viewCropPct` is expressed against the original, and the
+ * target re-derives its cropped image from its own original.
+ */
+function annotationTransferBlockReason(
+  payload: AnnotationTransfer | null,
+  subject: string,
+  emptyReason: string,
+): string | null {
+  if (!payload) return emptyReason;
+  const mine = ctx.originalImageSize();
+  if (!mine) return 'This capture has no image';
+  if (payload.source.w !== mine.w || payload.source.h !== mine.h) {
+    return `${subject} are for a ${payload.source.w}×${payload.source.h} image`
+      + `; this one is ${mine.w}×${mine.h}`;
+  }
+  return null;
+}
+
+/** Decode a data URL off-screen. Resolves null if it can't be
+ *  decoded, so callers can bail before touching any state. */
+function decodeImageUrl(url: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { resolve(img); };
+    img.onerror = () => { resolve(null); };
+    img.src = url;
+  });
+}
+
+/**
+ * Replace this page's annotations with `payload`'s. Overwrites rather
+ * than merges — the two sets are drawn against the same picture, so
+ * anything else would double up the crop and stack highlights on top
+ * of each other.
+ *
+ * Undo structure (the reason this isn't just "clear, then add"):
+ *
+ *   1. the pre-paste world goes onto `wholeStateStack`;
+ *   2. everything is cleared back to the original capture and the
+ *      pasted crop is applied;
+ *   3. a `paste` marker is pushed — the bottom of the new history;
+ *   4. each pasted edit is pushed with an ordinary add-op above it.
+ *
+ * So Undo peels the pasted annotations off one at a time, and only
+ * the last click — the one that reaches the marker — puts the
+ * pre-paste state (including whatever crop it had) back. The crop
+ * sits *at* the marker rather than above it because it's the frame
+ * the edits are expressed in; peeling edits must not be able to
+ * strand them on a re-framed image.
+ *
+ * All the fallible work happens before any mutation, so a failure
+ * leaves the page exactly as it was. Returns false when the paste
+ * couldn't be applied.
+ */
+async function applyAnnotationTransfer(
+  payload: AnnotationTransfer,
+): Promise<boolean> {
+  const original = ctx.originalImageUrl();
+  if (!original) return false;
+
+  // Re-derive the pasted crop from *this* capture's original. The
+  // preview may currently be showing this page's own cropped image
+  // (about to be discarded), so the source has to be an off-screen
+  // decode rather than `ctx.previewImg`.
+  let croppedUrl: string | null = null;
+  if (payload.viewCropPct) {
+    const img = await decodeImageUrl(original);
+    if (!img?.naturalWidth || !img.naturalHeight) return false;
+    const px = pctRectToPixels(payload.viewCropPct, img.naturalWidth, img.naturalHeight);
+    // `Number.isFinite`, not just `> 0`: every comparison against NaN
+    // is false, so a `<= 0` test alone would wave a NaN rectangle
+    // through to a canvas that silently coerces it to zero. The SW's
+    // validator rejects such a payload first; this is the second lock
+    // on the door, because everything past here mutates.
+    if (!Number.isFinite(px.w) || !Number.isFinite(px.h)) return false;
+    if (px.w <= 0 || px.h <= 0) return false;
+    croppedUrl = cropBaseImage(px, img);
+    if (!croppedUrl) return false;
+  }
+
+  pushWholeStateUndo();
+  edits.length = 0;
+  editHistory.length = 0;
+  viewCropStack.length = 0;
+  viewCropPct = payload.viewCropPct ? { ...payload.viewCropPct } : null;
+  setBaseImage(croppedUrl ?? original);
+  editHistory.push({ id: -1, paste: true });
+
+  // Re-id rather than trusting the source page's ids: history ops
+  // reference edits by id, and `nextEditId` has to stay ahead of
+  // everything in the stack for the next drawn edit to be distinct.
+  for (const e of payload.edits) {
+    const id = nextEditId++;
+    edits.push({ ...e, id });
+    editHistory.push({ id });
+  }
+
+  commitEdit();
+  render();
+  return true;
+}
+
+// Base tooltips for the three transfer menu items. The disabled
+// variants append a second line naming the blocker — a greyed item
+// with no explanation is the failure mode this feature is most
+// likely to hit (same-size-only is a real constraint the user can't
+// see from the menu).
+const COPY_ANNOTATIONS_TITLE =
+  'Copy this capture\'s image edits so they can be pasted onto another capture';
+const PASTE_ANNOTATIONS_TITLE =
+  'Replace current image edits with those last copied';
+const IMPORT_ANNOTATIONS_TITLE =
+  'Replace current image edits with those from the last capture page that was closed';
+
+/** Assign `title` only when it changed — `render()` runs on every
+ *  drag mousemove, and a `title` write while the tooltip is showing
+ *  makes it flicker. */
+function setMenuItemTitle(btn: HTMLButtonElement, title: string): void {
+  if (btn.title !== title) btn.title = title;
+}
+
+// Enabled state + tooltip for one of the two paste-side menu items.
+function refreshTransferMenuItem(
+  btn: HTMLButtonElement,
+  payload: AnnotationTransfer | null,
+  baseTitle: string,
+  // How the second line names the payload — "Copied edits" for the
+  // clipboard, "The last capture's edits" for the import. Passed in
+  // rather than derived so each item's reason reads as a sentence
+  // about the thing that item would actually paste.
+  subject: string,
+  emptyReason: string,
+): void {
+  const blocked = annotationTransferBlockReason(payload, subject, emptyReason);
+  setMenuItemDisabled(btn, blocked !== null);
+  const from = payload?.label ? `\nFrom: ${truncateLabel(payload.label)}` : '';
+  setMenuItemTitle(
+    btn,
+    blocked ? `${baseTitle}\nUnavailable: ${blocked}` : `${baseTitle}${from}`,
+  );
 }
 
 // Tool selection. Each `.tool-btn` carries `data-tool` matching one
@@ -2435,8 +2763,11 @@ export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void
     // pre-crop image) doesn't survive the snapshot, so keeping them
     // would offer an Undo click that can't do what it says. The
     // crop itself is restored — see `applyRestoredViewCrop`.
-    // `reset` markers go for the same reason — `resetStack` is
-    // in-memory too, so the pre-reset image and stacks are gone.
+    // `reset` / `paste` markers go for the same reason —
+    // `wholeStateStack` is in-memory too, so the pre-op image and
+    // stacks are gone. A paste's edits stay: they're ordinary add-ops
+    // above the marker, and the crop they were pasted into rides
+    // along in `viewCropPct` like any other.
     for (const h of cloneHistory(snapshot.editHistory)) {
       if (!isHistoryMarker(h)) editHistory.push(h);
     }
@@ -2444,13 +2775,13 @@ export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void
   // View-crop state belongs to the session that did the cropping —
   // a restore re-derives it from the snapshot's `viewCropPct` via
   // `applyRestoredViewCrop`, and the pre-crop images can't come with
-  // it. Same for the pre-reset state behind a `reset` marker. Clear
-  // all three so a second call can't inherit stale state, and so a
+  // it. Same for the pre-op state behind a `reset` / `paste` marker.
+  // Clear all three so a second call can't inherit stale state, and so a
   // dropped marker can't leave its multi-MB entry pinned for the
   // session.
   viewCropPct = null;
   viewCropStack.length = 0;
-  resetStack.length = 0;
+  wholeStateStack.length = 0;
   if (typeof snapshot.nextEditId === 'number') nextEditId = snapshot.nextEditId;
   if (typeof snapshot.editVersion === 'number') editVersion = snapshot.editVersion;
   if (snapshot.selectedTool) setSelectedTool(snapshot.selectedTool);
@@ -3256,11 +3587,14 @@ export function initDrawing(context: DrawingContext): void {
       render();
       return;
     }
-    if (last.reset) {
+    if (last.reset || last.paste) {
       // Same shape as the `viewCrop` branch: a whole-state restore,
       // with the pop alone as the fallback for a marker whose stack
-      // entry didn't survive a restore.
-      undoReset();
+      // entry didn't survive a restore. A `paste` marker is only
+      // reached once every pasted edit above it has been undone
+      // individually — this click is the one that goes back to what
+      // the page looked like before the paste.
+      undoWholeState();
       commitEdit();
       render();
       return;
@@ -3296,6 +3630,45 @@ export function initDrawing(context: DrawingContext): void {
   ctx.viewCroppedBtn.addEventListener('click', () => {
     applyViewCrop();
   });
+
+  ctx.copyAnnotationsBtn.addEventListener('click', () => {
+    const payload = buildAnnotationTransfer();
+    if (!payload) return;
+    void (async () => {
+      // Only failures speak. The status line sits far from the menu,
+      // and writing to it nudges the layout — too much cost for
+      // confirming something the menu already shows (Paste goes live
+      // the moment a copy lands).
+      if (!await ctx.onCopyAnnotations(payload)) {
+        ctx.setStatusMessage('Could not copy the image edits', 'error');
+      }
+    })();
+  });
+
+  // Both paste-side items run the same apply against a different
+  // slot. The payload is whatever the last menu-open read — main
+  // re-reads on every open, so it can only be stale by the width of
+  // one open menu, and a stale-but-compatible payload still pastes
+  // something the user asked for.
+  const wirePaste = (btn: HTMLButtonElement, pick: () => AnnotationTransfer | null): void => {
+    btn.addEventListener('click', () => {
+      const payload = pick();
+      if (!payload) return;
+      // Re-check rather than trusting the button's disabled state:
+      // the size gate depends on `originalImageSize()`, which is null
+      // until the capture decodes.
+      if (annotationTransferBlockReason(payload, 'Copied edits', 'Nothing to paste')) return;
+      void (async () => {
+        // Silent on success, like Copy — and here the picture itself
+        // is the confirmation.
+        if (!await applyAnnotationTransfer(payload)) {
+          ctx.setStatusMessage('Could not paste the image edits', 'error');
+        }
+      })();
+    });
+  };
+  wirePaste(ctx.pasteAnnotationsBtn, () => transferSources.clipboard);
+  wirePaste(ctx.importAnnotationsBtn, () => transferSources.lastCapture);
 
   ctx.shrinkBtn.addEventListener('click', () => {
     const target = shrinkTarget();

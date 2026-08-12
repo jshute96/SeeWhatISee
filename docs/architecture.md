@@ -72,6 +72,11 @@ listeners. The substantive logic lives in `src/background/`:
   promote-on-close, restore-on-menu-click, low-priority quota
   relief. See [`capture-page.md` → Restore last
   capture](capture-page.md#restore-last-capture).
+- `annotation-clipboard.ts` — the two geometry-only session slots
+  behind the Capture page's Copy / Paste / Import annotations items
+  (`annotationClipboard`, `lastCaptureAnnotations`). See
+  [`capture-page.md` → Annotation
+  transfer](capture-page.md#annotation-transfer-copy--paste--import).
 - `capture-page-defaults.ts` — stored Capture-page Save defaults
   (`capturePageDefaults`).
 - `options.ts` — Options-page SW wire (`getOptionsData` /

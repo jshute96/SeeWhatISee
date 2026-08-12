@@ -72,6 +72,8 @@ import {
   getDrawingSnapshot,
   restoreDrawingSnapshot,
   applyRestoredViewCrop,
+  setAnnotationTransferSources,
+  type AnnotationTransfer,
   type Tool,
   type RectPct,
 } from './capture-page/drawing.js';
@@ -290,6 +292,17 @@ let capturedUrl = '';
  * which never show an image).
  */
 let originalImageDataUrl = '';
+
+/**
+ * Natural pixel size of `originalImageDataUrl`, measured once the
+ * capture first decodes. Null before that, and on the error panes.
+ *
+ * Measured rather than read live off `previewImg`, whose natural
+ * size follows the *current* base image — a View cropped op shrinks
+ * it. The annotation-transfer compatibility check has to compare
+ * originals, since a transferred crop is expressed against one.
+ */
+let originalImageSize: { w: number; h: number } | null = null;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const screenshotRow = document.getElementById('row-screenshot') as HTMLDivElement;
@@ -462,6 +475,9 @@ const highlightControls = document.querySelector(
 ) as HTMLDivElement;
 const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
 const viewCroppedBtn = document.getElementById('view-cropped') as HTMLButtonElement;
+const copyAnnotationsBtn = document.getElementById('copy-annotations') as HTMLButtonElement;
+const pasteAnnotationsBtn = document.getElementById('paste-annotations') as HTMLButtonElement;
+const importAnnotationsBtn = document.getElementById('import-annotations') as HTMLButtonElement;
 const zoomBtn = document.getElementById('zoom') as HTMLButtonElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const resetBtn = document.getElementById('reset') as HTMLButtonElement;
@@ -480,7 +496,66 @@ const toolButtons = Array.from(
 // The items themselves (`#shrink`, `#view-cropped`) are owned by the
 // drawing module, which wires their clicks and disabled state; this
 // only opens and closes the container.
-const morePopover = createMenuPopover({ menu: moreMenu, button: moreBtn });
+// The annotation-transfer items' enabled state depends on two
+// session-storage slots, which `render()` can't await (it runs on
+// every drag mousemove). Re-read both just before the menu paints
+// and hand them to the drawing module, which re-renders with the
+// fresh state. Reading per-open rather than subscribing keeps it
+// simple and can only be stale by the width of one open menu; the
+// payloads are pure geometry, so the read is cheap.
+const morePopover = createMenuPopover({
+  menu: moreMenu,
+  button: moreBtn,
+  onBeforeOpen: () => { void refreshAnnotationTransferSources(); },
+});
+
+async function readTransferSource(
+  source: 'clipboard' | 'lastCapture',
+): Promise<AnnotationTransfer | null> {
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'getTransferableAnnotations',
+      source,
+    }) as { payload?: AnnotationTransfer | null } | undefined;
+    return res?.payload ?? null;
+  } catch {
+    // SW down / page closing — treat as "nothing to paste"; the
+    // items just stay disabled.
+    return null;
+  }
+}
+
+// Mirrored here (rather than read back out of the drawing module)
+// so a partial update — the optimistic one after a Copy — can't drop
+// the other slot on the floor.
+let annotationTransferSources: {
+  clipboard: AnnotationTransfer | null;
+  lastCapture: AnnotationTransfer | null;
+} = { clipboard: null, lastCapture: null };
+
+function updateAnnotationTransferSources(patch: {
+  clipboard?: AnnotationTransfer | null;
+  lastCapture?: AnnotationTransfer | null;
+}): void {
+  annotationTransferSources = { ...annotationTransferSources, ...patch };
+  setAnnotationTransferSources(annotationTransferSources);
+}
+
+// Sequence number for the reads above: open / close / open in quick
+// succession can land the older `Promise.all` last, which would
+// re-install payloads the newer read already superseded. Only the
+// most recent request is allowed to write.
+let transferRefreshSeq = 0;
+
+async function refreshAnnotationTransferSources(): Promise<void> {
+  const seq = ++transferRefreshSeq;
+  const [clipboard, lastCapture] = await Promise.all([
+    readTransferSource('clipboard'),
+    readTransferSource('lastCapture'),
+  ]);
+  if (seq !== transferRefreshSeq) return;
+  updateAnnotationTransferSources({ clipboard, lastCapture });
+}
 
 moreBtn.addEventListener('click', () => { morePopover.toggle(); });
 
@@ -1095,6 +1170,20 @@ async function loadData(): Promise<void> {
     // screenshot already visible rather than popping in a frame
     // later. (Mechanics in `awaitPreviewDecode`.)
     await awaitPreviewDecode();
+    // Pin the original capture's size while the preview still *is*
+    // the original — the restore re-crop just below would otherwise
+    // measure the cropped image. Zero on a failed decode (or a
+    // capture with no screenshot), which leaves this null so the
+    // annotation-transfer items stay disabled rather than claiming a
+    // 0×0 capture. Cleared first, not just conditionally written:
+    // `loadData` runs again after the upload flow hands back, and a
+    // second load with no decodable screenshot must not leave the
+    // previous capture's size looking current — Paste would read as
+    // compatible and then fail on the click.
+    originalImageSize = null;
+    if (previewImg.naturalWidth > 0 && previewImg.naturalHeight > 0) {
+      originalImageSize = { w: previewImg.naturalWidth, h: previewImg.naturalHeight };
+    }
     // A restored session's edits are stored against the view-cropped
     // frame, but the SW only ever hands back the original capture —
     // so re-derive the cropped base now that the original has
@@ -1412,10 +1501,35 @@ initDrawing({
   edgesSvg,
   shrinkBtn,
   viewCroppedBtn,
+  copyAnnotationsBtn,
+  pasteAnnotationsBtn,
+  importAnnotationsBtn,
   undoBtn,
   resetBtn,
   toolButtons,
   originalImageUrl: () => originalImageDataUrl || null,
+  originalImageSize: () => originalImageSize,
+  // The same string the page card shows (title, or the URL when the
+  // capture had no title) — so the target page's tooltip names the
+  // capture the way the user last saw it named.
+  captureLabel: () => capturedTitleLink.textContent || undefined,
+  onCopyAnnotations: async (payload) => {
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: 'copyAnnotations',
+        payload,
+      }) as { ok?: boolean } | undefined;
+      const ok = res?.ok === true;
+      // Reflect the write locally so Paste lights up without waiting
+      // for the next menu open — copying then pasting into the same
+      // page is a legitimate way to stash a state before reworking it.
+      if (ok) updateAnnotationTransferSources({ clipboard: payload });
+      return ok;
+    } catch {
+      return false;
+    }
+  },
+  setStatusMessage,
   updateImageSizeBadge,
   composeImageBadgeText,
   // Restorable state-changed: route through the debounced push so a
@@ -1533,6 +1647,7 @@ function captureUiStateSnapshot(): {
   editVersion: number;
   selectedTool: string;
   viewCropPct: RectPct | null;
+  sourceSize: { w: number; h: number } | null;
 } {
   const drawing = getDrawingSnapshot();
   return {
@@ -1549,6 +1664,11 @@ function captureUiStateSnapshot(): {
     editVersion: drawing.editVersion,
     selectedTool: drawing.selectedTool,
     viewCropPct: drawing.viewCropPct,
+    // Not used by Restore (which re-measures the screenshot the SW
+    // hands back) — it's here for "Import annotations from last
+    // capture", which builds its payload straight out of this record
+    // and has to answer the same-size question without decoding it.
+    sourceSize: originalImageSize,
   };
 }
 

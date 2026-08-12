@@ -60,6 +60,7 @@
 * **Shrink** and the new **View cropped** action moved into a **More…** menu at the bottom of the tool palette, as "Shrink last … to fit content" (the label names what it would shrink — box / redaction / crop) and "Replace with cropped image" (the README's Shrink bullet needs rewording for the new home)
 * **View cropped** replaces the image with just the cropped region, as if that was the captured screenshot — drawings survive (clipped to the new frame), a further crop can be drawn inside and applied again, and Undo puts the full image back
 * **Clear** is now **Reset** ("Undo all edits"): it goes all the way back to the original capture, undoing any **View cropped** re-frame as well as the drawings, and is itself undoable in one click (the README's Undo/Clear bullet needs the new name)
+* **Image-edit transfer** in the **More…** menu — **Copy image edits** / **Paste image edits** / **Import image edits from last capture** copy a capture's drawings *and* its crop onto another capture of the same size, for lining up before/after screenshots. Paste replaces whatever was there; Undo peels the pasted edits off one at a time and the last click restores what was there before. Items are greyed with a tooltip saying why when there's nothing to paste or the copy came from a differently-sized capture.
 
 ### Not documented
 

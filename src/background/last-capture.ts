@@ -13,12 +13,19 @@
 // freely clear `lastCapture` — the snapshot is best-effort, not
 // a durable history.
 //
+// Every promote also mirrors the page's annotations into the
+// separate, never-reclaimed `lastCaptureAnnotations` slot (see
+// `annotation-clipboard.ts`) — that's what the Capture page's
+// "Import annotations from last capture" reads, precisely because
+// opening the page that runs the import clears `lastCapture`.
+//
 // Stored under a `chrome.storage.session` key (same area the
 // per-tab Capture-page sessions live in) so it shares the same
 // 10 MiB quota and lifetime: gone on browser restart, just like a
 // real Capture-page session would be.
 
 import type { SelectionFormat } from '../capture/types.js';
+import { recordLastCaptureAnnotations } from './annotation-clipboard.js';
 import {
   type DetailsSession,
   detailsStorageKey,
@@ -72,6 +79,14 @@ export interface CapturePageUiState {
   editVersion?: number;
   selectedTool?: string;
   viewCropPct?: { x: number; y: number; w: number; h: number } | null;
+  /** Pixel size of the *original* capture (before any applied crop).
+   *  Not needed by Restore — the SW hands the original screenshot
+   *  back and the page re-measures it. It's here because
+   *  "Import annotations from last capture" builds its transfer
+   *  payload straight out of this record, and the compatibility
+   *  check (same-size captures only) has to answer before the menu
+   *  opens, without decoding the stored screenshot. */
+  sourceSize?: { w: number; h: number } | null;
 }
 
 /**
@@ -178,6 +193,16 @@ export async function promoteSessionToLastCapture(tabId: number): Promise<void> 
   // field shouldn't be carried.
   const record = { ...session } as Record<string, unknown>;
   for (const k of LAST_CAPTURE_EXCLUDED_KEYS) delete record[k];
+  // Mirror the annotations into their own slot before the write
+  // below. They can't be read back out of `lastCapture` when the
+  // import runs: opening the Capture page that would do the
+  // importing clears that slot for quota relief, while this one —
+  // geometry only — is never reclaimed. Independent of the `set`
+  // below succeeding, since that's the write quota can reject.
+  await recordLastCaptureAnnotations(
+    session.uiState,
+    session.capture.title || session.capture.url,
+  );
   try {
     await setLastCapture(record as unknown as LastCaptureRecord);
   } catch {
