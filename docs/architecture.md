@@ -324,6 +324,39 @@ sub-modules above.
           *either* `cloneContents()` or `toString()` is non-empty.
           Text saves work; HTML / markdown rows stay disabled (no
           real HTML to convert).
+      - **Canvas-rendered editors (Google Docs, Figma, terminal
+        emulators).**
+        - Document text is drawn into `<canvas>` tiles; the
+          editor keeps selection state in its own JS model and
+          never exposes a DOM `Range`, so `window.getSelection()`
+          returns `rangeCount === 0` even when the user visibly
+          has text selected.
+        - Fallback: the scrape registers a bubble-phase `copy`
+          listener on `document`, calls
+          `document.execCommand("copy")`, and reads whatever the
+          page wrote into `event.clipboardData` (`text/plain` and
+          `text/html`). Calls `preventDefault()` so the system
+          clipboard is never written.
+        - No new permissions: `clipboardData` on a `ClipboardEvent`
+          is the event's own payload, not the system clipboard, so
+          neither `clipboardRead` nor `clipboardWrite` is needed.
+          `execCommand("copy")` rides on the user gesture from the
+          toolbar click.
+        - Generic, not site-specific: any editor that hooks the
+          `copy` event (which is essentially every keyboard-
+          copyable editor on the web) surfaces its selection
+          through this path.
+        - Multi-frame injection. Some canvas editors (notably
+          Google Docs) park keyboard focus on a hidden iframe
+          (`docs-texteventtarget-iframe`) and register the `copy`
+          handler on the iframe's document — `execCommand("copy")`
+          fired in the top frame doesn't reach it. Both call sites
+          (`scrapeSelection` and `captureBothToMemory`) inject with
+          `allFrames: true` and pick the selection from whichever
+          frame finds one (DOM range or copy-fallback bytes). The
+          worker skips HTML serialization when `window !==
+          window.top` so the iframe variants don't pay the
+          `outerHTML` cost.
         - Diagnostic: when the scrape returns null, both call sites
           log `[SeeWhatISee] selection scrape empty: {diag}` to the
           SW console with `rangeCount` / `clonedHtmlLen` /

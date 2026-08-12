@@ -20,6 +20,13 @@
 //      This is the regression test for the GitHub blob-viewer bug.
 //   4. Empty range (cloneContents empty, toString empty) → null.
 //   5. `includeHtml: true` returns the page HTML; `false` returns ''.
+//   6. Copy-event interception fallback: page has no DOM selection
+//      but a `copy` listener writes clipboardData (Google Docs /
+//      Figma / canvas-editor pattern) → returns the bytes the
+//      page's handler put on the event. preventDefault inside the
+//      scrape's own listener keeps the system clipboard untouched.
+//   7. Copy-event fallback with no listener: no DOM selection and
+//      nothing writes clipboardData → still returns `null`.
 
 import { test, expect } from '../fixtures/extension';
 import { scrapePageStateInPage } from '../../src/scrape-page-state';
@@ -150,6 +157,91 @@ test.describe('scrapePageStateInPage', () => {
     expect(result.diag.rangeCount).toBe(1);
     expect(result.diag.clonedHtmlLen).toBe(0);
     expect(result.diag.selStrLen).toBe(0);
+    await page.close();
+  });
+
+  test('copy-event fallback recovers selection when page handler writes clipboardData', async ({
+    extensionContext,
+    fixtureServer,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+    // Simulate a canvas-based editor (Google Docs / Figma): no DOM
+    // Range, but a `copy` handler that writes selected text + HTML
+    // into the event's clipboardData. The scraper's own copy-event
+    // listener should pick those bytes up.
+    await page.evaluate(() => {
+      window.getSelection()?.removeAllRanges();
+      // Track that our handler ran *and* that the system clipboard
+      // write was suppressed by the scraper's preventDefault.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__copyHandlerCalls = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__lastCopyEvent = null;
+      document.addEventListener('copy', (e: ClipboardEvent) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).__copyHandlerCalls += 1;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).__lastCopyEvent = e;
+        e.clipboardData?.setData('text/plain', 'canvas selection text');
+        e.clipboardData?.setData(
+          'text/html',
+          '<span>canvas selection <b>html</b></span>',
+        );
+        // Page's handler doesn't preventDefault; the scraper's
+        // listener should be the one that does, so the system
+        // clipboard never sees the bytes. We cache the event
+        // reference so the test can inspect `defaultPrevented`
+        // *after* dispatch finishes (and the scraper has run).
+      });
+    });
+
+    const result = await page.evaluate(scrapePageStateInPage, false);
+    expect(result.selection).not.toBeNull();
+    expect(result.selection!.text).toBe('canvas selection text');
+    expect(result.selection!.html).toBe('<span>canvas selection <b>html</b></span>');
+    expect(result.diag.rangeCount).toBe(0);
+    expect(result.diag.copyTried).toBe(true);
+    expect(result.diag.copyTextLen).toBe('canvas selection text'.length);
+    expect(result.diag.copyHtmlLen).toBeGreaterThan(0);
+
+    // The page's handler ran exactly once, and the scraper's
+    // listener flipped defaultPrevented to true (so system clipboard
+    // was NOT written).
+    const handlerCalls = await page.evaluate(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      () => (window as any).__copyHandlerCalls,
+    );
+    expect(handlerCalls).toBe(1);
+    // After dispatch finishes, the cached event's `defaultPrevented`
+    // should be true — proving the scraper's listener ran *after*
+    // the page's writer and called `preventDefault` so the system
+    // clipboard write was suppressed.
+    const defaultPrevented = await page.evaluate(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      () => (window as any).__lastCopyEvent?.defaultPrevented ?? null,
+    );
+    expect(defaultPrevented).toBe(true);
+
+    await page.close();
+  });
+
+  test('copy-event fallback returns null when nothing writes clipboardData', async ({
+    extensionContext,
+    fixtureServer,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+    // No selection, no copy handler — execCommand("copy") still
+    // fires the event (with empty clipboardData) but our fallback
+    // sees nothing useful and stays null.
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+    const result = await page.evaluate(scrapePageStateInPage, false);
+    expect(result.selection).toBeNull();
+    expect(result.diag.copyTried).toBe(true);
+    expect(result.diag.copyTextLen).toBe(0);
+    expect(result.diag.copyHtmlLen).toBe(0);
     await page.close();
   });
 

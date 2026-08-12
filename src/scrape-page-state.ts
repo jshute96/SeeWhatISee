@@ -66,10 +66,12 @@ export type PageScrapeResult = {
  *     scrape comes back empty so future failures are diagnosable from
  *     the SW console alone, without instrumenting the page.
  *
- *  2. *No selection at all* (`!sel || rangeCount === 0`). Return
- *     `selection: null`. The diagnostic will say `rangeCount: 0` —
- *     usually means the user didn't select anything, or focus moved
- *     off the page and Chrome collapsed the selection before we ran.
+ *  2. *No selection at all* (`!sel || rangeCount === 0`). Skip the
+ *     normal-case branch entirely and try the copy-fallback branch
+ *     below — canvas-based editors (Google Docs, Figma, etc.) keep
+ *     selection state in their own JS model and never expose it as a
+ *     DOM Range, so `rangeCount` is legitimately 0 even when the user
+ *     visibly has text selected.
  *
  *  3. *Selection exists, normal case.* Clone every range's contents
  *     into a detached container; `container.innerHTML` is our
@@ -93,10 +95,28 @@ export type PageScrapeResult = {
  *     the user's selection — which is the format that matters for
  *     source code anyway.
  *
- *  5. *Selection exists but both bodies are empty* (e.g. a Range
- *     positioned in an entirely invisible region). Return
- *     `selection: null`; the master Save-selection row shows
- *     "Selection has no saveable content".
+ *  5. *Selection branch produced nothing — copy-event interception
+ *     fallback.* When the `getSelection()`-based branches above leave
+ *     `selection === null`, synthesize the same flow that Ctrl+C
+ *     would trigger: register a `copy` listener on `document`
+ *     (bubble phase, so it runs *after* the page's own copy handler),
+ *     call `document.execCommand('copy')`, and read whatever the
+ *     page wrote into `event.clipboardData`. Call `preventDefault()`
+ *     so the system clipboard is never actually written. This is the
+ *     escape hatch for canvas-rendered editors — Google Docs, Figma,
+ *     terminal emulators, etc. — that keep their selection in
+ *     internal JS and only expose it through the `copy` event. No
+ *     clipboard permissions required: `clipboardData` on a
+ *     `ClipboardEvent` is the event's own payload, not the system
+ *     clipboard. If the page's handler wrote text/html, we surface
+ *     it as a normal selection; otherwise the result stays `null`
+ *     (same as today).
+ *
+ *  6. *Selection exists but both bodies are empty* (e.g. a Range
+ *     positioned in an entirely invisible region) and the
+ *     copy-fallback also produced nothing. Return `selection: null`;
+ *     the master Save-selection row shows "Selection has no
+ *     saveable content".
  *
  * **Why include HTML here at all?** The bundled call from
  * `captureBothToMemory` needs both the page HTML and the selection in
@@ -125,7 +145,15 @@ export function scrapePageStateInPage(includeHtml: boolean): PageScrapeResult {
       active && (active as Element & { shadowRoot?: ShadowRoot }).shadowRoot
     ),
   };
-  const pageHtml = includeHtml ? document.documentElement.outerHTML : '';
+  // HTML is only meaningful for the top frame — child frames have
+  // their own (usually small / irrelevant) DOM, but the caller wants
+  // the host page's serialization. When the scrape runs with
+  // `allFrames: true` we inject into every frame; this guard keeps
+  // the iframe variants from wastefully serializing their own
+  // documents and the consumer reading the wrong frame's HTML.
+  const isTopFrame = window === window.top;
+  const pageHtml = includeHtml && isTopFrame ? document.documentElement.outerHTML : '';
+  diag.isTopFrame = isTopFrame;
   let selection: { html: string; text: string } | null = null;
   if (sel && sel.rangeCount > 0) {
     const container = document.createElement('div');
@@ -141,6 +169,41 @@ export function scrapePageStateInPage(includeHtml: boolean): PageScrapeResult {
     diag.anchorClass = anchorEl?.className || null;
     if (html.length > 0 || selStr.length > 0) {
       selection = { html, text: selStr };
+    }
+  }
+  if (selection === null) {
+    // Copy-event interception fallback — see branch (5) in the doc
+    // comment above. Generic, no permissions, no site-specific code:
+    // any editor whose `copy` handler writes selection bytes into
+    // `clipboardData` (which is essentially every keyboard-copyable
+    // editor on the web) will surface its selection through this
+    // path. Bubble-phase listener so the page's handler runs first
+    // and we read whatever it wrote; `preventDefault()` keeps the
+    // result out of the system clipboard.
+    let copyHtml = '';
+    let copyText = '';
+    const handler = (e: ClipboardEvent) => {
+      const cd = e.clipboardData;
+      if (cd) {
+        copyText = cd.getData('text/plain') || '';
+        copyHtml = cd.getData('text/html') || '';
+      }
+      e.preventDefault();
+    };
+    document.addEventListener('copy', handler, false);
+    let copyExecuted = false;
+    try {
+      copyExecuted = document.execCommand('copy');
+    } catch {
+      copyExecuted = false;
+    }
+    document.removeEventListener('copy', handler, false);
+    diag.copyTried = true;
+    diag.copyExecuted = copyExecuted;
+    diag.copyHtmlLen = copyHtml.length;
+    diag.copyTextLen = copyText.length;
+    if (copyText.length > 0 || copyHtml.length > 0) {
+      selection = { html: copyHtml, text: copyText };
     }
   }
   return { html: pageHtml, selection, diag };

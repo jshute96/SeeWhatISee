@@ -140,7 +140,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/capture-drawing.spec.ts` | E2E for the drawing overlay — boxes/lines/Redact/Crop/Undo/Clear, drag-to-crop, edit-flag semantics on log.json |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the details-flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
-| `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |
+| `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror / empty / copy-event-fallback selections, `includeHtml` flag |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureBoth` (PNG + HTML + record) |
 | `tests/e2e/get-latest.spec.ts` | Tests for `scripts/get-latest.sh` (absolute paths, config file, error cases) |
 | `tests/e2e/copy-last-snapshot.spec.ts` | Tests for `scripts/copy-last-snapshot.sh` (copy + path rewrite to TARGET_DIR) |

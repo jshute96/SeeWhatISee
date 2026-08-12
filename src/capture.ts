@@ -413,20 +413,34 @@ export async function scrapeSelection(
   tabId: number,
   pageUrl: string,
 ): Promise<SelectionBodies | null> {
+  // Run in every frame: canvas-rendered editors (Google Docs)
+  // park focus on a hidden iframe and register their `copy`
+  // handler there, so the top-frame copy-event fallback returns
+  // empty. Any frame may carry the selection — we pick the first
+  // one that finds it (DOM selection or copy-fallback bytes).
   const results = await chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, allFrames: true },
     func: scrapePageStateInPage,
     args: [false],
   });
-  const scraped = results[0]?.result as PageScrapeResult | undefined;
+  const scrapedFrames = results
+    .map((r) => r?.result as PageScrapeResult | undefined)
+    .filter((s): s is PageScrapeResult => !!s);
+  const scraped = scrapedFrames.find((s) => s.selection !== null) ?? scrapedFrames[0];
   if (!scraped || !scraped.selection) {
-    // Only log when the user *had* a range but we couldn't recover
-    // anything from it — the "no selection at all" case
-    // (`rangeCount === 0`) is the common, benign result of every
-    // toolbar click on a page with nothing selected and would
-    // otherwise spam the SW console.
-    if (scraped && (scraped.diag.rangeCount as number) > 0) {
-      console.log('[SeeWhatISee] selection scrape empty:', scraped.diag);
+    // Log every frame's diag when nothing was recoverable — for
+    // multi-frame failures (canvas editors, etc.) the top frame's
+    // diag alone would hide what the iframe-side fallback saw.
+    // Suppressed in the pure-no-selection case (rangeCount 0 and
+    // the fallback did not run) so benign clicks don't spam.
+    const interesting = scrapedFrames.some(
+      (s) => (s.diag.rangeCount as number) > 0 || s.diag.copyTried,
+    );
+    if (interesting) {
+      console.log(
+        '[SeeWhatISee] selection scrape empty: ' +
+          JSON.stringify(scrapedFrames.map((s) => s.diag)),
+      );
     }
     return null;
   }
@@ -660,22 +674,38 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   let htmlError: string | undefined;
   let selectionError: string | undefined;
   try {
+    // See `scrapeSelection` for the rationale on `allFrames: true`.
+    // The page-side worker skips HTML serialization in non-top
+    // frames (`window === window.top` guard inside
+    // `scrapePageStateInPage`), so the IPC payload from iframes
+    // stays small even with `includeHtml: true`.
     const results = await chrome.scripting.executeScript({
-      target: { tabId: active.id! },
+      target: { tabId: active.id!, allFrames: true },
       func: scrapePageStateInPage,
       args: [true],
     });
-    const scraped = results[0]?.result as PageScrapeResult | undefined;
-    if (!scraped || !scraped.html) {
+    const scrapedFrames = results
+      .map((r) => r?.result as PageScrapeResult | undefined)
+      .filter((s): s is PageScrapeResult => !!s);
+    const topScraped = scrapedFrames.find((s) => s.diag.isTopFrame);
+    const selectionScraped = scrapedFrames.find((s) => s.selection !== null);
+    if (!topScraped || !topScraped.html) {
       htmlError = 'Failed to retrieve page contents';
       selectionError = htmlError;
     } else {
-      html = scraped.html;
-      selectionRaw = scraped.selection;
-      // See `scrapeSelection` for the gating rationale — only log
-      // when there *was* a range but we couldn't recover from it.
-      if (selectionRaw === null && (scraped.diag.rangeCount as number) > 0) {
-        console.log('[SeeWhatISee] selection scrape empty:', scraped.diag);
+      html = topScraped.html;
+      selectionRaw = selectionScraped?.selection ?? null;
+      // Same logging rules as `scrapeSelection`: surface every
+      // frame's diag when nothing was recoverable but at least one
+      // frame had something interesting to report.
+      const interesting = scrapedFrames.some(
+        (s) => (s.diag.rangeCount as number) > 0 || s.diag.copyTried,
+      );
+      if (selectionRaw === null && interesting) {
+        console.log(
+          '[SeeWhatISee] selection scrape empty: ' +
+            JSON.stringify(scrapedFrames.map((s) => s.diag)),
+        );
       }
     }
   } catch (err) {
