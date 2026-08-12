@@ -655,14 +655,14 @@ Two rules stop it ever being a pessimization:
   string's. High-entropy bodies (already-compressed inline assets)
   fail this and ride through unpacked.
 
-So `InMemoryCapture.html` is a `MaybePackedText`, and every reader
-goes through `unpackText()` / `originalByteLength()` /
-`isEmptyText()`. A bare `if (capture.html)` is wrong now — it
-passes for *any* packed object, empty included.
+So `InMemoryCapture.html` and each body in `SelectionBodies` are
+`MaybePackedText`, and every reader goes through `unpackText()` /
+`isEmptyText()` / `isBlankText()`. A bare `if (capture.html)` is
+wrong now — it passes for *any* packed object, empty included.
 
 #### Where compression starts and stops
 
-- **Starts** at `packCaptureHtml` (capture-page open) and in the
+- **Starts** at `packCaptureText` (capture-page open) and in the
   `updateArtifact` handler for `kind: 'html'` (Edit-dialog save).
 - **Stops** at `getDetailsData`, which unpacks before the body
   crosses to the Capture page.
@@ -674,12 +674,16 @@ passes for *any* packed object, empty included.
     `htmlError` path rather than blanking the whole capture.
 - **Stops** at `downloadHtml`, so the `.html` on disk is always
   plain — an agent shouldn't have to gunzip a snapshot.
-- Never applies to selections (much smaller) or to the
-  context-menu Save paths (they stream straight to disk, never
-  touching storage).
+- Applies to the selection bundle on the same terms, packed and
+  unpacked at the same boundaries.
+- Never applies to the context-menu Save paths — they stream
+  straight to disk and never touch storage.
 
-Restore re-uses the already-packed body: `packCaptureHtml` skips
-anything that isn't a plain string, so it's idempotent.
+Restore re-uses the already-packed bodies: `packCaptureHtml` skips a
+non-string, and `packCaptureSelections` returns early when no format
+is still a plain string. A mixed bundle (one format edited since,
+two still packed) repacks deterministically to the same sizes, so a
+bundle that fit before still fits.
 
 ### Ask text cap
 
@@ -706,7 +710,7 @@ this Ask" — arriving only after the user had written a prompt.
 
 ### HTML size caps at capture + edit-save
 
-Two caps, checked cheapest-first in `packHtmlForStorage`:
+Three caps, checked cheapest-first in `packTextForStorage`:
 
 - **Stored cap — 4 MiB**, measured on the packed form with the same
   `JSON.stringify(...).length` accounting `getBytesInUse` uses.
@@ -715,6 +719,15 @@ Two caps, checked cheapest-first in `packHtmlForStorage`:
   - Deliberately a large slice of the 10 MiB budget — holding the
     whole snapshot is the Capture page's job, and the pre-flight
     quota check still refuses what won't fit beside the screenshot.
+- **Selection bundle cap — 2 MiB**, on the three formats summed.
+  - One artifact as far as the user is concerned: the Save-selection
+    rows share an error icon, and keeping markdown but dropping text
+    would be a confusing partial state. All three or none.
+  - Lower than HTML's: a selection is a deliberate slice rather than
+    a whole page, so 2 MiB stored is already far past intentional.
+  - Independent of the HTML cap — either can drop while the other
+    rides through, and the Capture page flags whichever rows are
+    affected.
 - **Raw cap — 24 MiB**, checked before compressing. Not a storage
   guard: it bounds bodies that would take seconds to gzip, wedge
   the Edit dialog's syntax highlighter, and overflow the `data:`
@@ -741,20 +754,36 @@ row greyed-out, error icon with the message, size badge hidden.
 Rest of the capture (image, URL, prompt, selection) proceeds
 normally.
 
-Edit-dialog saves run the same `packHtmlForStorage` on the incoming
+Edit-dialog saves run the same `packTextForStorage` on the incoming
 value before mutating the session; over-cap pastes return the
 message (without the context-menu hint — it's an edit, not the live
 page) without touching the body. Both wordings come from the shared
-`htmlTooLargeMessage` helper.
+`textTooLargeMessage` helper.
 
 `_setHtmlSizeCapForTest(bytes | null)` and
 `_setHtmlRawCapForTest(bytes | null)` are exposed on
 `self.SeeWhatISee` so e2e can exercise the branches without
 authoring a 24 MB fixture (see `tests/e2e/html-size-cap.spec.ts`).
 
-Selection content is neither capped nor compressed in this version —
-it's typically much smaller than HTML and would need its own
-scoping decision (per-format vs bundled).
+Selection edit-saves are weighed against the bundle:
+
+- The candidate's packed size plus what the *other* two formats
+  currently cost.
+- Without that, three individually-legal edits could sum past the
+  cap and fail only at the generic `set` rejection.
+
+Because the caps are independent, the Capture page's error icons
+changed:
+
+- The selection icon shows whenever `selectionError` differs from
+  `htmlError`, rather than being suppressed whenever HTML also
+  failed — each artifact can now fail on its own.
+- Identical strings still mean one shared scrape failure, and stay
+  suppressed so the user doesn't read the same sentence twice.
+- So the two decompress-failure messages are deliberately worded
+  differently: `DecompressionStream` being unavailable throws for
+  both bodies, and matching text would suppress the icon in exactly
+  the case it's needed.
 
 #### Not compressed yet
 

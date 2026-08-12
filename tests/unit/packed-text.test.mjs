@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  isBlankText,
   isEmptyText,
   isPackedText,
   originalByteLength,
@@ -115,6 +116,29 @@ test('isEmptyText covers both forms and undefined', async () => {
   // passes for any packed object, so an empty one would read as
   // present.
   assert.equal(isEmptyText({ z: 'gzip', d: '', n: 0 }), true);
+});
+
+test('isBlankText: whitespace counts as blank for plain bodies', async () => {
+  assert.equal(isBlankText(''), true);
+  assert.equal(isBlankText('   \n\t '), true);
+  assert.equal(isBlankText(undefined), true);
+  assert.equal(isBlankText('<p>x</p>'), false);
+  assert.equal(isBlankText(await packText(bloatedHtml(200_000))), false);
+});
+
+test('isBlankText: a packed body is never blank unless its length is 0', () => {
+  // Documented quirk: the whole point is to answer without
+  // decompressing, so a packed body is judged by its recorded byte
+  // count. 64 KiB of pure whitespace would therefore read as
+  // contentful — absurd enough to accept, and the unpacked check
+  // downstream still refuses it.
+  assert.equal(isBlankText({ z: 'gzip', d: 'x', n: 100 }), false);
+  assert.equal(isBlankText({ z: 'gzip', d: '', n: 0 }), true);
+});
+
+test('storedLength / originalByteLength are total over undefined', () => {
+  assert.equal(storedLength(undefined), 0);
+  assert.equal(originalByteLength(undefined), 0);
 });
 
 test('isPackedText rejects look-alikes', () => {

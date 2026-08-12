@@ -60,7 +60,7 @@
 * **Shrink** and the new **View cropped** action moved into a **More…** menu at the bottom of the tool palette, as "Shrink last … to fit content" (the label names what it would shrink — box / redaction / crop) and "Replace with cropped image" (the README's Shrink bullet needs rewording for the new home)
 * **View cropped** replaces the image with just the cropped region, as if that was the captured screenshot — drawings survive (clipped to the new frame), a further crop can be drawn inside and applied again, and Undo puts the full image back
 * **Clear** is now **Reset** ("Undo all edits"): it goes all the way back to the original capture, undoing any **View cropped** re-frame as well as the drawings, and is itself undoable in one click (the README's Undo/Clear bullet needs the new name)
-* **Much larger HTML pages now capture.** Page contents are stored compressed, so "Content too large for Capture page" appears far less often — the limit is now 4 MB *compressed*, and HTML typically shrinks ~3×, so pages of roughly 12 MB of source go through where 2 MB used to be the ceiling. Saved `.html` files and the Edit HTML dialog are unchanged (both still plain HTML). Sending HTML to **Ask** is separately capped at 2 MB of text, and says so up-front instead of failing after you've written a prompt.
+* **Much larger HTML pages now capture.** Page contents and selection text are stored compressed, so "Content too large for Capture page" appears far less often — the HTML limit is now 4 MB *compressed*, and HTML typically shrinks ~3×, so pages of roughly 12 MB of source go through where 2 MB used to be the ceiling. A very large selection has its own 2 MB compressed limit, and can be dropped without losing the HTML (or the other way round). Saved files and the Edit dialogs are unchanged — everything on disk is still plain text. Text sent to **Ask** — HTML plus any selection, combined — is separately capped at 2 MB, and says so up-front instead of failing after you've written a prompt.
 * **Image-edit transfer** in the **More…** menu — **Copy image edits** / **Paste image edits** / **Import image edits from last capture** copy a capture's drawings *and* its crop onto another capture of the same size, for lining up before/after screenshots. Paste replaces whatever was there; Undo peels the pasted edits off one at a time and the last click restores what was there before. Items are greyed with a tooltip saying why when there's nothing to paste or the copy came from a differently-sized capture.
 
 ### Not documented
@@ -73,9 +73,9 @@
 
 * Screenshots that are >2MB auto-recompress to JPEG if JPEG is ≥10% smaller
 * JPG images stay as JPG, event after drawing on them (previous conversion to PNG causes size blowup)
-* HTML is stored compressed (gzip, ~3× on typical pages), so a capture holds far more of it than the stored size suggests
-* HTML is omitted on the capture page (with an error) only if it's still >4MB compressed, or >24MB before compression
-* Sending HTML to Ask is capped separately at 2MB of text (Ask stages its own uncompressed copy), and refuses up-front rather than failing mid-send
+* HTML and selection text are stored compressed (gzip, ~3× on typical pages), so a capture holds far more of them than the stored size suggests
+* HTML is omitted on the capture page (with an error) only if it's still >4MB compressed, or >24MB before compression; the selection (all three formats together) has its own 2MB compressed cap, so either can drop without the other
+* Text sent to Ask (HTML plus any selection, combined) is capped at 2MB (Ask stages its own uncompressed copy), and refuses up-front rather than failing mid-send
 * When capturing an image directly (e.g. from a file: or http: URL ending in .jpg or .png), we just take the image, not a screenshot
 
 #### Keyboard shortcuts

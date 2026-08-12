@@ -71,8 +71,9 @@ import {
   refreshRestoreLastCaptureMenuState,
 } from './background/context-menu.js';
 import {
-  _setHtmlRawCapForTest,
   _setHtmlSizeCapForTest,
+  _setRawCapForTest,
+  _setSelectionSizeCapForTest,
   ensureHtmlDownloaded,
   ensureScreenshotDownloaded,
   ensureSelectionDownloaded,
@@ -469,5 +470,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // fixtures can exercise the capture-time + edit-save rejection
   // paths, and the raw cap that fires before compression is tried.
   _setHtmlSizeCapForTest,
-  _setHtmlRawCapForTest,
+  // Same, for the selection bundle's shared cap and for the raw cap
+  // that gates every text artifact before compression is tried.
+  _setSelectionSizeCapForTest,
+  _setRawCapForTest,
 };

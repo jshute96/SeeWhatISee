@@ -22,6 +22,13 @@
 //   7. Edit-save of a large body packs it too (the second call site).
 //   8. A corrupt packed body degrades to the Save-HTML error row
 //      rather than blanking the capture.
+//   9. A large selection packs too, and round-trips through the page.
+//  10. An over-cap selection bundle is dropped on its own, leaving
+//      HTML intact.
+//  11. A selection past the raw cap is refused outright, not stored
+//      as an empty body.
+//  12. HTML and selection failing independently show BOTH error
+//      icons, with their own messages.
 
 import fs from 'node:fs';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
@@ -30,7 +37,8 @@ import { test, expect } from '../fixtures/extension';
 type SizeCapApi = {
   startCaptureWithDetails: () => Promise<void>;
   _setHtmlSizeCapForTest: (bytes: number | null) => void;
-  _setHtmlRawCapForTest: (bytes: number | null) => void;
+  _setRawCapForTest: (bytes: number | null) => void;
+  _setSelectionSizeCapForTest: (bytes: number | null) => void;
 };
 
 // Inject random text into the opener page so the scraped HTML
@@ -78,6 +86,37 @@ async function bloatOpenerHtmlCompressible(
   }, approxBytes);
 }
 
+/**
+ * Select a large, compressible run of text on the opener page, so
+ * the scrape produces a selection bundle worth packing. Selecting a
+ * single text node keeps all three formats (html / text / markdown)
+ * large without building a big DOM.
+ */
+async function seedLargeSelection(page: Page, approxBytes: number): Promise<void> {
+  await page.evaluate((n) => {
+    const chunk = 'selection filler text for the compression test. ';
+    const p = document.createElement('p');
+    p.id = 'big-sel';
+    p.textContent = chunk.repeat(Math.ceil(n / chunk.length));
+    document.body.appendChild(p);
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, approxBytes);
+}
+
+/** The stored selection bundle for the given Capture-page tab. */
+async function storedSelectionsForTab(sw: Worker, tabId: number): Promise<unknown> {
+  return await sw.evaluate(async (id) => {
+    const key = `captureDetails_${id}`;
+    const got = await chrome.storage.session.get(key);
+    return (got[key] as { capture?: { selections?: unknown } } | undefined)
+      ?.capture?.selections;
+  }, tabId);
+}
+
 /** The `capture.html` body as it actually sits in session storage
  *  for the given Capture-page tab — packed or plain. */
 async function storedHtmlForTab(sw: Worker, tabId: number): Promise<unknown> {
@@ -96,6 +135,7 @@ async function openCapturePageForTest(
   beforeCapture?: (page: Page) => Promise<void>,
   capBytes?: number,
   rawCapBytes?: number,
+  selectionCapBytes?: number,
 ): Promise<{ openerPage: Page; capturePage: Page }> {
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/${fixturePath}`);
@@ -109,12 +149,13 @@ async function openCapturePageForTest(
   // Set the caps and trigger the capture in one evaluate so an SW
   // restart between them can't reset a cap on us. `null` means
   // "leave the production default in place."
-  await sw.evaluate(async ([cap, rawCap]) => {
+  await sw.evaluate(async ([cap, rawCap, selCap]) => {
     const api = (self as unknown as { SeeWhatISee: SizeCapApi }).SeeWhatISee;
     if (cap !== null) api._setHtmlSizeCapForTest(cap);
-    if (rawCap !== null) api._setHtmlRawCapForTest(rawCap);
+    if (rawCap !== null) api._setRawCapForTest(rawCap);
+    if (selCap !== null) api._setSelectionSizeCapForTest(selCap);
     await api.startCaptureWithDetails();
-  }, [capBytes ?? null, rawCapBytes ?? null]);
+  }, [capBytes ?? null, rawCapBytes ?? null, selectionCapBytes ?? null]);
   const capturePage = await capturePagePromise;
   await capturePage.waitForLoadState('domcontentloaded');
   return { openerPage, capturePage };
@@ -128,7 +169,8 @@ test.describe('html-size-cap', () => {
     await sw.evaluate(() => {
       const api = (self as unknown as { SeeWhatISee: SizeCapApi }).SeeWhatISee;
       api._setHtmlSizeCapForTest(null);
-      api._setHtmlRawCapForTest(null);
+      api._setRawCapForTest(null);
+      api._setSelectionSizeCapForTest(null);
     });
   });
 
@@ -416,7 +458,7 @@ test.describe('html-size-cap', () => {
       async () => (await chrome.tabs.getCurrent())!.id!,
     );
 
-    // `updateArtifact` is the second `packHtmlForStorage` call site
+    // `updateArtifact` is the second `packTextForStorage` call site
     // and the only one that writes through `applyArtifactEdit`;
     // without this the edit path's packing is untested.
     const body = await capturePage.evaluate(async () => {
@@ -501,6 +543,187 @@ test.describe('html-size-cap', () => {
       await chrome.runtime.sendMessage({ action: 'ensureDownloaded', kind: 'html' }),
     )) as { path?: string; error?: string };
     expect(dl.error).toMatch(/HTML not captured: the stored copy could not be decompressed/);
+
+    await capturePage.close();
+    await openerPage.close();
+  });
+
+  test('a large selection packs too, and round-trips back to the page', async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw0 = await getServiceWorker();
+    await sw0.evaluate(() => chrome.storage.local.clear());
+
+    const sw = await getServiceWorker();
+    const { openerPage, capturePage } = await openCapturePageForTest(
+      extensionContext,
+      fixtureServer,
+      sw,
+      'purple.html',
+      (page) => seedLargeSelection(page, 300_000),
+    );
+    const tabId = await capturePage.evaluate(
+      async () => (await chrome.tabs.getCurrent())!.id!,
+    );
+
+    // Stored packed — all three formats are one bundle, so it's the
+    // bundle that has to come back compressed.
+    const stored = (await storedSelectionsForTab(sw, tabId)) as
+      Record<string, { z?: string }> | undefined;
+    expect(stored?.text?.z).toBe('gzip');
+
+    // The rows are live and the page got plain text back.
+    await expect(capturePage.locator('#cap-selection')).toBeEnabled();
+    await expect(capturePage.locator('#row-selection')).not.toHaveClass(/has-error/);
+    const body = await capturePage.evaluate(
+      async () =>
+        ((await chrome.runtime.sendMessage({ action: 'getDetailsData' })) as {
+          selections: { text: string };
+        }).selections.text,
+    );
+    expect(body).toContain('selection filler');
+    expect(body.length).toBeGreaterThan(200_000);
+
+    await capturePage.close();
+    await openerPage.close();
+  });
+
+  test('over-cap selection is dropped on its own, leaving HTML intact', async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw0 = await getServiceWorker();
+    await sw0.evaluate(() => chrome.storage.local.clear());
+
+    const sw = await getServiceWorker();
+    // Selection cap at 1 KB, HTML cap left at production. Both
+    // artifacts are over-sized in raw terms; only the selection
+    // should be refused, which is the point of capping them apart.
+    // Set through the helper so it lands in the same `evaluate` as
+    // the capture trigger — an SW restart between the two would
+    // reset it and the test would flake.
+    const { openerPage, capturePage } = await openCapturePageForTest(
+      extensionContext,
+      fixtureServer,
+      sw,
+      'purple.html',
+      (page) => seedLargeSelection(page, 300_000),
+      undefined,
+      undefined,
+      1024,
+    );
+
+    // Selection refused...
+    await expect(capturePage.locator('#cap-selection')).toBeDisabled();
+    await expect(capturePage.locator('#row-selection')).toHaveClass(/has-error/);
+    await expect(capturePage.locator('#error-selection')).toHaveAttribute(
+      'title',
+      /Content too large for Capture page: .*limit 1 KB\)\./,
+    );
+    // ...and HTML, which shares the same scrape, is untouched. The
+    // two caps are independent; a shared-scrape failure would have
+    // taken out both.
+    await expect(capturePage.locator('#cap-html')).toBeEnabled();
+    await expect(capturePage.locator('#row-html')).not.toHaveClass(/has-error/);
+    // Capture itself still works.
+    await expect(capturePage.locator('#capture-failed-error')).toBeHidden();
+
+    await capturePage.close();
+    await openerPage.close();
+  });
+
+  test('selection past the raw cap is refused, not silently emptied', async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw0 = await getServiceWorker();
+    await sw0.evaluate(() => chrome.storage.local.clear());
+
+    const sw = await getServiceWorker();
+    // The raw gate rejects before compression is attempted, and its
+    // failure branch hands back an empty value. A bug that mistook
+    // that for a success would store the format as `''` — content
+    // lost with no error anywhere, which is worse than refusing.
+    // Assert the refusal reached storage.
+    const { openerPage, capturePage } = await openCapturePageForTest(
+      extensionContext,
+      fixtureServer,
+      sw,
+      'purple.html',
+      (page) => seedLargeSelection(page, 300_000),
+      undefined,
+      50_000,
+    );
+    const tabId = await capturePage.evaluate(
+      async () => (await chrome.tabs.getCurrent())!.id!,
+    );
+
+    // Dropped outright, with a reason — not present-but-empty.
+    expect(await storedSelectionsForTab(sw, tabId)).toBeUndefined();
+    const err = await sw.evaluate(async (id) => {
+      const key = `captureDetails_${id}`;
+      const got = await chrome.storage.session.get(key);
+      return (got[key] as { capture?: { selectionError?: string } } | undefined)
+        ?.capture?.selectionError;
+    }, tabId);
+    expect(err).toMatch(/Content too large for Capture page: .*limit 49 KB\)\./);
+
+    // The rows are disabled either way. (The selection lives inside
+    // the page, so HTML trips the same raw cap — and both messages
+    // quote sizes that round to the same figure, so they collapse to
+    // one icon by design. The disabled state is what the user acts
+    // on here.)
+    await expect(capturePage.locator('#cap-selection')).toBeDisabled();
+    await expect(capturePage.locator('#row-html')).toHaveClass(/has-error/);
+
+    await capturePage.close();
+    await openerPage.close();
+  });
+
+  test('independent HTML and selection failures each get their own error icon', async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const sw0 = await getServiceWorker();
+    await sw0.evaluate(() => chrome.storage.local.clear());
+
+    const sw = await getServiceWorker();
+    // Distinct caps → distinct messages → both icons. The page used
+    // to suppress the selection icon whenever HTML had also failed,
+    // which was safe only while the two could never fail apart.
+    // Now they can, so this is the case that regressed.
+    //
+    // Both caps have to be tight: the filler is highly compressible,
+    // so the whole 300 KB page packs to about 2 KB stored. The
+    // selection bundle is the same text three times over, hence the
+    // looser cap on it — the two still land on opposite sides of
+    // their own limits, which is what makes the messages differ.
+    const { openerPage, capturePage } = await openCapturePageForTest(
+      extensionContext,
+      fixtureServer,
+      sw,
+      'purple.html',
+      (page) => seedLargeSelection(page, 300_000),
+      1024,
+      undefined,
+      2048,
+    );
+
+    await expect(capturePage.locator('#row-html')).toHaveClass(/has-error/);
+    await expect(capturePage.locator('#row-selection')).toHaveClass(/has-error/);
+    await expect(capturePage.locator('#error-html')).toHaveAttribute(
+      'title',
+      /limit 1 KB\)\./,
+    );
+    await expect(capturePage.locator('#error-selection')).toHaveAttribute(
+      'title',
+      /limit 2 KB\)\./,
+    );
 
     await capturePage.close();
     await openerPage.close();

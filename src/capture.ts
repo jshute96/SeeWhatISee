@@ -36,6 +36,7 @@ import {
   downloadSelection,
   htmlDataUrl,
 } from './capture/downloads.js';
+import { unpackText } from './capture/packed-text.js';
 import {
   appendToLog,
   compactTimestamp,
@@ -308,8 +309,10 @@ export async function captureSelection(
 
   const bodies = await scrapeSelection(active.id!, active.url ?? '');
   if (!bodies) throw new Error('No text selected');
-  const body = bodies[format];
-  if (!body || body.trim().length === 0) {
+  // Fresh scrape — always plain (packing happens at the storage
+  // boundary, and this path streams straight to disk).
+  const body = await unpackText(bodies[format]);
+  if (body.trim().length === 0) {
     // Format-specific empty: e.g. text-only scrape on an image, or
     // markdown that collapsed to whitespace. Spell out which format
     // was missing so the toolbar error line is actionable.

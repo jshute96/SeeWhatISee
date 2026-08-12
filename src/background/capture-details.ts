@@ -17,8 +17,10 @@ import {
 import { compactTimestamp } from '../capture/log-store.js';
 import {
   type MaybePackedText,
+  isBlankText,
   isEmptyText,
   isPackedText,
+  originalByteLength,
   packText,
   storedLength,
   unpackText,
@@ -82,16 +84,32 @@ const HTML_STORED_CAP_BYTES_DEFAULT = 4 * 1024 * 1024;
 let htmlStoredCapBytes = HTML_STORED_CAP_BYTES_DEFAULT;
 
 /**
- * Secondary cap on the *raw* HTML, checked before we spend time
- * compressing. Not a storage guard — the stored cap above is that —
- * but a "don't even try" bound: a body this size would take seconds
- * to gzip, wedge the Edit HTML dialog's syntax highlighter solid,
- * and produce a `data:` URL beyond what `chrome.downloads` will
- * accept. Set far above any page a user would plausibly want, so in
- * practice only the stored cap ever fires.
+ * Cap on the stored cost of one capture's selection — the three
+ * formats (html / text / markdown) summed, since they're three
+ * renderings of the same selection and the UI carries one error per
+ * row. Over the cap, all three are dropped together and
+ * `selectionError` explains it.
+ *
+ * Lower than the HTML cap: a selection is a deliberate slice of a
+ * page rather than the whole thing, so 2 MiB stored (roughly 6 MB of
+ * selected text) is already far past anything intentional, and
+ * leaving the difference to HTML is the better split of a shared
+ * 10 MiB budget.
  */
-const HTML_RAW_CAP_BYTES_DEFAULT = 24 * 1024 * 1024;
-let htmlRawCapBytes = HTML_RAW_CAP_BYTES_DEFAULT;
+const SELECTION_STORED_CAP_BYTES_DEFAULT = 2 * 1024 * 1024;
+let selectionStoredCapBytes = SELECTION_STORED_CAP_BYTES_DEFAULT;
+
+/**
+ * Secondary cap on *raw* text, checked before we spend time
+ * compressing. Not a storage guard — the stored caps above are that
+ * — but a "don't even try" bound: a body this size would take
+ * seconds to gzip, wedge the Edit dialog's syntax highlighter solid,
+ * and produce a `data:` URL beyond what `chrome.downloads` will
+ * accept. Set far above anything a user would plausibly want, so in
+ * practice only the stored caps ever fire.
+ */
+const RAW_CAP_BYTES_DEFAULT = 24 * 1024 * 1024;
+let rawCapBytes = RAW_CAP_BYTES_DEFAULT;
 
 /** Test-only setter (mirrors `_setLargeScreenshotThresholdForTest`).
  *  Pass `null` to restore the production default. Exposed on
@@ -100,10 +118,17 @@ export function _setHtmlSizeCapForTest(bytes: number | null): void {
   htmlStoredCapBytes = bytes === null ? HTML_STORED_CAP_BYTES_DEFAULT : bytes;
 }
 
-/** Test-only setter for the raw-size cap. See
+/** Test-only setter for the selection-bundle cap. See
  *  `_setHtmlSizeCapForTest`. */
-export function _setHtmlRawCapForTest(bytes: number | null): void {
-  htmlRawCapBytes = bytes === null ? HTML_RAW_CAP_BYTES_DEFAULT : bytes;
+export function _setSelectionSizeCapForTest(bytes: number | null): void {
+  selectionStoredCapBytes =
+    bytes === null ? SELECTION_STORED_CAP_BYTES_DEFAULT : bytes;
+}
+
+/** Test-only setter for the raw-size cap, which applies to every
+ *  text artifact. See `_setHtmlSizeCapForTest`. */
+export function _setRawCapForTest(bytes: number | null): void {
+  rawCapBytes = bytes === null ? RAW_CAP_BYTES_DEFAULT : bytes;
 }
 
 /**
@@ -136,9 +161,9 @@ const CAPTURE_DIRECTLY_HINT =
  *
  * Getting this wrong produces *"Content too large: 4 MB (limit
  * 4 MB)"* — a raw size that rounds under a cap the stored size
- * cleared. See `packHtmlForStorage` for which figure goes where.
+ * cleared. See `packTextForStorage` for which figure goes where.
  */
-function htmlTooLargeMessage(
+function textTooLargeMessage(
   headBytes: number,
   limitBytes: number,
   storedBytes?: number,
@@ -150,25 +175,41 @@ function htmlTooLargeMessage(
 }
 
 /**
- * Compress a fresh HTML body for storage, or reject it as too large.
- * Returns the value to store, or an `error` message.
+ * Compress a fresh text body for storage, or reject it as too large.
+ * Returns the value to store, or an `error` message. Shared by the
+ * HTML and selection paths — only `storedCap` differs.
  *
  * Two gates, cheapest first:
- *   - raw size against `htmlRawCapBytes`, before paying for a gzip
+ *   - raw size against `rawCapBytes`, before paying for a gzip
  *     of something we're going to refuse anyway;
- *   - stored size (post-`packText`) against `htmlStoredCapBytes` —
- *     the figure that actually competes for the session budget.
+ *   - stored size (post-`packText`) against `storedCap` — the figure
+ *     that actually competes for the session budget.
+ *
+ * `value` comes back even on the error branch so a bundle caller can
+ * report the sum of what it measured; single-artifact callers ignore
+ * it. `error` being set is the only signal that matters.
  */
-async function packHtmlForStorage(
-  html: string,
-): Promise<{ value: MaybePackedText; error?: undefined } | { error: string }> {
-  const rawBytes = utf8ByteLength(html);
-  if (rawBytes > htmlRawCapBytes) {
-    return { error: htmlTooLargeMessage(rawBytes, htmlRawCapBytes) };
+async function packTextForStorage(
+  text: string,
+  storedCap: number,
+): Promise<{
+  value: MaybePackedText;
+  storedBytes: number;
+  rawBytes: number;
+  error?: string;
+}> {
+  const rawBytes = utf8ByteLength(text);
+  if (rawBytes > rawCapBytes) {
+    return {
+      value: '',
+      storedBytes: 0,
+      rawBytes,
+      error: textTooLargeMessage(rawBytes, rawCapBytes),
+    };
   }
-  const value = await packText(html, rawBytes);
+  const value = await packText(text, rawBytes);
   const storedBytes = storedLength(value);
-  if (storedBytes > htmlStoredCapBytes) {
+  if (storedBytes > storedCap) {
     // Which figures to print. `rawBytes` (source UTF-8) and
     // `storedBytes` (JSON-stringified stored cost) are different
     // measures, and only the latter was compared against the cap.
@@ -190,34 +231,48 @@ async function packHtmlForStorage(
     // the single-figure branch too.
     const packedWins = isPackedText(value) && storedBytes < rawBytes;
     return {
+      value,
+      storedBytes,
+      rawBytes,
       error: packedWins
-        ? htmlTooLargeMessage(rawBytes, htmlStoredCapBytes, storedBytes)
-        : htmlTooLargeMessage(storedBytes, htmlStoredCapBytes),
+        ? textTooLargeMessage(rawBytes, storedCap, storedBytes)
+        : textTooLargeMessage(storedBytes, storedCap),
     };
   }
-  return { value };
+  return { value, storedBytes, rawBytes };
 }
 
 /**
- * Pack an `InMemoryCapture`'s HTML for storage in place, or drop it
- * when it's over a cap — setting `htmlError` to the user-facing
- * "Content too large for Capture page: …" message plus the
- * capture-directly hint.
+ * Pack an `InMemoryCapture`'s text artifacts for storage in place,
+ * dropping any that are over a cap and setting the matching
+ * `htmlError` / `selectionError` to the user-facing "Content too
+ * large for Capture page: …" message plus the capture-directly hint.
  *
- * Mutates `capture`. Idempotent: a re-run sees either an already-
- * packed body (skipped — only a plain string needs packing) or the
- * `html === ''` + `htmlError` rejection state.
+ * HTML and the selection bundle are capped independently, so one can
+ * be dropped while the other rides through — the Capture page shows
+ * an error icon on whichever rows are affected.
+ *
+ * Mutates `capture`. Idempotent: a re-run sees either already-packed
+ * bodies (skipped — only plain strings need packing) or the
+ * dropped-plus-error rejection state.
  *
  * Called from `openCapturePageWithSession`, the one storage boundary
- * that takes an `InMemoryCapture` carrying scraped HTML. (The upload
- * session builds its own capture with `html: ''` — there's no page
- * to scrape — so it has nothing to pack.) The `updateArtifact` html
- * branch runs `packHtmlForStorage` itself against the incoming edit
- * value before mutating.
+ * that takes an `InMemoryCapture` carrying scraped text. (The upload
+ * session builds its own capture with `html: ''` and no selection —
+ * there's no page to scrape — so it has nothing to pack.) The
+ * `updateArtifact` handler runs `packTextForStorage` itself against
+ * the incoming edit value before mutating.
  */
+async function packCaptureText(capture: InMemoryCapture): Promise<void> {
+  await packCaptureHtml(capture);
+  await packCaptureSelections(capture);
+}
+
+/** The HTML half of `packCaptureText` — pack it, or drop it and set
+ *  `htmlError`. Capped independently of the selection bundle. */
 async function packCaptureHtml(capture: InMemoryCapture): Promise<void> {
   if (typeof capture.html !== 'string' || capture.html === '') return;
-  const result = await packHtmlForStorage(capture.html);
+  const result = await packTextForStorage(capture.html, htmlStoredCapBytes);
   if (result.error !== undefined) {
     capture.html = '';
     capture.htmlError = `${result.error}\n${CAPTURE_DIRECTLY_HINT}`;
@@ -227,11 +282,81 @@ async function packCaptureHtml(capture: InMemoryCapture): Promise<void> {
 }
 
 /**
+ * Pack the three selection formats as one bundle.
+ *
+ * Capped on the sum rather than per format: they're three renderings
+ * of the same selection, the Save-selection rows share a single
+ * error icon, and a per-format cap could leave the user with (say)
+ * markdown but not text — a confusing partial state for something
+ * they think of as one artifact. So it's all three or none, and the
+ * message quotes bundle totals.
+ */
+async function packCaptureSelections(capture: InMemoryCapture): Promise<void> {
+  const sel = capture.selections;
+  if (!sel) return;
+  const formats: SelectionFormat[] = ['html', 'text', 'markdown'];
+  if (formats.every((f) => typeof sel[f] !== 'string')) return;
+
+  const packed = {} as Record<SelectionFormat, MaybePackedText>;
+  let storedTotal = 0;
+  let rawTotal = 0;
+  let anyPacked = false;
+  let hardError: string | undefined;
+  for (const f of formats) {
+    const body = sel[f];
+    // Already-packed on a re-run: keep it and charge what it costs.
+    if (typeof body !== 'string') {
+      packed[f] = body;
+      storedTotal += storedLength(body);
+      rawTotal += originalByteLength(body);
+      if (isPackedText(body)) anyPacked = true;
+      continue;
+    }
+    // No per-format stored cap — `Infinity` — because the budget
+    // being enforced is the bundle's, checked once on the sum below.
+    // A per-format cap here would refuse a format for a budget the
+    // bundle still fits, and its verdict would have to be discarded
+    // anyway. That leaves the raw gate as the only thing that can
+    // error, so any error is a hard one.
+    const r = await packTextForStorage(body, Infinity);
+    if (r.error !== undefined) {
+      hardError = r.error;
+      break;
+    }
+    packed[f] = r.value;
+    storedTotal += r.storedBytes;
+    rawTotal += r.rawBytes;
+    if (isPackedText(r.value)) anyPacked = true;
+  }
+
+  const overBundle = hardError === undefined && storedTotal > selectionStoredCapBytes;
+  if (hardError !== undefined || overBundle) {
+    const message = hardError ?? (
+      // Same raw-vs-stored reasoning as the HTML path, applied to
+      // the bundle totals.
+      anyPacked && storedTotal < rawTotal
+        ? textTooLargeMessage(rawTotal, selectionStoredCapBytes, storedTotal)
+        : textTooLargeMessage(storedTotal, selectionStoredCapBytes)
+    );
+    delete capture.selections;
+    capture.selectionError = `${message}\n${CAPTURE_DIRECTLY_HINT}`;
+    return;
+  }
+  capture.selections = packed;
+}
+
+/**
  * Per-artifact size split of an `InMemoryCapture` for the quota
  * error message. Uses `JSON.stringify(value).length` (the same
  * accounting `getBytesInUse` uses), and only includes artifacts that
  * are present and non-empty — a screenshot-only upload then reads
  * as "5 MB image" rather than "5 MB image + 0 B HTML + 0 B selection".
+ *
+ * Text parts that were gzipped are labelled "compressed HTML" /
+ * "compressed selection", so the figure isn't read as a source size
+ * and silently compared against the size pill, which reports the
+ * uncompressed body. The image is never compressed here (the JPEG
+ * recompress at capture time already handled it), so it stays plain.
  *
  * The sum may not equal the session's grand total — the wrapper
  * structure (`DetailsSession` keys, `bases`, …) also costs bytes —
@@ -250,15 +375,23 @@ function captureBreakdown(capture: InMemoryCapture): QuotaBreakdownPart[] {
     // `storedLength`, so a packed body is charged what it actually
     // costs rather than what it would have cost plain — otherwise
     // the breakdown wouldn't add up to the total it sits beside.
-    parts.push({ label: 'HTML', bytes: storedLength(capture.html) });
+    parts.push({
+      label: isPackedText(capture.html) ? 'compressed HTML' : 'HTML',
+      bytes: storedLength(capture.html),
+    });
   }
   // `selections` is undefined when no selection was captured. Even
   // when present, all three bodies can be empty strings (e.g. a
   // future caller that pre-fills the shape) — guard against that so
   // we don't report a `40 B selection` line for nothing.
   const sel = capture.selections;
-  if (sel && (sel.html || sel.text || sel.markdown)) {
-    parts.push({ label: 'selection', bytes: JSON.stringify(sel).length });
+  if (sel && !(isEmptyText(sel.html) && isEmptyText(sel.text) && isEmptyText(sel.markdown))) {
+    const anyPacked = isPackedText(sel.html) || isPackedText(sel.text)
+      || isPackedText(sel.markdown);
+    parts.push({
+      label: anyPacked ? 'compressed selection' : 'selection',
+      bytes: JSON.stringify(sel).length,
+    });
   }
   return parts;
 }
@@ -676,11 +809,12 @@ async function openCapturePageWithSession(
   // `docs/capture-page.md` "Restore last capture".
   await clearLastCapture();
 
-  // Compress the HTML — or drop it, if it's over-cap even
-  // compressed — before it can blow the session-storage quota. The
-  // Capture page's existing `htmlError` path takes over from a drop
-  // (Save HTML row greyed-out with an error icon and the message).
-  await packCaptureHtml(data);
+  // Compress the text artifacts — or drop them, if they're over-cap
+  // even compressed — before they can blow the session-storage
+  // quota. The Capture page's existing `htmlError` / `selectionError`
+  // paths take over from a drop (row greyed-out with an error icon
+  // and the message).
+  await packCaptureText(data);
 
   // Build the prospective session up-front so the pre-flight quota
   // check (and the per-tab `set` below) operate on the same value.
@@ -1408,8 +1542,7 @@ export async function ensureSelectionDownloaded(
       if (!s.capture.selections || !s.capture.selectionFilenames) {
         throw new Error('No selection was captured');
       }
-      const body = s.capture.selections[format];
-      if (!body || body.trim().length === 0) {
+      if (isBlankText(s.capture.selections[format])) {
         throw new Error(noSelectionContentMessage(format));
       }
     },
@@ -1446,27 +1579,18 @@ export async function ensureSelectionDownloaded(
  */
 interface EditableArtifactSpec {
   /** Write the edited body into the right slot on the session.
-   *  `value` arrives storage-ready — for HTML that means already
-   *  run through `packHtmlForStorage`. */
+   *  `value` arrives storage-ready — already run through
+   *  `packTextForStorage`. */
   write: (session: DetailsSession, value: MaybePackedText) => void;
   /** Drop the matching `session.downloads` entry so the next
    *  materialization re-downloads with the edited body. */
   dropDownload: (session: DetailsSession) => void;
 }
 
-/** Selection bodies are never packed — only page HTML gets large
- *  enough to be worth compressing — so their `write` can insist on
- *  a plain string rather than widening `selections` to hold either
- *  form. A throw here means a caller broke that invariant. */
-function requirePlainText(v: MaybePackedText): string {
-  if (typeof v !== 'string') throw new Error('Expected an uncompressed body');
-  return v;
-}
-
 function selectionEditableSpec(format: SelectionFormat): EditableArtifactSpec {
   return {
     write: (s, v) => {
-      if (s.capture.selections) s.capture.selections[format] = requirePlainText(v);
+      if (s.capture.selections) s.capture.selections[format] = v;
       s.selectionEdited = { ...(s.selectionEdited ?? {}), [format]: true };
       // Bump the per-format revision so a subsequent save can tell
       // the body has changed since the last `recordDetailedCapture`
@@ -1532,6 +1656,45 @@ const EDIT_GUARD_ERROR: Record<EditableArtifactKind, 'htmlError' | 'selectionErr
   selectionHtml: 'selectionError',
   selectionText: 'selectionError',
   selectionMarkdown: 'selectionError',
+};
+
+/**
+ * Would swapping one selection format's body for `nextStoredBytes`
+ * push the bundle over its cap? Returns the user-facing message when
+ * it would, `undefined` otherwise.
+ *
+ * Charges the *other* two formats what they currently cost in
+ * storage and adds the candidate, so an edit is judged against the
+ * same total `packCaptureSelections` enforces. Without it, three
+ * individually-legal edits could sum past the cap and only fail at
+ * the generic `set` rejection.
+ */
+function selectionBundleOverflow(
+  session: DetailsSession,
+  kind: Exclude<EditableArtifactKind, 'html'>,
+  nextStoredBytes: number,
+): string | undefined {
+  const sel = session.capture.selections;
+  // No bundle to overflow. Not an approval — the caller's guard has
+  // already refused this edit before we get here.
+  if (!sel) return undefined;
+  const edited = SELECTION_EDIT_KIND_FORMAT[kind];
+  let total = nextStoredBytes;
+  for (const f of ['html', 'text', 'markdown'] as SelectionFormat[]) {
+    if (f !== edited) total += storedLength(sel[f]);
+  }
+  if (total <= selectionStoredCapBytes) return undefined;
+  return textTooLargeMessage(total, selectionStoredCapBytes);
+}
+
+/** Which selection format each editable selection kind writes. */
+const SELECTION_EDIT_KIND_FORMAT: Record<
+  Exclude<EditableArtifactKind, 'html'>,
+  SelectionFormat
+> = {
+  selectionHtml: 'html',
+  selectionText: 'text',
+  selectionMarkdown: 'markdown',
 };
 
 /**
@@ -1645,9 +1808,9 @@ export function installDetailsMessageHandlers(): void {
         const capturePageDefaults = session.capture.useImageFlowDefaults
           ? imageFlowDefaults(userDefaults)
           : userDefaults;
-        // The page mirrors the HTML body into `captured.html` for the
-        // Edit dialog, Copy, Save-as and the size pill — all of which
-        // want plain text — so compression stops at this boundary.
+        // The page mirrors these bodies into `captured.*` for the
+        // Edit dialogs, Copy, Save-as and the size pills — all of
+        // which want plain text — so compression stops here.
         // A page holding a few MB in a JS string is unremarkable;
         // it's *storage* that's scarce, and the packed copy stays in
         // the session record either way.
@@ -1665,6 +1828,7 @@ export function installDetailsMessageHandlers(): void {
         // decode would fail again and surface a raw `atob` error
         // instead of the friendly row message.
         let html = '';
+        let selections: Record<SelectionFormat, string> | undefined;
         try {
           html = await unpackText(session.capture.html);
         } catch (err) {
@@ -1677,10 +1841,35 @@ export function installDetailsMessageHandlers(): void {
             `the stored copy could not be decompressed.\n${CAPTURE_DIRECTLY_HINT}`;
           await saveDetailsSession(tabId, session);
         }
+        // Same degradation as HTML: a corrupt selection bundle costs
+        // the selection rows, not the whole capture.
+        const storedSelections = session.capture.selections;
+        if (storedSelections) {
+          try {
+            selections = {
+              html: await unpackText(storedSelections.html),
+              text: await unpackText(storedSelections.text),
+              markdown: await unpackText(storedSelections.markdown),
+            };
+          } catch (err) {
+            // Handled: surfaced on the Save selection rows.
+            console.info('[SeeWhatISee] selection decompress failed:', err);
+            delete session.capture.selections;
+            // Worded distinctly from the HTML message on purpose:
+            // the page suppresses the selection icon when the two
+            // error strings match, and `DecompressionStream` being
+            // unavailable throws for both bodies at once — identical
+            // wording would hide this row's icon in exactly the case
+            // it's needed.
+            session.capture.selectionError =
+              `the stored selection could not be decompressed.\n${CAPTURE_DIRECTLY_HINT}`;
+            await saveDetailsSession(tabId, session);
+          }
+        }
         sendResponse({
           screenshotDataUrl: session.capture.screenshotDataUrl,
           html,
-          selections: session.capture.selections,
+          selections,
           url: session.capture.url,
           title: session.capture.title,
           htmlError: session.capture.htmlError,
@@ -1747,23 +1936,39 @@ export function installDetailsMessageHandlers(): void {
       void (async () => {
         try {
           const session = await requireDetailsSession(tabId);
-          // Compress an HTML edit-save, and refuse it up-front if
-          // it's over-cap even compressed. Without this, the bytes
-          // would land on the in-memory capture and the next
+          // Compress the edit-save, and refuse it up-front if it's
+          // over-cap even compressed. Without this, the bytes would
+          // land on the in-memory capture and the next
           // `chrome.storage.session.set` would either succeed
           // (silently consuming most of the session quota) or fail
-          // with a generic "values were not stored." We only handle
-          // the HTML kind here — selection edit-saves stay both
-          // uncapped and uncompressed in this version.
-          let value: MaybePackedText = msg.value;
-          if (msg.kind === 'html') {
-            const packed = await packHtmlForStorage(msg.value);
-            if (packed.error !== undefined) {
-              sendResponse({ error: packed.error });
+          // with a generic "values were not stored."
+          // Guard before gzipping: `applyArtifactEdit` refuses a
+          // selection edit on a session that never scraped one, and
+          // there's no reason to spend a multi-MB compress pass on a
+          // body we're about to reject.
+          if (msg.kind !== 'html' && !session.capture.selections) {
+            throw new Error('Cannot edit selection: no selection was captured');
+          }
+          const packed = await packTextForStorage(
+            msg.value,
+            msg.kind === 'html' ? htmlStoredCapBytes : selectionStoredCapBytes,
+          );
+          if (packed.error !== undefined) {
+            sendResponse({ error: packed.error });
+            return;
+          }
+          if (msg.kind !== 'html') {
+            // A selection format is capped as part of its bundle, so
+            // the edited body has to be weighed against what the
+            // other two already cost — otherwise three separately-
+            // legal edits could sum past the cap.
+            const tooBig = selectionBundleOverflow(session, msg.kind, packed.storedBytes);
+            if (tooBig) {
+              sendResponse({ error: tooBig });
               return;
             }
-            value = packed.value;
           }
+          const value: MaybePackedText = packed.value;
           applyArtifactEdit(session, msg.kind, value);
           await saveDetailsSession(tabId, session);
           sendResponse({ ok: true });

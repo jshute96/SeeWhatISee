@@ -6,6 +6,7 @@ import {
   savePageContents,
 } from '../capture.js';
 import type { SelectionFormat } from '../capture/types.js';
+import { isBlankText } from '../capture/packed-text.js';
 import {
   downloadHtml,
   downloadScreenshot,
@@ -167,7 +168,7 @@ export async function saveDefaults(delayMs = 0): Promise<void> {
 
   const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
   const contentfulFormats = data.selections
-    ? allFormats.filter((fmt) => (data.selections![fmt] ?? '').trim().length > 0)
+    ? allFormats.filter((fmt) => !isBlankText(data.selections![fmt]))
     : [];
   const useWithSelection = contentfulFormats.length > 0;
   const branch = useWithSelection ? defaults.withSelection : defaults.withoutSelection;
@@ -245,7 +246,7 @@ export async function captureAll(delayMs = 0): Promise<void> {
 
   const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
   const contentfulFormats = data.selections
-    ? allFormats.filter((fmt) => (data.selections![fmt] ?? '').trim().length > 0)
+    ? allFormats.filter((fmt) => !isBlankText(data.selections![fmt]))
     : [];
   let selectionFormat: SelectionFormat | undefined;
   if (contentfulFormats.length > 0) {

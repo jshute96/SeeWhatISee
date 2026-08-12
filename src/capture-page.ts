@@ -1055,15 +1055,25 @@ async function loadData(): Promise<void> {
       htmlSizeBadge.hidden = false;
       htmlSizeBadge.textContent = `HTML · ${formatBytes(new Blob([captured.html]).size)}`;
     }
-    if (response.selectionError && !response.htmlError) {
-      // Selection couldn't be scraped *independently* of HTML. In
-      // practice this never fires today — `executeScript` reads both
-      // in one call so the two errors are always twins — but the UI
-      // is ready for a future SW that reports them separately. When
-      // the two fire together, we suppress the icon here: the HTML
-      // row's icon already explains the situation and a duplicate
-      // would just be visual noise. The master + all three format
-      // rows stay in their default disabled state regardless.
+    if (
+      response.selectionError
+      && response.selectionError !== response.htmlError
+    ) {
+      // Show the selection icon unless the two errors are literally
+      // the same string.
+      //
+      // A shared scrape failure sets both to the same message
+      // (`executeScript` reads HTML and selection in one call), and
+      // two icons saying the identical thing is just noise — so that
+      // case stays suppressed.
+      //
+      // But HTML and selection are capped independently, so each can
+      // now fail on its own with its own message while the other
+      // rides through. Testing `!response.htmlError` — as this did —
+      // would hide a real selection error whenever HTML happened to
+      // fail too, leaving the selection rows disabled with no
+      // explanation. The master + all three format rows stay in
+      // their default disabled state regardless.
       selectionRow.classList.add('has-error');
       selectionErrorIcon.title = `Unable to capture selection: ${response.selectionError}`;
     } else if (response.selections) {

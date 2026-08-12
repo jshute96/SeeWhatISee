@@ -111,8 +111,10 @@ export async function downloadSelection(
   if (!capture.selections || !capture.selectionFilenames) {
     throw new Error('No selection captured');
   }
-  const body = capture.selections[format];
-  if (!body || body.trim().length === 0) {
+  // Unpacked here for the same reason `downloadHtml` unpacks: the
+  // file on disk is always plain text, whatever form storage held.
+  const body = await unpackText(capture.selections[format]);
+  if (body.trim().length === 0) {
     throw new Error(noSelectionContentMessage(format));
   }
   const withNewline = body.endsWith('\n') ? body : `${body}\n`;

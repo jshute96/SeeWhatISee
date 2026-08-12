@@ -1,5 +1,6 @@
 // Transparent gzip packing for the large text bodies we park in
-// `chrome.storage.session` — today just the scraped page HTML.
+// `chrome.storage.session` — the scraped page HTML and the three
+// selection formats.
 //
 // Why: session storage is 10 MiB total, shared by every Capture-page
 // session and every Ask-widget record, and page HTML is the artifact
@@ -74,7 +75,8 @@ export function utf8ByteLength(s: string): number {
  * This is the number to show the user — it's what they'd see if they
  * viewed the source or looked at the saved file on disk.
  */
-export function originalByteLength(v: MaybePackedText): number {
+export function originalByteLength(v: MaybePackedText | undefined): number {
+  if (v === undefined) return 0;
   return isPackedText(v) ? v.n : utf8ByteLength(v);
 }
 
@@ -83,8 +85,11 @@ export function originalByteLength(v: MaybePackedText): number {
  * `JSON.stringify(value).length` accounting `getBytesInUse` does.
  * This is the number to check caps against.
  */
-export function storedLength(v: MaybePackedText): number {
-  return JSON.stringify(v).length;
+export function storedLength(v: MaybePackedText | undefined): number {
+  // `undefined` accepted so the module is uniformly total, matching
+  // `isEmptyText` / `isBlankText`. `JSON.stringify(undefined)` returns
+  // `undefined`, not a string, so `.length` would throw here.
+  return v === undefined ? 0 : JSON.stringify(v).length;
 }
 
 /** True when the body is empty in either representation. Replaces
@@ -92,6 +97,22 @@ export function storedLength(v: MaybePackedText): number {
  *  object would pass unconditionally. */
 export function isEmptyText(v: MaybePackedText | undefined): boolean {
   return v === undefined || (isPackedText(v) ? v.n === 0 : v.length === 0);
+}
+
+/**
+ * True when the body has no non-whitespace content — the
+ * "is this artifact worth offering to save" test.
+ *
+ * Answers without decompressing: nothing under `PACK_MIN_BYTES`
+ * gets packed, so a packed body is 64 KiB+ and treating it as
+ * contentful is right in every case but a selection made entirely
+ * of 64 KiB of whitespace. That one would be offered for save and
+ * then correctly refused downstream, where the body is unpacked
+ * before its own emptiness check.
+ */
+export function isBlankText(v: MaybePackedText | undefined): boolean {
+  if (v === undefined) return true;
+  return isPackedText(v) ? v.n === 0 : v.trim().length === 0;
 }
 
 /**

@@ -251,11 +251,17 @@ export interface CaptureResult extends CaptureRecord {
  *                  `htmlToMarkdown(html, pageUrl)`. See
  *                  `looksLikeMarkdownSource` in `src/markdown.ts`
  *                  for the detection rule.
+ *
+ * Each body may arrive gzip-packed, on the same terms as
+ * `InMemoryCapture.html` — see its docstring. The three formats are
+ * packed and capped as one bundle (they're three renderings of the
+ * same selection, and the UI shows one error per row), so they're
+ * either all stored or all dropped together.
  */
 export interface SelectionBodies {
-  html: string;
-  text: string;
-  markdown: string;
+  html: MaybePackedText;
+  text: MaybePackedText;
+  markdown: MaybePackedText;
 }
 
 export interface InMemoryCapture {

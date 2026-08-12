@@ -222,7 +222,7 @@ Own `package.json` (npm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
-| `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText` |
+| `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete` |
 | `src/capture/log-store.ts` | Capture log + on-disk `log.json` sidecar — `LOG_STORAGE_KEY`, `clearCaptureLog`/`appendToLog`/`writeJsonFile`/`serializeRecord`/`serializeWrite`, `compactTimestamp` |
@@ -307,7 +307,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML size caps + compression — stored/raw cap rejections, multi-MB compressible round-trip, edit-save packing, corrupt-body degradation |
+| `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
