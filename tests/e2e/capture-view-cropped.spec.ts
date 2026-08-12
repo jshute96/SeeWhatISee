@@ -356,3 +356,100 @@ test('more menu: opens, and closes on an item, Escape, or a click elsewhere', as
 
   await openerPage.close();
 });
+
+test('more menu: slides up rather than running off the bottom of the window', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const menu = capturePage.locator('#more-menu');
+
+  // Read the menu's geometry alongside the position it *would* have
+  // taken with the plain button alignment, so the assertions can tell
+  // "the clamp moved it" from "it happened to fit anyway".
+  const readPlacement = async (): Promise<{
+    top: number; bottom: number; height: number;
+    buttonTop: number; viewportH: number; docH: number;
+  }> => capturePage.evaluate(() => {
+    const r = document.getElementById('more-menu')!.getBoundingClientRect();
+    const b = document.getElementById('more')!.getBoundingClientRect();
+    return {
+      top: r.top,
+      bottom: r.bottom,
+      height: r.height,
+      buttonTop: b.top,
+      viewportH: document.documentElement.clientHeight,
+      docH: document.documentElement.scrollHeight,
+    };
+  });
+
+  // A short window puts the More… button near the bottom edge, which
+  // is where button-aligned placement used to push the menu past the
+  // window and pop a page scrollbar.
+  await capturePage.setViewportSize({ width: 1100, height: 560 });
+  // Document height with the menu closed. The capture page is taller
+  // than this window on its own, so the regression to pin isn't "no
+  // scrollbar" — it's that opening the menu doesn't *add* to the
+  // scrollable height.
+  const closedDocH = await capturePage.evaluate(
+    () => document.documentElement.scrollHeight,
+  );
+  await capturePage.locator('#more').click();
+  await expect(menu).toBeVisible();
+
+  const fits = await readPlacement();
+  // Precondition for the rest: the menu fits this window, and button
+  // alignment alone would *not* have fit — otherwise the assertions
+  // below would pass with the clamp deleted.
+  expect(fits.height).toBeLessThan(fits.viewportH);
+  expect(fits.buttonTop + fits.height).toBeGreaterThan(fits.viewportH);
+  // So it must have slid up, landing fully inside with its margin…
+  expect(fits.top).toBeLessThan(fits.buttonTop);
+  expect(fits.bottom).toBeLessThanOrEqual(fits.viewportH - 4);
+  expect(fits.top).toBeGreaterThanOrEqual(0);
+  // …without extending the page to hold it, which is the regression
+  // this exists to prevent.
+  expect(fits.docH).toBeLessThanOrEqual(closedDocH);
+
+  // Resizing with the menu open re-places it rather than leaving it
+  // wherever the open-time window put it. The re-place happens on the
+  // `resize` event, which the browser dispatches after
+  // `setViewportSize` has already resolved — so poll for it rather
+  // than measuring straight away.
+  await capturePage.setViewportSize({ width: 1100, height: 400 });
+  await expect(menu).toBeVisible();
+  await capturePage.waitForFunction(() => {
+    const r = document.getElementById('more-menu')!.getBoundingClientRect();
+    return r.bottom <= document.documentElement.clientHeight - 4;
+  });
+  const resized = await readPlacement();
+  // It had to slide further up than the 560px placement did.
+  expect(resized.top).toBeLessThan(fits.top);
+  expect(resized.bottom).toBeLessThanOrEqual(resized.viewportH - 4);
+  expect(resized.top).toBeGreaterThanOrEqual(0);
+
+  // A window shorter than the menu can satisfy neither edge. The
+  // guarantee that survives is that the *head* of the list is on
+  // screen: pinned to the top, overflowing the bottom into the old
+  // scrollbar behaviour — rather than the whole menu below the fold.
+  await capturePage.setViewportSize({ width: 1100, height: 140 });
+  await expect(menu).toBeVisible();
+  // Within a pixel of 0, not exactly 0: the clamp's own early exit is
+  // a sub-pixel threshold, and `getBoundingClientRect` reports
+  // layout-snapped fractions.
+  await capturePage.waitForFunction(
+    () => Math.abs(document.getElementById('more-menu')!.getBoundingClientRect().top) < 1,
+  );
+  const pinned = await readPlacement();
+  expect(pinned.height).toBeGreaterThan(pinned.viewportH);
+  expect(Math.abs(pinned.top)).toBeLessThan(1);
+  expect(pinned.bottom).toBeGreaterThan(pinned.viewportH);
+
+  await openerPage.close();
+});

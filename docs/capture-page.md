@@ -2153,9 +2153,35 @@ Both column menus — Zoom and More… — run on `menu-popover.ts`
   edge). Chosen over a flex-sibling layout because making the menu
   a flex item would push the image right when the menu opened —
   visible movement of the captured content the user is editing.
-- Inline `top` is set to the owning button's `offsetTop` on each
-  open, so a prompt-grow that pushed the button down doesn't leave
-  the menu misaligned.
+- Inline `top` is set to the owning button's `offsetTop`, so a
+  prompt-grow that pushed the button down doesn't leave the menu
+  misaligned.
+- Then clamped into the window (`clampIntoViewport`). The palette
+  sits low on the page, so a button-aligned menu near the bottom used
+  to run past the window, extend the document, and pop a scrollbar
+  under the click that opened it.
+  - Preference order: button alignment, then the 4px edge margin,
+    then flush at 0. Each is given up only when the next won't fit.
+  - Only the vertical offset moves. The menu keeps its column anchor,
+    so it can't cover the button that owns it.
+  - A menu *taller* than the window satisfies no edge. The top wins
+    (pinned at 0): the head of the list stays reachable and the
+    overflow falls back to the old scrollbar behaviour.
+- Both steps live in `reposition()`, which re-derives from the button
+  instead of adjusting in place. That makes it idempotent and safe to
+  re-run — a `resize` listener, live while the menu is open, does.
+  - The clamp alone only ever slides *up*, so it isn't a re-fit
+    primitive; a window that grew back needs the button-align step.
+- Measured after `hidden` is cleared (a hidden element has no box),
+  in the same task — so the pre-clamp position is never painted.
+- The clamp runs up to three passes: the move invalidates its own
+  measurement. Pulling an overflowing menu back inside shrinks
+  `scrollHeight`, and a page scrolled to the bottom then has its
+  `scrollTop` clamped, shifting every viewport coordinate.
+  - The cap bounds that feedback loop rather than guarding an
+    oscillation. Each pass perturbs less than the last, always
+    downward — so bailing after an unverified third write can leave
+    the menu a few pixels low, never off the top.
 
 **Dismissal**
 
