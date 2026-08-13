@@ -1088,17 +1088,24 @@ export function initZoom(context: ZoomContext): void {
     /Mac|iP(hone|ad|od)/i.test(navigator.platform || '') ||
     /Mac OS X/.test(navigator.userAgent);
   if (isMacPlatform) {
-    // Swap "Ctrl" / "Alt" → "Cmd" / "Option" anywhere they appear in
-    // the static HTML titles. Covers the Zoom button (Ctrl/Alt) and
-    // the Line / Arrow tool buttons (Ctrl-for-multi-line hint). Any
-    // future button whose title mentions either modifier picks this
-    // up automatically as long as it's loaded by this point.
+    // Swap "Ctrl" / "Alt" → "Cmd" / "Option" in every title on the
+    // page that names one — currently the Zoom button and Undo.
+    // Scanned rather than driven by a list of ids: the list this
+    // replaced still named the Line / Arrow buttons long after their
+    // Ctrl-for-polyline hint had moved out of the title, and missed
+    // Undo's Ctrl+Z when that arrived. Runs once, so a title written
+    // later (or a menu built later) doesn't pick it up — none do
+    // today, and the alternative is watching every title on the page.
     const swapModifiers = (s: string): string =>
       s.replace(/\bCtrl\b/g, 'Cmd').replace(/\bAlt\b/g, 'Option');
-    for (const id of ['zoom', 'tool-line', 'tool-arrow']) {
-      const el = document.getElementById(id);
-      const title = el?.getAttribute('title');
-      if (el && title) el.setAttribute('title', swapModifiers(title));
+    const titled = Array.from(
+      document.querySelectorAll<HTMLElement>('[title]'),
+    );
+    for (const el of titled) {
+      const title = el.getAttribute('title');
+      if (title && /\b(Ctrl|Alt)\b/.test(title)) {
+        el.setAttribute('title', swapModifiers(title));
+      }
     }
   }
 

@@ -66,11 +66,31 @@ function isEnabled(el: HTMLElement): boolean {
   return el.getAttribute('aria-disabled') !== 'true';
 }
 
-/** Somewhere a caret lives, so arrow keys belong to it. */
-function isTextEntry(el: HTMLElement): boolean {
-  return el instanceof HTMLTextAreaElement
-    || el instanceof HTMLInputElement
-    || el.isContentEditable;
+/** `<input>` types that hold no text, so no undoable edit can live in
+ *  them. Written as an exclusion list because every other type — the
+ *  date / number / search family included — does take typing. */
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button', 'checkbox', 'color', 'file', 'hidden',
+  'image', 'radio', 'range', 'reset', 'submit',
+]);
+
+/** Somewhere a caret lives, so the text the user types — and the undo
+ *  of that text — belongs to it. Used here for arrow keys, and by
+ *  `undo-scope.ts` to decide whether `Ctrl+Z` is the browser's. */
+export function isTextEntry(el: Element | null): boolean {
+  if (el instanceof HTMLTextAreaElement) return true;
+  if (el instanceof HTMLInputElement) {
+    return !NON_TEXT_INPUT_TYPES.has(el.type);
+  }
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
+/** Broader than `isTextEntry`: any form control that has its own
+ *  meaning for the arrow keys (a radio group steps through its
+ *  options, a range slider moves). The menu nav leaves those alone;
+ *  `Ctrl+Z` doesn't care, since none of them holds undoable text. */
+function ownsArrowKeys(el: HTMLElement): boolean {
+  return isTextEntry(el) || el instanceof HTMLInputElement;
 }
 
 export function createMenuKeyNav(opts: {
@@ -112,7 +132,7 @@ export function createMenuKeyNav(opts: {
       // caret's, not the menu's; a stray open shouldn't make the
       // field feel broken. Tab is left alone for the same reason: it
       // should walk on out of the field, not jump into the menu.
-      if (active && !opts.menu.contains(active) && isTextEntry(active)) return;
+      if (active && !opts.menu.contains(active) && ownsArrowKeys(active)) return;
       // -1 when focus is outside the menu — the state a mouse-opened
       // menu is in, with focus still on the owning button.
       const current = list.indexOf(active as HTMLElement);

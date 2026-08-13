@@ -46,6 +46,7 @@ import {
 } from './capture-page/zoom.js';
 import { createMenuPopover } from './capture-page/menu-popover.js';
 import { isKeyboardClick } from './capture-page/menu-keys.js';
+import { initUndoScope } from './capture-page/undo-scope.js';
 import {
   initDrawing,
   imgRect,
@@ -473,6 +474,12 @@ const edgesSvg = document.getElementById('viewport-edges') as unknown as SVGSVGE
 const imageBox = document.querySelector('.image-box') as HTMLDivElement;
 const highlightControls = document.querySelector(
   '.highlight-controls',
+) as HTMLDivElement;
+// The whole image half of the page: palette + menus + image box.
+// `undo-scope.ts` uses it as the boundary for "the user is working on
+// the image", so Ctrl+Z knows which undo stack to pop.
+const imagePanel = document.querySelector(
+  '.image-and-highlights',
 ) as HTMLDivElement;
 const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
 const viewCroppedBtn = document.getElementById('view-cropped') as HTMLButtonElement;
@@ -1613,6 +1620,16 @@ initSaveAs({
   bakeExt,
   setStatusMessage,
   formatClipboardError,
+});
+
+initUndoScope({
+  imagePanel,
+  promptInput,
+  undoBtn,
+  anyEditDialogOpen,
+  isStaleMode: () => staleMode,
+  isPolylineActive,
+  endPolylineChain,
 });
 
 initEditDialogs({

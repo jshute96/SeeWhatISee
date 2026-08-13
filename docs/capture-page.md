@@ -1188,6 +1188,80 @@ otherwise double the crop and stack highlights on each other. Order:
   keep painting their 1px past the edge. See the View cropped
   section for what this changes.
 
+### Undo scope (`Ctrl+Z`)
+
+`undo-scope.ts` routes `Ctrl+Z` between the page's two unrelated undo
+stacks: the image edits (the Undo button) and the prompt textarea's
+own text undo.
+
+**Why the page takes the key**
+
+- Chrome's default for `Ctrl+Z` pressed outside any field is to undo
+  the last *text* edit and pull focus into the field that owned it.
+- So before this, a drawing could never be undone from the keyboard,
+  and trying moved the caret.
+
+**Why not route on focus**
+
+- Drawing doesn't move focus: the overlay's mousedown is
+  `preventDefault`ed, which is what lets you draw and then type
+  straight into the prompt without clicking it first.
+- The textarea therefore still holds the caret mid-draw, so focus
+  alone would send the `Ctrl+Z` right after a draw to the text.
+- Instead the module tracks an invisible **undo scope** — which half
+  of the page the user was last demonstrably working in.
+
+**What claims the scope**
+
+- `image` — a mousedown anywhere in `.image-and-highlights` (a draw,
+  a pan, a palette or menu click), or focus landing on anything
+  inside it (tabbing to a tool button).
+- `prompt` — any `input` event on the prompt, so every way text
+  actually changes counts: typing, `Ctrl+V`, `Ctrl+X`, a drag-drop
+  with no keystroke at all, and the backslash+Enter `execCommand`
+  swap. A restored draft assigns `.value` directly and fires no
+  `input`, so reopening a capture claims nothing.
+- `prompt` — also caret motion (arrows, Home / End) while the field
+  holds focus. This and the `input` rule are what take the scope back
+  after a draw. Skipped for `Ctrl` / `Alt` / `Meta` presses (so
+  `Ctrl+Z` itself and the Alt shortcuts don't count) and for presses
+  a capture-phase handler already consumed — an arrow-key nudge
+  during a drag, or the Escape that ends a polyline chain, is image
+  work that only passes through the textarea because the caret never
+  left it.
+- Nothing else claims it — Capture / Ask, the header, the capture
+  card leave it where it was.
+
+**How a press resolves**
+
+- `image` — click Undo, swallow the key. Swallowed even when Undo is
+  disabled, so "nothing left to undo" can't fall through to the text
+  stack.
+- Not `image`, but a text-entry element has focus — hand the key to
+  the browser. The text stack only ever acts on a field that still
+  holds the caret; it never reaches across the page to grab focus
+  back.
+- Otherwise — swallow, so Chrome's focus-jumping default can't fire.
+- `Ctrl+Shift+Z` is left alone (redo in a textarea); the image stack
+  has no redo yet.
+- An open edit dialog, and the no-session stale state, hand the key
+  straight back to the browser.
+
+The Undo button's tooltip names the shortcut, with the caveat
+attached — `Ctrl+Z, when you were last working on the image` — since
+the same key goes to the prompt's text undo the rest of the time.
+
+**Why a synthetic click on `#undo`**
+
+- The button already carries both the undo implementation and the
+  "is there anything to undo" enabled state.
+- The click also lights the same press flash the mouse path gets, so
+  the keyboard route looks like the mouse one.
+- The one thing a synthetic click can't reproduce is the mousedown
+  side effect: a *mouse* click on Undo mid-polyline-chain ends the
+  chain first (the document mousedown router's "clicked somewhere
+  else" zone). So the handler calls `endPolylineChain()` itself.
+
 ### Crop rendering
 
 - The preview paints a single dim "picture frame" around the
@@ -1981,6 +2055,21 @@ programmatic dispatch for).
     stale CSS-px offset (often outside the new image rect). The
     next segment drew disconnected from the previous endpoint and
     the loop-close hit-test missed the original start anchor.
+
+### macOS tooltip modifiers
+
+- On macOS, `initZoom` rewrites every `title` on the page that names
+  `Ctrl` or `Alt` to say `Cmd` / `Option` instead. The handlers
+  already accept `metaKey` / `altKey`; only the label needs swapping.
+- Today that's the Zoom button and Undo. It scans `[title]` rather
+  than a list of ids — the list it replaced still named the Line /
+  Arrow buttons after their Ctrl hint had left the title, and knew
+  nothing about Undo's `Ctrl+Z`.
+- Platform check is `navigator.platform` plus a UA fallback:
+  deprecated, but still the quickest reliable test in MV3 and what
+  the rest of the web does.
+- One pass at init, so a title written later doesn't pick it up. None
+  do today; the alternative is observing every title on the page.
 
 ### Wheel + keyboard zoom + middle-click pan
 

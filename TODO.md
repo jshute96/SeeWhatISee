@@ -13,7 +13,7 @@
     - Delete element
     - Maybe drag to move
     - Maybe convert object types if you drew the wrong one (box/redact/crop, or line/arrow)
-* Redo (to go with undo), with ctrl-Z/ctrl-Y shortcuts
+* Redo (to go with undo), with ctrl-Y / ctrl-shift-Z shortcuts (ctrl-Z for undo is done)
 
 ### Possible big features
 * Record and save video (or repeated screenshots of interactions)
@@ -64,6 +64,7 @@
 * **Smooth zoom.** `Ctrl + mouse wheel` and trackpad pinch now zoom by a smooth amount instead of jumping between fixed levels, so the image can be set to whatever size suits it, and the point under the cursor stays put as you zoom. Pinch zoom works properly on trackpads (notably Chromebooks, where it used to skip several levels per gesture or not respond at all). Zooming out stops once the image fits the window, and `Ctrl + wheel` anywhere in the lower half of the page — the image, the tool palette, and the space around them — zooms the image instead of accidentally zooming the whole page. The 1× / 2× / 4× / 8× menu items remain as one-click presets, and `Alt +` / `Alt −` step by 2× per press.
 * **Image-edit transfer** in the **More…** menu — **Copy image edits** / **Paste image edits** / **Import image edits from last capture** copy a capture's drawings *and* its crop onto another capture of the same size, for lining up before/after screenshots. Paste replaces whatever was there; Undo peels the pasted edits off one at a time and the last click restores what was there before. Items are greyed with a tooltip saying why when there's nothing to paste or the copy came from a differently-sized capture.
 * **The Capture page's tool palette works from the keyboard.** `Tab` to a drawing tool and `Space` / `Enter` now selects it (it used to highlight but not stick). The *Zoom…*, *More…* and *Ask* menus are keyboard-navigable: `↓` / `↑` (or `Tab` / `Shift+Tab`) step through the items and wrap, `Home` / `End` jump to the ends, `Enter` picks, and `Esc` closes. While a menu is open `Tab` stays inside it, whichever menu it is. Opening a menu with the keyboard starts on its first item; opening it with the mouse highlights nothing until the first arrow press.
+* **`Ctrl+Z` undoes drawings.** The Capture page has two undo stacks — the image edits and the prompt text — and `Ctrl+Z` now goes to whichever half you were last working in, instead of always undoing prompt text and jumping the cursor there. Drawing something, or clicking anything in the image area, points it at the image; typing (or clicking) in the prompt points it back at the text. `Ctrl+Z` with the cursor parked somewhere else entirely does nothing. The Undo button's tooltip names the shortcut. (The README's *Drawing* shortcut list needs a `Ctrl+Z` line.)
 
 ### Not documented
 
