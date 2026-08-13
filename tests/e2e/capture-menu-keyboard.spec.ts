@@ -108,6 +108,13 @@ test('keyboard: Zoom menu — keyboard open focuses the first item, arrows wrap'
   await expect(items.nth(0)).toBeFocused();
   await capturePage.keyboard.press('ArrowDown');
   await expect(items.nth(1)).toBeFocused();
+  // Tab / Shift+Tab stay inside the menu and match Down / Up. The
+  // column popovers are appended after the whole palette, so without
+  // the nav taking the key, Tab would walk off to Undo / Reset.
+  await capturePage.keyboard.press('Tab');
+  await expect(items.nth(2 % count)).toBeFocused();
+  await capturePage.keyboard.press('Shift+Tab');
+  await expect(items.nth(1)).toBeFocused();
   // Home / End jump to the ends from wherever focus sits.
   await capturePage.keyboard.press('End');
   await expect(items.nth(count - 1)).toBeFocused();
@@ -249,9 +256,22 @@ test('keyboard: Ask menu rows are arrow-navigable and fire on Enter', async ({
     capturePage.locator('#ask-menu .ask-menu-item:focus'),
   ).toHaveCount(0);
   await capturePage.keyboard.press('ArrowDown');
-  await expect(
-    capturePage.locator('#ask-menu .ask-menu-item').nth(0),
-  ).toBeFocused();
+  // Disabled rows (a provider that's "coming soon", an excluded tab)
+  // are skipped by the nav, so step through the enabled ones.
+  const rows = capturePage.locator(
+    '#ask-menu .ask-menu-item:not([aria-disabled="true"])',
+  );
+  await expect(rows.nth(0)).toBeFocused();
+  // Tab stays in the menu here too — the rows are the DOM siblings
+  // right after the button, so an untouched Tab would leak out the
+  // bottom of the list into the per-provider Ask buttons.
+  // (This fixture may only have one enabled row — Tab then wraps
+  // back onto it, which is still "stayed in the menu".)
+  const enabled = await rows.count();
+  await capturePage.keyboard.press('Tab');
+  await expect(rows.nth(1 % enabled)).toBeFocused();
+  await capturePage.keyboard.press('Shift+Tab');
+  await expect(rows.nth(0)).toBeFocused();
   await capturePage.keyboard.press('Escape');
   await expect(capturePage.locator('#ask-menu')).toBeHidden();
 

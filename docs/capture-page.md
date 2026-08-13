@@ -2305,6 +2305,18 @@ open/close, so it wires the nav itself).
   Disabled rows are skipped, never focused-and-inert.
 - With focus outside the menu — where a mouse-opened menu leaves it,
   on the owning button — Down lands on the first item, Up on the last.
+- Tab / Shift+Tab do the same as Down / Up, keeping Tab inside the
+  open menu. Handled rather than left to the browser because the DOM
+  order differs per menu and the two families disagreed:
+  - `#ask-menu` is the sibling right after its button, so Tab fell
+    into its rows (and out the bottom into the per-provider Ask
+    buttons).
+  - The column popovers are appended at the *end* of
+    `.highlight-controls`, so Tab from `#zoom` walked the rest of the
+    palette — Undo, Reset, Copy… — and reached the menu last.
+  - Taking the key makes the behaviour a property of "a menu is
+    open", not of where the markup sits. Escape or a pick is the way
+    out.
 - Home / End jump to the ends.
 - Enter / Space fire the focused item, but only for rows that aren't
   real `<button>`s. The browser already turns those keys into a click
@@ -2319,10 +2331,13 @@ open/close, so it wires the nav itself).
     pressed with the caret in the prompt leaves the caret alone.
 - Modified presses (Alt / Ctrl / Meta / Shift) are left alone — they
   belong to the page's own shortcuts (Alt+± zoom, Ctrl+Arrow caret
-  motion, Shift+Arrow text selection).
-- Nothing traps Tab, so focus can be parked in the prompt textarea
-  with a menu still open. Arrows there stay the caret's — the nav
-  bails on a text-entry element outside the menu.
+  motion, Shift+Arrow text selection). Shift passes through for Tab
+  alone, where it's the direction rather than a separate chord.
+- Focus can still be parked in the prompt textarea with a menu open
+  (the menu doesn't take focus off the field to begin with). The nav
+  bails on a text-entry element outside the menu, so arrows there
+  stay the caret's and Tab walks on out of the field instead of
+  jumping into the menu.
 
 **Opening from the keyboard**
 

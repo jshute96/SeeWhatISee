@@ -12,6 +12,15 @@
 //     With focus outside the menu (the usual case just after a mouse
 //     click opened it, when focus is still on the owning button),
 //     Down lands on the first item and Up on the last.
+//   - Tab / Shift+Tab do the same as Down / Up, so an open menu keeps
+//     Tab inside itself. Without this the two menu families disagree:
+//     the Ask menu is the DOM sibling right after its button, so Tab
+//     falls into its rows, while the column popovers are appended at
+//     the *end* of `.highlight-controls` and Tab from the Zoom button
+//     walks the rest of the palette instead. Handling the key makes
+//     the behaviour a property of "a menu is open" rather than of
+//     where the markup happens to sit. Escape (or a pick) is the way
+//     out.
 //   - Home / End jump to the ends.
 //   - Enter / Space fire the focused item — but only for items that
 //     aren't real `<button>`s, since the browser already turns those
@@ -89,27 +98,40 @@ export function createMenuKeyNav(opts: {
     handleKey(e: KeyboardEvent): void {
       // Modified presses belong to the page's own shortcuts (Alt+±
       // zoom, Ctrl+Arrow caret motion in the prompt, Shift+Arrow /
-      // Shift+Home text selection), not to us.
-      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      // Shift+Home text selection), not to us. Shift is allowed
+      // through for Tab alone, where it's the direction, not a
+      // separate chord.
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.shiftKey && e.key !== 'Tab') return;
       const list = items();
       if (list.length === 0) return;
       const active = document.activeElement as HTMLElement | null;
-      // Nothing is trapping Tab, so focus can be parked in the prompt
-      // textarea with a menu still open. Arrows there are the caret's,
-      // not the menu's — otherwise a stray open would make the field
-      // feel broken.
+      // Focus can still be parked in the prompt textarea with a menu
+      // open — Tab moves within the menu, but the menu doesn't take
+      // focus off the field to begin with. Arrows there are the
+      // caret's, not the menu's; a stray open shouldn't make the
+      // field feel broken. Tab is left alone for the same reason: it
+      // should walk on out of the field, not jump into the menu.
       if (active && !opts.menu.contains(active) && isTextEntry(active)) return;
       // -1 when focus is outside the menu — the state a mouse-opened
       // menu is in, with focus still on the owning button.
       const current = list.indexOf(active as HTMLElement);
 
+      const forward = (): number =>
+        current < 0 ? 0 : (current + 1) % list.length;
+      const backward = (): number =>
+        current < 0 ? list.length - 1 : (current - 1 + list.length) % list.length;
+
       let next: number;
       switch (e.key) {
         case 'ArrowDown':
-          next = current < 0 ? 0 : (current + 1) % list.length;
+          next = forward();
           break;
         case 'ArrowUp':
-          next = current < 0 ? list.length - 1 : (current - 1 + list.length) % list.length;
+          next = backward();
+          break;
+        case 'Tab':
+          next = e.shiftKey ? backward() : forward();
           break;
         case 'Home':
           next = 0;
