@@ -616,7 +616,20 @@
   .ask-menu .ask-menu-item:hover,
   .ask-menu .ask-menu-item:focus {
     background: #eef;
+    /* Suppressed for a *mouse* focus (clicking a row focuses it),
+     * where a ring would be noise. The keyboard case re-adds one
+     * below — without it, an arrowed-to row and a hovered row look
+     * identical. */
     outline: none;
+  }
+  /* Matches what the Zoom / More… items get for free: those are
+   * `<button>`s, so the UA paints its focus ring on them. These rows
+   * are `<li>`s whose ring the rule above turns off, so the keyboard
+   * look has to be restored explicitly. `-2px` offset keeps the ring
+   * inside the menu's rounded border instead of straddling it. */
+  .ask-menu .ask-menu-item:focus-visible {
+    outline: -webkit-focus-ring-color auto 1px;
+    outline-offset: -2px;
   }
   .ask-menu .ask-menu-item[aria-disabled="true"] {
     color: #888;
@@ -743,8 +756,13 @@
     color: inherit;
     white-space: nowrap;
   }
+  /* Focus is styled like hover: arrowing through a menu should light
+   * the row the same way pointing at it does. The UA focus ring still
+   * paints on top for keyboard users. */
   .zoom-menu-item:hover,
-  .palette-menu-item:enabled:hover { background: #e9eef2; }
+  .zoom-menu-item:focus,
+  .palette-menu-item:enabled:hover,
+  .palette-menu-item:enabled:focus { background: #e9eef2; }
   .palette-menu-item:disabled {
     color: #999;
     cursor: default;

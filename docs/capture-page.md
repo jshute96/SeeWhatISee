@@ -469,6 +469,10 @@ fresh edit.
   (not `click`) so the previously-selected tool deselects the
   moment the user presses a new one — otherwise both old
   `.selected` and new `:active` paint at once.
+  - Space / Enter on a focused tool button fire a `click` with no
+    mousedown in front of it, so a second handler — gated on
+    `isKeyboardClick` so a mouse press doesn't run the switch twice —
+    covers the keyboard path.
 - Action buttons (Undo / Reset / Copy / Save / More…) are
   *actions*, not modes — they never get `.selected`. They share a
   `.btn` press-look with every other primary button on the page
@@ -2266,8 +2270,9 @@ Both column menus — Zoom and More… — run on `menu-popover.ts`
 
 **Dismissal**
 
-- The owning button toggles it; Escape closes it and returns focus
-  to the button; clicking a menu item closes it.
+- The owning button toggles it; Escape closes it; clicking a menu
+  item closes it. Any close with focus inside the menu returns it to
+  the button — see the Menu keyboard navigation section.
 - A mousedown anywhere else closes it, the way a menu is expected
   to behave. Two details keep that from fighting the button:
   - the listener runs on `mousedown` in the **capture** phase and
@@ -2286,6 +2291,71 @@ Both column menus — Zoom and More… — run on `menu-popover.ts`
   check marks through `onBeforeOpen`; More…'s items are static
   markup owned by the drawing module, and its `onBeforeOpen`
   refreshes the annotation-transfer sources instead.
+
+### Menu keyboard navigation
+
+`menu-keys.ts` (`createMenuKeyNav`) answers keydowns for the page's
+popup menus — the column's Zoom and More… popovers (via
+`menu-popover.ts`) and the Ask destination menu (which keeps its own
+open/close, so it wires the nav itself).
+
+**Keys**
+
+- Down / Up move to the next / previous **enabled** item and wrap.
+  Disabled rows are skipped, never focused-and-inert.
+- With focus outside the menu — where a mouse-opened menu leaves it,
+  on the owning button — Down lands on the first item, Up on the last.
+- Home / End jump to the ends.
+- Enter / Space fire the focused item, but only for rows that aren't
+  real `<button>`s. The browser already turns those keys into a click
+  on a button; synthesizing a second one would fire the item twice.
+  In practice this branch exists for the Ask menu's `<li>` rows.
+- Escape (already) closes. The focus handoff lives in `close()`
+  itself, so every path — Escape, an item pick, an outside mousedown
+  after arrowing in — behaves the same, and the item handlers don't
+  each carry their own `focus()` call. `closeAskMenu()` does the same
+  for the Ask menu.
+  - Guarded on focus actually being inside the menu, so an Escape
+    pressed with the caret in the prompt leaves the caret alone.
+- Modified presses (Alt / Ctrl / Meta / Shift) are left alone — they
+  belong to the page's own shortcuts (Alt+± zoom, Ctrl+Arrow caret
+  motion, Shift+Arrow text selection).
+- Nothing traps Tab, so focus can be parked in the prompt textarea
+  with a menu still open. Arrows there stay the caret's — the nav
+  bails on a text-entry element outside the menu.
+
+**Opening from the keyboard**
+
+- A menu opened with Space / Enter starts with its first item
+  focused, so picking doesn't need an extra Down. A mouse-opened menu
+  starts with nothing highlighted.
+- The two are told apart by `isKeyboardClick(e)` — `MouseEvent.detail`
+  is 0 for a click synthesized from a key press and ≥ 1 for a real
+  one.
+- The Ask menu renders its rows after an `await`, so its
+  keyboard-open focus is deferred to the render rather than applied
+  at open time.
+- More…'s rows exist at open time but their *enabled* flags don't:
+  `onBeforeOpen` kicks off the annotation-transfer reads, and on a
+  fresh capture every row is still disabled when `open()` tries to
+  focus — so the focus finds nothing. The refresh calls
+  `refocusFirstItem()` once the flags settle. It's a no-op for a
+  mouse open, and once focus is already inside the menu, so it can't
+  yank the user back to the top after they've arrowed on.
+
+**Focus look**
+
+- `.zoom-menu-item:focus` / `.palette-menu-item:enabled:focus` take
+  the same background as `:hover` (the Ask rows already did), so
+  arrowing through a menu lights the row the way pointing at it does.
+- The background alone can't distinguish the hovered row from the
+  arrowed-to one, so the focused row also needs a ring.
+  - Zoom / More… items are `<button>`s and get the UA's ring for
+    free.
+  - The Ask rows are `<li>`s carrying a pre-existing `outline: none`
+    (written when focus only ever arrived by clicking a row). A
+    `:focus-visible` rule re-adds the same ring for the keyboard
+    case, inset by 2px so it sits inside the menu's border.
 
 ### Stroke scaling
 

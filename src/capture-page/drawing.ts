@@ -48,6 +48,7 @@
 // edge.
 
 import { shrink as shrinkRect } from '../shrink.js';
+import { isKeyboardClick } from './menu-keys.js';
 import {
   currentDisplayScale,
   isOverVisibleImage,
@@ -3820,10 +3821,20 @@ export function initDrawing(context: DrawingContext): void {
     // tool's `:active` press feedback for the entire mousedown→mouseup
     // window — two pressed-looking buttons at once. Filter to button 0
     // so a stray right-click doesn't switch tools.
-    btn.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
+    const selectFromButton = (): void => {
       const tool = btn.dataset.tool as Tool | undefined;
       if (tool) setSelectedTool(tool);
+    };
+    btn.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      selectFromButton();
+    });
+    // Space / Enter on a focused button fire a `click` with no
+    // mousedown in front of it, so the handler above never sees a
+    // keyboard activation and the tool wouldn't stick. Restrict to
+    // keyboard clicks so a mouse press doesn't run the switch twice.
+    btn.addEventListener('click', (e) => {
+      if (isKeyboardClick(e)) selectFromButton();
     });
   }
 }

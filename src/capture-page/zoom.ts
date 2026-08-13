@@ -40,6 +40,7 @@
 // `ZoomContext`.
 import type { RectPct } from './drawing.js';
 import { createMenuPopover, type MenuPopover } from './menu-popover.js';
+import { isKeyboardClick } from './menu-keys.js';
 
 // Zoom is a continuous scale factor, not a rung on a ladder: `1`
 // renders at the editor's 1× CSS size (natural / DPR), `2.37` at
@@ -410,8 +411,9 @@ function buildZoomMenu(): HTMLDivElement {
     item.append(check, label);
     item.addEventListener('click', () => {
       setZoom(value);
+      // `close()` returns focus to the Zoom button — the item that
+      // holds it is about to be hidden.
       closeZoomMenu();
-      ctx.zoomBtn.focus();
     });
     menu.appendChild(item);
   }
@@ -425,6 +427,7 @@ function buildZoomMenu(): HTMLDivElement {
   zoomPopover = createMenuPopover({
     menu,
     button: ctx.zoomBtn,
+    itemSelector: '.zoom-menu-item',
     // Check marks track the current mode, which can change between
     // opens (wheel zoom, Alt+±).
     onBeforeOpen: refreshZoomMenuChecks,
@@ -448,9 +451,9 @@ function refreshZoomMenuChecks(): void {
   }
 }
 
-function openZoomMenu(): void {
+function openZoomMenu(focusFirstItem = false): void {
   if (!zoomMenuEl) zoomMenuEl = buildZoomMenu();
-  zoomPopover?.open();
+  zoomPopover?.open({ focusFirstItem });
 }
 
 function closeZoomMenu(): void {
@@ -986,9 +989,9 @@ export function initZoom(context: ZoomContext): void {
   // the Image-size pill at the new size.
   ctx.previewImg.addEventListener('load', applyZoom);
 
-  ctx.zoomBtn.addEventListener('click', () => {
+  ctx.zoomBtn.addEventListener('click', (e) => {
     if (zoomPopover?.isOpen()) closeZoomMenu();
-    else openZoomMenu();
+    else openZoomMenu(isKeyboardClick(e));
   });
 
   // Physical Ctrl/Cmd tracking for `isSynthesizedPinch`. Capture

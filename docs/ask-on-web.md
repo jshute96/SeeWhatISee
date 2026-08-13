@@ -66,6 +66,18 @@ additional providers additive.
   - `#ask-menu-btn` opens the menu. Picking a row shifts the
     default (writes the pin or the preferred-new-tab provider)
     and refreshes the labels — does *not* send.
+  - Keyboard: the rows are arrow-navigable through the shared
+    `menu-keys.ts` helper (see "Menu keyboard navigation" in
+    `capture-page.md`). Three Ask-specific wrinkles:
+    - The rows are `<li>`s, not `<button>`s, so Enter / Space
+      activation is synthesized by the helper.
+    - The keyboard-open first-item focus waits for the rows, which
+      render only after the `fetchAskState` await. The pending flag
+      is consumed before the no-providers branch, so it can't leak
+      into the next open.
+    - Applying a pick disables the Ask buttons for the SW
+      round-trip, which would drop focus to `<body>`;
+      `setAskDefaultDestination` restores it to `#ask-menu-btn`.
 - After `.ask-split` come the per-provider Ask buttons. One
   `.ask-provider-btn` per enabled provider, appended directly
   into `.button-row` by `refreshAskTargetLabel()` — they're real

@@ -45,6 +45,7 @@ import {
   type ZoomMode,
 } from './capture-page/zoom.js';
 import { createMenuPopover } from './capture-page/menu-popover.js';
+import { isKeyboardClick } from './capture-page/menu-keys.js';
 import {
   initDrawing,
   imgRect,
@@ -509,6 +510,7 @@ const toolButtons = Array.from(
 const morePopover = createMenuPopover({
   menu: moreMenu,
   button: moreBtn,
+  itemSelector: '.palette-menu-item',
   onBeforeOpen: () => { void refreshAnnotationTransferSources(); },
 });
 
@@ -558,20 +560,27 @@ async function refreshAnnotationTransferSources(): Promise<void> {
   ]);
   if (seq !== transferRefreshSeq) return;
   updateAnnotationTransferSources({ clipboard, lastCapture });
+  // These reads are what enable the Paste / Import rows, and they
+  // land after `open()` has already tried to focus the first item —
+  // on a fresh capture with nothing drawn, every row was still
+  // disabled at that moment and the focus found nothing. Re-run it
+  // now the flags have settled (a no-op for a mouse open, or once
+  // the user has arrowed on).
+  morePopover.refocusFirstItem();
 }
 
-moreBtn.addEventListener('click', () => { morePopover.toggle(); });
+moreBtn.addEventListener('click', (e) => {
+  morePopover.toggle({ focusFirstItem: isKeyboardClick(e) });
+});
 
 // Any item click dismisses the menu. Registered on the container so
 // it stays independent of the drawing module's own handlers — both
 // run, in either order.
 moreMenu.addEventListener('click', (e) => {
   if (!(e.target as HTMLElement).closest('.palette-menu-item')) return;
+  // `close()` hands focus back to `#more` — focus would otherwise
+  // land on `<body>` when the item it sits on goes `hidden`.
   morePopover.close();
-  // Focus would otherwise land on `<body>` when the item it sits on
-  // goes `hidden`. Returning it to the opener matches the Zoom
-  // menu's items and keeps keyboard users where they were.
-  moreBtn.focus();
 });
 
 // Vertical metrics of the prompt textarea: the height of one wrapped

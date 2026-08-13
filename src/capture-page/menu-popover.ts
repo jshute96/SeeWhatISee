@@ -11,8 +11,12 @@
 //     and prompt growth), then slid up as far as needed to keep the
 //     menu inside the window — and re-run on a window resize;
 //   - `hidden` toggling plus the button's `aria-expanded`;
-//   - Escape closes and returns focus to the button;
-//   - a mousedown anywhere else closes it.
+//   - closing returns focus to the button whenever focus is inside
+//     the menu (Escape, an item pick, an outside click after
+//     arrowing in);
+//   - a mousedown anywhere else closes it;
+//   - arrow-key navigation over the items (`menu-keys.ts`), plus
+//     first-item focus when the menu was opened from the keyboard.
 //
 // The outside-click closer has two details that keep it from
 // fighting the button's own toggle:
@@ -34,6 +38,8 @@
 // `mousedown`. Left alone rather than folded in here, so this module
 // stays about the two menus that have to look and behave identically.
 
+import { createMenuKeyNav } from './menu-keys.js';
+
 // Breathing room between the menu and a window edge it gets pinned
 // against, so a pinned menu doesn't look welded to the frame. Given
 // up (down to 0) when the menu is too tall to fit with it.
@@ -41,9 +47,19 @@ const VIEWPORT_MARGIN_PX = 4;
 
 export interface MenuPopover {
   isOpen(): boolean;
-  open(): void;
+  /** `focusFirstItem` puts focus straight on the first item — pass it
+   *  when the open came from the keyboard, so the user doesn't have
+   *  to press Down before picking. */
+  open(opts?: { focusFirstItem?: boolean }): void;
   close(): void;
-  toggle(): void;
+  toggle(opts?: { focusFirstItem?: boolean }): void;
+  /** Re-run the keyboard-open first-item focus. For a menu whose
+   *  items are enabled asynchronously (More…'s annotation-transfer
+   *  rows), the focus at open time can find nothing pickable; the
+   *  owner calls this once the flags have settled. A no-op unless
+   *  the menu is open, the open was keyboard-driven, and focus is
+   *  still outside the menu. */
+  refocusFirstItem(): void;
 }
 
 export function createMenuPopover(opts: {
@@ -53,16 +69,31 @@ export function createMenuPopover(opts: {
   /** The button that owns it — supplies the vertical alignment,
    *  carries `aria-expanded`, and takes focus back on Escape. */
   button: HTMLButtonElement;
+  /** Selector for the menu's item rows, for arrow-key navigation. */
+  itemSelector: string;
   /** Run just before the menu is shown — used by Zoom to refresh
    *  its check marks. */
   onBeforeOpen?(): void;
 }): MenuPopover {
   const { menu, button } = opts;
+  const keyNav = createMenuKeyNav({ menu, itemSelector: opts.itemSelector });
+  // Whether the current open came from the keyboard, so a late
+  // `refocusFirstItem()` can tell "nothing was focusable yet" from
+  // "the user opened this with the mouse and wants nothing focused".
+  let openedFromKeyboard = false;
 
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key !== 'Escape') return;
-    close();
-    button.focus();
+    if (e.key === 'Escape') {
+      // `close()` does the focus handoff — and only when focus is
+      // actually inside the menu, so an Escape pressed with the caret
+      // in the prompt doesn't yank it onto the button.
+      close();
+      return;
+    }
+    // Bubble phase, and only registered while the menu is open, so
+    // the arrows reach the page's own handlers whenever no menu has
+    // a claim on them.
+    keyNav.handleKey(e);
   };
 
   const onOutsideDown = (e: MouseEvent): void => {
@@ -86,7 +117,7 @@ export function createMenuPopover(opts: {
   // de-dupes `addEventListener` on an identical
   // (type, callback, capture) triple, so a redundant open can't leak
   // a listener. (`close()` guards on `hidden` and is idempotent too.)
-  function open(): void {
+  function open(openOpts?: { focusFirstItem?: boolean }): void {
     opts.onBeforeOpen?.();
     menu.hidden = false;
     // Unhidden first: placement has to measure the menu, and a
@@ -97,6 +128,16 @@ export function createMenuPopover(opts: {
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onOutsideDown, true);
     window.addEventListener('resize', onResize);
+    openedFromKeyboard = openOpts?.focusFirstItem === true;
+    if (openedFromKeyboard) keyNav.focusFirst();
+  }
+
+  function refocusFirstItem(): void {
+    if (menu.hidden || !openedFromKeyboard) return;
+    // Already inside — the user has arrowed on since the open, and
+    // yanking focus back to the top would undo that.
+    if (menu.contains(document.activeElement)) return;
+    keyNav.focusFirst();
   }
 
   /**
@@ -178,7 +219,14 @@ export function createMenuPopover(opts: {
 
   function close(): void {
     if (menu.hidden) return;
+    // Hand focus back to the opener whenever it's inside the menu —
+    // hiding the element it sits on would otherwise drop focus to
+    // `<body>`. Covers every close path (item pick, Escape, an
+    // outside mousedown after arrowing in) from one place, so the
+    // callers don't each need their own `focus()`.
+    if (menu.contains(document.activeElement)) button.focus();
     menu.hidden = true;
+    openedFromKeyboard = false;
     button.setAttribute('aria-expanded', 'false');
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('mousedown', onOutsideDown, true);
@@ -189,8 +237,9 @@ export function createMenuPopover(opts: {
     isOpen: () => !menu.hidden,
     open,
     close,
-    toggle: () => {
-      if (menu.hidden) open();
+    refocusFirstItem,
+    toggle: (toggleOpts) => {
+      if (menu.hidden) open(toggleOpts);
       else close();
     },
   };

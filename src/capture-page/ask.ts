@@ -41,6 +41,7 @@
 import type { AskProviderId } from '../ask/providers.js';
 import { excludedSuffix } from '../url-helpers.js';
 import { formatBytes } from './pills.js';
+import { createMenuKeyNav, isKeyboardClick, type MenuKeyNav } from './menu-keys.js';
 
 /**
  * Cap on the total *uncompressed* text one Ask may carry.
@@ -235,6 +236,15 @@ let currentDefaultDisplayName: string | undefined;
 // closeAskMenu() clears it so a close that happens *before* the timer
 // fires doesn't leak listener attaches against an already-hidden menu.
 let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Arrow-key navigation over the destination rows, shared with the
+// column's Zoom / More popovers. Built in `initAsk`.
+let askMenuKeys: MenuKeyNav;
+
+// Set while an open() is waiting on `fetchAskState`, when the menu
+// was opened from the keyboard: the rows don't exist yet, so the
+// first-item focus has to happen once they're rendered.
+let focusAskMenuOnRender = false;
 
 // Swap the trailing glyph on #ask-btn between the pin (existing
 // pinned tab) and new-window glyphs so the user sees at a glance
@@ -452,7 +462,12 @@ function renderAskProviderButtons(enabled: AskProviderListing[]): void {
 }
 
 function closeAskMenu(): void {
+  // Focus would otherwise land on `<body>` when the row it sits on
+  // goes `hidden` — same handoff the column menus do, so a keyboard
+  // pick leaves the user back on the button they opened.
+  if (askMenu.contains(document.activeElement)) askMenuBtn.focus();
   askMenu.hidden = true;
+  focusAskMenuOnRender = false;
   askMenuBtn.setAttribute('aria-expanded', 'false');
   if (askListenerAttachTimer !== null) {
     clearTimeout(askListenerAttachTimer);
@@ -480,9 +495,15 @@ function onDocumentClickWhileAskOpen(e: MouseEvent): void {
 function onKeydownWhileAskOpen(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault();
+    // `closeAskMenu()` does the focus handoff, and only when focus is
+    // inside the menu — same rule as the column popovers.
     closeAskMenu();
-    askMenuBtn.focus();
+    return;
   }
+  // Arrow / Home / End move between rows; Enter and Space fire the
+  // focused one. The rows are `<li>`s, so their activation has to be
+  // synthesized — `menu-keys.ts` does that.
+  askMenuKeys.handleKey(e);
 }
 
 /**
@@ -570,11 +591,14 @@ function isSameDestination(
   return true;
 }
 
-async function openAskMenu(): Promise<void> {
+async function openAskMenu(focusFirstItem = false): Promise<void> {
   if (!askMenu.hidden) {
     closeAskMenu();
     return;
   }
+  // Rows are built after an await, so the keyboard-open focus is
+  // deferred to the render below rather than applied here.
+  focusAskMenuOnRender = focusFirstItem;
   askMenuList.replaceChildren();
   const loading = document.createElement('li');
   loading.className = 'ask-menu-heading';
@@ -597,6 +621,13 @@ async function openAskMenu(): Promise<void> {
   const { providers, defaultDestination, staleTabPin } = await fetchAskState();
   // Bail if the user already closed the menu while we were waiting.
   if (askMenu.hidden) return;
+
+  // Consumed here rather than at the end of the render: the
+  // no-providers branch below returns early, and a flag left standing
+  // would fire on the *next* open — a mouse open that shouldn't focus
+  // anything.
+  const focusOnRender = focusAskMenuOnRender;
+  focusAskMenuOnRender = false;
 
   askMenuList.replaceChildren();
   if (providers.length === 0) {
@@ -711,6 +742,9 @@ async function openAskMenu(): Promise<void> {
       );
     }
   }
+
+  // Deferred from `openAskMenu`'s entry: the rows only exist now.
+  if (focusOnRender) askMenuKeys.focusFirst();
 }
 
 /**
@@ -733,6 +767,12 @@ async function openAskMenu(): Promise<void> {
  * default.
  */
 async function setAskDefaultDestination(destination: AskDestination): Promise<void> {
+  // Disabling the focused element drops focus to `<body>`. A menu
+  // pick has just handed focus back to `#ask-menu-btn`, which is
+  // about to be disabled for the round-trip — so remember and
+  // restore it, or a keyboard pick would strand the user at the top
+  // of the tab order.
+  const refocusMenuBtn = document.activeElement === askMenuBtn;
   askBtn.disabled = true;
   askMenuBtn.disabled = true;
   setAskProviderButtonsDisabled(true);
@@ -755,6 +795,7 @@ async function setAskDefaultDestination(destination: AskDestination): Promise<vo
     );
   } finally {
     await refreshAskTargetLabel();
+    if (refocusMenuBtn && !askMenuBtn.disabled) askMenuBtn.focus();
   }
 }
 
@@ -1129,6 +1170,12 @@ export function initAsk(context: AskContext): void {
   askMenuBtn = document.getElementById('ask-menu-btn') as HTMLButtonElement;
   askMenu = document.getElementById('ask-menu') as HTMLDivElement;
   askMenuList = askMenu.querySelector('ul') as HTMLUListElement;
+  // `.ask-menu-item` deliberately excludes the headings and
+  // separators, which are `<li>`s in the same list.
+  askMenuKeys = createMenuKeyNav({
+    menu: askMenu,
+    itemSelector: '.ask-menu-item',
+  });
   askTargetLabel = document.getElementById('ask-target-label') as HTMLSpanElement;
   askBtnIcon = document.getElementById('ask-btn-icon') as HTMLSpanElement;
   askButtonRow = document.querySelector('.button-row') as HTMLDivElement;
@@ -1183,8 +1230,8 @@ export function initAsk(context: AskContext): void {
     }
   });
 
-  askMenuBtn.addEventListener('click', () => {
-    void openAskMenu();
+  askMenuBtn.addEventListener('click', (e) => {
+    void openAskMenu(isKeyboardClick(e));
   });
 
   askBtn.addEventListener('click', (e) => {
