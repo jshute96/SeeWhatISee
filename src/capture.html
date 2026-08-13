@@ -661,10 +661,9 @@
     /* Containing block for the `#viewport-edges` overlay. */
     position: relative;
   }
-  /* Scrollable viewport, used whenever zoom is a scale factor rather
-   * than Fit. `block` (not flex) so the inline-block `.image-wrap` is
-   * sized by its content and `overflow` kicks in cleanly; JS sets the
-   * max-height on every applyZoom(). */
+  /* Scrollable viewport when zoomed past Fit. `block` (not flex) so the
+   * inline-block `.image-wrap` is sized by its content and `overflow`
+   * kicks in cleanly; JS sets the max-height on every applyZoom(). */
   .image-box {
     flex: 1;
     min-width: 0;
@@ -825,18 +824,6 @@
     background: #cfd6dc;
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-  }
-  /* The Zoom label is a live readout that changes on every wheel event
-   * ("Zoom: Fit" → "Zoom: 137%" → "Zoom: 98%"). `.highlight-buttons`
-   * is `width: fit-content`, so without a floor wide enough for the
-   * longest label the column would resize mid-gesture and shift the
-   * image pane sideways (same hazard the `.tool-btn-icon` padding note
-   * above guards against). Tabular figures stop the digits themselves
-   * from jittering. Width covers "Zoom: 100%" plus padding + border. */
-  .highlight-buttons #zoom {
-    min-width: 108px;
-    box-sizing: border-box;
-    font-variant-numeric: tabular-nums;
   }
   /* Extra space above each palette cluster: tools → Zoom → Undo/Reset →
    * Copy/Save → More. */
@@ -1262,13 +1249,10 @@
                 type="button" data-tool="crop"
                 title="Drag to crop to a region"
                 aria-pressed="false">Crop</button>
-        <!-- Zoom affects the preview only, never the saved image. Opens a
-             popover menu of presets; a preset is checked only when the
-             current (continuous) scale is sitting on it. -->
         <button id="zoom" class="btn" type="button"
                 aria-haspopup="menu" aria-expanded="false"
                 aria-controls="zoom-menu"
-                title="Set image zoom&#10;Ctrl + scroll wheel (or trackpad pinch) to zoom&#10;Alt+- / Alt++ to zoom out / in">Zoom: Fit</button>
+                title="Set image zoom&#10;Ctrl + scroll wheel or Alt +/- to zoom">Zoom…</button>
         <button id="undo" class="btn" disabled
                 title="Undo the most recent edit">Undo</button>
         <button id="reset" class="btn" disabled

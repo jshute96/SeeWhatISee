@@ -38,10 +38,17 @@
 //   - Leaving Fit: the first wheel event continues from the scale Fit
 //     was rendering at, and a zero-delta Ctrl+wheel leaves Fit *intact*
 //     so it still re-fits on resize.
-//   - Alt+± steps by one detent's worth through the same path.
-//   - Button label: Fit / a preset as "2×" / off-preset as a
-//     percentage, clamped at both ends, with the menu's radio checked
-//     only when the scale is actually on a preset.
+//   - Alt+± steps by a doubling (deliberately coarser than the wheel).
+//   - Zoom-out floors at the Fit scale — shrinking below the size that
+//     already fits the window isn't useful, and it leaves bare pane
+//     where a Ctrl+wheel would reach the browser's own page zoom.
+//   - Cursor-centered: the image pixel under the cursor stays under the
+//     cursor across a zoom, including the `.image-wrap` margin offset.
+//   - The Zoom button is a static "Zoom…"; the menu's radio is checked
+//     only when the scale is actually on a preset (or Fit is armed).
+//   - Ctrl+wheel is claimed for the whole region below the main
+//     separator (palette, surround, bare page under a short image), not
+//     just `.image-box`; above it the event still reaches the browser.
 //   - Arrow-key fine pan: while a pan drag is held, each arrow moves
 //     `.image-box`'s scroll by one *image* pixel against the arrow
 //     direction (the image moves *with* it), snapping that axis onto
@@ -901,11 +908,17 @@ async function dispatchSynthesizedPinch(
   deltaY: number,
 ): Promise<void> {
   await page.evaluate((dy) => {
-    document.querySelector('.image-box')!.dispatchEvent(
+    const box = document.querySelector('.image-box')!;
+    const r = box.getBoundingClientRect();
+    box.dispatchEvent(
       new WheelEvent('wheel', {
         deltaY: dy,
         deltaMode: 0,
         ctrlKey: true,      // Chrome sets this for pinch with no key down
+        // Real coordinates matter: the handler ignores anything above
+        // the main separator, and an unset clientY defaults to 0.
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
         bubbles: true,
         cancelable: true,
       }),
@@ -1025,7 +1038,7 @@ test('zoom: wheel leaves Fit from the scale Fit was rendering at', async ({
   await openerPage.close();
 });
 
-test('zoom: the button label reads presets as ×, off-preset as %', async ({
+test('zoom: the menu checks a preset only when the scale is on it', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1038,30 +1051,38 @@ test('zoom: the button label reads presets as ×, off-preset as %', async ({
   await waitForImageLoaded(capturePage);
   const zoomBtn = capturePage.locator('#zoom');
 
-  await expect(zoomBtn).toHaveText('Zoom: Fit');
-  await applyZoomMode(capturePage, 2);
-  await expect(zoomBtn).toHaveText('Zoom: 2×');
+  // Static label: zoom is continuous, so a readout would be an
+  // arbitrary percentage churning on every wheel event.
+  await expect(zoomBtn).toHaveText('Zoom…');
   await applyZoomMode(capturePage, 1.37);
-  await expect(zoomBtn).toHaveText('Zoom: 137%');
+  await expect(zoomBtn).toHaveText('Zoom…');
 
-  // Clamped at both ends.
-  await applyZoomMode(capturePage, 99);
-  await expect(zoomBtn).toHaveText('Zoom: 8×');
-  await applyZoomMode(capturePage, 0.001);
-  await expect(zoomBtn).toHaveText('Zoom: 13%');
+  // Off-preset → nothing checked; on a preset → that one.
+  await zoomBtn.click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[aria-checked="true"]'),
+  ).toHaveCount(0);
+  await capturePage.keyboard.press('Escape');
 
-  // A preset is checked only when the scale is actually at it.
   await applyZoomMode(capturePage, 2);
   await zoomBtn.click();
   await expect(
     capturePage.locator('.zoom-menu-item[data-zoom="2"]'),
   ).toHaveAttribute('aria-checked', 'true');
   await capturePage.keyboard.press('Escape');
-  await applyZoomMode(capturePage, 1.37);
+
+  // Clamped programmatically at both ends (the __seeState hook skips
+  // the gesture floor, which is the Fit scale — see the zoom-out test).
+  await applyZoomMode(capturePage, 99);
   await zoomBtn.click();
   await expect(
-    capturePage.locator('.zoom-menu-item[aria-checked="true"]'),
-  ).toHaveCount(0);
+    capturePage.locator('.zoom-menu-item[data-zoom="8"]'),
+  ).toHaveAttribute('aria-checked', 'true');
+  await capturePage.keyboard.press('Escape');
+  // ZOOM_MIN's only remaining job — gestures floor at Fit long before
+  // reaching it, so this hook is the one path that still sees it.
+  await applyZoomMode(capturePage, 0.001);
+  expect(await readDisplayScale(capturePage)).toBeCloseTo(0.125, 3);
 
   await openerPage.close();
 });
@@ -1084,18 +1105,23 @@ test('zoom: a zero-delta Ctrl+wheel leaves Fit mode intact', async ({
   // not quietly resolve to the equal number, because a frozen number
   // stops re-fitting on resize with no visible symptom at the time.
   await capturePage.evaluate(() => {
-    document.querySelector('.image-box')!.dispatchEvent(
+    const box = document.querySelector('.image-box')!;
+    const r = box.getBoundingClientRect();
+    box.dispatchEvent(
       new WheelEvent('wheel', {
         deltaX: -40,
         deltaY: 0,
         deltaMode: 0,
         ctrlKey: true,
+        // Real coordinates, or `isInZoomRegion` rejects the event at
+        // clientY 0 and the zero-delta path is never reached.
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
         bubbles: true,
         cancelable: true,
       }),
     );
   });
-  await expect(capturePage.locator('#zoom')).toHaveText('Zoom: Fit');
 
   // Still sticky: a viewport change re-fits rather than holding a size.
   const before = await readDisplayScale(capturePage);
@@ -1103,12 +1129,17 @@ test('zoom: a zero-delta Ctrl+wheel leaves Fit mode intact', async ({
   await expect
     .poll(() => readDisplayScale(capturePage))
     .not.toBeCloseTo(before, 2);
-  await expect(capturePage.locator('#zoom')).toHaveText('Zoom: Fit');
+  // Fit is still the armed mode, which the menu is now the only
+  // surface for.
+  await capturePage.locator('#zoom').click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[data-zoom="fit"]'),
+  ).toHaveAttribute('aria-checked', 'true');
 
   await openerPage.close();
 });
 
-test('zoom: Alt+± steps by one detent worth through the same path', async ({
+test('zoom: Alt+± steps by a doubling', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -1121,15 +1152,175 @@ test('zoom: Alt+± steps by one detent worth through the same path', async ({
   await waitForImageLoaded(capturePage);
   await applyZoomMode(capturePage, 1);
 
-  // KEY_ZOOM_FACTOR = exp(WHEEL_ZOOM_K · 100) — the same amount one
-  // mouse detent moves, so the two input paths agree on "a step".
+  // KEY_ZOOM_FACTOR = 2, coarser than the wheel's ~1.28× detent on
+  // purpose: a keypress is a discrete act, and needing three of them
+  // to reach a useful zoom makes the shortcut feel broken.
   await capturePage.keyboard.press('Alt+Equal');
+  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(2, 2);
+  await capturePage.keyboard.press('Alt+Equal');
+  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(4, 2);
+
+  await capturePage.keyboard.press('Alt+Minus');
+  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(2, 2);
+
+  await openerPage.close();
+});
+
+test('zoom: zooming out stops at the Fit scale', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 'fit');
+  const fitScale = await readDisplayScale(capturePage);
+
+  const box = await capturePage.locator('.image-box').boundingBox();
+  await capturePage.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await capturePage.keyboard.down('Control');
+  // Far more zoom-out than the range allows. Shrinking below Fit isn't
+  // useful and leaves bare pane where a Ctrl+wheel misses `.image-box`
+  // and hits the browser's own page zoom instead.
+  for (let i = 0; i < 12; i++) await capturePage.mouse.wheel(0, 200);
+  await capturePage.keyboard.up('Control');
+
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(fitScale, 2);
+
+  // And Fit is still *armed*, not resolved to an equal number: the
+  // gesture had nowhere to go, so it must not cost the sticky mode.
+  await capturePage.locator('#zoom').click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[data-zoom="fit"]'),
+  ).toHaveAttribute('aria-checked', 'true');
+  await capturePage.keyboard.press('Escape');
+
+  // Same from above: zooming out until it fits re-arms Fit rather
+  // than parking a number that merely equals it — otherwise the image
+  // looks fitted but stops re-fitting on the next resize.
+  await applyZoomMode(capturePage, 4);
+  await capturePage.keyboard.down('Control');
+  for (let i = 0; i < 12; i++) await capturePage.mouse.wheel(0, 200);
+  await capturePage.keyboard.up('Control');
+  await expect
+    .poll(() => readDisplayScale(capturePage))
+    .toBeCloseTo(fitScale, 2);
+  await capturePage.locator('#zoom').click();
+  await expect(
+    capturePage.locator('.zoom-menu-item[data-zoom="fit"]'),
+  ).toHaveAttribute('aria-checked', 'true');
+
+  await openerPage.close();
+});
+
+test('zoom: the pixel under the cursor stays under the cursor', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 2);
+
+  // Focal point off-center on both axes, so an anchor that silently
+  // recentered (or ignored the `.image-wrap` margin) would show up.
+  //
+  // Measured off the *box*, not the image: at 2× the image is several
+  // times wider than the pane, so a fraction of the image lands
+  // outside the window, the wheel events never reach `.image-box`,
+  // and the test passes without exercising anything.
+  const boxRect = await capturePage.locator('.image-box').boundingBox();
+  const focalX = boxRect!.x + boxRect!.width * 0.3;
+  const focalY = boxRect!.y + boxRect!.height * 0.4;
+  const imgBefore = await capturePage.locator('#preview').boundingBox();
+  const fracBefore = {
+    x: (focalX - imgBefore!.x) / imgBefore!.width,
+    y: (focalY - imgBefore!.y) / imgBefore!.height,
+  };
+  // Guard the guard: the focal must actually be over the image, or
+  // the zoom path skips re-anchoring entirely.
+  expect(fracBefore.x).toBeGreaterThan(0);
+  expect(fracBefore.x).toBeLessThan(1);
+  expect(fracBefore.y).toBeGreaterThan(0);
+  expect(fracBefore.y).toBeLessThan(1);
+  await capturePage.mouse.move(focalX, focalY);
+
+  // A whole gesture's worth of events, not one step: each event
+  // re-anchors from where the last one landed, so any per-event error
+  // compounds across the gesture — that's what made the old
+  // margin-ignoring math visibly crawl.
+  await capturePage.keyboard.down('Control');
+  for (let i = 0; i < 10; i++) await capturePage.mouse.wheel(0, -30);
+  await capturePage.keyboard.up('Control');
+
+  const imgAfter = await capturePage.locator('#preview').boundingBox();
+  const fracAfter = {
+    x: (focalX - imgAfter!.x) / imgAfter!.width,
+    y: (focalY - imgAfter!.y) / imgAfter!.height,
+  };
+  // Same image fraction under the cursor, within a pixel's worth.
+  expect(Math.abs(fracAfter.x - fracBefore.x) * imgAfter!.width)
+    .toBeLessThan(2);
+  expect(Math.abs(fracAfter.y - fracBefore.y) * imgAfter!.height)
+    .toBeLessThan(2);
+
+  await openerPage.close();
+});
+
+test('zoom: Ctrl+wheel below the separator zooms the image, above it passes through', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await waitForImageLoaded(capturePage);
+  await applyZoomMode(capturePage, 1);
+
+  // Over the tool palette: below the separator but nowhere near
+  // `.image-box`. Before this, the event reached the browser and
+  // page-zoomed the capture page itself.
+  const palette = await capturePage.locator('.highlight-controls').boundingBox();
+  await capturePage.mouse.move(
+    palette!.x + palette!.width / 2,
+    palette!.y + palette!.height / 2,
+  );
+  await capturePage.keyboard.down('Control');
+  await capturePage.mouse.wheel(0, -100);
+  await capturePage.keyboard.up('Control');
   await expect
     .poll(() => readDisplayScale(capturePage))
     .toBeCloseTo(Math.exp(WHEEL_ZOOM_K * 100), 2);
 
-  await capturePage.keyboard.press('Alt+Minus');
-  await expect.poll(() => readDisplayScale(capturePage)).toBeCloseTo(1, 2);
+  // Above the separator is ordinary page content — the browser's own
+  // zoom is a reasonable ask there, so the event is left alone.
+  const scaleBefore = await readDisplayScale(capturePage);
+  const prevented = await capturePage.evaluate(() => {
+    const hr = document.querySelector('hr[data-capture-main]')!;
+    const y = hr.getBoundingClientRect().top - 20;
+    const ev = new WheelEvent('wheel', {
+      deltaY: -100, deltaMode: 0, ctrlKey: true,
+      clientX: 100, clientY: y,
+      bubbles: true, cancelable: true,
+    });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+  expect(await readDisplayScale(capturePage)).toBeCloseTo(scaleBefore, 4);
 
   await openerPage.close();
 });

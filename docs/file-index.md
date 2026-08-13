@@ -298,7 +298,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-annotation-transfer.spec.ts` | E2E for annotation Copy / Paste / Import — cross-capture round-trip, re-derived applied crop, overwrite + per-edit Undo, disabled-state tooltips |
 | `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo, Reset and undoing it, More-menu dismissal + slide-up placement |
 | `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
-| `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width ladder + DPR-stub regressions, continuous wheel / pinch zoom + button label, arrow-key fine pan (drag + scrollbar), pan snap to a box edit, and Zoom-popover dismissal |
+| `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width + DPR-stub regressions, continuous wheel / pinch / key zoom with cursor anchoring, arrow-key fine pan, pan snap, Zoom-popover |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |

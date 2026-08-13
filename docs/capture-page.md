@@ -501,9 +501,8 @@ fresh edit.
   slots, whose contents `render()` can't await.
 - Mechanics come from `menu-popover.ts`, shared with the Zoom menu
   — see the Column popover menus section.
-- Labelled "More…". Neither column menu opener carries a caret —
-  Zoom's label is a mode readout ("Zoom: Fit") with no room for
-  one, so the two stay visually consistent without it.
+- Labelled "More…", matching "Zoom…" — both are ellipsis-suffixed
+  menu openers, and neither carries a caret.
 - The CSS is shared too: `.palette-menu` / `.palette-menu-item` are
   grouped with the `.zoom-menu` rules, plus a disabled item look.
 
@@ -1858,26 +1857,44 @@ programmatic dispatch for).
 
 ## Image fit-to-viewport + Zoom
 
-- Zoom is **continuous**: either Fit (default) or any scale factor in
-  `[ZOOM_MIN, ZOOM_MAX]` = `[0.125, 8]`.
+- Zoom is **continuous**: either Fit (default) or any scale factor.
   - Fit is a *mode*, not a scale — it re-fits on every resize /
     prompt grow, so it can't collapse to the number it currently
     renders at.
   - 1×, 2×, 4×, 8× survive only as **menu presets**. They are not the
     set of reachable zooms.
 - Changed via:
-  - The **Zoom** button (popover menu; a preset is checked only when
-    the current scale is within 0.5% of it, otherwise nothing is).
+  - The **Zoom…** button (popover menu of presets).
   - **Ctrl + wheel** or **trackpad pinch** over the image-box (Cmd +
     wheel on macOS — the wheel handler accepts both `ctrlKey` and
-    `metaKey`; the Zoom button's `title` is rewritten on init for Mac
-    UAs so the visible hint matches the platform).
-  - **Alt+−** zoom out, **Alt++** zoom in (plus a quiet **Alt+=**
-    alias that doesn't require Shift).
+    `metaKey`; the button's `title` is rewritten on init for Mac UAs
+    so the visible hint matches the platform).
+  - **Alt+−** / **Alt++** (plus a quiet **Alt+=** alias that doesn't
+    require Shift), which step by a **doubling**, not by the wheel's
+    detent. A keypress is a discrete act; needing three of them to
+    reach a useful zoom reads as broken.
 - Plain wheel / trackpad swipe falls through to native `.image-box`
   scroll — important for panning a tall image while zoomed in.
-- Button label reads `Zoom: Fit`, `Zoom: 2×` at (or within 0.5% of) a
-  preset, else a percentage like `Zoom: 137%`.
+- **Range.** Zoom-in stops at `ZOOM_MAX` (8). Zoom-out stops at the
+  **Fit scale**, recomputed per gesture (`fitScale()`), not at a fixed
+  minimum.
+  - Below Fit the image only gets harder to see, and it leaves bare
+    pane around itself — where a Ctrl+wheel misses `.image-box`
+    entirely and reaches the *browser's* page zoom instead.
+  - The floor is `min(fitScale(), current)` so it can never clamp
+    *upward*: Fit is height-bounded, so a squashed window can leave
+    the current scale below the floor, and a bare clamp would make
+    the first zoom-out step jump the image bigger.
+  - `ZOOM_MIN` (0.125) is now just the absolute clamp for programmatic
+    `setZoom` (the `__seeState` hook), plus the floor's fallback
+    before the image decodes. Gestures otherwise never reach it.
+- **The button label is static** (`Zoom…`, like `More…`). Under
+  continuous zoom a readout would be an arbitrary percentage churning
+  on every wheel event — noise rather than state, and it would resize
+  the `width: fit-content` palette column mid-gesture. The scale is
+  visible in the image; what isn't visible is whether Fit is still
+  armed, and the menu's check mark carries that (a preset is checked
+  only when the scale is within `PRESET_MATCH_TOL` of it).
 
 ### Modes
 
@@ -1968,15 +1985,31 @@ programmatic dispatch for).
 - **Ctrl/Cmd-required for wheel.**
   - Plain wheel / trackpad gestures pass through to native
     `.image-box` scroll.
-  - Ctrl+wheel is swallowed unconditionally — otherwise the browser's
-    page-zoom would fire alongside the app zoom.
+  - Ctrl+wheel is swallowed — otherwise the browser's page-zoom would
+    fire alongside the app zoom.
   - Chrome delivers a trackpad pinch *as* a Ctrl+wheel event, so
     pinch arrives on the same path.
+- **Zoom region** (`isInZoomRegion`). The listener is on `window`, not
+  `.image-box`, and claims Ctrl+wheel for everything below the
+  `<hr data-capture-main>` above the image area.
+  - The image rarely fills that region — tool palette to its left,
+    gray surround to its right, bare page below a short image — and a
+    Ctrl+wheel landing in any of it was still aimed at the image.
+    Passing those through page-zooms the capture page by accident.
+  - Above the separator (prompt, save options, capture card) it still
+    passes through — ordinary page content, where the browser's zoom
+    is a reasonable ask.
+  - A modal edit dialog or stale mode opts out, matching the keyboard
+    path. A hidden separator (stale mode hides `data-capture-main`)
+    means *no* region qualifies rather than all of it.
+  - `passive: false` is explicit: Chrome makes `wheel` on `window`
+    passive by default, which would make `preventDefault` a no-op.
 - **Exponential mapping.** `scale *= exp(-deltaPixels * k)`.
   - Exponential so the same gesture multiplies zoom by the same
     factor at every level: 1× → 2× costs exactly what 4× → 8× does.
   - `WHEEL_ZOOM_K` = 0.0025 → one 100 px detent ≈ 1.28×, ~2.8 detents
-    per doubling.
+    per doubling. `KEY_ZOOM_FACTOR` is a flat 2 — the wheel is the
+    fine control, the keyboard the coarse one.
   - `PINCH_ZOOM_K` = 0.02 (8× larger). Not a different rule — Chrome
     reports pinch deltas ~8× smaller per unit of finger travel than a
     wheel detent. Measured on ChromeOS.
@@ -2012,21 +2045,39 @@ programmatic dispatch for).
   `cursorCenteredZoomTo(scale, …)`.
   - Measuring is what lets a wheel gesture leave Fit smoothly: the
     first event continues from exactly where Fit had landed.
-  - Alt+± reuses the same path with `KEY_ZOOM_FACTOR`, one detent's
-    worth of zoom, so keyboard and wheel agree on a "step".
+  - Alt+± reuses the same path with `KEY_ZOOM_FACTOR` (a flat 2).
   - The image-fraction the focal point was over pre-zoom is preserved
-    post-zoom by setting `imageBox.scrollLeft / scrollTop` to
-    `boxRect.left + fx * newWidth - focalX` (similarly for Y).
+    post-zoom by re-scrolling the box, all measured *after* the zoom
+    in the box's scroll-content space:
+    `scrollLeft = origin.x + fx · newWidth − (focalX − contentLeft)`,
+    where `origin` is `scrollContentOrigin()` and `contentLeft` is the
+    box's content edge.
+  - `scrollContentOrigin()` is what makes it land on the pixel. The
+    image's top-left is *not* at the box's content origin:
+    `.image-wrap` carries a `WRAP_MARGIN`, and a smaller-than-box
+    image is centered on top of that.
+  - Earlier math assumed that offset away, costing ~4 px per event.
+    Tolerable at one event per detent; a continuous gesture
+    re-anchors ~30 times, and each step re-measures from the position
+    the last error produced.
+  - Net effect was a "fixed" pixel that visibly crawled — ~57 px over
+    one gesture, measured against the e2e that now covers it.
   - Browser clamps to the new content bounds, so a focal near an edge
     scrolls maximally that way.
   - Focal outside the visible image (or unknown — pre-mousemove)
     falls back to a scale change without re-scrolling.
   - A scale already parked against a clamp bound is a no-op, so
     holding the wheel at the limit doesn't keep rewriting scroll.
-  - The lower bound is `min(ZOOM_MIN, current scale)`, not `ZOOM_MIN`
-    flat: Fit is height-bounded, so a squashed window can render
-    below `ZOOM_MIN`, and a flat clamp would make the first zoom-out
-    step jump the image *bigger*.
+  - Zooming *out* while Fit is armed is a no-op that **keeps the
+    mode** — Fit already is the floor. Belt-and-braces against the
+    same silent-disarm class as the zero-delta case: the float gap
+    between the measured `renderedScale()` and the computed
+    `fitScale()` would otherwise be enough to resolve Fit to a number
+    on a gesture that changed nothing on screen. Zooming *in* from
+    Fit still leaves the mode, which is the point.
+  - Landing on the floor from above re-arms Fit, rather than parking
+    a number that merely equals the Fit scale — two states with the
+    same pixels but different behaviour on the next resize.
 - **Keyboard listener** is separate from the page-wide alt-hotkey
   handler because that one early-returns on `shiftKey`, and Alt++
   needs Shift on most layouts. We accept `+`, `=` (no-shift alias),

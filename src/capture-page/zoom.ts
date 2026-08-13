@@ -65,29 +65,33 @@ let zoomMode: ZoomMode = 'fit';
 const clampZoom = (s: number): number =>
   Number.isFinite(s) ? Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s)) : 1;
 
-// Labelling tolerance: a scale this close to a preset reads as that
-// preset ("2×") instead of a percentage ("199%"). Cosmetic only — it
-// does not snap the scale itself.
+// How close a scale has to be to a preset for the menu to show that
+// preset as the active one.
 //
 // Deliberately tighter than the 0.0033 that drawing's stroke-width
-// epsilon absorbs (`ceil(3·ratio − 0.01)`). A wider tolerance would
-// let a scale read "1×", and check the 1× radio, while strokes had
-// already stepped up to the 4 px bucket.
-const PRESET_LABEL_TOL = 0.003;
+// epsilon absorbs (`ceil(3·ratio − 0.01)`), so the 1× radio can't
+// read as active while strokes have already stepped up to the 4 px
+// bucket.
+const PRESET_MATCH_TOL = 0.003;
 
 // The preset this scale is sitting on, or null when it's between
 // presets (the normal case under continuous zoom). Presets are ≥ 2×
 // apart, so the first match within tolerance is the only match.
 function presetAt(scale: number): number | null {
   return ZOOM_PRESET_SCALES.find(
-    (p) => Math.abs(scale - p) <= p * PRESET_LABEL_TOL,
+    (p) => Math.abs(scale - p) <= p * PRESET_MATCH_TOL,
   ) ?? null;
 }
 
-function zoomLabel(m: ZoomMode): string {
-  if (m === 'fit') return 'Fit';
-  const p = presetAt(m);
-  return p !== null ? `${p}×` : `${Math.round(m * 100)}%`;
+// Menu item labels. The button itself is a static "Zoom…" — under
+// continuous zoom it would otherwise be showing an arbitrary
+// percentage that changes on every wheel event, which reads as noise
+// rather than state (and, being inside a `width: fit-content` column,
+// would resize the palette mid-gesture). The scale is visible in the
+// image; what *isn't* visible is whether Fit is still armed, and the
+// menu's check mark carries that.
+function presetLabel(m: ZoomMode): string {
+  return m === 'fit' ? 'Fit' : `${m}×`;
 }
 
 /**
@@ -100,6 +104,9 @@ export interface ZoomContext {
   imageBox: HTMLDivElement;
   highlightControls: HTMLDivElement;
   zoomBtn: HTMLButtonElement;
+  /** The `<hr>` above the image area. Everything below it is the
+   *  image's territory as far as Ctrl+wheel is concerned. */
+  mainSeparator: HTMLElement;
 
   /** Drawing module's `render()` — applyZoom calls it after sizing
    *  changes so stroke widths re-derive from the new display ratio. */
@@ -173,6 +180,27 @@ let ctx: ZoomContext;
 // position would be lost on every applyZoom() call.
 const WRAP_MARGIN = 4;
 
+/**
+ * The scale Fit mode renders at right now, or `null` when the image
+ * hasn't decoded (nothing to fit). Capped at 1 — Fit shrinks to the
+ * viewport but never magnifies.
+ *
+ * Shared by `applyZoom`'s Fit branch and the zoom-out floor, so the
+ * two can't drift: "as far out as Fit" has to mean one thing.
+ *
+ * Note it reads `clientWidth`, which excludes a scrollbar the current
+ * zoom may have produced — so while zoomed in this can come back a
+ * few px smaller than the scale Fit would settle at. That only makes
+ * the floor marginally more permissive, which is harmless.
+ */
+function fitScale(): number | null {
+  const { w: targetW, h: targetH } = targetCssSize();
+  const wMax = Math.max(0, ctx.imageBox.clientWidth - 2 * WRAP_MARGIN);
+  const hMax = availableImageHeight().image;
+  if (!(targetW > 0 && targetH > 0 && wMax > 0 && hMax > 0)) return null;
+  return Math.min(1, wMax / targetW, hMax / targetH);
+}
+
 export function availableImageHeight(): { box: number; image: number } {
   const top = ctx.imageBox.getBoundingClientRect().top;
   const bodyMargin = 24;
@@ -233,8 +261,12 @@ export function applyZoom(): void {
     const wMax = Math.max(0, boxW - 2 * WRAP_MARGIN);
     const hMax = avail.image;
     const { w: targetW, h: targetH } = targetCssSize();
-    if (targetW > 0 && targetH > 0 && wMax > 0 && hMax > 0) {
-      const scale = Math.min(1, wMax / targetW, hMax / targetH);
+    // `fitScale()` owns this number — the zoom-out floor reads the
+    // same helper, so the two can't disagree about what "as far out
+    // as Fit" means. It returns null in exactly the not-yet-loaded /
+    // degenerate case the else branch handles.
+    const scale = fitScale();
+    if (scale !== null) {
       ctx.previewImg.style.width = targetW * scale + 'px';
       ctx.previewImg.style.height = targetH * scale + 'px';
       ctx.previewImg.style.maxWidth = '';
@@ -290,13 +322,8 @@ export function fitImage(): void {
   applyZoom();
 }
 
-function updateZoomButtonLabel(): void {
-  ctx.zoomBtn.textContent = `Zoom: ${zoomLabel(zoomMode)}`;
-}
-
 export function setZoom(m: ZoomMode): void {
   zoomMode = typeof m === 'number' ? clampZoom(m) : m;
-  updateZoomButtonLabel();
   applyZoom();
   // Refresh the menu's check marker too, in case the menu is open
   // (wheel-zoom while it's up should update the visible state).
@@ -379,7 +406,7 @@ function buildZoomMenu(): HTMLDivElement {
     check.textContent = '✓';
     check.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');
-    label.textContent = zoomLabel(value);
+    label.textContent = presetLabel(value);
     item.append(check, label);
     item.addEventListener('click', () => {
       setZoom(value);
@@ -412,9 +439,7 @@ function refreshZoomMenuChecks(): void {
   );
   // Continuous zoom means the current scale usually sits between
   // presets — then nothing is checked, which is the honest reading of
-  // a radio group whose options are all "off". A scale within the
-  // label tolerance of a preset checks that preset, matching what the
-  // button is displaying.
+  // a radio group whose options are all "off".
   const checked =
     zoomMode === 'fit' ? 'fit' : String(presetAt(zoomMode) ?? '');
   for (const item of items) {
@@ -542,15 +567,22 @@ function cursorCenteredZoomTo(
   // honours a number, so it would never re-fit.
   if (!ctx.previewImg.naturalWidth) return false;
 
-  // Floor at ZOOM_MIN *or* wherever we already are, whichever is
-  // lower. A short window can leave Fit rendering below ZOOM_MIN
-  // (Fit is height-bounded, so squashing the window shrinks it
-  // without limit) — a plain clamp would then make the first
-  // zoom-out step jump the image *bigger*, which is the opposite of
-  // what the user asked for. Zooming out can never grow the image;
-  // it just stops.
+  // Zooming out stops at Fit: shrinking the image below the size
+  // that already fits the window isn't useful, and it drags in side
+  // effects — a small enough image leaves most of the pane bare, and
+  // a Ctrl+wheel over that bare area misses `.image-box` entirely and
+  // reaches the browser's own page zoom instead.
+  //
+  // `Math.min(…, cur)` keeps the floor from ever clamping *upward*:
+  // Fit is height-bounded, so a squashed window (or a menu preset set
+  // while the window was larger) can leave the current scale below
+  // the floor, and a bare clamp would make the first zoom-out step
+  // jump the image bigger — the opposite of what was asked for.
+  // Zooming out can never grow the image; it just stops.
   const cur = currentZoomScale();
-  const next = Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_MIN, cur), scale));
+  const fit = fitScale();
+  const floor = Math.min(fit ?? ZOOM_MIN, cur);
+  const next = Math.min(ZOOM_MAX, Math.max(floor, scale));
   // No change — skip the re-render and the scroll rewrite, which
   // would otherwise nudge the view while the user keeps spinning the
   // wheel at a clamp bound.
@@ -562,6 +594,25 @@ function cursorCenteredZoomTo(
   // silently freeze it — Fit would stop re-fitting on resize with no
   // visible change at the moment it happened.
   if (next === cur) return false;
+  // Zooming out while Fit is armed: Fit already *is* the floor, so
+  // there's nowhere to go — keep the mode rather than resolving it to
+  // a number. Without this the tiny float gap between the measured
+  // `renderedScale()` and the computed `fitScale()` is enough for
+  // `next !== cur`, and Fit would be silently disarmed by a gesture
+  // that changed nothing on screen. (Zooming *in* from Fit still
+  // leaves the mode, which is the point.)
+  if (zoomMode === 'fit' && next <= cur) return false;
+
+  // Landing on the floor from above re-arms Fit rather than parking a
+  // number that happens to equal it. Otherwise "zoom out until it
+  // fits" leaves a frozen size that looks identical but stops
+  // re-fitting on the next resize — two states, same pixels,
+  // different behaviour later. Only when the floor really is the Fit
+  // scale: a squashed window can floor at `cur` instead, and that
+  // isn't Fit. The focal re-anchor below is unaffected — it measures
+  // the post-zoom rects either way.
+  const target: ZoomMode =
+    fit !== null && next === floor && next === fit ? 'fit' : next;
 
   const useFocal =
     focalX !== null && focalY !== null &&
@@ -573,21 +624,34 @@ function cursorCenteredZoomTo(
     fy = (focalY! - r.top) / Math.max(1, r.height);
   }
 
-  setZoom(next);
+  setZoom(target);
 
   if (useFocal) {
     const r2 = ctx.imgRect();
-    // Measure the box *after* the zoom. It used to be captured
-    // pre-zoom on the reasoning that only the image inside the box
-    // resizes — no longer safe: the Zoom button is a live readout
-    // ("Fit" → "137%") inside a `width: fit-content` palette column,
-    // so a label change can reflow the column and move the box
-    // sideways. `#zoom` carries a `min-width` to stop that, but the
-    // scroll target is defined in post-zoom layout anyway, so reading
-    // it here is simply the correct measurement.
-    const boxRect = ctx.imageBox.getBoundingClientRect();
-    ctx.imageBox.scrollLeft = boxRect.left + fx * r2.width - focalX!;
-    ctx.imageBox.scrollTop  = boxRect.top  + fy * r2.height - focalY!;
+    // Everything here is measured *after* the zoom, in the box's
+    // scroll-content space.
+    //
+    // `scrollContentOrigin()` is what makes this land on the pixel:
+    // the image's top-left is NOT at the box's content origin — the
+    // `.image-wrap` margin offsets it, and a smaller-than-box image
+    // is centered on top of that. The old math assumed that offset
+    // away, which cost ~4 px per event. That was tolerable at one
+    // event per detent, but a continuous gesture re-anchors ~30
+    // times, and each step re-measures from the position the last
+    // error produced — so the "fixed" pixel visibly crawled out from
+    // under the cursor.
+    //
+    // Post-zoom is also the correct time to read the box: the scroll
+    // target is defined in post-zoom layout.
+    const origin = scrollContentOrigin();
+    const box = ctx.imageBox.getBoundingClientRect();
+    const contentX = box.left + ctx.imageBox.clientLeft;
+    const contentY = box.top + ctx.imageBox.clientTop;
+    // Put image-fraction (fx, fy) back under (focalX, focalY). The
+    // browser clamps to the scroll range, so a focal near an edge (or
+    // an image too small to scroll) simply goes as far as it can.
+    ctx.imageBox.scrollLeft = origin.x + fx * r2.width - (focalX! - contentX);
+    ctx.imageBox.scrollTop  = origin.y + fy * r2.height - (focalY! - contentY);
   }
   // A zoom step can land mid-pan (Ctrl+wheel with the drag held).
   // Nothing to do here: the pan's `mousemove` notices the scroll it
@@ -634,11 +698,13 @@ const WHEEL_ZOOM_K = 0.0025;
 // on ChromeOS, where WHEEL_ZOOM_K alone felt sluggish to the point
 // of being unusable.
 const PINCH_ZOOM_K = 0.02;
-// One Alt+± press = one mouse detent's worth of zoom, so keyboard and
-// wheel agree on what "a step" means. The 100 is that detent's
-// `deltaY`; nothing else in the wheel path cares about notches
-// anymore.
-const KEY_ZOOM_FACTOR = Math.exp(WHEEL_ZOOM_K * 100);
+// Alt+± steps by a doubling, deliberately *not* matching the wheel's
+// ~1.28× detent. A keypress is a discrete act — you press it to get
+// somewhere, and needing three presses to reach a useful zoom makes
+// the shortcut feel broken. The wheel is the continuous control; the
+// keyboard is the coarse one. Doubling also lands on the 1 / 2 / 4 /
+// 8 presets when starting from one.
+const KEY_ZOOM_FACTOR = 2;
 
 // Wheel deltas can arrive in lines or pages (`deltaMode`); normalize
 // to pixels so `k` means one thing. Chrome sends pixels for both
@@ -658,6 +724,29 @@ function wheelDeltaPixels(e: WheelEvent): number {
   if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * LINE_HEIGHT_PX;
   if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * PAGE_DELTA_PX;
   return e.deltaY;
+}
+
+// Does a Ctrl+wheel at this viewport Y belong to the image?
+//
+// Everything below the `<hr>` above the image area counts, not just
+// `.image-box`. The image rarely fills that region — there's the tool
+// palette to its left, gray surround to its right, and bare page
+// below a short image — and a Ctrl+wheel that lands in any of it was
+// still aimed at the image. Letting those through means an accidental
+// *browser page* zoom, which is never what's wanted mid-edit and is
+// annoying to undo.
+//
+// Above the separator (prompt, save options, capture card) it still
+// passes through: that's ordinary page content where the browser's
+// own zoom is a reasonable thing to ask for.
+//
+// A degenerate rect means the separator is hidden (it carries
+// `data-capture-main`, so it goes with the rest in stale mode) — then
+// no region qualifies, rather than the whole window qualifying.
+function isInZoomRegion(vy: number): boolean {
+  const r = ctx.mainSeparator.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) return false;
+  return vy >= r.bottom;
 }
 
 // Is a Ctrl/Cmd modifier physically held? Chrome delivers a trackpad
@@ -915,16 +1004,24 @@ export function initZoom(context: ZoomContext): void {
   // The blur reset lives in the shared focus-loss handler below,
   // which already exists for the same missed-Ctrl-keyup reason.
 
-  ctx.imageBox.addEventListener('wheel', (e) => {
+  // Listening on `window`, not `.image-box`, so the whole area below
+  // the separator answers to Ctrl+wheel — see `isInZoomRegion`.
+  // Chrome makes `wheel` on window passive by default, so
+  // `passive: false` is required for `preventDefault` to take.
+  window.addEventListener('wheel', (e) => {
     // Image zoom requires Ctrl (Cmd on macOS) — which a trackpad
     // pinch reports too, so pinch lands here as well. Plain wheel /
-    // trackpad scroll falls through to native `.image-box` scroll,
-    // necessary for panning a tall image while zoomed in.
+    // trackpad scroll falls through to native scrolling, necessary
+    // for panning a tall image while zoomed in.
     if (!(e.ctrlKey || e.metaKey)) return;
+    if (!isInZoomRegion(e.clientY)) return;
+    // Match the keyboard path: a modal edit dialog owns the page, and
+    // the stale-capture state has no image worth zooming.
+    if (ctx.anyEditDialogOpen() || ctx.isStaleMode()) return;
 
-    // Always swallow Ctrl/Cmd+wheel: the browser default would page-
-    // zoom on top of (or instead of) our app zoom, which is rarely
-    // what the user wants over the captured image.
+    // Always swallow Ctrl/Cmd+wheel here: the browser default would
+    // page-zoom on top of (or instead of) our app zoom, which is
+    // rarely what the user wants while editing a screenshot.
     e.preventDefault();
 
     const k = isSynthesizedPinch(e) ? PINCH_ZOOM_K : WHEEL_ZOOM_K;
@@ -1212,6 +1309,4 @@ export function initZoom(context: ZoomContext): void {
     }
     if (ctx.isPolylineActive()) ctx.endPolylineChain();
   });
-
-  updateZoomButtonLabel();
 }

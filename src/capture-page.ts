@@ -479,6 +479,9 @@ const copyAnnotationsBtn = document.getElementById('copy-annotations') as HTMLBu
 const pasteAnnotationsBtn = document.getElementById('paste-annotations') as HTMLButtonElement;
 const importAnnotationsBtn = document.getElementById('import-annotations') as HTMLButtonElement;
 const zoomBtn = document.getElementById('zoom') as HTMLButtonElement;
+// Separator above the image area. Zoom uses it as the boundary below
+// which a Ctrl+wheel belongs to the image rather than the browser.
+const mainSeparator = document.querySelector('hr[data-capture-main]') as HTMLElement;
 const undoBtn = document.getElementById('undo') as HTMLButtonElement;
 const resetBtn = document.getElementById('reset') as HTMLButtonElement;
 const copyImageBtn = document.getElementById('copy-image-btn') as HTMLButtonElement;
@@ -1555,6 +1558,7 @@ initZoom({
   imageBox,
   highlightControls,
   zoomBtn,
+  mainSeparator,
   render,
   drawViewportEdges,
   visibleImageRect,
@@ -1863,8 +1867,8 @@ void loadData();
     // stroke-width math. `applyZoom` is also exposed so a
     // DPR-stubbing test can re-trigger sizing after overriding
     // `window.devicePixelRatio` without going through `setZoom`
-    // (saves the menu-check refresh + label rewrite, which would
-    // be confusing telemetry on a same-mode "re-apply").
+    // (saves the menu-check refresh, which would be confusing
+    // telemetry on a same-mode "re-apply").
     setZoom: (m: ZoomMode) => setZoom(m),
     applyZoom: () => applyZoom(),
     displayScale: () => currentDisplayScale(),
