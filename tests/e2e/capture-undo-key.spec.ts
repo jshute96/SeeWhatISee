@@ -1,13 +1,18 @@
-// E2E coverage for `Ctrl+Z` on the Capture page, which has two
-// unrelated undo stacks — the image edits and the prompt textarea's
-// own text undo. `src/capture-page/undo-scope.ts` routes the key by
-// an invisible "undo scope" rather than by focus, because drawing
-// never takes focus off the prompt.
+// E2E coverage for `Ctrl+Z` and the two redo spellings (`Ctrl+Y`,
+// `Ctrl+Shift+Z`) on the Capture page, which has two unrelated undo
+// stacks — the image edits and the prompt textarea's own text undo.
+// `src/capture-page/undo-scope.ts` routes the keys by an invisible
+// "undo scope" rather than by focus, because drawing never takes
+// focus off the prompt.
+//
+// Undo cases first, then redo. The redo of a whole-state op lives
+// with that op: View cropped in `capture-view-cropped.spec.ts`,
+// Paste in `capture-annotation-transfer.spec.ts`.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
-import { readEditKinds } from './capture-drawing-helpers';
+import { dragEdge, readEditKinds, readLastBounds } from './capture-drawing-helpers';
 
 /** id of the element that currently has focus in the Capture page. */
 async function focusedId(page: Page): Promise<string> {
@@ -183,8 +188,8 @@ test('undo key: Ctrl+Shift+Z still redoes prompt text', async ({
   await prompt.click();
   await capturePage.keyboard.type('hello');
 
-  // The one deliberate passthrough: the image stack has no redo, so
-  // Shift is never taken and the textarea keeps its own.
+  // The prompt owns the scope, so both spellings of redo stay the
+  // browser's — the image's redo only fires when the scope is there.
   await capturePage.keyboard.press('Control+z');
   await expect(prompt).not.toHaveValue('hello');
   await capturePage.keyboard.press('Control+Shift+z');
@@ -217,6 +222,158 @@ test('undo key: Ctrl+Z with focus on neither half does nothing', async ({
   expect(await focusedId(capturePage)).toBe('capture');
   await expect(prompt).toHaveValue('hello');
   expect(await readEditKinds(capturePage)).toEqual(['rect']);
+
+  await openerPage.close();
+});
+
+test('redo key: Ctrl+Y and Ctrl+Shift+Z put undone drawings back', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.5, yPct: 0.5 });
+  await capturePage.keyboard.press('Control+z');
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual([]);
+
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  // Both spellings drive the same stack.
+  await capturePage.keyboard.press('Control+Shift+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'rect']);
+
+  // Nothing left to redo — swallowed, not passed to the browser.
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual(['rect', 'rect']);
+
+  // Undo still walks back through the re-done edits, one at a time.
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+
+  await openerPage.close();
+});
+
+test('redo key: drawing after an undo discards the redo stack', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual([]);
+
+  // The usual redo semantics: a fresh edit on top of an undo means
+  // the undone work is gone for good.
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.5, yPct: 0.5 });
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual(['redact']);
+
+  await openerPage.close();
+});
+
+test('redo key: a re-done Reset can be undone again', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // Reset is a whole-state op — its undo state lives on a separate
+  // in-memory stack, and redo has to put that stack back too or the
+  // second Undo below finds a marker with nothing behind it.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await capturePage.locator('#reset').click();
+  expect(await readEditKinds(capturePage)).toEqual([]);
+
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+
+  await openerPage.close();
+});
+
+test('redo key: Ctrl+Y in the prompt leaves the image alone', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  const prompt = capturePage.locator('#prompt-text');
+
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.3, yPct: 0.3 });
+  await capturePage.keyboard.press('Control+z');
+  // Typing hands the scope to the prompt, so the pending image redo
+  // stays pending rather than firing on the next Ctrl+Y.
+  await capturePage.keyboard.type('hello');
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  await expect(prompt).toHaveValue('hello');
+
+  await openerPage.close();
+});
+
+test('redo key: an in-place geometry op redoes its geometry', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+
+  // An edge-handle resize mutates the existing edit rather than
+  // adding one, so the edit *count* never changes across undo/redo —
+  // only the bounds can show whether redo did anything. This is the
+  // one op kind the other redo tests can't see.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.7, yPct: 0.7 });
+  const before = await readLastBounds(capturePage, 'rect');
+  expect(before).not.toBeNull();
+  await dragEdge(capturePage, 'e', before!, 0.5);
+  const resized = await readLastBounds(capturePage, 'rect');
+  expect(resized!.w).toBeLessThan(before!.w - 10);
+
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  expect((await readLastBounds(capturePage, 'rect'))!.w).toBeCloseTo(before!.w, 1);
+
+  await capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  const redone = await readLastBounds(capturePage, 'rect');
+  expect(redone!.x).toBeCloseTo(resized!.x, 1);
+  expect(redone!.w).toBeCloseTo(resized!.w, 1);
+
+  // Undoing the re-done resize still lands on the pre-drag geometry
+  // rather than removing the edit.
+  await capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(capturePage)).toEqual(['rect']);
+  expect((await readLastBounds(capturePage, 'rect'))!.w).toBeCloseTo(before!.w, 1);
 
   await openerPage.close();
 });

@@ -10,7 +10,8 @@
 //   - a Box edit surviving the re-frame with re-mapped percentages,
 //     and one that falls entirely outside being dropped without
 //     changing the edit flags the save would report;
-//   - Undo restoring the full-size image and the crop edit;
+//   - Undo restoring the full-size image and the crop edit, and Redo
+//     re-applying the re-frame so it can be undone again;
 //   - Reset returning to the original capture from any crop depth,
 //     and the saved record that follows carrying no crop flag;
 //   - the More menu's open / dismiss behaviour, which is what makes
@@ -104,6 +105,48 @@ test('view cropped: re-frames the image around the crop and Undo restores it', a
   expect(restored!.w).toBeGreaterThan(40);
   expect(restored!.w).toBeLessThan(60);
   await expect(btn).toBeEnabled();
+
+  await openerPage.close();
+});
+
+test('view cropped: Ctrl+Y re-applies an undone re-frame, undoably', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const full = await readNaturalSize(capturePage);
+
+  await capturePage.locator('#tool-crop').click();
+  await dragRect(capturePage, { xPct: 0.25, yPct: 0.25 }, { xPct: 0.75, yPct: 0.75 });
+  await clickMoreMenuItem(capturePage, '#view-cropped');
+  const cropped = await readNaturalSize(capturePage);
+  await capturePage.locator('#undo').click();
+  await waitForNaturalWidth(capturePage, full.w);
+
+  // This is the path the whole snapshot design exists for: redo has
+  // to swap the base image back *and* re-install `viewCropStack` /
+  // `viewCropPct`, none of which an edit-kinds assertion can see.
+  await capturePage.keyboard.press('Control+y');
+  await waitForNaturalWidth(capturePage, cropped.w);
+  expect(await readNaturalSize(capturePage)).toEqual(cropped);
+  // The crop edit is consumed by the re-frame, exactly as on the
+  // original click.
+  expect(await readEditKinds(capturePage)).toEqual([]);
+  expect(await readEffectiveCrop(capturePage)).toBeNull();
+  await expect(capturePage.locator('#view-cropped')).toBeDisabled();
+
+  // And the re-done op is undoable again — the assertion that fails
+  // if redo restored the picture but not the stack behind it.
+  await capturePage.keyboard.press('Control+z');
+  await waitForNaturalWidth(capturePage, full.w);
+  expect(await readEditKinds(capturePage)).toEqual(['crop']);
+  expect(await readEffectiveCrop(capturePage)).not.toBeNull();
 
   await openerPage.close();
 });

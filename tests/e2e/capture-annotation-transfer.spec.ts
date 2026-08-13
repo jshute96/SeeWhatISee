@@ -10,7 +10,8 @@
 //     re-derive from its own original;
 //   - paste over existing annotations: overwrite, then Undo peeling
 //     the pasted edits off one at a time before the last click
-//     restores the pre-paste state;
+//     restores the pre-paste state, and Redo walking back up through
+//     the marker so the re-done paste stays undoable;
 //   - the enable rules and the "Unavailable: …" tooltip line, with
 //     the size gate driven by a hand-seeded wrong-size payload;
 //   - import from the last closed Capture page.
@@ -231,6 +232,61 @@ test('annotation transfer: paste overwrites, and Undo peels the pasted edits the
   await undo.click();
   expect(await readEditKinds(b.capturePage)).toEqual([]);
   await expect(undo).toBeDisabled();
+
+  await b.capturePage.close();
+  await b.openerPage.close();
+});
+
+test('annotation transfer: Ctrl+Y re-applies an undone paste, undoably', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  await clearSession(getServiceWorker);
+
+  const a = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  await dragRect(a.capturePage, { xPct: 0.1, yPct: 0.1 }, { xPct: 0.3, yPct: 0.3 });
+  await clickMoreMenuItem(a.capturePage, '#copy-annotations');
+  await a.capturePage.close();
+  await a.openerPage.close();
+
+  const b = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+  );
+  await b.capturePage.locator('#tool-redact').click();
+  await dragRect(b.capturePage, { xPct: 0.6, yPct: 0.1 }, { xPct: 0.9, yPct: 0.3 });
+  await clickMoreMenuItem(b.capturePage, '#paste-annotations');
+  expect(await readEditKinds(b.capturePage)).toEqual(['rect']);
+
+  // Undo twice: the pasted edit, then the marker itself, which is
+  // the click that swaps the whole pre-paste world back.
+  const undo = b.capturePage.locator('#undo');
+  await undo.click();
+  await undo.click();
+  expect(await readEditKinds(b.capturePage)).toEqual(['redact']);
+
+  // Redo returns to the state right after that second Undo's target
+  // — the emptied stack the marker left behind, not the paste's
+  // edits, which sit above it and redo one at a time.
+  await b.capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(b.capturePage)).toEqual([]);
+  await b.capturePage.keyboard.press('Control+y');
+  expect(await readEditKinds(b.capturePage)).toEqual(['rect']);
+
+  // The re-done paste is undoable again, all the way back through the
+  // marker to the target's own redaction — this is what fails if redo
+  // restores the edits without the stack the marker indexes into.
+  await b.capturePage.keyboard.press('Control+z');
+  await b.capturePage.keyboard.press('Control+z');
+  expect(await readEditKinds(b.capturePage)).toEqual(['redact']);
 
   await b.capturePage.close();
   await b.openerPage.close();

@@ -1,9 +1,10 @@
-// Routes `Ctrl+Z` to one of the Capture page's two undo stacks — the
+// Routes the undo / redo keys (`Ctrl+Z`, and `Ctrl+Y` /
+// `Ctrl+Shift+Z`) to one of the Capture page's two undo stacks — the
 // image edits (popped by `#undo`) or the prompt textarea's own native
 // text undo. See "Undo scope" in `docs/capture-page.md` for the full
 // behaviour; this header covers the non-obvious "why"s.
 //
-// **Why the page takes the key at all.** Chrome's default for
+// **Why the page takes the keys at all.** Chrome's default for
 // `Ctrl+Z` pressed outside any field is to undo the last *text* edit
 // and pull focus into the field that owned it — so before this, a
 // drawing could never be undone from the keyboard, and trying moved
@@ -24,6 +25,9 @@ export interface UndoScopeCtx {
   promptInput: HTMLTextAreaElement;
   /** Owns both "is there anything to undo" and the undo itself. */
   undoBtn: HTMLButtonElement;
+  /** Put back the last undone image edit. No button to click, so
+   *  unlike undo this is a direct call. */
+  redo(): void;
   anyEditDialogOpen(): boolean;
   isStaleMode(): boolean;
   isPolylineActive(): boolean;
@@ -69,11 +73,22 @@ export function initUndoScope(ctx: UndoScopeCtx): void {
     scope = 'prompt';
   });
 
+  // Which of the two operations a press asks for, or null when it's
+  // not one of ours. Both spellings of redo are accepted on every
+  // platform — `Ctrl+Y` is the Windows / Linux convention and
+  // `Ctrl+Shift+Z` (`Cmd+Shift+Z`) the Mac one, and taking both costs
+  // nothing.
+  const actionFor = (e: KeyboardEvent): 'undo' | 'redo' | null => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+    const key = e.key.toLowerCase();
+    if (key === 'y') return e.shiftKey ? null : 'redo';
+    if (key !== 'z') return null;
+    return e.shiftKey ? 'redo' : 'undo';
+  };
+
   document.addEventListener('keydown', (e) => {
-    // Shift is excluded, leaving `Ctrl+Shift+Z` (redo in a textarea)
-    // to the browser. The image stack has no redo yet.
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-    if (e.key.toLowerCase() !== 'z') return;
+    const action = actionFor(e);
+    if (!action) return;
     // An edit dialog is its own little world with its own text
     // fields; the no-session error state has no image panel at all.
     // Both hand the key straight back to the browser.
@@ -82,8 +97,14 @@ export function initUndoScope(ctx: UndoScopeCtx): void {
       e.preventDefault();
       // Mirror what a *mouse* click on Undo does mid-chain: the
       // document mousedown router ends the chain before the click
-      // lands, and a synthetic click alone would skip that.
+      // lands, and a synthetic click alone would skip that. Redo
+      // needs it for the same reason — an unfinished chain would
+      // otherwise keep drawing over the restored state.
       if (ctx.isPolylineActive()) ctx.endPolylineChain();
+      if (action === 'redo') {
+        ctx.redo();
+        return;
+      }
       // A synthetic click rather than a direct call: the button
       // already carries the whole undo implementation *and* the
       // enabled state, and clicking it also lights the press flash,
@@ -91,7 +112,15 @@ export function initUndoScope(ctx: UndoScopeCtx): void {
       ctx.undoBtn.click();
       return;
     }
+    // The prompt keeps its own text undo *and* redo — the browser's,
+    // on whichever spelling it recognizes.
     if (isTextEntry(document.activeElement)) return;
+    // Only the `Z` chords get swallowed here, and only because of the
+    // focus-jumping default described at the top. `Ctrl+Y` has no
+    // such default to defend against, and taking it anyway would kill
+    // a live browser shortcut for nothing (`Cmd+Y` is History on
+    // macOS).
+    if (e.key.toLowerCase() !== 'z') return;
     e.preventDefault();
   });
 }

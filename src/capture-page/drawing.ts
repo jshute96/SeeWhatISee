@@ -194,8 +194,15 @@ let editVersion = 0;
  * that previously wrote `editVersion++` should go through this
  * helper so the last-capture push picks up every commit kind (drag,
  * undo, reset, shrink, edge-handle resize, test-only setter).
+ *
+ * Also the one place the redo stack is dropped, since every new edit
+ * lands here — the usual redo semantics: once you change something
+ * after undoing, the undone work is gone for good. Undo and Redo pass
+ * `keepRedo` because they're the two ops that walk the stack rather
+ * than invalidate it.
  */
-function commitEdit(): void {
+function commitEdit(opts?: { keepRedo?: boolean }): void {
+  if (!opts?.keepRedo) redoStack.length = 0;
   editVersion++;
   ctx?.onEditCommit?.();
 }
@@ -1763,6 +1770,36 @@ type WholeStateUndo = {
 };
 const wholeStateStack: WholeStateUndo[] = [];
 
+// ─── Redo ─────────────────────────────────────────────────────────
+//
+// Redo doesn't invert the undone op — it restores a snapshot of
+// everything as it stood just before the Undo click. The history
+// mixes add-ops, in-place geometry ops and whole-state markers, so a
+// per-op inverse would need its own reversal rule per op kind; a
+// snapshot handles all of them at once and can't drift out of sync
+// with the undo side as new op kinds are added.
+//
+// `wholeStateStack` is carried too, which `WholeStateUndo` itself
+// doesn't hold: a Reset's entry has no reason to describe the Resets
+// before it, but a Redo does — it has to put the undo stacks back
+// exactly as they were, or the re-done Reset couldn't be undone a
+// second time.
+//
+// The `src` fields are shared string references, not copies, so an
+// entry costs about what its edit arrays cost — the images aren't
+// duplicated. They are *retained* longer, though: Undo of a View
+// cropped op used to release the image it swapped away, and now the
+// redo entry holds it until the next commit.
+//
+// `nextEditId` is deliberately not in here (the first thing this
+// raises): it only ever grows, so an edit put back by Redo can never
+// collide with one a later draw creates.
+type RedoEntry = {
+  state: WholeStateUndo;
+  wholeStateStack: WholeStateUndo[];
+};
+const redoStack: RedoEntry[] = [];
+
 // True between assigning a new base-image `src` and its `load`.
 // During that window `previewImg` still reports the *outgoing*
 // image's natural size while the edits have already been re-mapped
@@ -1829,6 +1866,54 @@ function cloneViewCropUndo(v: ViewCropUndo): ViewCropUndo {
     editHistory: cloneHistory(v.editHistory),
     viewCropPct: v.viewCropPct ? { ...v.viewCropPct } : null,
   };
+}
+
+function cloneWholeState(w: WholeStateUndo): WholeStateUndo {
+  return {
+    src: w.src,
+    edits: cloneEdits(w.edits),
+    editHistory: cloneHistory(w.editHistory),
+    viewCropStack: w.viewCropStack.map(cloneViewCropUndo),
+    viewCropPct: w.viewCropPct ? { ...w.viewCropPct } : null,
+  };
+}
+
+// Everything a wholesale restore has to put back. Taken *before* the
+// op that will need undoing (or, for Redo, before the Undo click).
+//
+// The literal is a shim so `cloneWholeState` can do the copying — it
+// aliases the live arrays and must not escape this expression.
+function captureWholeState(): WholeStateUndo {
+  return cloneWholeState({
+    src: ctx.previewImg.src,
+    edits,
+    editHistory,
+    viewCropStack,
+    viewCropPct,
+  });
+}
+
+// The part of a restore every path shares: the picture and the edits
+// drawn on it. Split out from `applyWholeState` because `undoViewCrop`
+// needs exactly this much and no more — it has just popped the entry
+// it's restoring off `viewCropStack`, so putting a `viewCropStack`
+// back would undo that pop. Sharing the rest means a field added to
+// the restore can't reach two of the three paths and miss the third.
+function applyEditState(prior: ViewCropUndo): void {
+  edits.length = 0;
+  for (const e of cloneEdits(prior.edits)) edits.push(e);
+  editHistory.length = 0;
+  for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
+  viewCropPct = prior.viewCropPct ? { ...prior.viewCropPct } : null;
+  setBaseImage(prior.src);
+}
+
+// The inverse of `captureWholeState`. Callers own the base-image
+// swap's `load` → re-render; nothing here calls `render()`.
+function applyWholeState(prior: WholeStateUndo): void {
+  applyEditState(prior);
+  viewCropStack.length = 0;
+  for (const v of prior.viewCropStack) viewCropStack.push(cloneViewCropUndo(v));
 }
 
 /** True once View cropped has replaced the base image (until undone).
@@ -2031,12 +2116,10 @@ function applyViewCrop(): void {
 function undoViewCrop(): boolean {
   const prior = viewCropStack.pop();
   if (!prior) return false;
-  edits.length = 0;
-  for (const e of cloneEdits(prior.edits)) edits.push(e);
-  editHistory.length = 0;
-  for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
-  viewCropPct = prior.viewCropPct;
-  setBaseImage(prior.src);
+  // Deliberately not `applyWholeState`: the entry being restored has
+  // just been popped off `viewCropStack`, so that stack is already
+  // where it should be.
+  applyEditState(prior);
   return true;
 }
 
@@ -2065,16 +2148,10 @@ function canReset(): boolean {
 // pops it, `undoWholeState` swaps the whole world back, and the next Undo
 // carries on through the restored history as if Reset never
 // happened.
-// Everything a `reset` / `paste` marker's Undo has to put back.
-// Taken *before* the op mutates anything.
+// Stash what a `reset` / `paste` marker's Undo will have to put back.
+// Called *before* the op mutates anything.
 function pushWholeStateUndo(): void {
-  wholeStateStack.push({
-    src: ctx.previewImg.src,
-    edits: cloneEdits(edits),
-    editHistory: cloneHistory(editHistory),
-    viewCropStack: viewCropStack.map(cloneViewCropUndo),
-    viewCropPct: viewCropPct ? { ...viewCropPct } : null,
-  });
+  wholeStateStack.push(captureWholeState());
 }
 
 function applyReset(): void {
@@ -2104,15 +2181,82 @@ function applyReset(): void {
 function undoWholeState(): boolean {
   const prior = wholeStateStack.pop();
   if (!prior) return false;
-  edits.length = 0;
-  for (const e of cloneEdits(prior.edits)) edits.push(e);
-  editHistory.length = 0;
-  for (const h of cloneHistory(prior.editHistory)) editHistory.push(h);
-  viewCropStack.length = 0;
-  for (const v of prior.viewCropStack) viewCropStack.push(cloneViewCropUndo(v));
-  viewCropPct = prior.viewCropPct ? { ...prior.viewCropPct } : null;
-  setBaseImage(prior.src);
+  applyWholeState(prior);
   return true;
+}
+
+/**
+ * Step back one entry in the edit history — the Undo button's whole
+ * body, also reachable from the keyboard (`Ctrl+Z`, via a synthetic
+ * click on the button).
+ *
+ * A no-op with nothing to undo, so the caller doesn't have to repeat
+ * the button's `disabled` rule.
+ */
+function undoLastEdit(): void {
+  if (editHistory.length === 0) return;
+  // Snapshot first: this is the state Redo puts back, and the
+  // branches below are about to mutate it.
+  redoStack.push({
+    state: captureWholeState(),
+    wholeStateStack: wholeStateStack.map(cloneWholeState),
+  });
+  const last = editHistory.pop()!;
+  if (last.viewCrop) {
+    // Whole-state restore (base image included) — nothing to look
+    // up in `edits`. `undoViewCrop` returning false would mean a
+    // marker with no stack entry; `restoreDrawingSnapshot` drops
+    // those, so the pop alone is the right fallback.
+    undoViewCrop();
+  } else if (last.reset || last.paste) {
+    // Same shape as the `viewCrop` branch: a whole-state restore,
+    // with the pop alone as the fallback for a marker whose stack
+    // entry didn't survive a restore. A `paste` marker is only
+    // reached once every pasted edit above it has been undone
+    // individually — this click is the one that goes back to what
+    // the page looked like before the paste.
+    undoWholeState();
+  } else {
+    const idx = edits.findIndex((e) => e.id === last.id);
+    if (idx >= 0) {
+      if (last.prev) {
+        // In-place geometry op (Shrink click or edge-handle resize)
+        // — restore the rect's pre-mutation geometry. Only rect-shaped
+        // edits (rect / redact / crop) carry resizable geometry, so
+        // this branch is unreachable for line / arrow.
+        const e = edits[idx]!;
+        if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+          e.x = last.prev.x;
+          e.y = last.prev.y;
+          e.w = last.prev.w;
+          e.h = last.prev.h;
+        }
+      } else {
+        edits.splice(idx, 1);
+      }
+    }
+  }
+  commitEdit({ keepRedo: true });
+  render();
+}
+
+/**
+ * Put back the most recently undone edit. Reachable from the
+ * keyboard only (`Ctrl+Y` / `Ctrl+Shift+Z`); there's no Redo button
+ * yet, so unlike Undo there's no click to synthesize.
+ *
+ * The restore is wholesale, and it puts the undo stacks back as they
+ * were too, so the re-done op can be undone again — Undo and Redo
+ * step the same state back and forth as many times as the user likes.
+ */
+export function redoLastEdit(): void {
+  const next = redoStack.pop();
+  if (!next) return;
+  applyWholeState(next.state);
+  wholeStateStack.length = 0;
+  for (const w of next.wholeStateStack) wholeStateStack.push(cloneWholeState(w));
+  commitEdit({ keepRedo: true });
+  render();
 }
 
 /**
@@ -2778,12 +2922,14 @@ export function restoreDrawingSnapshot(snapshot: Partial<DrawingSnapshot>): void
   // a restore re-derives it from the snapshot's `viewCropPct` via
   // `applyRestoredViewCrop`, and the pre-crop images can't come with
   // it. Same for the pre-op state behind a `reset` / `paste` marker.
-  // Clear all three so a second call can't inherit stale state, and so a
-  // dropped marker can't leave its multi-MB entry pinned for the
-  // session.
+  // Clear them all so a second call can't inherit stale state, and so
+  // a dropped marker can't leave its multi-MB entry pinned for the
+  // session. The redo stack goes for the same reason — its snapshots
+  // describe the session being replaced, not this one.
   viewCropPct = null;
   viewCropStack.length = 0;
   wholeStateStack.length = 0;
+  redoStack.length = 0;
   if (typeof snapshot.nextEditId === 'number') nextEditId = snapshot.nextEditId;
   if (typeof snapshot.editVersion === 'number') editVersion = snapshot.editVersion;
   if (snapshot.selectedTool) setSelectedTool(snapshot.selectedTool);
@@ -3577,50 +3723,7 @@ export function initDrawing(context: DrawingContext): void {
   }, true);
 
   ctx.undoBtn.addEventListener('click', () => {
-    const last = editHistory.pop();
-    if (!last) return;
-    if (last.viewCrop) {
-      // Whole-state restore (base image included) — nothing to look
-      // up in `edits`. `undoViewCrop` returning false would mean a
-      // marker with no stack entry; `restoreDrawingSnapshot` drops
-      // those, so the pop alone is the right fallback.
-      undoViewCrop();
-      commitEdit();
-      render();
-      return;
-    }
-    if (last.reset || last.paste) {
-      // Same shape as the `viewCrop` branch: a whole-state restore,
-      // with the pop alone as the fallback for a marker whose stack
-      // entry didn't survive a restore. A `paste` marker is only
-      // reached once every pasted edit above it has been undone
-      // individually — this click is the one that goes back to what
-      // the page looked like before the paste.
-      undoWholeState();
-      commitEdit();
-      render();
-      return;
-    }
-    const idx = edits.findIndex((e) => e.id === last.id);
-    if (idx >= 0) {
-      if (last.prev) {
-        // In-place geometry op (Shrink click or edge-handle resize)
-        // — restore the rect's pre-mutation geometry. Only rect-shaped
-        // edits (rect / redact / crop) carry resizable geometry, so
-        // this branch is unreachable for line / arrow.
-        const e = edits[idx]!;
-        if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
-          e.x = last.prev.x;
-          e.y = last.prev.y;
-          e.w = last.prev.w;
-          e.h = last.prev.h;
-        }
-      } else {
-        edits.splice(idx, 1);
-      }
-    }
-    commitEdit();
-    render();
+    undoLastEdit();
   });
 
   ctx.resetBtn.addEventListener('click', () => {

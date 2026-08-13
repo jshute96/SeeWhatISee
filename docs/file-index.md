@@ -240,7 +240,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour plus slide-up-to-fit placement (re-run on resize) for the Capture column's Zoom and More… popovers |
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
-| `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
+| `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` / `Ctrl+Y` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
 | `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
 
@@ -297,10 +297,10 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-menu-keyboard.spec.ts` | E2E for keyboard use of the tool buttons (Space / Enter selects) and arrow navigation in the Zoom / More… / Ask menus |
-| `tests/e2e/capture-undo-key.spec.ts` | E2E for `Ctrl+Z` routing between the image edit stack and the prompt's own text undo |
+| `tests/e2e/capture-undo-key.spec.ts` | E2E for `Ctrl+Z` / `Ctrl+Y` routing between the image edit stack and the prompt's own text undo, and the redo stack's semantics |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
-| `tests/e2e/capture-annotation-transfer.spec.ts` | E2E for annotation Copy / Paste / Import — cross-capture round-trip, re-derived applied crop, overwrite + per-edit Undo, disabled-state tooltips |
-| `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo, Reset and undoing it, More-menu dismissal + slide-up placement |
+| `tests/e2e/capture-annotation-transfer.spec.ts` | E2E for annotation Copy / Paste / Import — cross-capture round-trip, re-derived applied crop, overwrite + per-edit Undo / Redo, disabled-state tooltips |
+| `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo / Redo, Reset and undoing it, More-menu dismissal + slide-up placement |
 | `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width + DPR-stub regressions, continuous wheel / pinch / key zoom with cursor anchoring, arrow-key fine pan, pan snap, Zoom-popover |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |

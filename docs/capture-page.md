@@ -1136,6 +1136,33 @@ otherwise double the crop and stack highlights on each other. Order:
   series shrinks geometrically, so that stack costs on the order of
   the original capture. `wholeStateStack` is the exception — see
   below.
+- **Redo** — `Ctrl+Y` / `Ctrl+Shift+Z`, keyboard-only (no button
+  yet). Restores the *snapshot* taken just before the matching Undo,
+  rather than inverting the undone op.
+  - Why a snapshot: the history mixes add ops, in-place ops and
+    whole-state markers, so a per-op inverse would need its own
+    reversal rule per op kind and could drift out of sync with the
+    undo side as kinds are added.
+  - Each entry carries the base image `src`, edits, history,
+    `viewCropStack`, `viewCropPct` *and* `wholeStateStack`. That last
+    one is what lets a re-done Reset be undone a second time.
+  - No image is *duplicated* — the `src` fields are shared string
+    references, so an entry costs about what its edit arrays cost.
+  - But images are *retained* longer than they used to be: Undo of a
+    View cropped op no longer releases the image it swapped away,
+    because the redo entry still points at it. Undoing a whole
+    drill-down series therefore holds every image the session
+    produced at once. Still bounded by the same geometric-shrink
+    argument as `viewCropStack`, and released on the next commit.
+  - Unbounded depth, like the undo-side stacks — bounded only by how
+    many edits there were to undo, and dropped wholesale on the next
+    commit.
+  - Two things clear it. `commitEdit()`, which every edit path
+    funnels through, giving the usual semantics where drawing after
+    an undo discards the undone work — Undo and Redo pass `keepRedo`
+    so they can walk the stack instead. And `restoreDrawingSnapshot`,
+    separately, because a restore replaces the session wholesale
+    without going through an edit path at all.
 - **Reset** — one click back to the capture as it was taken: the
   edits, history and `viewCropStack` are moved aside onto
   `wholeStateStack`, `viewCropPct` is cleared, and the base image is
@@ -1188,13 +1215,13 @@ otherwise double the crop and stack highlights on each other. Order:
   keep painting their 1px past the edge. See the View cropped
   section for what this changes.
 
-### Undo scope (`Ctrl+Z`)
+### Undo scope (`Ctrl+Z` / `Ctrl+Y`)
 
-`undo-scope.ts` routes `Ctrl+Z` between the page's two unrelated undo
-stacks: the image edits (the Undo button) and the prompt textarea's
-own text undo.
+`undo-scope.ts` routes the undo / redo keys between the page's two
+unrelated undo stacks: the image edits (the Undo button) and the
+prompt textarea's own text undo.
 
-**Why the page takes the key**
+**Why the page takes the keys**
 
 - Chrome's default for `Ctrl+Z` pressed outside any field is to undo
   the last *text* edit and pull focus into the field that owned it.
@@ -1232,24 +1259,36 @@ own text undo.
 - Nothing else claims it — Capture / Ask, the header, the capture
   card leave it where it was.
 
+**Which keys**
+
+- `Ctrl+Z` (`Cmd+Z`) — undo.
+- `Ctrl+Y` and `Ctrl+Shift+Z` — redo. Both spellings are taken on
+  every platform: `Ctrl+Y` is the Windows / Linux convention and
+  `Ctrl+Shift+Z` the Mac one, and accepting both costs nothing.
+- Keyed off `e.key`, so a non-Latin keyboard layout that maps the
+  physical Z elsewhere won't reach it. `e.code` would fix that but
+  would break a Dvorak user's muscle memory the other way.
+
 **How a press resolves**
 
-- `image` — click Undo, swallow the key. Swallowed even when Undo is
-  disabled, so "nothing left to undo" can't fall through to the text
-  stack.
+- `image` — run the image undo / redo and swallow the key. Swallowed
+  even with nothing to undo or redo, so an exhausted stack can't fall
+  through to the text one.
 - Not `image`, but a text-entry element has focus — hand the key to
-  the browser. The text stack only ever acts on a field that still
-  holds the caret; it never reaches across the page to grab focus
-  back.
+  the browser, which is also how the prompt keeps its own text *redo*.
+  The text stack only ever acts on a field that still holds the
+  caret; it never reaches across the page to grab focus back.
 - Otherwise — swallow, so Chrome's focus-jumping default can't fire.
-- `Ctrl+Shift+Z` is left alone (redo in a textarea); the image stack
-  has no redo yet.
+  Only the `Z` chords, though: `Ctrl+Y` has no such default to defend
+  against, so it goes back to the browser rather than becoming a
+  page-wide dead key (`Cmd+Y` is History on macOS).
 - An open edit dialog, and the no-session stale state, hand the key
   straight back to the browser.
 
-The Undo button's tooltip names the shortcut, with the caveat
-attached — `Ctrl+Z, when you were last working on the image` — since
-the same key goes to the prompt's text undo the rest of the time.
+The Undo button's tooltip names the undo key and one spelling of redo
+(`Ctrl+Z, Ctrl+Y to redo`). It leaves out `Ctrl+Shift+Z` and says
+nothing about the scope rule — both are true, but neither is worth
+the tooltip real estate.
 
 **Why a synthetic click on `#undo`**
 
