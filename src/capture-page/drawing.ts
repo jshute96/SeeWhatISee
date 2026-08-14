@@ -3606,8 +3606,8 @@ export function initDrawing(context: DrawingContext): void {
     setLastMousePos({ x: nextX, y: nextY });
     // Drive the drag handler directly with the float-precise position.
     // Going through `dispatchEvent(new MouseEvent('mousemove', {...}))`
-    // would lose the sub-CSS-pixel precision: Chrome rounds `clientX`
-    // / `clientY` to integers in the dispatched event, so a
+    // would lose the sub-CSS-pixel precision: Chrome truncates
+    // `clientX` / `clientY` to integers in the dispatched event, so a
     // zoomed-in / HiDPI step (always sub-pixel here) would snap back
     // to the integer pre-press position and successive presses would
     // never accumulate.

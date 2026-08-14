@@ -16,6 +16,8 @@
 import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
 import {
+  pointerPoint,
+  previewPoint,
   readAllLines,
   readEditKinds,
   readLastBounds,
@@ -134,11 +136,11 @@ test('drawing: snap-to: line endpoint snaps to the nearest point on a box edge',
   //     come out fractionally below 0.3 / 0.5 of `r`. The corner test
   //     above documents the same trap.
   //   - y matches the aim's cursor row, but again — `aim.y = 456.8`
-  //     arrives in the page as `456`, so we compare against
-  //     `Math.floor(aim.y)`.
+  //     arrives in the page as `456`, so we compare against the
+  //     quantized row (`pointerPoint`), not the raw aim.
   const westEdgeXcss = r.x + (rectB.x / 100) * r.w;
   expect(endXcss).toBeCloseTo(westEdgeXcss, 0);
-  expect(endYcss).toBeCloseTo(Math.floor(aim.y), 0);
+  expect(endYcss).toBeCloseTo(pointerPoint(aim.x, aim.y).y, 0);
 
   await openerPage.close();
 });
@@ -157,8 +159,8 @@ test('drawing: snap-to: line endpoint snaps to a prior line endpoint', async ({
   const r = await readPreviewRect(capturePage);
   // First line A→B.
   await capturePage.locator('#tool-line').click();
-  const A = { x: r.x + 100, y: r.y + 100 };
-  const B = { x: r.x + 300, y: r.y + 100 };
+  const A = previewPoint(r, 100, 100);
+  const B = previewPoint(r, 300, 100);
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move((A.x + B.x) / 2, A.y);
@@ -166,7 +168,7 @@ test('drawing: snap-to: line endpoint snaps to a prior line endpoint', async ({
   await capturePage.mouse.up();
 
   // Second line aiming 5 px short of B — should snap onto B.
-  const C = { x: r.x + 100, y: r.y + 300 };
+  const C = previewPoint(r, 100, 300);
   const aim = { x: B.x - 5, y: B.y + 2 };
   await capturePage.mouse.move(C.x, C.y);
   await capturePage.mouse.down();
@@ -200,15 +202,15 @@ test('drawing: snap-to: holding Shift disables snap', async ({
   // cursor's released position, not snap onto B.
   const r = await readPreviewRect(capturePage);
   await capturePage.locator('#tool-line').click();
-  const A = { x: r.x + 100, y: r.y + 100 };
-  const B = { x: r.x + 300, y: r.y + 100 };
+  const A = previewPoint(r, 100, 100);
+  const B = previewPoint(r, 300, 100);
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move((A.x + B.x) / 2, A.y);
   await capturePage.mouse.move(B.x, B.y);
   await capturePage.mouse.up();
 
-  const C = { x: r.x + 100, y: r.y + 300 };
+  const C = previewPoint(r, 100, 300);
   const aim = { x: B.x - 5, y: B.y + 2 };
   await capturePage.keyboard.down('Shift');
   await capturePage.mouse.move(C.x, C.y);
@@ -245,15 +247,15 @@ test('drawing: snap-to: arrow-key nudge bypasses snap (steps off the snapped tar
   // logic doesn't re-grab it (arrow nudges bypass snap).
   const r = await readPreviewRect(capturePage);
   await capturePage.locator('#tool-line').click();
-  const A = { x: r.x + 100, y: r.y + 100 };
-  const B = { x: r.x + 300, y: r.y + 100 };
+  const A = previewPoint(r, 100, 100);
+  const B = previewPoint(r, 300, 100);
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move((A.x + B.x) / 2, A.y);
   await capturePage.mouse.move(B.x, B.y);
   await capturePage.mouse.up();
 
-  const C = { x: r.x + 100, y: r.y + 300 };
+  const C = previewPoint(r, 100, 300);
   // Land snapped right on B.
   const onB = { x: B.x, y: B.y };
   await capturePage.mouse.move(C.x, C.y);
@@ -272,7 +274,7 @@ test('drawing: snap-to: arrow-key nudge bypasses snap (steps off the snapped tar
   const endX = lines[1]!.x2;
   // Expected end-x in image-percent = B's percent + one natural-px
   // worth of percent (1/natW * 100).
-  const expectedX = (B.x - r.x) / r.w * 100 + (100 / r.natW);
+  const expectedX = B.dx / r.w * 100 + (100 / r.natW);
   expect(endX).toBeCloseTo(expectedX, 1);
 
   await openerPage.close();
@@ -295,9 +297,9 @@ test('drawing: snap-to: polyline loop closes when endpoint lands near the chain 
   // chain auto-exits (polygon-close is one of the chain-end gestures).
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 100, y: r.y + 100 };
-  const B = { x: r.x + 250, y: r.y + 100 };
-  const C = { x: r.x + 200, y: r.y + 250 };
+  const A = previewPoint(r, 100, 100);
+  const B = previewPoint(r, 250, 100);
+  const C = previewPoint(r, 200, 250);
   // 5 px from A — within SNAP_PX.
   const nearA = { x: A.x + 5, y: A.y + 3 };
 
@@ -440,24 +442,35 @@ test('drawing: snap-to: endpoint priority beats a slightly-closer corner', async
     x: r.x + (rectB.x / 100) * r.w,
     y: r.y + (rectB.y / 100) * r.h,
   };
-  // Line A→B where B sits 14 px west of cornerNW (well outside
-  // HANDLE_PX so the rect's corner-handle hit-test won't fire from
-  // aim). Aim 6.5 px west of cornerNW = 7.5 px east of B: corner
-  // closer (6.5 < 7.5), both within SNAP_PX (8), both outside
-  // HANDLE_PX (6). Tier priority must pull the second draw's
-  // anchor onto B.
+  // Everything below is built off the whole pixel the corner lands
+  // on, so the aim and the endpoint are exact integers — they survive
+  // dispatch unchanged (see `pointerPoint`) and the distances the page
+  // computes are the ones asserted here, whatever fraction the image's
+  // origin happens to carry.
+  const cx = Math.round(cornerNW.x);
+  const cy = Math.round(cornerNW.y);
+  // Aim 7 px west of the corner. B is a further 7 px west and 3 px
+  // north of the aim — hypot(7, 3) ≈ 7.6, so B is inside SNAP_PX (8)
+  // but *farther* from the aim than the corner is (≈ 7). A
+  // distance-only implementation would pick the corner; only tier
+  // priority (endpoints before corners) pulls the anchor onto B. The
+  // aim also stays outside HANDLE_PX (6) of the corner, so the rect's
+  // corner-handle hit-test doesn't fire instead of a draw.
   await capturePage.locator('#tool-line').click();
-  const A = { x: r.x + r.w * 0.05, y: cornerNW.y };
-  const B = { x: cornerNW.x - 14, y: cornerNW.y };
+  const B = { x: cx - 14, y: cy - 3 };
+  const A = { x: Math.floor(r.x + r.w * 0.05), y: B.y };
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move((A.x + B.x) / 2, A.y);
   await capturePage.mouse.move(B.x, B.y);
   await capturePage.mouse.up();
 
-  const aim = { x: cornerNW.x - 6.5, y: cornerNW.y };
-  // Sanity-assert the geometry: aim in radius of both, corner closer
-  // than endpoint, but outside HANDLE_PX (6) so no resize gesture.
+  const aim = { x: cx - 7, y: cy };
+  // Sanity-assert the geometry the page will actually see: the aim is
+  // in radius of both targets, the corner is the closer of the two,
+  // and the aim is outside HANDLE_PX (6) so no resize gesture fires.
+  // Computed from the dispatched integers against the *unrounded*
+  // corner, which is where the page's own snap math puts it.
   const dB = Math.hypot(aim.x - B.x, aim.y - B.y);
   const dC = Math.hypot(aim.x - cornerNW.x, aim.y - cornerNW.y);
   expect(dB).toBeLessThan(8);

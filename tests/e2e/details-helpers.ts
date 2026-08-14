@@ -224,10 +224,17 @@ export async function dragRect(
   const box = await capturePage.locator('#overlay').boundingBox();
   if (!box) throw new Error('overlay has no bounding box');
   const HANDLE_PX = 6;
-  const x1 = box.x + box.width * fromPct.xPct;
-  const y1 = box.y + box.height * fromPct.yPct;
-  const x2 = box.x + box.width * toPct.xPct;
-  const y2 = box.y + box.height * toPct.yPct;
+  // Floored, because that's where the pointer actually lands: Chrome
+  // truncates the coordinates the DevTools protocol hands it. Checking
+  // the guard below against the *requested* inset would pass a caller
+  // sitting at exactly HANDLE_PX whose mousedown then lands 1 px
+  // further out, inside the handle band. See `previewPoint` in
+  // `capture-drawing-helpers.ts` and § Pointer coordinates in
+  // `docs/testing.md`.
+  const x1 = Math.floor(box.x + box.width * fromPct.xPct);
+  const y1 = Math.floor(box.y + box.height * fromPct.yPct);
+  const x2 = Math.floor(box.x + box.width * toPct.xPct);
+  const y2 = Math.floor(box.y + box.height * toPct.yPct);
   const insetX = Math.min(x1 - box.x, box.x + box.width - x1);
   const insetY = Math.min(y1 - box.y, box.y + box.height - y1);
   if (insetX < HANDLE_PX || insetY < HANDLE_PX) {

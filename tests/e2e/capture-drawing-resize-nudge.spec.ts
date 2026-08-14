@@ -15,6 +15,7 @@ import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
 import {
   dragEdge,
+  previewPoint,
   readAllLines,
   readEditKinds,
   readLastBounds,
@@ -209,11 +210,10 @@ test('drawing: arrow keys nudge an in-flight Box draw one output pixel each', as
   // reflect the net cursor delta — 10 CSS px from the explicit
   // mouse move plus the net arrow nudge in natural-pixel terms.
   const r = await readPreviewRect(capturePage);
-  const x1 = r.x + 100;
-  const y1 = r.y + 100;
-  await capturePage.mouse.move(x1, y1);
+  const p1 = previewPoint(r, 100, 100);
+  await capturePage.mouse.move(p1.x, p1.y);
   await capturePage.mouse.down();
-  await capturePage.mouse.move(x1 + 10, y1 + 10);
+  await capturePage.mouse.move(p1.x + 10, p1.y + 10);
   for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowRight');
   for (let i = 0; i < 3; i++) await capturePage.keyboard.press('ArrowDown');
   await capturePage.keyboard.press('ArrowLeft');
@@ -232,8 +232,10 @@ test('drawing: arrow keys nudge an in-flight Box draw one output pixel each', as
   expect(widthNatPx).toBeCloseTo(10 * r.natW / r.w + 4, 0);
   expect(heightNatPx).toBeCloseTo(10 * r.natH / r.h + 2, 0);
   // Top-left unchanged by arrows (only the dragged corner moved).
-  expect(bounds!.x).toBeCloseTo((100 / r.w) * 100, 1);
-  expect(bounds!.y).toBeCloseTo((100 / r.h) * 100, 1);
+  // Measured from where the pointer actually landed (`p1.dx` / `p1.dy`),
+  // which is the requested offset minus the image origin's fraction.
+  expect(bounds!.x).toBeCloseTo((p1.dx / r.w) * 100, 1);
+  expect(bounds!.y).toBeCloseTo((p1.dy / r.h) * 100, 1);
 
   await openerPage.close();
 });
@@ -254,11 +256,10 @@ test('drawing: arrow keys clamp at the image-pane edges', async ({
   // pinned to x=100% on the east side. Mirrors `localCoords`'
   // clamp.
   const r = await readPreviewRect(capturePage);
-  const x1 = r.x + r.w - 20;
-  const y1 = r.y + 100;
-  await capturePage.mouse.move(x1, y1);
+  const p1 = previewPoint(r, r.w - 20, 100);
+  await capturePage.mouse.move(p1.x, p1.y);
   await capturePage.mouse.down();
-  await capturePage.mouse.move(x1 + 5, y1 + 5);
+  await capturePage.mouse.move(p1.x + 5, p1.y + 5);
   // Press ArrowRight far more times than needed to walk past the
   // right edge — the clamp stops at the image rect.
   for (let i = 0; i < 200; i++) await capturePage.keyboard.press('ArrowRight');
@@ -291,11 +292,10 @@ test('drawing: arrow keys nudge an in-flight Line endpoint', async ({
   await capturePage.locator('#tool-line').click();
 
   const r = await readPreviewRect(capturePage);
-  const x1 = r.x + 100;
-  const y1 = r.y + 100;
-  await capturePage.mouse.move(x1, y1);
+  const p1 = previewPoint(r, 100, 100);
+  await capturePage.mouse.move(p1.x, p1.y);
   await capturePage.mouse.down();
-  await capturePage.mouse.move(x1 + 30, y1 + 20);
+  await capturePage.mouse.move(p1.x + 30, p1.y + 20);
   // Nudge the live endpoint: net 4 right, net 2 down (in natural
   // pixels of saved output).
   for (let i = 0; i < 5; i++) await capturePage.keyboard.press('ArrowRight');
@@ -316,14 +316,14 @@ test('drawing: arrow keys nudge an in-flight Line endpoint', async ({
   expect(ln).not.toBeNull();
   // (x1, y1) anchor: the mousedown CSS-pixel position projected
   // onto the image rect.
-  expect(ln!.x1).toBeCloseTo((100 / r.w) * 100, 1);
-  expect(ln!.y1).toBeCloseTo((100 / r.h) * 100, 1);
+  expect(ln!.x1).toBeCloseTo((p1.dx / r.w) * 100, 1);
+  expect(ln!.y1).toBeCloseTo((p1.dy / r.h) * 100, 1);
   // (x2, y2) endpoint: 30 CSS px (mouse) plus 4 natural-px nudge
   // on x; 20 CSS px (mouse) plus 2 natural-px nudge on y.
   const x2NatPx = ln!.x2 * r.natW / 100;
   const y2NatPx = ln!.y2 * r.natH / 100;
-  expect(x2NatPx).toBeCloseTo((100 + 30) * r.natW / r.w + 4, 0);
-  expect(y2NatPx).toBeCloseTo((100 + 20) * r.natH / r.h + 2, 0);
+  expect(x2NatPx).toBeCloseTo((p1.dx + 30) * r.natW / r.w + 4, 0);
+  expect(y2NatPx).toBeCloseTo((p1.dy + 20) * r.natH / r.h + 2, 0);
 
   await openerPage.close();
 });

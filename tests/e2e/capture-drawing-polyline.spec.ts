@@ -27,6 +27,7 @@ import {
   waitForPageDownloads,
 } from './details-helpers';
 import {
+  previewPoint,
   readAllLines,
   readEditKinds,
   readPolylineChainStart,
@@ -54,10 +55,10 @@ test('drawing: Polyline tool chains a polyline of Line segments', async ({
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
 
-  const A = { x: r.x + 100, y: r.y + 100 };
-  const B = { x: r.x + 200, y: r.y + 100 };
-  const C = { x: r.x + 250, y: r.y + 130 };  // mousedown for segment 2 — ignored
-  const D = { x: r.x + 300, y: r.y + 200 };
+  const A = previewPoint(r, 100, 100);
+  const B = previewPoint(r, 200, 100);
+  const C = previewPoint(r, 250, 130);  // mousedown for segment 2 — ignored
+  const D = previewPoint(r, 300, 200);
 
   // Segment 1: A → B.
   await capturePage.mouse.move(A.x, A.y);
@@ -124,9 +125,9 @@ test('drawing: Polyline tool: click adds a polyline segment from the previous en
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
 
-  const A = { x: r.x + 80, y: r.y + 80 };
-  const B = { x: r.x + 180, y: r.y + 80 };
-  const Cclick = { x: r.x + 250, y: r.y + 150 };
+  const A = previewPoint(r, 80, 80);
+  const B = previewPoint(r, 180, 80);
+  const Cclick = previewPoint(r, 250, 150);
 
   // Segment 1 — drag A → B.
   await capturePage.mouse.move(A.x, A.y);
@@ -171,10 +172,10 @@ test('drawing: Ctrl-promote: holding Ctrl at mouseup of a Line draw enters polyl
   await capturePage.locator('#tool-line').click();
   const r = await readPreviewRect(capturePage);
 
-  const A = { x: r.x + 60, y: r.y + 60 };
-  const B = { x: r.x + 160, y: r.y + 60 };
-  const C = { x: r.x + 220, y: r.y + 200 };
-  const D = { x: r.x + 320, y: r.y + 220 };
+  const A = previewPoint(r, 60, 60);
+  const B = previewPoint(r, 160, 60);
+  const C = previewPoint(r, 220, 200);
+  const D = previewPoint(r, 320, 220);
 
   // Plain Line draw (mousedown without Ctrl — so it doesn't pan)…
   await capturePage.mouse.move(A.x, A.y);
@@ -277,8 +278,8 @@ test('drawing: Polyline tool: zero-length click on chain head finishes the chain
   // sits at the same place and ends the chain.
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 80, y: r.y + 80 };
-  const B = { x: r.x + 220, y: r.y + 80 };
+  const A = previewPoint(r, 80, 80);
+  const B = previewPoint(r, 220, 80);
 
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
@@ -317,9 +318,9 @@ test('drawing: Polyline tool: double-click ends the chain after committing the s
   // at the double-click position, then exit.
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 60, y: r.y + 60 };
-  const B = { x: r.x + 200, y: r.y + 60 };
-  const C = { x: r.x + 260, y: r.y + 200 };
+  const A = previewPoint(r, 60, 60);
+  const B = previewPoint(r, 200, 60);
+  const C = previewPoint(r, 260, 200);
 
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
@@ -474,9 +475,9 @@ test('drawing: Poly-arrow tool chains arrows the same way Polyline chains lines'
   // Two drags should produce two arrows whose endpoints chain.
   await capturePage.locator('#tool-polyarrow').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 90, y: r.y + 90 };
-  const B = { x: r.x + 190, y: r.y + 110 };
-  const D = { x: r.x + 280, y: r.y + 200 };
+  const A = previewPoint(r, 90, 90);
+  const B = previewPoint(r, 190, 110);
+  const D = previewPoint(r, 280, 200);
 
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
@@ -518,9 +519,9 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   // next segment continues from that nudged point.
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 80, y: r.y + 80 };
-  const Bdrag = { x: r.x + 180, y: r.y + 80 };
-  const Cphys = { x: r.x + 240, y: r.y + 130 };
+  const A = previewPoint(r, 80, 80);
+  const Bdrag = previewPoint(r, 180, 80);
+  const Cphys = previewPoint(r, 240, 130);
   const NUDGE_MID = 4;     // ArrowRight presses while dragging seg 1
   const NUDGE_BETWEEN = 3; // ArrowDown presses while between segments
 
@@ -550,7 +551,7 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   // independent of the test viewport's display scale.
   const seg1EndXNat = lines[0]!.x2 * r.natW / 100;
   expect(seg1EndXNat).toBeCloseTo(
-    (Bdrag.x - r.x) * r.natW / r.w + NUDGE_MID,
+    Bdrag.dx * r.natW / r.w + NUDGE_MID,
     0,
   );
   // Segment 2 starts where segment 1 ended (chain anchor) — the
@@ -563,7 +564,7 @@ test('drawing: arrow keys nudge polyline endpoints — mid-drag and between segm
   // nudge in natural-pixel terms.
   const seg2EndYNat = lines[1]!.y2 * r.natH / 100;
   expect(seg2EndYNat).toBeCloseTo(
-    (Cphys.y - r.y) * r.natH / r.h + NUDGE_BETWEEN,
+    Cphys.dy * r.natH / r.h + NUDGE_BETWEEN,
     0,
   );
 
@@ -591,12 +592,12 @@ test('drawing: releasing Ctrl mid-segment-drag commits the segment and ends the 
   // then sees `ctrlKey === false` and ends the chain.
   await capturePage.locator('#tool-line').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 80, y: r.y + 80 };
-  const B = { x: r.x + 200, y: r.y + 80 };
-  const Cdown = { x: r.x + 220, y: r.y + 110 };
-  const Dup = { x: r.x + 340, y: r.y + 200 };
-  const E = { x: r.x + 380, y: r.y + 260 };
-  const F = { x: r.x + 460, y: r.y + 300 };
+  const A = previewPoint(r, 80, 80);
+  const B = previewPoint(r, 200, 80);
+  const Cdown = previewPoint(r, 220, 110);
+  const Dup = previewPoint(r, 340, 200);
+  const E = previewPoint(r, 380, 260);
+  const F = previewPoint(r, 460, 300);
 
   // Segment 1: plain Line draw A→B, but Ctrl held at mouseup so the
   // segment is promoted to a chain.
@@ -942,8 +943,8 @@ test('drawing: zooming in mid-polyline keeps the chain head aligned with the ima
   const r0 = await readPreviewRect(capturePage);
 
   // Segment 1: A → B (drag). Chain start anchors at A.
-  const A = { x: r0.x + r0.w * 0.2, y: r0.y + r0.h * 0.2 };
-  const B = { x: r0.x + r0.w * 0.5, y: r0.y + r0.h * 0.3 };
+  const A = previewPoint(r0, r0.w * 0.2, r0.h * 0.2);
+  const B = previewPoint(r0, r0.w * 0.5, r0.h * 0.3);
   await capturePage.mouse.move(A.x, A.y);
   await capturePage.mouse.down();
   await capturePage.mouse.move(B.x, B.y);
@@ -952,8 +953,9 @@ test('drawing: zooming in mid-polyline keeps the chain head aligned with the ima
   const startBefore = await readPolylineChainStart(capturePage);
   expect(startBefore).not.toBeNull();
   // Chain-start anchor reads back as image-rect-local CSS px; check it
-  // lines up with A in viewport coords. Allow a 1 px slack for sub-
-  // pixel snap rounding (endpoint snap rounds to image-rect corners).
+  // lines up with A in viewport coords. The 1 px slack is for sub-pixel
+  // snap rounding (endpoint snap rounds to image-rect corners) — A is
+  // a `previewPoint`, so pointer truncation isn't eating the budget.
   expect(Math.abs(r0.x + startBefore!.x - A.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(r0.y + startBefore!.y - A.y)).toBeLessThanOrEqual(1);
 
@@ -1141,9 +1143,9 @@ test('drawing: a held pan suppresses the polyline nudge, which resumes on releas
   // press would scroll the box *and* move the pending endpoint.
   await capturePage.locator('#tool-polyline').click();
   const r = await readPreviewRect(capturePage);
-  const A = { x: r.x + 80, y: r.y + 80 };
-  const B = { x: r.x + 180, y: r.y + 80 };
-  const C = { x: r.x + 240, y: r.y + 130 };
+  const A = previewPoint(r, 80, 80);
+  const B = previewPoint(r, 180, 80);
+  const C = previewPoint(r, 240, 130);
   // Nudges run on the x axis: the visible-pane clamp in the nudge
   // handler bites on y in short viewports, which would muddy what
   // this test is actually asserting.
@@ -1172,7 +1174,7 @@ test('drawing: a held pan suppresses the polyline nudge, which resumes on releas
   // Segment 2's endpoint carries only the post-release nudges. Had the
   // suppressed presses landed, it would sit NUDGE_PANNING further right.
   const seg2EndXNat = lines[1]!.x2 * r.natW / 100;
-  expect(seg2EndXNat).toBeCloseTo((C.x - r.x) * r.natW / r.w + NUDGE_AFTER, 0);
+  expect(seg2EndXNat).toBeCloseTo(C.dx * r.natW / r.w + NUDGE_AFTER, 0);
 
   await openerPage.close();
 });

@@ -211,6 +211,10 @@ export async function dragEdge(
   if (modifiers?.shift) await capturePage.keyboard.up('Shift');
 }
 
+export type PreviewRect = {
+  x: number; y: number; w: number; h: number; natW: number; natH: number;
+};
+
 // Read the previewImg's viewport-coord bounding box plus its
 // natural (intrinsic) size so the arrow-key tests can convert
 // between CSS-pixel mouse moves, percent-space stored bounds, and
@@ -218,7 +222,7 @@ export async function dragEdge(
 // `previewImg.naturalWidth` reads the in-page handler does.
 export async function readPreviewRect(
   capturePage: Page,
-): Promise<{ x: number; y: number; w: number; h: number; natW: number; natH: number }> {
+): Promise<PreviewRect> {
   return capturePage.evaluate(() => {
     const img = document.getElementById('preview') as HTMLImageElement;
     const b = img.getBoundingClientRect();
@@ -227,6 +231,54 @@ export async function readPreviewRect(
       natW: img.naturalWidth, natH: img.naturalHeight,
     };
   });
+}
+
+/**
+ * Quantize a viewport point to where the pointer will actually land.
+ *
+ * **Pointer events land on whole CSS pixels.** Chrome truncates the
+ * coordinates the DevTools protocol hands it, so `mouse.move(x, 401.6)`
+ * arrives in the page as `clientY === 401`. Anything the page then
+ * records — a committed endpoint, a drag position — carries the
+ * truncated value, so a spec that asserts against its own unrounded
+ * target misses by that fraction.
+ *
+ * The miss is invisible while the fraction is under 0.5 and becomes a
+ * hard failure the moment an unrelated layout change pushes it over, so
+ * specs must not hand-roll this. Use `previewPoint` for a point given
+ * as an offset into the preview image; use this one for a point derived
+ * from geometry read back from the page (a committed box corner, a line
+ * endpoint), where there is no offset to speak of.
+ *
+ * Points that are only ever *compared against* — a snap target the
+ * cursor is expected to land on — keep their exact fractional values.
+ * Quantizing those would make the snap assertions meaningless.
+ */
+export function pointerPoint(x: number, y: number): { x: number; y: number } {
+  return { x: Math.floor(x), y: Math.floor(y) };
+}
+
+/**
+ * A pointer target `offX` / `offY` CSS px inside the preview image's
+ * top-left corner, in viewport coords, quantized per `pointerPoint`.
+ *
+ * The image's origin is routinely fractional (it's centred in a flex
+ * row), so a target built as a bare `r.y + 100` is delivered up to 1 px
+ * from where the spec asked. Assert against the returned `x` / `y`, or
+ * against `dx` / `dy` — the offset from the image origin the page will
+ * *actually* see, which is not the offset that was requested.
+ *
+ * `dx` / `dy` are relative to the `r` passed in, so re-read the rect
+ * after anything that can reflow or rescale the image (a zoom change,
+ * a viewport resize) before building further points from it.
+ */
+export function previewPoint(
+  r: PreviewRect,
+  offX: number,
+  offY: number,
+): { x: number; y: number; dx: number; dy: number } {
+  const { x, y } = pointerPoint(r.x + offX, r.y + offY);
+  return { x, y, dx: x - r.x, dy: y - r.y };
 }
 
 // Read every committed line/arrow edit's geometry in commit order.

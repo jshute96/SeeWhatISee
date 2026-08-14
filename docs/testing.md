@@ -89,6 +89,33 @@ multi-step drilling behavior.
   the SW console to test stderr, so spikes in retries are visible
   during a run without per-spec instrumentation.
 
+### Pointer coordinates are truncated to whole CSS pixels
+
+Chrome truncates the coordinates the DevTools protocol hands it, so
+`page.mouse.move(x, 351.6)` arrives in the page as `clientY === 351`.
+
+- The Capture page's preview image is centred in a flex row, so its
+  viewport origin is routinely fractional (e.g. `y = 301.59375`).
+- A spec that builds a target as `r.y + 100`, dispatches it, then
+  asserts against its own unrounded `r.y + 100` is comparing 401.59
+  against the 401 the page actually saw.
+- **This fails silently for a long time.** While the origin's fraction
+  is under 0.5 the miss is inside the usual `toBeCloseTo(…, 0)`
+  tolerance; the day an unrelated layout change pushes the fraction
+  over 0.5, a pile of drawing specs goes red at once with no change to
+  the code under test. That is what happened once already.
+- Use `previewPoint(r, dx, dy)` from `capture-drawing-helpers.ts` for
+  every dispatched point, and assert against what it returns:
+  - `x` / `y` — the floored viewport coords, matching what the page
+    will see.
+  - `dx` / `dy` — the offset from the image origin the page will
+    *actually* see, for percent-space assertions. Not the requested
+    offset.
+- Points read *back* from the page (a committed box corner, a line
+  endpoint that a drag is meant to snap onto) keep their exact
+  fractional values — don't round those, or the snap assertions stop
+  meaning anything.
+
 ## Practical devtools-console workflow
 
 - **Open the SW console** via `chrome://extensions` → Service
