@@ -296,6 +296,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e/capture-drawing-resize-nudge.spec.ts` | E2E for box-edge resize, arrow-key nudge of an in-flight drag, and visible-pane clamping under zoom |
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
+| `tests/e2e/capture-status-layout.spec.ts` | E2E for the page's vertical layout contract — a status message must not raise a scrollbar, and the rule stays centred |
 | `tests/e2e/capture-menu-keyboard.spec.ts` | E2E for keyboard use of the tool buttons (Space / Enter selects) and arrow navigation in the Zoom / More… / Ask menus |
 | `tests/e2e/capture-undo-key.spec.ts` | E2E for `Ctrl+Z` / `Ctrl+Y` routing between the image edit stack and the prompt's own text undo, and the redo stack's semantics |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |

@@ -326,6 +326,46 @@ radio:
   Useful for exporting an experimental edit without committing it
   back to the SW.
 
+### Vertical layout contract
+
+The page deliberately has **no vertical slack**: it fills the
+viewport exactly and never scrolls. Everything below depends on
+that, so treat these as invariants when editing the layout.
+
+- **The image is the only elastic element.** `fitImage` gives the
+  preview whatever height is left after the header, the card, the
+  controls strip, and the rule. Nothing else absorbs growth.
+- **Anything that grows the controls strip must call `fitImage()`.**
+  Growers today: the prompt textarea gaining a row
+  (`autoGrowPrompt`), a wrapping status message
+  (`setStatusMessage`), viewport resize, and image load.
+  - This is an explicit contract, not an automatic one — a new
+    grower that forgets the call re-opens the scrollbar bug.
+  - A `ResizeObserver` on the controls strip would automate it, and
+    was considered. It's deliberately not used: the observer fires
+    on width changes too, and the scrollbar-appears →
+    text-rewraps → height-changes cycle is exactly what Chrome
+    reports as "ResizeObserver loop completed with undelivered
+    notifications". That's an uncaught error for a layout that is
+    in fact settling, and extension-context errors land on the
+    `chrome://extensions` Errors page (see
+    `docs/chrome-extension.md`), making the extension look broken.
+- **The image has a floor.** It can only give back space while it's
+  taller than the tool-palette column beside it. Below that the
+  palette sets the page's minimum height and the page does scroll —
+  correct behaviour, and the reason the layout specs pick viewports
+  above that floor.
+- **Height that is reserved but invisible must be compensated.**
+  The empty status slot is the only such space today; the `<hr>`
+  subtracts it (and `.right-stack`'s row gap) from its top margin so
+  the rule still looks centred. Sizes come from `:root` custom
+  properties (`--rule-gap`, `--status-row-h`, `--stack-gap`) rather
+  than repeated literals.
+- Enforced by `tests/e2e/capture-status-layout.spec.ts` (fill,
+  overflow, and rule centring) and
+  `tests/e2e/capture-prompt-autogrow.spec.ts` (the measure-must-not-
+  move-the-layout case).
+
 ### Prompt textarea
 
 - Auto-growing, capped at 200px. `rows="1"` initially; on each
@@ -403,6 +443,44 @@ moves the layout under the measurement:
   (markdown / HTML source / plain text). Ctrl+Shift+V always
   pastes verbatim plain text. See [smart-paste.md](smart-paste.md)
   for the full design.
+
+### Status line (`#ask-status`)
+
+The shared result line under the button row, used by both the
+Capture and Ask flows. It carries the same no-slack layout concern
+as the prompt textarea:
+
+- `fitImage` leaves the page exactly filled, so anything that grows
+  the controls column raises a page scrollbar unless the image
+  gives the space back. See § Vertical layout contract.
+- **A one-line message must not change the height at all.** The
+  slot carries an explicit `line-height` and an equal
+  `min-height`, so the empty and one-line states measure the same.
+  - `min-height: 1em` (13px) against a ~16px line box used to make
+    the first status message grow the page by ~3px.
+- **Longer messages re-fit the image.** `setStatusMessage`
+  compares `offsetHeight` before and after the update and calls
+  `fitImage()` when it changed — the same re-fit `autoGrowPrompt`
+  does when the textarea gains a row.
+  - The re-fit can only give back space while the image is still
+    the tallest thing in its row. Once it has shrunk to the tool-
+    palette column's height, the palette sets the page's floor and
+    a long enough message does scroll the page — unavoidable, and
+    only reachable on a short viewport.
+- The `<hr>` below it wants an equal `--rule-gap` of *visible* space
+  on each side, but two invisible things sit above it: the reserved
+  status row and `.right-stack`'s row gap.
+  - Its top margin subtracts both — `calc(var(--rule-gap) -
+    var(--status-row-h) - var(--stack-gap))` — so the rule reads as
+    centred in the gap between the button row and the image.
+  - All three are `:root` custom properties used by both the rule and
+    the elements they describe, so the margin can't drift from what
+    it's cancelling.
+  - `--rule-gap` is half the space the rule has always occupied
+    between the button row and the image, so centring it left the
+    page's overall height alone — several specs measure the image at
+    pixel precision and are sensitive to a changed fit scale.
+- Covered by `tests/e2e/capture-status-layout.spec.ts`.
 
 ### Preview image
 

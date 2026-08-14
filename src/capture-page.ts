@@ -237,10 +237,18 @@ const promptInput = document.getElementById('prompt-text') as HTMLTextAreaElemen
 // has one place to look for "what just happened" feedback.
 const pageStatus = document.getElementById('ask-status') as HTMLDivElement;
 function setStatusMessage(text: string, kind: 'ok' | 'error' | 'info'): void {
+  const before = pageStatus.offsetHeight;
   pageStatus.textContent = text;
   pageStatus.classList.remove('ask-status-ok', 'ask-status-error');
   if (kind === 'ok') pageStatus.classList.add('ask-status-ok');
   else if (kind === 'error') pageStatus.classList.add('ask-status-error');
+  // A message long enough to wrap makes the controls column taller,
+  // which shrinks the space left for the image. Same re-fit the prompt
+  // textarea does when it grows a line — without it the page just gets
+  // taller and sprouts a vertical scrollbar. (One-line messages don't
+  // change the height at all; see `#ask-status`'s min-height in
+  // capture.html.)
+  if (pageStatus.offsetHeight !== before) fitImage();
 }
 
 /**
@@ -1934,5 +1942,11 @@ void loadData();
     // (e.g. tight on three edges, loose on one) that's hard to
     // reach via mouse drags alone. No production caller exists.
     setLastRectBounds: hooks.setLastRectBounds,
+    // Drives the shared status line directly, so the status-layout
+    // e2e can show a message of an exact length (including one long
+    // enough to wrap) without having to provoke a matching real
+    // failure.
+    setStatusMessage: (text: string, kind: 'ok' | 'error' | 'info') =>
+      setStatusMessage(text, kind),
   };
 }

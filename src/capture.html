@@ -9,6 +9,22 @@
 <!-- Shared `.btn` chrome; per-button sizing stays in the <style> below. -->
 <link rel="stylesheet" href="shared-styles.css">
 <style>
+  :root {
+    /* Height of one row of `#ask-status` text — the space that slot
+     * reserves whether or not it has a message. Shared with the `hr`
+     * below it, which subtracts it from its top margin. See the
+     * `#ask-status` rule for why the slot's height must be fixed. */
+    --status-row-h: 16px;
+    /* Row gap inside `.right-stack` (prompt row / button row / status).
+     * The `hr` subtracts it too — the gap below the button row is the
+     * one that trails off into the rule's margin. */
+    --stack-gap: 8px;
+    /* Visible space the `hr` gets on each side. Half of the 72px the
+     * rule has always occupied between the button row and the image —
+     * so centring it didn't change the page's overall height, which
+     * several specs measure the image against at pixel precision. */
+    --rule-gap: 36px;
+  }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 24px;
@@ -134,7 +150,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--stack-gap);
   }
   .prompt-row {
     display: flex;
@@ -649,8 +665,22 @@
   /* Result line for the last Capture / Ask attempt. `overflow-wrap`
    * breaks long URLs in error messages rather than widening the column. */
   #ask-status {
+    /* One row of status text. The slot reserves exactly this much even
+     * when empty, so showing or clearing a one-line message doesn't
+     * change the page height at all. (`min-height: 1em` was 13px
+     * against a ~16px line box, so the first status message grew the
+     * page by ~3px and popped a vertical scrollbar into existence —
+     * the page is sized to fill the viewport with no slack.) Longer
+     * messages that wrap still change the height; `setStatusMessage`
+     * re-fits the image when that happens.
+     *
+     * The `hr` below reads the same `--status-row-h` to cancel the
+     * reserved height out of its top margin, so the two can't drift.
+     * The variable is declared on `:root` because `hr` is a sibling,
+     * not a descendant, of this slot. */
     font-size: 13px;
-    min-height: 1em;
+    line-height: var(--status-row-h);
+    min-height: var(--status-row-h);
     word-wrap: break-word;
     overflow-wrap: anywhere;
   }
@@ -661,10 +691,13 @@
   hr {
     border: none;
     border-top: 2px solid #555;
-    /* Asymmetric on purpose: `#ask-status`'s `min-height: 1em` adds
-     * ~13px of invisible space above the rule, so trim that off the top
-     * to balance the visible gap. */
-    margin: 19px 0 32px 0;
+    /* Asymmetric on purpose, and doubly so: the rule wants an equal
+     * `--rule-gap` of *visible* space on each side, but above it sits
+     * both `#ask-status`'s reserved row and `.right-stack`'s row gap —
+     * neither of which ever shows anything when the status is empty.
+     * Subtract both so the rule reads as centred in the gap. */
+    margin: calc(var(--rule-gap) - var(--status-row-h) - var(--stack-gap))
+            0 var(--rule-gap) 0;
   }
   /* Palette column on the left, image on the right. */
   .image-and-highlights {
