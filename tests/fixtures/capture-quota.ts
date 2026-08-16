@@ -85,12 +85,21 @@ export async function installCaptureQuotaTracker(sw: Worker): Promise<void> {
       return msg.includes('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND');
     };
 
+    // `chrome.tabs.captureVisibleTab` is overloaded (promise form and
+    // callback form), and TypeScript resolves `orig(...args)` against
+    // the callback overload, whose declared return is `void`. Every
+    // call site here is the promise form, so re-type the bound
+    // original to just that shape rather than casting at each await.
+    const origAsync = orig as (
+      ...args: Parameters<typeof chrome.tabs.captureVisibleTab>
+    ) => Promise<string>;
+
     const patched = async (
       ...args: Parameters<typeof chrome.tabs.captureVisibleTab>
     ): Promise<string> => {
       const callTime = Date.now();
       try {
-        const out = await orig(...args);
+        const out = await origAsync(...args);
         stamp(callTime);
         return out;
       } catch (err) {
@@ -112,7 +121,7 @@ export async function installCaptureQuotaTracker(sw: Worker): Promise<void> {
         console.warn(`[capture-quota] backoff retry, sleeping ${wait}ms`);
         await new Promise((r) => setTimeout(r, wait));
         const retryCallTime = Date.now();
-        const out = await orig(...args);
+        const out = await origAsync(...args);
         stamp(retryCallTime);
         return out;
       }

@@ -101,7 +101,10 @@ test('opening the Options page refreshes the tooltip with current hotkeys', asyn
     // Refresh sets the cached fingerprint to the empty-shortcut
     // baseline.
     const ctx = self as unknown as {
-      SeeWhatISee: { refreshActionTooltip: () => Promise<void> };
+      SeeWhatISee: {
+        refreshActionTooltip: () => Promise<void>;
+        refreshMenusIfHotkeysChanged: () => Promise<void>;
+      };
     };
     await ctx.SeeWhatISee.refreshActionTooltip();
     // Also refresh menus so the cached fingerprint matches the empty

@@ -24,9 +24,18 @@ import { expect, type Worker } from '@playwright/test';
 // declarations (rather than redeclaring them here) means the tests
 // fail to compile if the production type drifts, which is exactly the
 // drift detector we want.
-import type { CaptureRecord, CaptureResult } from '../../src/capture.js';
+import type { CaptureRecord, CaptureResult } from '../../src/capture/types.js';
 
 export type { CaptureRecord, CaptureResult };
+
+/**
+ * A record as it appears in `log.json`, which is not quite the
+ * in-memory `CaptureRecord`: `serializeRecord` omits `url` / `title`
+ * when they're empty, so on disk they're optional even though the
+ * write paths always assign a (possibly empty) string.
+ */
+export type SerializedCaptureRecord = Omit<CaptureRecord, 'url' | 'title'> &
+  Partial<Pick<CaptureRecord, 'url' | 'title'>>;
 
 /**
  * Wait for `chrome.downloads` to report the given downloadId as
@@ -117,7 +126,7 @@ export async function verifyHtmlCapture(
   expect(html.length).toBeGreaterThan(0);
   expect(html).toContain(expectedSubstring);
 
-  const expectedRecord: CaptureRecord = {
+  const expectedRecord: SerializedCaptureRecord = {
     timestamp: result.timestamp,
     contents: result.contents,
     // `serializeRecord` omits `url` / `title` from the JSON output
@@ -183,7 +192,7 @@ export async function verifyCapture(
   // The record we expect to find in the log sidecar. Built here in
   // canonical key order so toEqual diffs read sensibly when an
   // assertion fails.
-  const expectedRecord: CaptureRecord = {
+  const expectedRecord: SerializedCaptureRecord = {
     timestamp: result.timestamp,
     screenshot: result.screenshot,
     // `serializeRecord` omits `url` / `title` from the JSON output

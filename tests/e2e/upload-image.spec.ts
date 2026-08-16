@@ -114,7 +114,6 @@ test('upload: a `.png`-named file with garbage bytes fails decode-validation up 
 });
 
 test('upload: menu-click handler opens capture.html?upload=true adjacent to the active tab', async ({
-  extensionContext,
   getServiceWorker,
 }) => {
   // The menu-click route is `chrome.contextMenus.onClicked` →

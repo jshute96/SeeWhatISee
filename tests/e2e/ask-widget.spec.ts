@@ -11,7 +11,8 @@
 // page-level root doesn't see across the shadow boundary, so the
 // chain is required.
 
-import { test, expect, type Page, type Locator } from '../fixtures/extension';
+import type { Locator, Page } from '@playwright/test';
+import { test, expect } from '../fixtures/extension';
 import { openDetailsFlow, seedSelection } from './details-helpers';
 import {
   clickExistingFakeClaudeItem,
@@ -1115,7 +1116,7 @@ test('widget: in-flight row icon carries the spinner CSS', async ({
   // animation name. `swis-spin` proves the row picked up the
   // spinner rule, not just the empty placeholder.
   const animationName = await firstRowIcon.evaluate(
-    (el) => getComputedStyle(el).animationName,
+    (el: Element) => getComputedStyle(el).animationName,
   );
   expect(animationName).toBe('swis-spin');
 

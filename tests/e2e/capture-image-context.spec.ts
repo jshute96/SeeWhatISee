@@ -273,10 +273,13 @@ test('image flow: save screenshot does NOT scrape the page (no executeScript cal
     g.__seeScrapeOrig = chrome.scripting.executeScript.bind(chrome.scripting);
     g.__seeScrapeCount = 0;
     (chrome.scripting as { executeScript: typeof chrome.scripting.executeScript }).executeScript =
+      // `executeScript` is overloaded (promise + callback forms), so
+      // the spy's single promise-form signature doesn't structurally
+      // match the full overload set — hence the `unknown` hop.
       (async (...args: Parameters<typeof chrome.scripting.executeScript>) => {
         g.__seeScrapeCount = (g.__seeScrapeCount ?? 0) + 1;
         return g.__seeScrapeOrig!(...args);
-      }) as typeof chrome.scripting.executeScript;
+      }) as unknown as typeof chrome.scripting.executeScript;
 
     const [active] = await chrome.tabs.query({
       active: true,

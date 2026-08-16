@@ -27,6 +27,15 @@ multi-step drilling behavior.
   probe and caller's `evaluate`); practical mitigation is to
   bundle all work for a single test into one `evaluate` block.
 
+### The test tree is type-checked separately
+
+- `tsconfig.json` compiles `src/` only, and Playwright transpiles
+  specs without checking types — so nothing checked `tests/*.ts`.
+- `tsconfig.tests.json` + `npm run typecheck:tests` close that gap,
+  and `npm test` runs the check before the suite.
+- It runs in about a second, so it's the cheapest way to catch a
+  broken annotation before paying for a 9-minute e2e run.
+
 ### Shared per-test hooks must be fixtures, not `beforeEach`
 
 - `tests/fixtures/extension.ts` is imported by every e2e spec, but

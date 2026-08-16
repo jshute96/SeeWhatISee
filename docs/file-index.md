@@ -13,6 +13,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `package-lock.json` | npm lockfile (auto-generated) |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
+| `tsconfig.tests.json` | Type-check-only config covering the `tests/` TypeScript tree and the Playwright configs |
 | `playwright.config.ts` | Playwright test runner config (default e2e suite) |
 | `playwright.config.live.ts` | Playwright config for the live-provider suite (Claude / Gemini / ChatGPT / Google) — opt-in only |
 | `.gitignore` | Git ignore rules |

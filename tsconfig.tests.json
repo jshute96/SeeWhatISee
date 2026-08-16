@@ -1,0 +1,26 @@
+// Type-check-only project for the TypeScript test tree.
+//
+// The root `tsconfig.json` compiles `src/` to `dist/` and includes
+// nothing else, so the Playwright specs, fixtures, and helpers under
+// `tests/` went unchecked — Playwright transpiles without checking
+// types, so a broken annotation there surfaced as nothing at all.
+//
+// Wired up as `npm run typecheck:tests`, which `npm test` runs.
+//
+// `lib` adds `DOM.Iterable` because page-side `evaluate` bodies
+// iterate `NodeList` / `FileList` directly.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": null,
+    "outDir": null,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["chrome", "node"]
+  },
+  "include": [
+    "tests/**/*.ts",
+    "playwright.config.ts",
+    "playwright.config.live.ts"
+  ]
+}

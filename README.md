@@ -392,8 +392,9 @@ In Chrome: open `chrome://extensions`, enable **Developer mode**, click **Load u
 ### Testing
 
 ```bash
-npm test                  # validate skill templates, run unit + MCP-server + Playwright e2e tests
+npm test                  # validate skill templates, type-check the tests, run unit + MCP-server + Playwright e2e tests
 npm run test:skills       # validate skill templates only (fast, no build)
+npm run typecheck:tests   # type-check the tests/ TypeScript tree only (fast, no build)
 npm run test:e2e          # run Playwright e2e tests only
 npm run test:headed       # same as test:e2e, with a visible browser
 npm run test:unit         # run the HTML→markdown converter unit tests
