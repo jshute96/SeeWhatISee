@@ -27,6 +27,19 @@ multi-step drilling behavior.
   probe and caller's `evaluate`); practical mitigation is to
   bundle all work for a single test into one `evaluate` block.
 
+### Parallelism is per file, across whole browsers
+
+- `fullyParallel: false` keeps each spec file on a single worker;
+  `workers` is unset, so Playwright uses half the cores.
+- Every worker gets its own browser, profile, download dir,
+  `captureVisibleTab` quota, and fixture HTTP server — nothing is
+  shared, which is what makes this safe.
+- A worker is a whole Chromium, so this is real CPU load, but the
+  tests mostly wait on CDP and SW round-trips: 4 workers cut the
+  suite from 8.8 min to ~3 min on an 8-core box.
+- Don't push it higher by hand. At 6 workers the gain was ~30 s and
+  contention started tripping the 5 s `expect` timeouts.
+
 ### The test tree is type-checked separately
 
 - `tsconfig.json` compiles `src/` only, and Playwright transpiles
