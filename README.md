@@ -69,11 +69,15 @@ On this page, you can:
   - Use the **black box** to redact and hide parts of the image.
   - Drag box edges to resize them.
   - **Crop** the image by drawing a rectangle, or dragging borders.
-  - Use **Shrink** to tighten the most recent box or redaction, or the crop region, around its content. This strips whitespace or borders around the outer edges.
-  - **Zoom** in or out. (Also with `Ctrl+mouse wheel` or `Alt +/-`.)
-  - **Undo** or **Clear** to revert edits.
+  - **Zoom** in or out. (Also with `Ctrl+mouse wheel`, trackpad pinch, or `Alt +/-`.)
+  - **Undo** or **Reset** (undo all edits) to revert edits.
   - **Copy** to clipboard.
   - **Save** to a file.
+
+- The **More…** menu has extra image actions:
+  - **Shrink last … to fit content** — tighten the most recent box, redaction, or the crop region around its content, stripping whitespace or borders around the outer edges.
+  - **Replace with cropped image** — apply the crop, replacing the current image.
+  - **Copy** / **Paste image edits**, and **Import image edits from last capture** — copy a capture's drawings and crop onto another capture of the same size, for lining up before/after screenshots.
 
 > [!TIP]
 > If you add a prompt, the agent will follow it when reading this snapshot, focusing on highlighted areas in the screenshot.
@@ -124,14 +128,17 @@ While viewing a chatbot page, the toolbar context menu lets you **Set this tab a
 
 ##### Zoom and pan
 
-- `Alt +` / `Alt −` (or `Ctrl+mouse-wheel`) — zoom in / out.
+- `Alt +` / `Alt −` — zoom in / out by 2× per press.
+- `Ctrl+mouse-wheel` or trackpad pinch — zoom smoothly.
 - `Ctrl+drag` (or middle-click drag) — pan.
+- Arrow keys while panning — pan by one image pixel, for precise alignment.
 
 ##### Drawing
 
 - `Shift+drag` — draw without snap and without grabbing resize handles.
 - `Ctrl+Shift+drag` — draw without grabbing resize handles, with snap still on.
 - Arrow keys while drawing or resizing — nudge the drag point by one output pixel.
+- `Ctrl+Z` — undo, and `Ctrl+Y` (or `Ctrl+Shift+Z`) — redo.
 
 #### Options
 
