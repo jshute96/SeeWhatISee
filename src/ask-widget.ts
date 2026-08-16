@@ -612,7 +612,14 @@
   //   clearComposer — synchronous DOM wipe + MutationObserver
   //                   install; sub-second in practice. 5 s mirrors
   //                   typePrompt's headroom.
-  //   attachFile    — settle (1.5 s) + chip-confirm (8 s) + buffer.
+  //   attachFile    — preFileInputClicks chain (15 s ceiling,
+  //                   Gemini only, ~1.5 s in practice — see
+  //                   PRE_CLICK_CHAIN_TIMEOUT_MS in ask-inject.ts)
+  //                   + file-input poll (3 s) + settle (1.5 s) +
+  //                   chip-confirm (8 s) + buffer. This doubles as
+  //                   the user's worst-case spinner on a wedged
+  //                   attach, so it tracks the chain ceiling down
+  //                   as well as up.
   //                   The chip gate proves the SITE accepted the
   //                   selection, NOT that the upload completed; the
   //                   actual upload runs in the background and is
@@ -629,7 +636,7 @@
   //                   clickable.
   const CALL_MAIN_TIMEOUTS_MS: Record<string, number> = {
     clearComposer: 5000,
-    attachFile: 15000,
+    attachFile: 30000,
     typePrompt: 5000,
     clickSubmit: 35000,
   };

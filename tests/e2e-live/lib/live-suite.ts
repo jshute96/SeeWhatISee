@@ -174,15 +174,21 @@ export function runLiveSuite(provider: LiveProvider): void {
   async function openFreshProviderPage(): Promise<Page> {
     const browser = await getSharedBrowser(provider.label);
     const page = await getSharedProviderPage(browser, provider);
+    // Make the tab the active one. Not cosmetic: providers defer
+    // work in hidden tabs (Gemini's upload menu never finishes
+    // populating in the background), and the shared tab is often
+    // *not* the foreground one because the previous suite left its
+    // own tab in front.
+    await page.bringToFront();
     // Reset page state via `goto` — clears the composer, drops any
     // attached files, and unloads the runtime IIFE. Skipping this
     // would leak state across the suite.
     await page.goto(provider.newTabUrl, { waitUntil: 'domcontentloaded' });
     await provider.waitForComposerReady(page);
-    // Optional provider-specific extra cleanup. Used by destinations
-    // where `goto(newTabUrl)` doesn't actually reset the composer
-    // — Claude Code's `/code` redirects to the last session and
-    // preserves any queued prompt + attachment pills.
+    // Optional provider-specific extra cleanup, for destinations
+    // where `goto(newTabUrl)` doesn't actually reset the composer.
+    // Both Claude surfaces need it — see their specs for what each
+    // one preserves across the navigation.
     if (provider.resetPage) await provider.resetPage(page);
     return page;
   }
@@ -257,15 +263,21 @@ export function runLiveSuite(provider: LiveProvider): void {
     await page.locator(provider.selectors.textInput[0]).click();
     await page.keyboard.type('x');
     // Walk the ranked list and require *some* selector to match —
-    // most specific often shifts a release at a time.
-    let submitFound = false;
-    for (const sel of provider.selectors.submitButton) {
-      if ((await page.locator(sel).count()) > 0) {
-        submitFound = true;
-        break;
-      }
-    }
-    expect(submitFound, 'no submit-button selector matched').toBe(true);
+    // most specific often shifts a release at a time. Poll rather
+    // than checking once: claude.ai debounces the empty → non-empty
+    // composer transition and takes ~2 s to swap the mic button for
+    // Send.
+    await expect
+      .poll(
+        async () => {
+          for (const sel of provider.selectors.submitButton) {
+            if ((await page.locator(sel).count()) > 0) return true;
+          }
+          return false;
+        },
+        { timeout: 10_000, message: 'no submit-button selector matched' },
+      )
+      .toBe(true);
   });
 
   // ─── No-submit multi-file attach ───────────────────────────────

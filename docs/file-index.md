@@ -334,6 +334,7 @@ Own `package.json` (npm workspace), bundled to a single
 | `tests/e2e-live/lib/types.ts` | `LiveProvider` plugin contract for the live test suite — selectors plus per-provider DOM-verification helpers |
 | `tests/e2e-live/lib/bridge.ts` | Shared postMessage-bridge driver (`callBridge`, `driveBridge`) that mirrors the widget's `callMain` so live specs exercise the same code path |
 | `tests/e2e-live/lib/live-suite.ts` | Shared live-test cases parameterized by a `LiveProvider` — same suite runs against any provider |
+| `tests/e2e-live/lib/dom.ts` | Page-side DOM helpers for the live specs' `resetPage` hooks (`clearContentEditable`) |
 | `tests/e2e-live/claude.live.spec.ts` | Claude `LiveProvider` wiring (selectors imported from `claude.ts`, data-testid-based locators) — calls `runLiveSuite` |
 | `tests/e2e-live/claude-code.live.spec.ts` | Claude Code `LiveProvider` wiring — reuses Claude's selectors / locators, declares `acceptedAttachmentKinds: ['image']`; the shared suite swaps in extra images for the text-payload tests |
 | `tests/e2e-live/gemini.live.spec.ts` | Gemini `LiveProvider` wiring (selectors imported from `gemini.ts`, Quill + `uploader-file-preview` chips + Angular `user-query` locators) — calls `runLiveSuite` |

@@ -30,6 +30,7 @@
 
 import { expect, type Locator, type Page } from '@playwright/test';
 import { claudeProvider } from '../../src/ask/claude.js';
+import { clearContentEditable } from './lib/dom.js';
 import { runLiveSuite } from './lib/live-suite.js';
 import type { LiveProvider } from './lib/types.js';
 
@@ -62,22 +63,18 @@ const claudeCode: LiveProvider = {
     //     waits forever. Calling `.click()` on the element directly
     //     dispatches the React click handler regardless.
     //   - The composer is a ProseMirror; `page.keyboard.press('Control+A')`
-    //     collides with Claude Code's own bindings. `execCommand`
+    //     collides with Claude Code's own bindings. `clearContentEditable`
+    //     (see `lib/dom.ts`) goes through `execCommand` instead, which
     //     mirrors the runtime's typePrompt path, so any future
     //     breakage surfaces in the prompt-typing tests too.
-    await page.evaluate((composerSelector) => {
+    await page.evaluate(() => {
       document
         .querySelectorAll<HTMLButtonElement>(
           'button.epitaxy-pill-remove[aria-label^="Remove "]',
         )
         .forEach((b) => b.click());
-      const composer = document.querySelector<HTMLElement>(composerSelector);
-      if (composer) {
-        composer.focus();
-        document.execCommand('selectAll');
-        document.execCommand('delete');
-      }
-    }, COMPOSER);
+    });
+    await page.evaluate(clearContentEditable, COMPOSER);
   },
 
   imageAttachmentLocator(page: Page, filename: string): Locator {

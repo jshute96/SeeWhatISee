@@ -40,6 +40,17 @@
   // Sized to cover slow networks while staying well under the
   // submit-enable budget.
   const PREVIEW_CONFIRM_TIMEOUT_MS = 8000;
+  // Budget for the WHOLE `preFileInputClicks` chain, not per
+  // selector — a provider that grows a third step can't quietly
+  // multiply its way past the widget's per-op bridge timeout.
+  // That shape is the point; the number is secondary.
+  //
+  // Keep it tight. Gemini is the only provider that uses the chain
+  // and its menu items land in ~1.5 s, so 15 s is already 10x
+  // headroom — and every second here is a second the user watches
+  // a spinner when the menu is genuinely wedged, since the widget's
+  // `attachFile` bridge timeout has to clear this value.
+  const PRE_CLICK_CHAIN_TIMEOUT_MS = 15000;
   const POLL_INTERVAL_MS = 150;
 
   // Test-only tuning hook. If the target page sets
@@ -401,8 +412,10 @@
         didOverride = true;
       }
 
+      const preClickDeadline = Date.now() + PRE_CLICK_CHAIN_TIMEOUT_MS;
       for (const sel of preClicks) {
-        const el = await waitForSelector<HTMLElement>(sel, 3000);
+        const remaining = Math.max(0, preClickDeadline - Date.now());
+        const el = await waitForSelector<HTMLElement>(sel, remaining);
         if (!el) {
           throw new Error(`preFileInputClicks: selector did not appear: ${sel}`);
         }

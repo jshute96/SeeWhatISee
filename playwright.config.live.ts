@@ -33,13 +33,22 @@ export default defineConfig({
   testDir: './tests/e2e-live',
   fullyParallel: false,
   workers: 1,
-  // Live tests cross the network. 20s is enough for the slowest
-  // case (image upload + prompt typing + submit + post-submit
-  // composer-clear poll) without wasting minutes on a stuck test.
+  // Live tests cross the network and wait out each provider's page
+  // load, so the budget is dominated by the site, not by our steps.
+  //
+  // Sizing:
+  //
+  // - Slowest healthy test on an idle machine: ~12s (the submitting
+  //   case — upload + typing + submit + post-submit composer poll).
+  // - The same tests reach ~31s when something heavy (the full
+  //   Playwright suite) runs alongside them, which is easy to do by
+  //   accident.
+  // - 60s covers the loaded case with room to spare. The old 20s
+  //   did not, and produced timeouts that looked like site bugs.
+  //
   // The deterministic e2e suite (`playwright.config.ts`) is much
-  // tighter; bump only this when adding a new test that legitimately
-  // needs more time.
-  timeout: 20_000,
+  // tighter.
+  timeout: 60_000,
   reporter: 'list',
   use: {
     trace: 'retain-on-failure',

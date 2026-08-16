@@ -35,7 +35,7 @@ export interface AskSelectors {
 // production rather than as a generic Playwright timeout.
 export const BRIDGE_TIMEOUTS_MS: Record<string, number> = {
   clearComposer: 5_000,
-  attachFile: 15_000,
+  attachFile: 30_000,
   typePrompt: 5_000,
   clickSubmit: 35_000,
 };

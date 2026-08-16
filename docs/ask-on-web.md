@@ -491,6 +491,27 @@ Claude's adapter omits `preFileInputClicks`; the runtime takes the
 fast path (a single `findRanked` call against `fileInput`) and the
 override never installs.
 
+#### The click chain's timeout
+
+`PRE_CLICK_CHAIN_TIMEOUT_MS` in `src/ask-inject.ts` bounds the
+**whole** chain, not each step. That shape is the point: a provider
+that grows a third step can't quietly multiply past the widget's
+per-op bridge timeout.
+
+The value (30 s) is headroom, not a measured need:
+
+- Gemini's menu items land in ~1.5 s — measured on fresh page
+  loads and on a fresh browser process alike. There is no
+  cold-start penalty.
+- Long waits (20 s+) *have* been seen while profiling, but only on
+  a machine simultaneously running the full Playwright suite. They
+  did not reproduce on an idle machine and should be read as load,
+  not as Gemini behaviour.
+
+If a genuinely slow menu ever shows up, the fix isn't a bigger
+timeout — synthesising a `paste` or `drop` on the composer would
+skip the menu entirely.
+
 ### `acceptedAttachmentKinds` and `urlVariants` (Claude Code)
 
 Some composers reject attachments their file input would otherwise

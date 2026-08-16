@@ -9,10 +9,15 @@
 
 import { expect, type Locator, type Page } from '@playwright/test';
 import { claudeProvider } from '../../src/ask/claude.js';
+import { clearContentEditable } from './lib/dom.js';
 import { runLiveSuite } from './lib/live-suite.js';
 import type { LiveProvider } from './lib/types.js';
 
 const SELECTORS = claudeProvider.selectors;
+
+// Every composer attachment — image preview or file card — mounts
+// under this wrapper.
+const ATTACHMENT_THUMBNAIL = '[data-testid="file-thumbnail"]';
 
 const claude: LiveProvider = {
   id: 'claude',
@@ -29,26 +34,54 @@ const claude: LiveProvider = {
     });
   },
 
-  imageAttachmentLocator(page: Page, filename: string): Locator {
-    // Claude tags image previews with the filename as `data-testid`,
-    // e.g. `data-testid="test.png"`.
-    return page.locator(`[data-testid="${filename}"]`);
+  async resetPage(page: Page): Promise<void> {
+    // claude.ai persists the composer draft — text *and* attachment
+    // thumbnails — across `goto(newTabUrl)`, so the shared suite's
+    // navigate-between-tests reset isn't enough on its own. Left
+    // uncleaned, a second `test.png` from an earlier test makes the
+    // filename locators strict-mode ambiguous.
+    await page.evaluate(clearContentEditable, SELECTORS.textInput[0]);
+
+    // Thumbnails unmount one React render at a time, so drop them
+    // one per pass rather than firing every click at once. Clicking
+    // via `evaluate` (not Playwright's `.click()`) skips the
+    // actionability wait — the remove button only becomes visible on
+    // hover. Bounded so a stuck thumbnail fails the assertion in the
+    // test rather than hanging here.
+    const thumbnails = page.locator(ATTACHMENT_THUMBNAIL);
+    for (let i = 0; i < 20 && (await thumbnails.count()) > 0; i++) {
+      // Query *inside* a thumbnail so the click and the loop
+      // condition can't disagree — an unrelated "Remove …" button
+      // elsewhere on the page would otherwise spin this loop out.
+      await page.evaluate((thumbnail) => {
+        document
+          .querySelector<HTMLButtonElement>(
+            `${thumbnail} button[aria-label^="Remove"]`,
+          )
+          ?.click();
+      }, ATTACHMENT_THUMBNAIL);
+      await page.waitForTimeout(250);
+    }
   },
 
-  fileAttachmentLocator(page: Page, filename: string): Locator {
-    // Non-image files render as `data-testid="file-thumbnail"`
-    // elements with the filename inside.
-    return page.locator('[data-testid="file-thumbnail"]', {
-      hasText: filename,
+  imageAttachmentLocator(page: Page, filename: string): Locator {
+    // Image previews are `file-thumbnail` wrappers around an
+    // `<img>` whose `alt` is the filename — claude.ai used to put
+    // the filename on the wrapper's own `data-testid`, but no
+    // longer does. The `alt` is the only filename-tagged hook left.
+    return page.locator(ATTACHMENT_THUMBNAIL, {
+      has: page.locator(`img[alt="${filename}"]`),
     });
   },
 
+  fileAttachmentLocator(page: Page, filename: string): Locator {
+    // Non-image files use the same wrapper, but render the filename
+    // as text instead of an image preview.
+    return page.locator(ATTACHMENT_THUMBNAIL, { hasText: filename });
+  },
+
   allAttachmentsLocator(page: Page): Locator {
-    // The image-preview testid is the filename (variable), so we OR
-    // file-thumbnail with anything carrying the upload-success role.
-    return page.locator(
-      '[data-testid="file-thumbnail"], [data-testid$=".png"], [data-testid$=".jpg"], [data-testid$=".jpeg"], [data-testid$=".gif"], [data-testid$=".webp"]',
-    );
+    return page.locator(ATTACHMENT_THUMBNAIL);
   },
 
   userMessageLocator(page: Page, hasText: string): Locator {

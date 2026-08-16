@@ -162,7 +162,8 @@ into MAIN-world helpers in `ask-inject.ts`.
   hang the orchestrator:
   - `clearComposer` — 5 s (synchronous wipe + observer install,
     sub-second in practice).
-  - `attachFile` — 15 s (covers the 1.5 s settle + 8 s
+  - `attachFile` — 30 s (covers the 15 s `preFileInputClicks`
+    ceiling, the 3 s file-input poll, the 1.5 s settle and the 8 s
     chip-confirm). The chip gate proves the page accepted the
     selection, NOT that the upload reached the server.
   - `typePrompt` — 5 s (sub-second in practice).

@@ -43,6 +43,12 @@ const ASK_INJECT_PATH = path.join(REPO_ROOT, 'dist/ask-inject.js');
 const SELECTORS = googleProvider.selectors;
 const COMPOSER = SELECTORS.textInput[0];
 
+// Google's post-upload attachment chip. Not part of the provider's
+// selector set — the runtime never needs it — but it's the one
+// stable, non-obfuscated hook the page renders once it has accepted
+// an image, so the test uses it to confirm ingestion.
+const ATTACHMENT_CHIP = 'button[aria-label="Remove file attachment"]';
+
 // 1×1 transparent PNG — smallest valid image, keeps Google's image-
 // search server-side traffic minimal.
 const TINY_PNG_DATA_URL =
@@ -96,6 +102,10 @@ async function getGooglePage(browser: Browser): Promise<Page> {
 async function openFreshGooglePage(): Promise<Page> {
   const browser = await getBrowser();
   const page = await getGooglePage(browser);
+  // Same reason as the shared suite's `openFreshProviderPage`:
+  // the tab may be behind another provider's, and pages defer
+  // rendering work while hidden.
+  await page.bringToFront();
   // Fresh DOM each test — submitting in test 3 navigates to
   // `/search?...`, so without the goto subsequent runs would land on
   // a results page with no `wcaWdc` file input.
@@ -173,6 +183,30 @@ test('Google: selectors match the real DOM', async () => {
 test('Google: image attaches, no submit', async () => {
   const page = await openFreshGooglePage();
   await loadRuntime(page);
+
+  // Google's change handler consumes the file and resets the input
+  // (the usual "clear it so re-picking the same file fires change
+  // again" pattern), so reading `input.files` after the runtime
+  // returns always sees 0. Snapshot the file list from inside a
+  // `change` listener instead.
+  //
+  // Google delegates its handler to an ancestor, so this listener —
+  // bound on the input itself — runs first. Note that's a property
+  // of Google's wiring, not a guarantee: the capture flag buys no
+  // priority against a listener bound on the same target, so if this
+  // ever starts reporting an empty list, check whether Google moved
+  // its handler onto the input.
+  await page.locator(SELECTORS.fileInput[0]).evaluate((el) => {
+    const input = el as HTMLInputElement;
+    const w = window as unknown as { __swisSeenFiles?: string[][] };
+    w.__swisSeenFiles = [];
+    input.addEventListener(
+      'change',
+      () => w.__swisSeenFiles!.push([...(input.files ?? [])].map((f) => f.name)),
+      true,
+    );
+  });
+
   const result = await callRuntime(
     page,
     [
@@ -188,14 +222,16 @@ test('Google: image attaches, no submit', async () => {
   );
   expect(result.ok, result.error).toBe(true);
 
-  // The file input is hidden, but `input.files` is the authoritative
-  // signal — that's what Google's onChange handlers consume. Checking
-  // it directly is more robust than scraping for whatever preview
-  // chip Google chose to render today.
-  const fileCount = await page.locator(SELECTORS.fileInput[0]).evaluate(
-    (el) => (el as HTMLInputElement).files?.length ?? 0,
+  const seenFiles = await page.evaluate(
+    () => (window as unknown as { __swisSeenFiles?: string[][] }).__swisSeenFiles ?? [],
   );
-  expect(fileCount).toBe(1);
+  expect(seenFiles).toEqual([['test.png']]);
+
+  // …and Google actually ingested it: the composer grows a
+  // remove-attachment control once the upload is accepted. Asserting
+  // this too means a silent server-side rejection can't pass just
+  // because the input dispatch looked fine.
+  await expect(page.locator(ATTACHMENT_CHIP)).toBeVisible({ timeout: 10_000 });
 
   // Composer is empty — the runtime only attached the file, didn't
   // type anything.

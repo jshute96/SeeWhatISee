@@ -266,10 +266,74 @@ production `AskProvider`:
   attachments.
 
 A provider can also supply a `resetPage` hook that runs after the
-goto + composer-ready wait. Used by Claude Code, where the goto
-redirects to the last session and preserves any queued prompt /
-attachment pills — the hook clears those in-place so each test
-starts from a known-clean state.
+goto + composer-ready wait, for destinations where the navigation
+doesn't leave a clean composer:
+
+- Claude Code's goto redirects to the last session, preserving
+  queued prompts and attachment pills.
+- claude.ai restores its draft — text and attachment thumbnails —
+  after the navigation.
+
+Each hook clears that state in place, so every test starts from a
+known-clean composer.
+
+### Claude-only
+
+claude.ai persists the composer draft — text **and** attachment
+thumbnails — across `goto(newTabUrl)`, so the shared suite's
+navigate-between-tests reset isn't enough:
+
+- `resetPage` clears the composer and clicks every
+  `button[aria-label^="Remove"]`, one render at a time.
+- Without it a second `test.png` from an earlier test makes the
+  filename locators strict-mode ambiguous.
+- Clear the composer with a `Range` scoped to it, never
+  `execCommand('selectAll')` — the latter selects the whole
+  document on claude.ai and takes ~10 s. `lib/dom.ts` holds the
+  shared helper.
+
+Attachment locators all hang off one wrapper:
+
+- Every attachment mounts as `[data-testid="file-thumbnail"]`.
+- Images are identified by an inner `img[alt="<filename>"]`.
+- Files are identified by their text.
+
+### Gemini-only
+
+`openFreshProviderPage` calls `page.bringToFront()`. Gemini
+defers rendering its upload menu indefinitely in a background tab,
+and the shared tab is often *not* in front because the previous
+suite left its own tab there.
+
+Chips carry the filename only in their accessible description — a
+hidden Angular CDK node referenced by `aria-describedby` — so the
+spec matches them with XPath across that reference.
+
+Don't chase a slow Gemini attach without checking machine load
+first:
+
+- Attaches take ~1.5 s on an idle machine.
+- They stretch past 20 s when the full Playwright suite runs
+  alongside them.
+- Reading that as a Gemini problem has already put one round of
+  timeout inflation into the production runtime.
+
+### Google-only
+
+`tests/e2e-live/google.live.spec.ts` doesn't use the shared suite
+(see the header comment there for why), and detects a successful
+attach differently:
+
+- Google's `change` handler consumes the file and **resets the
+  input**, so reading `input.files` after the bridge call always
+  sees 0.
+- The test registers a capture-phase `change` listener before
+  calling the runtime and asserts on the filenames recorded there
+  — that fires ahead of Google's handlers.
+- It then waits for `button[aria-label="Remove file attachment"]`,
+  the chip Google renders once it has actually ingested the image.
+  That guards against a dispatch that looked fine but was
+  server-rejected.
 
 ## Troubleshooting
 
