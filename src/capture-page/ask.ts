@@ -232,10 +232,10 @@ let currentDefaultAcceptedKinds: ('image' | 'text')[] | undefined;
 let currentDefaultMaxAttachmentCount: number | undefined;
 let currentDefaultDisplayName: string | undefined;
 
-// Tracks the deferred-listener-attach `setTimeout` (see openAskMenu).
+// Tracks the deferred listener attach `setTimeout` (see openAskMenu).
 // closeAskMenu() clears it so a close that happens *before* the timer
-// fires doesn't leak listener attaches against an already-hidden menu.
-let askListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
+// fires doesn't leak a listener attach against an already-hidden menu.
+let askClickListenerAttachTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Arrow-key navigation over the destination rows, shared with the
 // column's Zoom / More popovers. Built in `initAsk`.
@@ -469,9 +469,9 @@ function closeAskMenu(): void {
   askMenu.hidden = true;
   focusAskMenuOnRender = false;
   askMenuBtn.setAttribute('aria-expanded', 'false');
-  if (askListenerAttachTimer !== null) {
-    clearTimeout(askListenerAttachTimer);
-    askListenerAttachTimer = null;
+  if (askClickListenerAttachTimer !== null) {
+    clearTimeout(askClickListenerAttachTimer);
+    askClickListenerAttachTimer = null;
   }
   document.removeEventListener('click', onDocumentClickWhileAskOpen, true);
   document.removeEventListener('keydown', onKeydownWhileAskOpen, true);
@@ -606,16 +606,27 @@ async function openAskMenu(focusFirstItem = false): Promise<void> {
   askMenuList.appendChild(loading);
   askMenu.hidden = false;
   askMenuBtn.setAttribute('aria-expanded', 'true');
-  // Defer listener attach so the click that opened the menu doesn't
-  // immediately close it on the same event-loop tick. Track the timer
-  // and check `askMenu.hidden` at fire time so a close-before-fire
-  // (Escape, programmatic toggle, etc.) doesn't leave dangling
-  // listeners — closeAskMenu() also clears the pending timer.
-  askListenerAttachTimer = setTimeout(() => {
-    askListenerAttachTimer = null;
+  // Keys are taken from the moment the menu is up, *before* the await
+  // below. The rows arrive after an SW round-trip whose completion can
+  // beat a `setTimeout(0)` callback, so a deferred attach leaves a
+  // window in which the menu looks open and populated but silently
+  // drops Escape / arrows / Enter.
+  //
+  // Attaching from the keydown that opened the menu (Enter on
+  // `#ask-menu-btn` fires its click as that keydown's default action)
+  // is safe: the keydown is already past document's capture phase, and
+  // a capture-phase listener doesn't fire on the way back up.
+  document.addEventListener('keydown', onKeydownWhileAskOpen, true);
+  // The click listener does still have to wait a tick, or the very
+  // click that opened the menu would count as an outside-click and
+  // close it again. Track the timer and check `askMenu.hidden` at fire
+  // time so a close-before-fire (Escape, programmatic toggle, etc.)
+  // doesn't leave a dangling listener — closeAskMenu() also clears the
+  // pending timer.
+  askClickListenerAttachTimer = setTimeout(() => {
+    askClickListenerAttachTimer = null;
     if (askMenu.hidden) return;
     document.addEventListener('click', onDocumentClickWhileAskOpen, true);
-    document.addEventListener('keydown', onKeydownWhileAskOpen, true);
   }, 0);
 
   const { providers, defaultDestination, staleTabPin } = await fetchAskState();

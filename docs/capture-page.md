@@ -2564,6 +2564,26 @@ open/close, so it wires the nav itself).
   mouse open, and once focus is already inside the menu, so it can't
   yank the user back to the top after they've arrowed on.
 
+**When the listeners go on**
+
+- Both menu families attach their document-level *keydown* listener
+  synchronously in the open call, so an open menu answers keys from
+  the moment it's up — including during the Ask menu's "Loading…"
+  phase, before its rows exist.
+- The Ask menu's *outside-click* listener is the one exception: it
+  waits a tick (`setTimeout(0)`), or the very click that opened the
+  menu would count as an outside click and close it again. The
+  column popovers dodge this by dismissing on `mousedown` instead,
+  which the opening click has already delivered.
+- The keydown listener must not be deferred alongside it. The rows
+  land after an SW round-trip that can beat a `setTimeout(0)`
+  callback, which used to leave a window where the menu looked open
+  and populated but silently dropped Escape / arrows / Enter.
+- Attaching from the keydown that opened the menu (Enter on a button
+  fires its click as that keydown's default action) is safe: the
+  keydown is already past document's capture phase, and a
+  capture-phase listener doesn't fire on the way back up.
+
 **Focus look**
 
 - `.zoom-menu-item:focus` / `.palette-menu-item:enabled:focus` take
