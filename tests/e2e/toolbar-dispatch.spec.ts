@@ -916,19 +916,25 @@ test('Capture page: format radio falls back when preferred format has no content
     withSelection: { screenshot: false, html: false, selection: true, format: 'markdown' },
   });
 
-  // Open a capture.html tab directly from the SW and seed its
-  // session with a fake `DetailsSession` carrying html-only
-  // selection content. We reload the page after seeding so
-  // `loadData` runs against the populated session — sidesteps the
-  // race between `chrome.tabs.create` returning and the page's
-  // first `getDetailsData` round-trip.
-  const capturePagePromise = extensionContext.waitForEvent('page', {
-    predicate: (p) => p.url().endsWith('/capture.html'),
-    timeout: 5000,
-  });
+  // Open a capture.html tab directly from the SW, seeded with a fake
+  // `DetailsSession` carrying html-only selection content.
+  //
+  // The tab is created at `about:blank` and only navigated to
+  // capture.html *after* the session is stored. Creating it at
+  // capture.html directly is a race: the page's first
+  // `getDetailsData` can beat our `storage.session.set`, and a
+  // Capture page that gets no session latches into `staleMode` and
+  // hides all its controls — there's no retry. (Production doesn't
+  // hit this: the SW seeds the session in the same task that created
+  // the tab, long before the page's script runs.)
+  //
+  // Snapshot the pages that already exist so the poll below can tell
+  // *our* Capture page from a straggler: fixture teardown gives up on
+  // a `page.close()` that hasn't landed within its bound, so a slow-
+  // closing Capture page from an earlier test can still be attached.
+  const preexisting = new Set(extensionContext.pages());
   await sw.evaluate(async () => {
-    const url = chrome.runtime.getURL('capture.html');
-    const tab = await chrome.tabs.create({ url });
+    const tab = await chrome.tabs.create({ url: 'about:blank' });
     await chrome.storage.session.set({
       [`captureDetails_${tab.id!}`]: {
         capture: {
@@ -951,10 +957,24 @@ test('Capture page: format radio falls back when preferred format has no content
         openerTabId: tab.id,
       },
     });
+    await chrome.tabs.update(tab.id!, { url: chrome.runtime.getURL('capture.html') });
   });
-  const capturePage = await capturePagePromise;
-  await capturePage.waitForLoadState('domcontentloaded');
-  await capturePage.reload();
+  // The tab already existed (as about:blank) before it became the
+  // Capture page, so there's no `page` event to wait on for the
+  // capture.html URL — poll the context's page list instead.
+  let found: Page | undefined;
+  await expect
+    .poll(
+      () => {
+        found = extensionContext
+          .pages()
+          .find((p) => !preexisting.has(p) && p.url().endsWith('/capture.html'));
+        return Boolean(found);
+      },
+      { timeout: 5000 },
+    )
+    .toBe(true);
+  const capturePage = found!;
   await capturePage.waitForLoadState('domcontentloaded');
 
   // The preferred format (`markdown`) is empty for this capture, so
@@ -966,7 +986,12 @@ test('Capture page: format radio falls back when preferred format has no content
   // withSelection.selection = true).
   await expect(capturePage.locator('#cap-selection')).toBeChecked();
 
-  await capturePage.close();
+  // No explicit `capturePage.close()`. The Capture page flushes its
+  // UI state to the SW on `pagehide`, and closing it late in a long
+  // run has been seen to leave `page.close()` pending past the 30 s
+  // test timeout. The fixture teardown closes leftover pages with a
+  // bound on each close, so a slow one costs seconds instead of
+  // failing a test whose assertions have all already passed.
 });
 
 // ─── getDefaultWithoutSelectionId storage migration ──────────────

@@ -27,6 +27,30 @@ multi-step drilling behavior.
   probe and caller's `evaluate`); practical mitigation is to
   bundle all work for a single test into one `evaluate` block.
 
+### Shared per-test hooks must be fixtures, not `beforeEach`
+
+- `tests/fixtures/extension.ts` is imported by every e2e spec, but
+  Node caches the module: its top level executes **once per
+  Playwright worker**, while the worker's *first* spec file loads.
+- Playwright attaches a `test.beforeEach` / `test.afterEach` to
+  whichever file is loading when the call runs. Module-level hooks
+  there therefore covered only that first spec file — every later
+  file in the worker ran without them, silently.
+- That is exactly what happened here: the capture-quota wait and
+  the leftover-page cleanup stopped running after the first spec
+  file, so pages leaked for the rest of the worker's life.
+- Each extra attached page slows every CDP round-trip, which made
+  identical tests run several times slower purely because of what
+  ran before them.
+- **Rule:** shared per-test setup/teardown belongs in an
+  `{ auto: true }` fixture (`extensionHooks`), which has no file
+  affinity. Reserve `beforeEach`/`afterEach` for hooks written
+  inside a spec file, or in a helper the spec calls at load time
+  (e.g. `installAskTestHooks()`).
+- Corollary, now that cleanup really does run everywhere: a page
+  must not be expected to survive into a later test. Create pages
+  inside the test that uses them.
+
 ### Playwright cannot click the toolbar or open a context menu
 
 - There's no real click on the extension icon and no
@@ -82,9 +106,9 @@ multi-step drilling behavior.
   - `waitForCaptureQuota(sw)` reads the ring and sleeps only the
     minimum needed (often 0 ms) so a third call won't trip the
     quota.
-- A global `test.beforeEach` in `tests/fixtures/extension.ts`
-  installs the tracker and waits — specs no longer carry their
-  own ~600 ms cushion.
+- The `extensionHooks` auto fixture in
+  `tests/fixtures/extension.ts` installs the tracker and waits —
+  specs no longer carry their own ~600 ms cushion.
 - Backoff retries are tagged `[capture-quota]` and forwarded from
   the SW console to test stderr, so spikes in retries are visible
   during a run without per-spec instrumentation.

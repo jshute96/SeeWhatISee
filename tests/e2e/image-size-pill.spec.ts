@@ -29,13 +29,6 @@ import {
   openImageDetailsFlow,
 } from './details-helpers';
 
-// chrome.tabs.captureVisibleTab is rate-limited (~2/s per window).
-// Mirrors the cushion the capture-drawing-*.spec.ts files use so
-// neighboring captures don't trip the quota.
-test.beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 600));
-});
-
 // Pill text shape: `${LABEL} · ${W}×${H} · ${formatBytes(bytes)}`.
 // `formatBytes` emits `123 B`, `1.5 KB`, or `12 MB` (1 decimal under
 // 10, integer otherwise). Captured as named groups so each test can

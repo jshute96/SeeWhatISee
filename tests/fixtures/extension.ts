@@ -18,6 +18,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 
+// How long teardown waits on a single `page.close()` before giving up
+// — see the call site for why this is bounded.
+const PAGE_CLOSE_TIMEOUT_MS = 3000;
+
 // `extensionContext` is *worker-scoped* so a single Chromium window
 // (with the extension loaded) is reused across every test in the same
 // Playwright worker. Spinning up a fresh persistent context per test
@@ -59,6 +63,9 @@ type TestFixtures = {
   // gnarly details).
   getServiceWorker: GetServiceWorker;
   extensionId: string;
+  // Auto-fixture (see its body) — nothing to consume, it just has to
+  // run around every test.
+  extensionHooks: void;
 };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -190,46 +197,72 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const id = new URL(sw.url()).host;
     await use(id);
   },
-});
 
-// Smart wait for the captureVisibleTab quota — see capture-quota.ts.
-//
-// Replaces the unconditional `await sleep(600)` that every spec's
-// own `beforeEach` used to carry. The new flow:
-//   - `installCaptureQuotaTracker` patches the SW so successful
-//     captures stamp a 2-entry ring of timestamps.
-//   - `waitForCaptureQuota` reads the ring and sleeps only the
-//     remainder needed for a third call to be quota-safe — typically
-//     0 ms when the previous test captured early and then spent
-//     time on assertions.
-//   - The patch also auto-retries the
-//     `MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND` error as a safety
-//     net for cases the proactive wait under-estimates.
-test.beforeEach(async ({ getServiceWorker }) => {
-  const sw = await getServiceWorker();
-  await installCaptureQuotaTracker(sw);
-  await waitForCaptureQuota(sw);
-});
+  // Per-test setup/teardown shared by every extension spec. This is an
+  // *auto fixture*, not a `test.beforeEach` / `test.afterEach` pair,
+  // and that distinction matters:
+  //
+  //   - Node caches this module, so its top level executes exactly
+  //     once per Playwright worker — while the *first* spec file of
+  //     that worker is being loaded.
+  //   - Playwright attaches a `test.beforeEach` to whichever file is
+  //     loading at the time it is called. So module-level hooks here
+  //     only ever ran for that first spec file; every later file in
+  //     the same worker silently ran with no quota wait and no page
+  //     cleanup.
+  //   - Leaked pages then piled up for the rest of the worker's life,
+  //     and each extra page slows down every CDP round-trip. That
+  //     made identical tests run several times slower purely because
+  //     of what ran before them.
+  //
+  // Fixtures have no such file affinity — an auto fixture runs for
+  // every test that uses this `test` object, in any file.
+  //
+  // Setup: the smart captureVisibleTab quota wait (see
+  // capture-quota.ts). `installCaptureQuotaTracker` patches the SW so
+  // successful captures stamp a 2-entry timestamp ring;
+  // `waitForCaptureQuota` sleeps only the remainder needed for the
+  // next call to stay under Chrome's 2-per-second cap — typically
+  // 0 ms. The patch also auto-retries the quota error as a safety net.
+  //
+  // Teardown: close any pages the test left behind. Tests generally
+  // close their own, but cleanup is best-effort and failure paths
+  // skip it. `about:blank` pages are left alone (Chrome's initial tab
+  // counts) and errors from already-closed pages are swallowed.
+  extensionHooks: [
+    async ({ getServiceWorker, extensionContext }, use) => {
+      const sw = await getServiceWorker();
+      await installCaptureQuotaTracker(sw);
+      await waitForCaptureQuota(sw);
 
-// Safety-net cleanup: close any pages a test left behind. Tests
-// generally close their own opens, but cleanup is best-effort and
-// failure paths can skip it. Stragglers accumulate over the worker's
-// lifetime and slow down `tracing.startChunk` (which snapshots every
-// attached page at the start of each test) — past a few dozen pages
-// the CDP roundtrip can stall long enough to blow the test timeout
-// during fixture setup. Closing here keeps the page list bounded.
-//
-// We leave `about:blank` pages alone (Chrome's initial tab counts)
-// and swallow errors from pages the test already closed.
-test.afterEach(async ({ extensionContext }) => {
-  for (const page of extensionContext.pages()) {
-    try {
-      if (page.url() === 'about:blank') continue;
-      await page.close();
-    } catch {
-      // page already closed, or context tearing down — ignore.
-    }
-  }
+      await use();
+
+      for (const page of extensionContext.pages()) {
+        if (page.url() === 'about:blank') continue;
+        // Bounded: a page whose renderer is wedged (or which is
+        // mid-navigation as the test ends) can leave `close()` pending
+        // indefinitely. Fixture teardown counts against the *test*
+        // timeout, so an unbounded wait here turns a passing test into
+        // a 30 s "Tearing down extensionHooks exceeded the test
+        // timeout" failure. A straggler page is a much smaller problem
+        // than a false failure, so we give up and move on.
+        //
+        // The `.catch` sits on the close promise itself rather than
+        // around the race: a page that already closed (or a context
+        // tearing down) can reject *after* the timeout has won, and a
+        // try/catch around the race would no longer be listening.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          page.close().catch(() => {}),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, PAGE_CLOSE_TIMEOUT_MS);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
+    },
+    { auto: true },
+  ],
 });
 
 export const expect = test.expect;

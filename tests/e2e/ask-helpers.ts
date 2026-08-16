@@ -8,8 +8,8 @@
 // the same snapshot/restore of `ASK_PROVIDERS`. None of that is
 // specific to either suite, so it lives here to keep the spec files
 // focused on tests rather than rigging. (The `captureVisibleTab`
-// quota wait that used to live here is now in the global
-// `tests/fixtures/extension.ts` beforeEach.)
+// quota wait that used to live here is now in the `extensionHooks`
+// auto fixture in `tests/fixtures/extension.ts`.)
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -164,7 +164,7 @@ export async function overrideAskProviders(
  *     default.
  *
  * The captureVisibleTab quota wait that used to live here as a 600 ms
- * sleep is now installed globally by the extension fixture (see
+ * sleep now runs in the `extensionHooks` auto fixture (see
  * `tests/fixtures/extension.ts`), so each test only sleeps the
  * remaining time actually needed to stay under the rate limit.
  *
