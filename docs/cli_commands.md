@@ -232,7 +232,7 @@ Platform-specific differences stay in the top-level templates:
   `copy-last-snapshot.sh` via `!{...}`.
 
 The generator `skills/generate-skills.py` runs in validate
-mode by default (exit 1 on drift), is wired into `npm test` via
-`npm run test:skills`, and has `--diff` / `--update` flags. See
+mode by default (exit 1 on drift), is wired into `pnpm test` via
+`pnpm run test:skills`, and has `--diff` / `--update` flags. See
 `CLAUDE.md` → "Keep the skill files in sync" for the full
 workflow.

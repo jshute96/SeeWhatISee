@@ -342,7 +342,7 @@ prompt-about-the-URL without attaching any page content.
 ## Why a separate `dist/`
 
 - `src/` holds TypeScript and the manifest template.
-- `npm run build` compiles to `dist/` and copies the manifest and
+- `pnpm run build` compiles to `dist/` and copies the manifest and
   icons across.
 - Chrome loads the extension unpacked from `dist/`.
 - Keeping sources and build output separate means the loaded

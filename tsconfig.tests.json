@@ -5,7 +5,7 @@
 // `tests/` went unchecked — Playwright transpiles without checking
 // types, so a broken annotation there surfaced as nothing at all.
 //
-// Wired up as `npm run typecheck:tests`, which `npm test` runs.
+// Wired up as `pnpm run typecheck:tests`, which `pnpm test` runs.
 //
 // `lib` adds `DOM.Iterable` because page-side `evaluate` bodies
 // iterate `NodeList` / `FileList` directly.

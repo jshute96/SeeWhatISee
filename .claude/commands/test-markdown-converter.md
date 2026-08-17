@@ -13,7 +13,7 @@ Targets come in as space-separated arguments below — each is either:
 
 2. First, make sure the converter is built so the helper script can
    import it:
-   - Run `npm run build` once at the start. Don't rebuild per target.
+   - Run `pnpm run build` once at the start. Don't rebuild per target.
 
 3. For each target, launch a background Agent (all in parallel, in
    one message with multiple Agent tool uses) that:

@@ -1,8 +1,8 @@
 // Unit tests for `src/shrink.ts` — the Shrink-tool image operator
 // that tightens a rectangle around its content.
 //
-// Runs under `node --test`. The `pretest:unit` script builds
-// `dist/` first, so `npm run test:unit` is enough.
+// Runs under `node --test`. The `test:unit` script builds
+// `dist/` first, so `pnpm run test:unit` is enough.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

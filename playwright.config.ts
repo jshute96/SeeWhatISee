@@ -23,7 +23,7 @@ import { defineConfig } from '@playwright/test';
 // long-running persistent context, and the failures show up as a
 // "trace recording" fixture-setup timeout rather than anything in the
 // test itself. To capture traces while debugging a failure, run with
-// `PW_TRACE=retain-on-failure npm run test:e2e` (or any other value
+// `PW_TRACE=retain-on-failure pnpm run test:e2e` (or any other value
 // from Playwright's `trace` option — `on`, `on-first-retry`, etc.).
 const trace = (process.env.PW_TRACE ?? 'off') as
   | 'off'

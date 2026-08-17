@@ -2,9 +2,9 @@
 //
 // These tests hit real AI sites (claude.ai, gemini.google.com,
 // chatgpt.com) with a logged-in user and so are NOT part of the
-// default `npm run test:e2e`. They run only when explicitly
-// requested via `npm run test:live` (all providers) or
-// `npm run test:live-<provider>` (one project).
+// default `pnpm run test:e2e`. They run only when explicitly
+// requested via `pnpm run test:live` (all providers) or
+// `pnpm run test:live-<provider>` (one project).
 //
 // Scope is narrow: each spec tests the inject library
 // (`src/ask-inject.ts`) directly against the real AI page — it
@@ -25,7 +25,7 @@
 //   1. Drop a spec at `tests/e2e-live/<provider>.live.spec.ts`.
 //   2. Add a project entry below following the Claude/Gemini/ChatGPT
 //      pattern.
-//   3. Optionally add an `npm run test:live-<provider>` script.
+//   3. Optionally add a `pnpm run test:live-<provider>` script.
 
 import { defineConfig } from '@playwright/test';
 

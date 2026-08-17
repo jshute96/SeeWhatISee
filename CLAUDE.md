@@ -46,9 +46,9 @@ user before elaborating further. Default to action over planning.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
 
 ## Running tests
-- Prefer running a single test file over `npm test` — the full suite (Playwright e2e) is slow.
+- Prefer running a single test file over `pnpm test` — the full suite (Playwright e2e) is slow.
   - Unit: `node --test tests/unit/<file>.test.mjs`
-  - E2E: `npx playwright test tests/e2e/<file>.spec.ts`
+  - E2E: `pnpm exec playwright test tests/e2e/<file>.spec.ts`
 - When you do need a full run, start it with Bash `run_in_background: true` so it doesn't block the turn.
 
 ## Dev repo vs. release repos for skills
@@ -95,7 +95,7 @@ do not edit the per-bundle copies.
 - The generator is `skills/generate-skills.py`:
   - `skills/generate-skills.py` — validate that each target matches the
     template output (exits non-zero if any differ). Also wired up as
-    `npm run test:skills` and runs as part of `npm test`, so `npm test` will
+    `pnpm run test:skills` and runs as part of `pnpm test`, so `pnpm test` will
     fail if the generated files have drifted from the templates.
   - `skills/generate-skills.py --diff` — same validation, but also
     prints a unified diff for each mismatching file.

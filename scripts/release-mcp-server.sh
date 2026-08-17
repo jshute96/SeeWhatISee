@@ -8,21 +8,23 @@
 # Artifact: published to the npm registry; no GitHub-attached zip.
 #
 # Steps:
-#   0. Verify gh + npm + that you're logged into npm.
+#   0. Verify gh + pnpm + that you're logged into the npm registry.
 #   1. Verify the working tree is clean, on main, in sync with origin.
 #   2. Compute the new version from the requested bump type.
 #   3. Verify the resulting tag doesn't exist locally or on origin.
 #   4. Run tests + build before mutating any state, so a failing test
 #      doesn't pollute git.
-#   5. Bump mcp-server/package.json with `npm version --no-git-tag-version`
-#      (file-only — no auto-commit or auto-tag from npm).
-#   6. Sync the root lockfile so the workspace + lockfile stay aligned.
-#   7. Commit the version bump and create the mcp-server-vX.Y.Z tag.
-#   8. `npm publish` from inside mcp-server/ (its prepack runs the build,
+#   5. Bump mcp-server/package.json with `pnpm version --no-git-tag-version`
+#      (file-only — no auto-commit or auto-tag).
+#   6. Commit the version bump and create the mcp-server-vX.Y.Z tag.
+#   7. `pnpm publish` from inside mcp-server/ (its prepack runs the build,
 #      its prepublishOnly runs the tests, so this is the second safety
 #      net after step 4).
-#   9. Push the commit + tag to origin together.
-#  10. Create a GitHub release with auto-generated notes (draft by default).
+#   8. Push the commit + tag to origin together.
+#   9. Create a GitHub release with auto-generated notes (draft by default).
+#
+# pnpm-lock.yaml doesn't record a workspace package's own version, so
+# there's no lockfile to refresh after the bump.
 #
 # Usage:
 #   scripts/release-mcp-server.sh patch              # 0.1.0 → 0.1.1 (draft GH release)
@@ -33,7 +35,7 @@
 #
 # NOTE: For the first publish of the package, do it manually once to
 # register the name on the npm registry:
-#   cd mcp-server && npm publish
+#   cd mcp-server && pnpm publish
 # Subsequent releases use this script.
 #
 # If the publish step fails after the version-bump commit / tag exist
@@ -87,9 +89,9 @@ source scripts/_release-common.sh
 
 # 0. Preflight.
 release_check_gh
-command -v npm >/dev/null 2>&1 || { echo "npm not found in PATH."; exit 1; }
-if ! npm whoami >/dev/null 2>&1; then
-  echo "Not logged into npm. Run 'npm login' first."
+command -v pnpm >/dev/null 2>&1 || { echo "pnpm not found in PATH."; exit 1; }
+if ! pnpm whoami >/dev/null 2>&1; then
+  echo "Not logged into the npm registry. Run 'pnpm login' first."
   exit 1
 fi
 
@@ -117,34 +119,31 @@ release_check_tag_unused "$TAG"
 
 # 4. Tests + build first, so a red test doesn't pollute git state.
 echo "Running tests and build..."
-npm run test:mcp-server --silent
-npm run build:mcp-server --silent
+pnpm --silent run test:mcp-server
+pnpm --silent run build:mcp-server
 
 # 5. Bump just the version in mcp-server/package.json. --no-git-tag-version
-#    prevents npm from creating its own commit / tag — we control both.
-(cd mcp-server && npm version "$NEW" --no-git-tag-version >/dev/null)
+#    keeps it file-only — no auto-commit or auto-tag; we control both.
+(cd mcp-server && pnpm version "$NEW" --no-git-tag-version >/dev/null)
 
-# 6. Refresh the root lockfile so it carries the new workspace version.
-npm install --silent
-
-# 7. Commit + tag locally. The tag is annotated so it shows up cleanly in
+# 6. Commit + tag locally. The tag is annotated so it shows up cleanly in
 #    `git tag -l --format` and gets a creation date.
-git add mcp-server/package.json package-lock.json
+git add mcp-server/package.json
 git commit -m "mcp-server: $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
-# 8. Publish to npm. prepack → npm run build; prepublishOnly → npm test.
+# 7. Publish to npm. prepack → pnpm run build; prepublishOnly → pnpm test.
 #    If this fails the commit + tag are still local-only and easy to
 #    undo (see the script header).
-(cd mcp-server && npm publish)
+(cd mcp-server && pnpm publish)
 
-# 9. Now that the registry has the new version, push the commit + tag
+# 8. Now that the registry has the new version, push the commit + tag
 #    together. --follow-tags only pushes annotated tags that point at
 #    pushed commits, which matches what we just made.
 git push --follow-tags
 
-# 10. GitHub release with the bundled binary attached and auto-generated
-#     notes prefixed with the npm install URL.
+# 9. GitHub release with the bundled binary attached and auto-generated
+#    notes prefixed with the npm install URL.
 if ! $SKIP_GH_RELEASE; then
   # Stage a versioned copy of the bundle so the asset name on the
   # release page reads as a real version, not a generic name.
@@ -168,7 +167,7 @@ The server is also attached below as \`$(basename "$RELEASE_BIN")\` for direct d
     $DRAFT_FLAG
 fi
 
-# 11. Clean up the GitHub source-code archive directory if anything
+# 10. Clean up the GitHub source-code archive directory if anything
 #     extracted one alongside the release. No-op when not present.
 release_cleanup_extracted_archive "$TAG"
 

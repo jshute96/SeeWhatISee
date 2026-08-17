@@ -36,11 +36,10 @@
   "scripts": {
     "prompts": "node build-prompts.mjs",
     "prepare": "node build-prompts.mjs && tsc",
-    "build": "npm run prompts && tsc && node bundle.mjs",
-    "pretest": "npm run prompts && tsc",
-    "test": "node --test 'tests/*.test.mjs'",
-    "prepack": "npm run build",
-    "prepublishOnly": "npm test"
+    "build": "pnpm run prompts && tsc && node bundle.mjs",
+    "test": "pnpm run prompts && tsc && node --test 'tests/*.test.mjs'",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "pnpm test"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

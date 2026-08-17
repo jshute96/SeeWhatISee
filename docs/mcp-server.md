@@ -309,12 +309,12 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   for clients that support an MCP server's tools but not its prompts —
   they drive the `see-what-i-see` MCP server's tools directly.
 - `skills/generate-skills.py` validates `skills/mcp/*/SKILL.md` against
-  the templates as part of `npm run test:skills` (root-level script,
-  wired into `npm test`); drift fails the check.
+  the templates as part of `pnpm run test:skills` (root-level script,
+  wired into `pnpm test`); drift fails the check.
 - `mcp-server/build-prompts.mjs` runs from `prepare` (which also
-  runs `tsc`), so a fresh `npm install` leaves `dist/` ready for a
-  direct `node --test tests/<file>.mjs` invocation. `pretest` and
-  `build` also re-run it on every test / build.
+  runs `tsc`), so a fresh `pnpm install` leaves `dist/` ready for a
+  direct `node --test tests/<file>.mjs` invocation. The `test` and
+  `build` scripts also re-run it on every test / build.
 
 ## Differences from `SeeWhatISee.sh`
 

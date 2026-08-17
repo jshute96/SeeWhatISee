@@ -6,7 +6,7 @@ Manual e2e tests that run our injection library
 confirm the production selectors still match the live DOM and the
 production timing constants are still right.
 
-These tests are **not** part of `npm test` — they require a
+These tests are **not** part of `pnpm test` — they require a
 manually-launched browser, a logged-in test account, and they
 create real conversations on that account. Run them when:
 
@@ -79,9 +79,9 @@ get, with no test logic copied.
 ## One-time setup
 
 ```bash
-npm install
-npx playwright install chromium
-npm run build
+pnpm install
+pnpm exec playwright install chromium
+pnpm run build
 scripts/open-test-browser.sh
 ```
 
@@ -98,11 +98,11 @@ Leave the browser running.
 ## Running
 
 ```bash
-npm run test:live-claude        # just Claude
-npm run test:live-claude-code   # just Claude Code (claude.ai/code)
-npm run test:live-gemini        # just Gemini
-npm run test:live-chatgpt       # just ChatGPT
-npm run test:live               # all enabled providers
+pnpm run test:live-claude        # just Claude
+pnpm run test:live-claude-code   # just Claude Code (claude.ai/code)
+pnpm run test:live-gemini        # just Gemini
+pnpm run test:live-chatgpt       # just ChatGPT
+pnpm run test:live               # all enabled providers
 ```
 
 The Claude Code project requires that the test browser's profile
@@ -175,7 +175,7 @@ goes to some lengths to keep that to a minimum:
   (one window raise).
 - The browser handle and the per-provider tab references are held
   at module scope, so they're shared across the Claude / Gemini /
-  ChatGPT suites in the same `npm run test:live`.
+  ChatGPT suites in the same `pnpm run test:live`.
 - `afterAll` navigates the cached page back to the start URL and
   leaves it open, so the *next* run finds it via the same loop.
 
@@ -356,7 +356,7 @@ separate mirror to keep in sync.
 
 ### Auto-submit test passes but no `user-message` bubble
 
-Inspect the trace via `npx playwright show-trace
+Inspect the trace via `pnpm exec playwright show-trace
 test-results/<…>/trace.zip`. Often the runtime returned `ok:
 true` but Claude rejected the message (e.g., quota hit). Try
 the same flow manually in the test browser to confirm.
@@ -364,7 +364,7 @@ the same flow manually in the test browser to confirm.
 ### Iterating on extension code
 
 Chrome doesn't auto-reload extensions when `dist/` files
-change. After an `npm run build`:
+change. After a `pnpm run build`:
 
 - Either kill the test browser and rerun `scripts/open-test-browser.sh`.
 - Or open `chrome://extensions` in the test browser, find the
@@ -391,7 +391,7 @@ checking against the running extension, reload it first.
    (follow the Claude / Gemini / ChatGPT / Google pattern).
 3. Log in to the provider in the running test browser
    (`.chrome-test-profile/` retains the session).
-4. Optionally add an `npm run test:live-<provider>` script.
+4. Optionally add a `pnpm run test:live-<provider>` script.
 
 ## Cleanup
 

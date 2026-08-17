@@ -1,0 +1,6 @@
+packages:
+  - 'mcp-server'
+# esbuild's postinstall links its platform-specific native binary; the
+# mcp-server bundle step needs it.
+allowBuilds:
+  esbuild: true

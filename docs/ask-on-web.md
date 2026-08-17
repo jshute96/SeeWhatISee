@@ -968,7 +968,7 @@ There's a separate manual suite at `tests/e2e-live/` that runs
 the injection library against the **real** provider pages
 (claude.ai, gemini.google.com, chatgpt.com, google.com). Used to
 confirm prod selectors still match the live DOM and the prod
-timings still work. Not part of `npm test`.
+timings still work. Not part of `pnpm test`.
 
 Setup, running, design principles, and how to add a new
 provider all live in [`ask-live-tests.md`](ask-live-tests.md).

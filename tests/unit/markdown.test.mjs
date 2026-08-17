@@ -2,8 +2,8 @@
 // conversion used by the selection capture paths.
 //
 // Runs under Node's built-in `node:test` runner (Node 20+), reading
-// the compiled module out of `dist/`. The `pretest:unit` script in
-// package.json builds `dist/` first, so invoking `npm run test:unit`
+// the compiled module out of `dist/`. The `test:unit` script in
+// package.json builds `dist/` first, so invoking `pnpm run test:unit`
 // is enough; running `node --test` directly on these files also
 // works once `dist/` exists.
 

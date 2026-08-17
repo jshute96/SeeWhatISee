@@ -77,7 +77,7 @@ install path:
 
 ```
 .claude/
-├── settings.json                 # local-dev: bash permissions for plugin scripts + npm tests
+├── settings.json                 # local-dev: bash permissions for plugin scripts + pnpm tests
 └── skills/                       # local-dev: symlinks into skills/claude-plugin/skills/
     ├── see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
     ├── see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch

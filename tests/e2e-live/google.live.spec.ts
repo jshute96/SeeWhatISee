@@ -131,7 +131,7 @@ test.beforeAll(async () => {
   if (!fs.existsSync(ASK_INJECT_PATH)) {
     throw new Error(
       `Build the extension first — ${ASK_INJECT_PATH} not found.\n` +
-        `Run: npm run build`,
+        `Run: pnpm run build`,
     );
   }
   askInjectSrc = fs.readFileSync(ASK_INJECT_PATH, 'utf8');

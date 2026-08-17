@@ -16,7 +16,7 @@ multi-step drilling behavior.
   launches a Chromium persistent context with
   `--load-extension=<dist>` plus an allowlist for the extension
   service worker.
-- Run `npm run build` first so `dist/` is up to date.
+- Run `pnpm run build` first so `dist/` is up to date.
 
 ### `getServiceWorker()` re-resolves every call
 
@@ -44,8 +44,8 @@ multi-step drilling behavior.
 
 - `tsconfig.json` compiles `src/` only, and Playwright transpiles
   specs without checking types — so nothing checked `tests/*.ts`.
-- `tsconfig.tests.json` + `npm run typecheck:tests` close that gap,
-  and `npm test` runs the check before the suite.
+- `tsconfig.tests.json` + `pnpm run typecheck:tests` close that gap,
+  and `pnpm test` runs the check before the suite.
 - It runs in about a second, so it's the cheapest way to catch a
   broken annotation before paying for a 9-minute e2e run.
 

@@ -359,10 +359,16 @@ The scripts that extract these records to pass to agents expand `filename` to ho
 
 ### Setup
 
+This repo uses [pnpm](https://pnpm.io/) (a faster, disk-efficient npm
+alternative). Install it once with `corepack enable pnpm`, then:
+
 ```bash
-npm install
-npx playwright install chromium
+pnpm install
+pnpm exec playwright install chromium
 ```
+
+A `preinstall` guard rejects `npm install` / `yarn install` so the
+lockfile can't drift.
 
 ### Developing skills
 
@@ -380,8 +386,8 @@ Send a PR if you get skills working for another tool.
 ### Building
 
 ```bash
-npm run build        # one-shot build into dist/
-npm run watch        # rebuild on TS changes
+pnpm run build        # one-shot build into dist/
+pnpm run watch        # rebuild on TS changes
 ```
 
 ### Install Chrome extension from source
@@ -399,13 +405,13 @@ In Chrome: open `chrome://extensions`, enable **Developer mode**, click **Load u
 ### Testing
 
 ```bash
-npm test                  # validate skill templates, type-check the tests, run unit + MCP-server + Playwright e2e tests
-npm run test:skills       # validate skill templates only (fast, no build)
-npm run typecheck:tests   # type-check the tests/ TypeScript tree only (fast, no build)
-npm run test:e2e          # run Playwright e2e tests only
-npm run test:headed       # same as test:e2e, with a visible browser
-npm run test:unit         # run the HTML→markdown converter unit tests
-npm run test:mcp-server   # run the MCP server's tests (in-memory transport)
+pnpm test                  # validate skill templates, type-check the tests, run unit + MCP-server + Playwright e2e tests
+pnpm run test:skills       # validate skill templates only (fast, no build)
+pnpm run typecheck:tests   # type-check the tests/ TypeScript tree only (fast, no build)
+pnpm run test:e2e          # run Playwright e2e tests only
+pnpm run test:headed       # same as test:e2e, with a visible browser
+pnpm run test:unit         # run the HTML→markdown converter unit tests
+pnpm run test:mcp-server   # run the MCP server's tests (in-memory transport)
 ```
 
 The tests load the unpacked extension from `dist/` and drive it by
@@ -447,14 +453,14 @@ scripts/SeeWhatISee.sh --stop                   # stop a watcher running with --
 
 ### MCP server
 
-`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as an npm workspace, so the root `npm install` covers it.
+`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as a pnpm workspace, so the root `pnpm install` covers it.
 
 Design doc: `docs/mcp-server.md`.
 
 Build the single-file bundle:
 
 ```bash
-npm run build:mcp-server
+pnpm run build:mcp-server
 ```
 
 That produces `mcp-server/dist/seewhatisee-mcp.js` — a single bundled Node script with a `#!/usr/bin/env node` shebang, ready to run.
@@ -464,7 +470,7 @@ That produces `mcp-server/dist/seewhatisee-mcp.js` — a single bundled Node scr
 The fastest way to poke at the server is the official inspector — a local web UI that lists tools, lets you call each one with form-filled args, reads/subscribes to resources, and renders prompts:
 
 ```bash
-npx @modelcontextprotocol/inspector node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
+pnpm dlx @modelcontextprotocol/inspector node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
 #### Try it in Claude Code
@@ -480,7 +486,7 @@ Inside any Claude Code session after that, the `get_latest` / `watch` tools are 
 #### Tests
 
 ```bash
-npm run test:mcp-server
+pnpm run test:mcp-server
 ```
 
 End-to-end tests use the SDK's in-memory transport — no subprocess, no stdio framing, just a `Client` and `Server` linked inside one Node process.
@@ -494,9 +500,9 @@ scripts/release-mcp-server.sh patch --publish    # publish the GH release immedi
 scripts/release-mcp-server.sh patch --no-gh-release   # npm-only release, skip GH
 ```
 
-Bumps `mcp-server/package.json`, runs tests + build, commits, tags as `mcp-server-vX.Y.Z`, publishes to npm, pushes, and (by default) drafts a GitHub release. Requires `npm login` and `gh auth login` first. See the script header for the rollback recipe if `npm publish` fails after the local commit lands.
+Bumps `mcp-server/package.json`, runs tests + build, commits, tags as `mcp-server-vX.Y.Z`, publishes to npm, pushes, and (by default) drafts a GitHub release. Requires `pnpm login` and `gh auth login` first. See the script header for the rollback recipe if `pnpm publish` fails after the local commit lands.
 
-The first publish — to register the name on npm — is manual: `cd mcp-server && npm publish`. Subsequent releases use this script.
+The first publish — to register the name on npm — is manual: `cd mcp-server && pnpm publish`. Subsequent releases use this script.
 
 ### Building a Chrome extension release
 
@@ -534,7 +540,7 @@ GitHub UI.
   - `skills/claude-plugin/` → `plugin/` in the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo
   - `skills/dot-claude-plugin/` → `.claude-plugin/` in that release repo
   - `skills/dot-gemini/` → root of the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo
-- `mcp-server/` — standalone TS MCP server (npm workspace) that exposes
+- `mcp-server/` — standalone TS MCP server (pnpm workspace) that exposes
   captures over the Model Context Protocol; bundled to a single
   `dist/seewhatisee-mcp.js` for distribution
 - `tests/e2e/` — Playwright tests

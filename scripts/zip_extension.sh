@@ -50,7 +50,7 @@ else
   TARGET="/tmp/SeeWhatISee.zip"
 fi
 
-npm run build
+pnpm run build
 
 rm -f "$TARGET"
 cd dist && zip -r "$TARGET" .

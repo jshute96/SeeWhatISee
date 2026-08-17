@@ -4,10 +4,10 @@
       "Bash(skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
       "Bash(skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
       "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
-      "Bash(npm run build:*)",
-      "Bash(npm run test:*)",
-      "Bash(npm run test:skills:*)",
-      "Bash(npm run test:e2e:*)"
+      "Bash(pnpm run build:*)",
+      "Bash(pnpm run test:*)",
+      "Bash(pnpm run test:skills:*)",
+      "Bash(pnpm run test:e2e:*)"
     ]
   },
   "enabledPlugins": {

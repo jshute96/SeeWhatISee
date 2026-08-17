@@ -11,7 +11,8 @@ One-line descriptions of every source file, grouped by directory.
 | `THIRD_PARTY_NOTICES.md` | Attribution + license terms for bundled third-party assets — provider brand logos (Claude / Gemini / ChatGPT / Google) |
 | `CLAUDE.md` | Guidance for AI agents working in this repository |
 | `package.json` | Node project manifest, scripts, devDependencies |
-| `package-lock.json` | npm lockfile (auto-generated) |
+| `pnpm-lock.yaml` | pnpm lockfile (auto-generated) |
+| `pnpm-workspace.yaml` | pnpm workspace members and the allowlist of dependency build scripts |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `tsconfig.tests.json` | Type-check-only config covering the `tests/` TypeScript tree and the Playwright configs |
 | `playwright.config.ts` | Playwright test runner config (default e2e suite) |
@@ -22,7 +23,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `.claude/settings.json` | Local dev settings — Bash permissions for the plugin scripts and `npm test` commands |
+| `.claude/settings.json` | Local dev settings — Bash permissions for the plugin scripts and `pnpm test` commands |
 | `.claude/skills/see-what-i-see` | Symlink to `skills/claude-plugin/skills/see-what-i-see` |
 | `.claude/skills/see-what-i-see-watch` | Symlink to `skills/claude-plugin/skills/see-what-i-see-watch` |
 | `.claude/skills/see-what-i-see-stop` | Symlink to `skills/claude-plugin/skills/see-what-i-see-stop` |
@@ -143,7 +144,7 @@ Client-agnostic hybrid of the Claude and Gemini skills, with the client-specific
 
 Standalone TypeScript MCP server. Exposes the same captures as
 `SeeWhatISee.sh`, plus a subscribable `seewhatisee://captures/stream`.
-Own `package.json` (npm workspace), bundled to a single
+Own `package.json` (pnpm workspace), bundled to a single
 `dist/seewhatisee-mcp.js`. Not part of the extension build.
 
 | File | Description |
