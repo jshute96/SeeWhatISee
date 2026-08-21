@@ -8,11 +8,14 @@
 // missing URL/title, long prompt — without orchestrating one capture
 // per case.
 //
-// Not covered here: the `file://` thumbnails and file links. The
+// Not covered here: anything that needs real files on disk. The
 // harness never runs a real capture, so there's no `log.json` download
 // record for `getCaptureDirectory()` to resolve against — every
 // file-backed cell renders its no-directory fallback (bare filename /
-// unlinked label), which is what these tests assert.
+// unlinked label), which is what these tests assert. For the same
+// reason `chrome.downloads` knows nothing about the seeded filenames,
+// so the `(deleted)` markers never fire and the file-access banner
+// stays hidden.
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -289,5 +292,49 @@ test('the History page links out to Options and Help but not itself', async ({
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/history.html`);
   await expect(page.locator('.app-header .header-btn')).toHaveText(['Options', 'Help']);
+  await page.close();
+});
+
+test('a long URL scrolls inside the Page cell instead of stretching the row', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  // A real search URL's worth of tracking parameters — enough to wrap
+  // to well past the cap.
+  const longUrl = `https://example.com/search?q=cow&${'gs_lcrp=EgZjaHJvbWUqBggAEEUYOzIGCAAQRRg7&'.repeat(20)}ie=UTF-8`;
+  await seedLog(sw, [
+    { timestamp: '2026-01-02T03:04:05.000Z', url: 'https://example.com/short', title: 'Short' },
+    { timestamp: '2026-01-03T03:04:05.000Z', url: longUrl, title: 'Long' },
+  ]);
+
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+
+  const rows = page.locator('#rows tr');
+  // Newest first, so the long-URL capture leads.
+  const box = rows.nth(0).locator('.page-cell .scroll-box');
+  const size = await box.evaluate((el) => ({
+    client: el.clientHeight,
+    scroll: el.scrollHeight,
+    cap: parseFloat(getComputedStyle(el).maxHeight),
+  }));
+  // The content really does overflow, and the box really does cap it —
+  // asserting only the height would pass on a URL that happened to fit.
+  expect(size.scroll).toBeGreaterThan(size.client);
+  expect(size.client).toBeLessThanOrEqual(size.cap);
+  // Same cap as the Prompt box: both read `--thumb-h`.
+  expect(size.cap).toBe(144);
+
+  // The row is no taller than the cap plus cell padding, i.e. the long
+  // URL bought no extra height over the short one.
+  const heights = await rows.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+  expect(Math.max(...heights)).toBeLessThan(size.cap + 40);
+
+  // No capture directory in this harness, so flipping the file-URL
+  // toggle would change nothing — the banner stays hidden.
+  await expect(page.locator('#file-access-hint')).toBeHidden();
+
   await page.close();
 });

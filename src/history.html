@@ -14,8 +14,9 @@
    */
   :root {
     /* Thumbnail box. `--thumb-w` doubles as the screenshot column's
-       width and `--thumb-h` as the prompt cell's height cap, so the
-       column hugs its images and the two tall cells in a row match.
+       width and `--thumb-h` as the height cap on every `.scroll-box`
+       (Prompt, Page), so the column hugs its images and no cell in a
+       row can outgrow the screenshot beside it.
        Change these two numbers to resize the thumbnails; nothing else
        needs touching. */
     --thumb-w: 192px;
@@ -130,9 +131,21 @@
      the thumbnail's `max-width` uses. Sizing the two independently
      leaves the difference as dead space down the right of every row,
      because a fixed column can't shrink to its content. */
-  td.date-cell, th.date-cell { white-space: nowrap; width: 110px; }
+  /* Date and Files are each sized to their widest possible value plus
+     a few px of margin. Measured at this font size, including the
+     cell's 10px side padding:
+       - Date: "12:30:59 PM" (wider than any date line) → 94px.
+       - Files: "Selection (html)" → 110px. The "(deleted)" marker
+         doesn't factor in; it renders on its own line.
+     Neither column sets `nowrap`. The measurements above are en-US in
+     one UI font, and both columns can exceed them — a wider platform
+     face, or a locale where `toLocaleTimeString` yields "12:30:59 p.
+     m." or "下午12:30:59". Under `table-layout: fixed` an overlong
+     `nowrap` value spills visibly into the next column, so wrapping is
+     the better failure. */
+  td.date-cell, th.date-cell { width: 100px; }
   td.shot-cell, th.shot-cell { width: var(--thumb-w); }
-  td.files-cell, th.files-cell { white-space: nowrap; width: 130px; }
+  td.files-cell, th.files-cell { width: 116px; }
   th.page-cell { width: 30%; }
 
   .date-cell .time { color: #555; }
@@ -143,8 +156,8 @@
   /* Thumbnails are the on-disk PNG scaled down by the browser.
      `--thumb-w` is shared with the screenshot column's width so the
      widest thumbnails sit flush against the column edge (see the
-     column-sizing block above); `--thumb-h` is shared with the prompt
-     cell's cap so a row's two tall cells agree. */
+     column-sizing block above); `--thumb-h` is shared with the
+     `.scroll-box` cap so every tall cell in a row agrees. */
   .thumb {
     display: block;
     max-width: var(--thumb-w);
@@ -152,25 +165,47 @@
     border: 1px solid #ccc;
     background: #fff;
   }
-  .thumb-link { text-decoration: none; }
+  /* No underline under a thumbnail image — but when the image fails to
+     load we swap in the filename as text, and that should look like
+     the link it still is (right-click → Copy link address is the whole
+     point of keeping the <a>). So drop the underline only while an
+     image is actually in there. */
+  .thumb-link:has(.thumb) { text-decoration: none; }
+  td.shot-cell { word-break: break-all; }
 
   /* One artifact per line — `block` on every child so the unlinked
      fallback (when the capture directory can't be resolved) stacks the
      same way the links do. */
   .files-cell > * { display: block; }
   /* Unlinked fallback for a saved artifact we can't build a file://
-     URL for — greyed so it doesn't read as a dead link. */
-  .files-cell .flag { color: #777; }
+     URL for — greyed so it doesn't read as a dead link. Used by the
+     Files and Screenshot columns alike. */
+  .flag { color: #777; }
+  /* "(deleted)" — Chrome's download record says the file is no longer
+     where we wrote it. Its own line inside the artifact's label, so
+     neither column has to be sized for label-plus-marker. */
+  .deleted-mark {
+    display: block;
+    font-style: italic;
+    color: #999;
+  }
 
   .page-cell .title { font-weight: 600; }
   .page-cell .url { color: #1a5fb4; word-break: break-all; }
 
-  /* Prompt is capped to the thumbnail height and scrolls in place, so
-     one long prompt can't stretch the whole row. `pre-wrap` keeps the
-     user's line breaks. */
-  .prompt-box {
+  /* Any cell whose content has no natural length limit is capped to
+     the thumbnail height and scrolls in place, so one outlier can't
+     stretch the whole row taller than its own screenshot. Applied to
+     the Prompt box and the Page cell — a tracking-parameter-laden
+     search URL runs to a dozen wrapped lines, and none of them past
+     the first few carry information worth that much vertical space. */
+  .scroll-box {
     max-height: var(--thumb-h);
     overflow-y: auto;
+  }
+
+  /* `pre-wrap` keeps the user's line breaks in the prompt. */
+  .prompt-box {
     white-space: pre-wrap;
     word-break: break-word;
     font-size: 13px;
@@ -190,10 +225,34 @@
     max-width: 60ch;
     line-height: 1.5;
   }
-  .notice code {
-    background: #f0f0f0;
-    padding: 1px 4px;
-    border-radius: 3px;
+  /* Standing condition rather than an empty state: it sits under the
+     toolbar (outside the scrolling <main>) so it can't scroll out of
+     view while the rows it explains are on screen. Amber rather than
+     the `.notice` grey because it's actionable — something is missing
+     and the user can fix it.
+
+     `width: fit-content` shrink-wraps the box to its own text (the
+     line break in the markup is deliberate, so this ends up as wide as
+     the longer of the two lines) instead of letting a block-level <p>
+     stretch the full page and trail a wide band of empty yellow. It
+     still wraps normally once the window is narrower than the text. */
+  .banner {
+    flex: none;
+    width: fit-content;
+    margin: 0 24px 12px 24px;
+    padding: 8px 12px;
+    background: #fff8e1;
+    border: 1px solid #ffca28;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #5d4037;
+    line-height: 1.5;
+  }
+  /* Same blue as the table's URL links so it reads as a link, and
+     `nowrap` keeps "extension settings" from splitting across lines. */
+  .banner a {
+    color: #1a5fb4;
+    white-space: nowrap;
   }
 </style>
 </head>
@@ -216,6 +275,19 @@
   <span class="count" id="count"></span>
 </div>
 
+<!-- Sits outside <main> so it stays pinned under the search box
+     instead of scrolling away with the table. -->
+<p class="banner" id="file-access-hint" hidden>
+  Image thumbnails and file links are served from local disk, which
+  Chrome only allows if <b>Allow access to file URLs</b> is enabled.<br/>
+  Enable that permission in
+  <!-- Real `href` so the target is visible on hover and right-click →
+       Copy link address works, but the click is intercepted: Chrome
+       blocks a page-initiated navigation to `chrome://`, so the actual
+       open goes through `chrome.tabs.create` in history.ts. -->
+  <a href="chrome://extensions/" id="file-access-btn">extension settings</a>.
+</p>
+
 <main>
   <p class="notice" id="empty" hidden>
     No captures in the log yet. Capture something and it will show up here.
@@ -235,11 +307,6 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
-  <p class="notice" id="file-access-hint" hidden>
-    Thumbnails and file links read the saved files straight off disk.
-    To let them load, enable <b>Allow access to file URLs</b> for
-    SeeWhatISee at <code>chrome://extensions</code>.
-  </p>
 </main>
 
 <script type="module" src="history.js"></script>

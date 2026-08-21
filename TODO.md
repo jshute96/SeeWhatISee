@@ -70,7 +70,8 @@
     Capture and Options pages.
   * The search box filters on URL, title, or prompt text.
   * Thumbnails and file links need "Allow access to file URLs"
-    enabled for the extension.
+    enabled for the extension; the page says so, with a link to the
+    settings page carrying the toggle.
 
 ### Not documented
 

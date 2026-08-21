@@ -100,8 +100,9 @@ Finding that tab is less obvious than it looks:
     column's width. A fixed column can't shrink to its content, so any
     difference between the two shows up as dead space down the right of
     every row.
-  - `--thumb-h` — the thumbnail `max-height` **and** the prompt box's
-    height cap, so a row's two tall cells agree.
+  - `--thumb-h` — the thumbnail `max-height` **and** the `.scroll-box`
+    cap on the Prompt and Page cells, so nothing in a row outgrows the
+    screenshot beside it.
 
 ## Columns
 
@@ -115,8 +116,22 @@ Finding that tab is less obvious than it looks:
 
 - Any column with nothing to show renders a greyed *N/A* — no
   screenshot saved, no prompt entered, no URL/title available.
-- The Prompt cell is capped to the thumbnail height and scrolls
-  internally, so one long prompt can't stretch the row.
+- Column widths are honoured exactly (`table-layout: fixed`), so each
+  narrow column is sized to its widest possible value plus a few px,
+  and Prompt absorbs the remaining width.
+  - Date 100px — *12:30:59 PM* is wider than any date line.
+  - Files 116px — *Selection (html)*. No `nowrap`, so a wider platform
+    UI font wraps the label instead of spilling into Page.
+  - Re-measure before changing either; don't eyeball it on a scaled
+    display, where every column looks proportionally wider.
+- The Prompt and Page cells share a `.scroll-box` capped to the
+  thumbnail height, so no row grows taller than its own screenshot.
+  Both scroll internally.
+  - Page needs it for search URLs carrying a wall of tracking
+    parameters — a dozen wrapped lines, none of it past the origin and
+    path worth reading in a table.
+  - The cap is on an inner `<div>`, not the `<td>`: `overflow` on a
+    table cell isn't reliably honoured.
 
 ## File links and `file://`
 
@@ -125,16 +140,93 @@ Finding that tab is less obvious than it looks:
 - The directory is resolved with the shared `getCaptureDirectory()`
   helper in `capture/downloads.ts` (also used by *Snapshots
   directory*), which derives it from the `log.json` download record.
+- Thumbnails are plain `<img src="file://…">`. The browser loads the
+  PNG itself; nothing reads the bytes into the extension, so there is
+  no size limit to worry about and `loading="lazy"` keeps offscreen
+  rows free.
 - Chrome blocks `file://` subresources unless the user enables **Allow
   access to file URLs** for the extension. The page renders the
-  thumbnails/links regardless and shows a hint explaining the toggle
-  when it's off — the rest of each row is useful either way.
-- Two graceful degradations:
-  - Directory unresolvable (no capture has been written yet): the
-    cells show the bare filename / an unlinked label.
-  - Thumbnail fails to load (file deleted, toggle off): the `<img>`
-    is swapped for the filename as text, so there's no broken-image
-    icon with no explanation.
+  thumbnails/links regardless — the rest of each row is useful either
+  way.
+
+### The file-access banner
+
+- Amber banner under the search box (outside the scrolling `<main>`,
+  so it can't scroll away from the rows it explains), shrink-wrapped
+  to its own text with `width: fit-content`.
+- Shown only when all of: the toggle is off
+  (`chrome.extension.isAllowedFileSchemeAccess()`), the capture
+  directory resolved, and some record references a file. Any of those
+  missing means flipping the toggle would change nothing.
+- Keyed off the whole log, not the search-filtered subset — it
+  describes a standing browser setting, so blinking in and out while
+  typing would read as a glitch.
+- The *extension settings* link opens `chrome://extensions/?id=<runtime.id>`,
+  the details page that actually carries the toggle (our own Options
+  page does not).
+  - It's a real `<a href>` — hover shows the destination and
+    right-click → Copy link address works — but the click is
+    intercepted: Chrome blocks page-initiated `chrome://` navigation,
+    so the open runs through `chrome.tabs.create`, the same call the
+    Options page's *Edit shortcuts* button makes.
+  - `history.ts` assigns the `href` from the same constant it passes
+    to `tabs.create`, so the two can't drift.
+  - Looking like a real link invites real-link gestures, and the ones
+    that skip `click` would hit the blocked href and do nothing. So
+    `auxclick` is handled too (middle-click → background tab), and
+    ctrl/⌘-click opens in the background rather than stealing focus.
+    Enter/Space fire `click`, so keyboard needs nothing extra.
+- Two graceful degradations, and the Screenshot and Files columns
+  must agree on both — they fail for the same reasons, so a filename
+  in one column beside a live link in the other just looks broken:
+  - Directory unresolvable (no capture has been written yet): no
+    `file://` URL exists, so both columns show a greyed, unlinked
+    label (filename / "HTML" / "Selection (md)").
+  - Thumbnail fails to load anyway — the toggle is off, or the
+    download records don't know the file (deletion is caught earlier,
+    see below). The `<img>` is swapped for the filename **inside the
+    surviving `<a>`**, so there's no unexplained broken-image icon.
+  - The `<a>` stays because its href is the last useful thing on the
+    row: right-click → Copy link address still works. Files-column
+    links stay links for the same reason — and they have no load event
+    to react to anyway.
+
+### Deleted files
+
+- `getCaptureFileExistence()` (`capture/downloads.ts`) reads
+  `DownloadItem.exists` for what we've written under `SeeWhatISee/`,
+  giving a bare-filename → still-there map. Chrome's query caps at its
+  default 1000 newest records, so a very long history truncates — into
+  *unknown*, which renders normally.
+- Needed because an `<img>` error carries no reason (deleted? toggle
+  off?) and the Files-column links have no load event at all. This is
+  the only signal that works for both columns.
+- A filename **absent** from the map is *unknown*, not deleted — the
+  user can clear their download history without touching the files.
+  Those render as normal links.
+- The newest record wins per filename — `conflictAction: 'overwrite'`
+  leaves several pointing at one path. Only `state: 'complete'` records
+  answer; an in-flight download reports `exists: false`, so if the
+  newest record is still writing the name reads as unknown rather than
+  letting an older record call a live file deleted.
+- Keyed on the bare filename because `compactTimestamp` makes capture
+  filenames unique; `log.json`, the one reused name, is never rendered.
+- A known-deleted file renders as the greyed unlinked label with a
+  `(deleted)` marker on its own line, nested inside that artifact's
+  element so a row listing two files says which one is gone. The
+  screenshot column skips the `<img>` entirely rather than loading it
+  to watch it fail.
+- Refreshed on `chrome.downloads.onChanged` deltas that carry
+  `exists`, so a file deleted while the tab is open updates in place.
+  - Also the delayed half of the read: `exists` can be stale, and it's
+    the `search()` call that prompts Chrome to re-check, with the
+    answer arriving as one of these events.
+  - Coalesced on a 500ms timer. The delta carries only a download id,
+    so we can't cheaply tell our downloads from anyone else's, and one
+    re-check sweeps the directory and rebuilds every row — deleting a
+    folder of captures would otherwise fire one sweep per file.
+- "Deleted" is the plain-language reading: strictly, the file is no
+  longer at the path we wrote it to, which also covers a move.
 
 ## Search
 

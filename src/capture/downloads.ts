@@ -195,6 +195,60 @@ export async function getCaptureDirectory(): Promise<string> {
 }
 
 /**
+ * Which of our capture files are still on disk, keyed by bare
+ * filename. Chrome tracks this per download record (`DownloadItem
+ * .exists`), so we get a real answer without touching the filesystem
+ * — and for artifacts like the HTML / selection files, where a link
+ * has no load event to fail, it's the *only* answer available.
+ *
+ * A name absent from the map means "unknown", not "present". Callers
+ * must render those normally rather than assuming deleted. Reasons a
+ * name can be missing:
+ *
+ * - The user cleared their download history (chrome://downloads →
+ *   Clear all), which drops the records without touching the files.
+ * - `DownloadQuery.limit` defaults to 1000, so a very long capture
+ *   history is truncated. `orderBy: ['-startTime']` makes that the
+ *   *oldest* records, which are the least likely to be on screen.
+ *
+ * Keyed on the bare filename, ignoring the directory, which is safe
+ * only because `compactTimestamp` makes every capture filename unique
+ * (see `log-store.ts`). The one deliberately reused name, `log.json`,
+ * is never rendered.
+ *
+ * `exists` can be stale on read — it's the `search()` call itself that
+ * prompts Chrome to re-check, and the result arrives later as a
+ * `downloads.onChanged` event. So a file deleted outside the browser
+ * reads as present until that round-trip lands; callers wanting to
+ * converge must listen for those deltas too.
+ */
+export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
+  const items = await chrome.downloads.search({
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]`,
+    orderBy: ['-startTime'],
+  });
+  const byName = new Map<string, boolean>();
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.byExtensionId !== chrome.runtime.id || !item.filename) continue;
+    const base = item.filename.replace(/^.*[/\\]/, '');
+    // Newest record wins per name: `conflictAction: 'overwrite'` means
+    // a re-saved capture leaves several records pointing at one path,
+    // and only the latest reflects the file that's there now.
+    if (seen.has(base)) continue;
+    seen.add(base);
+    // An in-flight download legitimately reports `exists: false`, so
+    // it can't answer the question — but it has still claimed the
+    // name, and letting an older record answer instead would flag a
+    // file that's being written right now as deleted. Leave it out of
+    // the map, i.e. unknown.
+    if (item.state !== 'complete') continue;
+    byName.set(base, item.exists);
+  }
+  return byName;
+}
+
+/**
  * Join `dir` and `name` using whichever separator `dir` already uses.
  * `chrome.downloads.search` returns OS-native paths — backslashes on
  * Windows, forward slashes elsewhere — so reusing the existing

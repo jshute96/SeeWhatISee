@@ -19,7 +19,12 @@
 // rest of the row (date, URL, title, prompt) is still useful either
 // way.
 
-import { getCaptureDirectory, joinCapturePath, pathToFileUrl } from './capture/downloads.js';
+import {
+  getCaptureDirectory,
+  getCaptureFileExistence,
+  joinCapturePath,
+  pathToFileUrl,
+} from './capture/downloads.js';
 import { LOG_STORAGE_KEY } from './capture/log-store.js';
 import type { CaptureRecord, SelectionFormat } from './capture/types.js';
 
@@ -30,7 +35,39 @@ const rowsEl = document.getElementById('rows') as HTMLElement;
 const emptyEl = document.getElementById('empty') as HTMLElement;
 const noMatchesEl = document.getElementById('no-matches') as HTMLElement;
 const fileAccessHintEl = document.getElementById('file-access-hint') as HTMLElement;
+const fileAccessLink = document.getElementById('file-access-btn') as HTMLAnchorElement;
 const optionsBtn = document.getElementById('options-btn') as HTMLButtonElement;
+
+// The "Allow access to file URLs" toggle lives on Chrome's own
+// per-extension details page, not in our Options page — so this jumps
+// straight there.
+//
+// It's a real `<a href>` so the destination shows in the status bar on
+// hover and right-click → Copy link address works, but the navigation
+// itself has to be intercepted: Chrome blocks a page-initiated load of
+// a `chrome://` URL, so the open goes through `chrome.tabs.create`
+// (the same call the Options page's "Edit shortcuts" button makes).
+// The href is assigned here rather than in the markup so it can't
+// drift from the URL we actually open.
+const FILE_ACCESS_URL = `chrome://extensions/?id=${chrome.runtime.id}`;
+fileAccessLink.href = FILE_ACCESS_URL;
+// `click` alone isn't enough. Looking like a real link invites the
+// gestures people use on real links, and the ones that skip `click`
+// would fall through to the blocked `chrome://` href and silently do
+// nothing: middle-click fires `auxclick`, and ctrl/⌘-click expects a
+// *background* tab. Enter/Space do fire `click`, so keyboard is
+// covered by the first handler.
+const openFileAccessPage = (e: MouseEvent, active: boolean): void => {
+  e.preventDefault();
+  void chrome.tabs.create({ url: FILE_ACCESS_URL, active });
+};
+fileAccessLink.addEventListener('click', (e) => {
+  openFileAccessPage(e, !(e.ctrlKey || e.metaKey));
+});
+fileAccessLink.addEventListener('auxclick', (e) => {
+  if (e.button !== 1) return;
+  openFileAccessPage(e, false);
+});
 
 optionsBtn.addEventListener('click', () => {
   // `openOptionsPage` honours the manifest's `open_in_tab: true`, so
@@ -47,6 +84,21 @@ let records: CaptureRecord[] = [];
  * still render every row, just without thumbnails or file links.
  */
 let captureDir: string | null = null;
+/**
+ * Bare filename → still on disk, from `chrome.downloads`. A missing
+ * key means "unknown" (the user cleared their download history), which
+ * renders as a normal link — see `getCaptureFileExistence`.
+ */
+let fileExists = new Map<string, boolean>();
+
+/**
+ * `true` only when Chrome positively tells us the file is gone.
+ * Unknown filenames answer `false` so we never label a live capture
+ * deleted on the strength of missing information.
+ */
+function isDeleted(filename: string): boolean {
+  return fileExists.get(filename) === false;
+}
 
 // ───────────────────────────── rendering ─────────────────────────────
 
@@ -94,19 +146,42 @@ function fileUrlFor(filename: string): string | null {
 }
 
 /**
- * A saved file we can't offer as a working link — either the capture
- * directory never resolved, or the bytes wouldn't load. Greyed so it
- * doesn't read as a dead link. `label` defaults to the filename;
- * the Files column passes its own ("HTML", "Selection (md)").
+ * A saved file we shouldn't offer as a working link. Two reasons, and
+ * the marker distinguishes them:
  *
- * Shared by the Files column and the screenshot column's broken-image
- * fallback so both degrade the same way.
+ * - The capture directory never resolved, so there is no `file://` URL
+ *   to point at. Renders as the bare label.
+ * - Chrome reports the file gone, so a link would 404. Renders with
+ *   the `(deleted)` marker.
+ *
+ * Greyed either way so it doesn't read as a dead link. `label`
+ * defaults to the filename (what the Screenshot column shows); the
+ * Files column passes its own ("HTML", "Selection (md)").
+ *
+ * Not used for a file that merely failed to *load* — there we keep the
+ * link, since its href is still worth right-clicking.
  */
 function unlinkedFile(filename: string, label = filename): HTMLElement {
   const span = document.createElement('span');
   span.className = 'flag';
   span.textContent = label;
   span.title = filename;
+  if (isDeleted(filename)) {
+    // Nested rather than appended to the label text: it renders on its
+    // own line (`.deleted-mark` is `display: block`) so the Files
+    // column doesn't have to be wide enough for
+    // "Selection (html) (deleted)" on one line, and it stays *inside*
+    // the artifact's own element so a row listing both an HTML and a
+    // selection file can't leave you guessing which one is gone.
+    //
+    // "deleted" is the plain-language reading of what Chrome reports —
+    // strictly, the file is no longer at the path we wrote it to,
+    // which also covers a move or a rename.
+    const mark = document.createElement('span');
+    mark.className = 'deleted-mark';
+    mark.textContent = '(deleted)';
+    span.append(mark);
+  }
   return span;
 }
 
@@ -125,8 +200,12 @@ function screenshotCell(r: CaptureRecord): HTMLElement {
     return td;
   }
   const url = fileUrlFor(r.screenshot.filename);
-  if (!url) {
-    td.textContent = r.screenshot.filename;
+  if (!url || isDeleted(r.screenshot.filename)) {
+    // Either no directory resolved (so there's no href to offer) or
+    // the file is known gone. Both render as the greyed non-link the
+    // Files column uses; a deleted file skips the <img> entirely
+    // rather than loading it just to watch it fail.
+    td.append(unlinkedFile(r.screenshot.filename));
     return td;
   }
   const link = document.createElement('a');
@@ -140,15 +219,18 @@ function screenshotCell(r: CaptureRecord): HTMLElement {
   img.src = url;
   img.alt = r.screenshot.filename;
   img.loading = 'lazy';
-  // A thumbnail that can't load (file deleted, or the file-URL toggle
-  // is off) would otherwise render as a broken-image icon with no
-  // explanation. Replace the whole link — not just its contents —
-  // with the greyed filename, matching how the Files column renders an
-  // artifact it can't build a URL for. Keeping the <a> would leave a
-  // link that looks live but goes nowhere, since whatever stopped the
-  // <img> loading stops the navigation too.
+  // A thumbnail that can't load would otherwise render as a
+  // broken-image icon with no explanation. Deletion is caught upstream
+  // by `isDeleted`, so what reaches here is the file-URL toggle being
+  // off, a file the download records don't know about, or a decode
+  // failure. Swap just the <img> for the filename and keep the
+  // surrounding <a>: the link's href is still the one useful thing
+  // left on the row, so the user can right-click → Copy link address
+  // and open the file another way. The Files column behaves the same
+  // — its links stay links whether or not the bytes are reachable —
+  // and the two columns must not disagree about a failure they share.
   img.addEventListener('error', () => {
-    link.replaceWith(unlinkedFile(r.screenshot!.filename));
+    img.replaceWith(document.createTextNode(r.screenshot!.filename));
   });
   link.append(img);
   td.append(link);
@@ -177,7 +259,7 @@ function filesCell(r: CaptureRecord): HTMLElement {
   td.className = 'files-cell';
   const add = (label: string, artifact: { filename: string }): void => {
     const url = fileUrlFor(artifact.filename);
-    if (url) {
+    if (url && !isDeleted(artifact.filename)) {
       const a = document.createElement('a');
       a.href = url;
       a.target = '_blank';
@@ -207,15 +289,26 @@ function filesCell(r: CaptureRecord): HTMLElement {
  * live link back to the page. Either half can be missing (restricted
  * tabs, uploads), so each is rendered only when present and the cell
  * falls back to "N/A" when both are.
+ *
+ * Capped to the same height as the Prompt box and the thumbnail: a
+ * search URL carrying a wall of tracking parameters otherwise wraps to
+ * a dozen lines and stretches the row, and none of it past the origin
+ * and path is worth reading in a table.
  */
 function pageCell(r: CaptureRecord): HTMLElement {
   const td = document.createElement('td');
   td.className = 'page-cell';
+  // Title and URL go in an inner scrolling box rather than capping the
+  // <td> itself, because `overflow` on a table cell isn't reliably
+  // honoured — and the cap has to cover the pair together anyway.
+  const box = document.createElement('div');
+  box.className = 'scroll-box';
+  td.append(box);
   if (r.title) {
     const title = document.createElement('div');
     title.className = 'title';
     title.textContent = r.title;
-    td.append(title);
+    box.append(title);
   }
   if (r.url) {
     const a = document.createElement('a');
@@ -224,9 +317,9 @@ function pageCell(r: CaptureRecord): HTMLElement {
     a.target = '_blank';
     a.rel = 'noreferrer noopener';
     a.textContent = r.url;
-    td.append(a);
+    box.append(a);
   }
-  if (!td.childElementCount) td.append(naSpan());
+  if (!box.childElementCount) box.append(naSpan());
   return td;
 }
 
@@ -243,7 +336,7 @@ function promptCell(r: CaptureRecord): HTMLElement {
     return td;
   }
   const box = document.createElement('div');
-  box.className = 'prompt-box';
+  box.className = 'prompt-box scroll-box';
   box.textContent = r.prompt;
   td.append(box);
   return td;
@@ -290,16 +383,21 @@ function render(): void {
     : '';
   // The hint tells the user to enable "Allow access to file URLs", so
   // only show it when that is actually the thing standing between them
-  // and a working link — i.e. the toggle is off AND some visible row
-  // would otherwise have rendered a file:// URL. Without the
-  // `captureDir` check it would fire on a log whose directory never
-  // resolved, where flipping the toggle changes nothing (the real
-  // reason is that no capture has been written yet); without the
-  // artifact check it would fire on a log of prompt- or URL-only
-  // records, which reference no files at all.
+  // and a working link — i.e. the toggle is off AND some row would
+  // otherwise have rendered a file:// URL. Without the `captureDir`
+  // check it would fire on a log whose directory never resolved, where
+  // flipping the toggle changes nothing (the real reason is that no
+  // capture has been written yet); without the artifact check it would
+  // fire on a log of prompt- or URL-only records, which reference no
+  // files at all.
+  //
+  // Deliberately keyed off the whole log, not the filtered `shown`
+  // set: the banner describes a standing browser setting, so having it
+  // blink in and out as the user types in the search box would read as
+  // a glitch.
   fileAccessHintEl.hidden = !fileAccessBlocked
     || captureDir === null
-    || !shown.some((r) => r.screenshot || r.contents || r.selection);
+    || !records.some((r) => r.screenshot || r.contents || r.selection);
 }
 
 // ─────────────────────────────── loading ─────────────────────────────
@@ -324,6 +422,16 @@ async function loadCaptureDir(): Promise<void> {
   }
 }
 
+async function loadFileExistence(): Promise<void> {
+  try {
+    fileExists = await getCaptureFileExistence();
+  } catch {
+    // Leave the map empty — every file reads as "unknown", so the page
+    // renders exactly as it did before this check existed.
+    fileExists = new Map();
+  }
+}
+
 async function loadRecords(): Promise<void> {
   const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
   const log = (data[LOG_STORAGE_KEY] as CaptureRecord[] | undefined) ?? [];
@@ -344,8 +452,35 @@ chrome.storage.onChanged.addListener((changes, area) => {
     // A first-ever capture is also what makes the capture directory
     // resolvable, so retry that while we're here.
     if (!captureDir) await loadCaptureDir();
+    // The new capture's own files won't be in the existence map yet.
+    await loadFileExistence();
     render();
   })();
+});
+
+// Chrome reports a download's file going missing (or coming back) as
+// an `exists` delta, which is the only live signal for a file deleted
+// while this tab sits open — and the delayed half of the round-trip
+// `getCaptureFileExistence` starts (see its doc comment). Other deltas
+// (progress, state) say nothing about the "(deleted)" markers, so we
+// ignore them.
+//
+// Coalesced because `onChanged` is global: the delta carries only an
+// id, so we can't tell our downloads from anyone else's without
+// tracking every id we've ever written, and a re-check sweeps the
+// whole capture directory and rebuilds every row. Deleting a folder of
+// captures fires one event per file; this collapses the burst into a
+// single sweep.
+let existenceRefresh: ReturnType<typeof setTimeout> | null = null;
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta.exists || existenceRefresh !== null) return;
+  existenceRefresh = setTimeout(() => {
+    existenceRefresh = null;
+    void (async () => {
+      await loadFileExistence();
+      render();
+    })();
+  }, 500);
 });
 
 // ───────────────────── tab identity, for reuse ───────────────────────
@@ -375,6 +510,6 @@ void (async () => {
   chrome.runtime.sendMessage({ action: 'historyPageReady' }).catch(() => {});
 
   fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
-  await Promise.all([loadRecords(), loadCaptureDir()]);
+  await Promise.all([loadRecords(), loadCaptureDir(), loadFileExistence()]);
   render();
 })();
