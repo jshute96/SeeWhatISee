@@ -806,10 +806,42 @@ document.addEventListener('click', (e) => {
   setTimeout(() => target.classList.remove('pressed'), PRESS_FLASH_MS);
 }, true);
 
+/**
+ * Ask the service worker to open (or focus) the History page.
+ *
+ * Deliberate twin of the identical helper in `capture-page.ts`: this
+ * file is a classic script and can't `import`, the same reason the
+ * wire types above are restated here rather than shared. Keep the two
+ * bodies in lock-step.
+ *
+ * `sendMessage` rejects outright when the SW isn't reachable, and the
+ * handler answers `{ error }` when the open itself fails; both are
+ * logged at `info` (an unreachable SW is an expected, recoverable
+ * state — the user can click again — and `warn`/`error` from any
+ * extension context lands on the chrome://extensions Errors page).
+ */
+function openHistoryPage(): void {
+  chrome.runtime.sendMessage({ action: 'openHistoryPage' }).then(
+    (resp: { error?: string } | undefined) => {
+      if (resp?.error) {
+        console.info('[SeeWhatISee] options: could not open History:', resp.error);
+      }
+    },
+    (err: unknown) => {
+      console.info('[SeeWhatISee] options: History message failed:', err);
+    },
+  );
+}
+
 async function init(): Promise<void> {
   const editBtn = $('#edit-shortcuts');
   editBtn.addEventListener('click', () => {
     void chrome.tabs.create({ url: SHORTCUTS_URL });
+  });
+  $('#history-btn').addEventListener('click', () => {
+    // The SW owns the open (focus-an-existing-tab-or-create), so this
+    // button and the History menu entry behave identically.
+    openHistoryPage();
   });
   $('#save').addEventListener('click', () => {
     void onSave();

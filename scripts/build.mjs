@@ -13,7 +13,7 @@
 //
 // Note on watch mode: only TypeScript is watched. If you edit
 // src/manifest.json, src/capture.html, src/options.html,
-// src/shared-styles.css, or swap out icon files, re-run
+// src/history.html, src/shared-styles.css, or swap out icon files, re-run
 // `pnpm run build`.
 
 import { rm, mkdir, cp, readFile, writeFile } from 'node:fs/promises';
@@ -48,13 +48,20 @@ await cp(resolve(root, 'src/capture.html'), resolve(dist, 'capture.html'));
 //        TypeScript file (no top-level imports/exports).
 await cp(resolve(root, 'src/options.html'), resolve(dist, 'options.html'));
 
+// 3b-iii. Copy the History page HTML. Its controller
+//         (src/history.ts) compiles via tsc with the rest of src/ and
+//         is loaded as a module script, so it can import the shared
+//         capture/downloads + log-store helpers directly.
+await cp(resolve(root, 'src/history.html'), resolve(dist, 'history.html'));
+
 // 3c. Copy the offscreen-document HTML into dist/. The accompanying
 //     TypeScript (src/offscreen.ts) is picked up by tsc; the HTML
 //     just hosts a <script> tag pointing at the compiled offscreen.js.
 await cp(resolve(root, 'src/offscreen.html'), resolve(dist, 'offscreen.html'));
 
-// 3c-ii. Copy the shared CSS chrome (`.btn` press-look) used by both
-//        capture.html and options.html via `<link rel="stylesheet">`.
+// 3c-ii. Copy the shared CSS chrome (`.btn` press-look) used by
+//        capture.html, options.html and history.html via
+//        `<link rel="stylesheet">`.
 //        See `src/shared-styles.css` for the design rationale on what
 //        is and isn't in this file.
 await cp(resolve(root, 'src/shared-styles.css'), resolve(dist, 'shared-styles.css'));

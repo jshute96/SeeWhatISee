@@ -227,6 +227,31 @@ optionsBtn.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
 
+const historyBtn = document.getElementById('history-btn') as HTMLButtonElement;
+historyBtn.addEventListener('click', () => {
+  // The SW owns the open (focus-an-existing-tab-or-create), so both
+  // this button and the History menu entry behave identically.
+  //
+  // Deliberate twin of the same helper in `options.ts` — that file is
+  // a classic script and can't `import`, so the two bodies are kept in
+  // lock-step by hand rather than shared.
+  //
+  // `sendMessage` rejects outright when the SW isn't reachable, and
+  // the handler answers `{ error }` when the open itself fails; both
+  // are logged at `info` since an unreachable SW is an expected,
+  // recoverable state (the user can click again).
+  chrome.runtime.sendMessage({ action: 'openHistoryPage' }).then(
+    (resp: { error?: string } | undefined) => {
+      if (resp?.error) {
+        console.info('[SeeWhatISee] capture: could not open History:', resp.error);
+      }
+    },
+    (err: unknown) => {
+      console.info('[SeeWhatISee] capture: History message failed:', err);
+    },
+  );
+});
+
 const screenshotBox = document.getElementById('cap-screenshot') as HTMLInputElement;
 const htmlBox = document.getElementById('cap-html') as HTMLInputElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;

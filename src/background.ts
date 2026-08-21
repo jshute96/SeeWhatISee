@@ -51,6 +51,7 @@ import {
   COPY_LAST_HTML_MENU_ID,
   COPY_LAST_SCREENSHOT_MENU_ID,
   COPY_LAST_SELECTION_MENU_ID,
+  HISTORY_MENU_ID,
   IMAGE_CAPTURE_MENU_ID,
   IMAGE_SAVE_SCREENSHOT_MENU_ID,
   PIN_ASK_TARGET_MENU_ID,
@@ -83,6 +84,10 @@ import {
   startCaptureWithDetailsFromImage,
 } from './background/capture-details.js';
 import { LAST_CAPTURE_STORAGE_KEY } from './background/last-capture.js';
+import {
+  installHistoryMessageHandler,
+  openHistoryPage,
+} from './background/history-page.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import {
   findProviderForTab,
@@ -101,6 +106,7 @@ import { getAskProviderSettings } from './ask/settings.js';
 installUnhandledRejectionHandler();
 installDetailsMessageHandlers();
 installOptionsMessageHandlers();
+installHistoryMessageHandler();
 installAskMessageHandler();
 installWidgetStoreCleanup();
 
@@ -336,6 +342,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
+  // Open the History page — a table view over the capture log.
+  // Unlike the Snapshots directory entry this can't fail on "no
+  // captures yet" (the page renders its own empty state), but it
+  // goes through the same wrapper so an unexpected tab-create
+  // failure still surfaces on the icon/tooltip channel.
+  if (id === HISTORY_MENU_ID) {
+    await runWithErrorReporting(() => openHistoryPage());
+    return;
+  }
+
   // Copy the latest screenshot / HTML filename to the clipboard. The
   // menu entries are greyed when the latest record doesn't carry the
   // matching field, so under normal operation these calls always have
@@ -433,6 +449,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   captureImageToMemory,
   clearCaptureLog,
   openSnapshotsDirectory,
+  openHistoryPage,
   openUploadCapturePage,
   copyLastScreenshotFilename,
   copyLastHtmlFilename,

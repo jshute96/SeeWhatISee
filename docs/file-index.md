@@ -185,7 +185,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
-| `src/shared-styles.css` | Page-wide `.btn` chrome + `.app-header` / `.app-footer` bar layout/colour + `.header-btn` trailing chrome shared by `capture.html` and `options.html` |
+| `src/history.html` | Capture history page — Search box + fixed-layout, newest-first table of the stored capture log |
+| `src/history.ts` | Controller for `history.html`: reads `captureLog` + the capture dir, renders rows, live search filter |
+| `src/shared-styles.css` | Page-wide `.btn` chrome + `.app-header` / `.app-footer` bar layout/colour + `.header-btn` trailing chrome shared by `capture.html`, `options.html`, and `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 
@@ -205,6 +207,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
+| `src/background/history-page.ts` | SW side of the History page — `openHistoryPage` (focus-or-create its tab) + the message handler the header buttons call |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
@@ -227,7 +230,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete` |
+| `src/capture/downloads.ts` | Download helpers — `DOWNLOAD_SUBDIR`, `downloadArtifact`/`htmlDataUrl`, `downloadScreenshot`/`downloadHtml`/`downloadSelection`, `waitForDownloadComplete`, `getCaptureDirectory`/`joinCapturePath`/`pathToFileUrl` |
 | `src/capture/log-store.ts` | Capture log + on-disk `log.json` sidecar — `LOG_STORAGE_KEY`, `clearCaptureLog`/`appendToLog`/`writeJsonFile`/`serializeRecord`/`serializeWrite`, `compactTimestamp` |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 
@@ -316,6 +319,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
+| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering, N/A fallbacks, search, empty + live-update states, header History buttons |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
@@ -374,6 +378,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `chrome-extension.md` | Chrome MV3 hazards: SW lifecycle, permissions rationale, error surface, context-menu gotchas, image-fetch strategies |
 | `testing.md` | Playwright + devtools-console patterns for testing the extension |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
+| `history-page.md` | History page — data source, columns, `file://` link degradations, search |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |

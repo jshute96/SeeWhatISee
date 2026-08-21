@@ -210,6 +210,9 @@ Every record has `timestamp` and `url`, plus optional fields:
   whole `~/Downloads/SeeWhatISee/` directory not existing yet
   (it `mkdir -p`s on startup and polls for `log.json` to appear),
   so `/see-what-i-see-watch` can be launched before any capture.
+- To browse the log, use the top-level **History** context-menu
+  entry — a table view over the same `captureLog` array. See
+  [history-page.md](history-page.md).
 - To clear history, use the **More → Clear log history**
   context-menu entry on the toolbar icon (or call
   `SeeWhatISee.clearCaptureLog()` from the service-worker

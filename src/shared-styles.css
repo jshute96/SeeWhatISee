@@ -1,16 +1,16 @@
 /*
  * Shared chrome for every extension page (Capture page, Options
- * page, any future page). Linked from each HTML's <head> via
- * `<link rel="stylesheet" href="shared-styles.css">`. Build copies
- * this file verbatim into dist/.
+ * page, History page, any future page). Linked from each HTML's
+ * <head> via `<link rel="stylesheet" href="shared-styles.css">`.
+ * Build copies this file verbatim into dist/.
  *
  * For most buttons, per-page sizing/padding/border still lives next
  * to each button's own selectors — the `.btn` rules below add only
  * the *feedback* layer (raised look + hover/active/.pressed flash +
  * disabled) so each call site keeps its visual hierarchy. The one
  * exception is the trailing app-header chrome (`.header-btn`), which
- * is fully shared because Capture and Options render the same
- * Options/Help row.
+ * is fully shared because Capture, Options and History render the
+ * same Options/Help row.
  *
  * Intentionally NOT applied to:
  *   - `.copy-btn` raised look (tiny per-row icon buttons; intentionally
@@ -60,9 +60,9 @@
 
 /*
  * Light-purple chrome for top app-headers / bottom app-footers,
- * shared across capture.html and options.html. Picks up the violet
- * eye in the toolbar icon (deep-purple-50 background, deep-purple-200
- * border). Per-page padding, font, and flex layout still live in the
+ * shared across capture.html, options.html and history.html. Picks
+ * up the violet eye in the toolbar icon (deep-purple-50 background,
+ * deep-purple-200 border). Per-page padding, font, and flex layout still live in the
  * page's own `header` / `.footer` rule — these classes only set the
  * colour theme + the divider line against the main content area.
  */
@@ -81,7 +81,7 @@
   color: #512da8;
 }
 /* Shared header layout — flex row, brand img/title on the left, any
- * trailing chrome (Options, Help) on the right. Per-page padding /
+ * trailing chrome (Options, History, Help) on the right. Per-page padding /
  * margin still live next to each page's own `header` rule so the
  * Capture page can pull its bar out to the viewport edge with
  * negative margins, and the Options page can declare `flex: none`
@@ -97,7 +97,7 @@
   width: 28px;
   height: 28px;
 }
-/* Trailing header chrome (`Options`, `Help`). Flat-button look that
+/* Trailing header chrome (`Options`, `History`, `Help`). Flat-button look that
  * matches the rest of each page; the `<a>` resets neutralize default
  * link styling so an `<a class="btn header-btn">` reads identically
  * to a `<button class="btn header-btn">` in the same row. */

@@ -244,9 +244,31 @@ Reachable via the toolbar action's right-click → Options, the
 Manifest entry `options_ui` with `open_in_tab: true` opens it in a
 full tab.
 
-Both the Capture and Options page headers also carry a trailing
-**Help** link (`#help-btn`) — a plain `<a target="_blank">` to the
-project README on GitHub. Pure chrome; no JS handler.
+### Shared header button group
+
+Every page's `.app-header` carries the same trailing button group, in
+the order **Options | History | Help**, minus a link to the page
+you're already on:
+
+| Page | Buttons |
+|------|---------|
+| Capture | Options, History, Help |
+| Options | History, Help |
+| History | Options, Help |
+
+- **Options** (`#options-btn`) — calls `chrome.runtime.openOptionsPage`.
+- **History** (`#history-btn`) — sends `{ action: 'openHistoryPage' }`
+  to the SW rather than opening a tab itself, so it behaves exactly
+  like the History context-menu entry (focus an open History tab, else
+  create one). Going through the SW is also what lets `options.ts` —
+  a classic script that can't `import` — share the one implementation.
+  See [history-page.md](history-page.md).
+- **Help** (`#help-btn`) — a plain `<a target="_blank">` to the project
+  README on GitHub. Pure chrome; no JS handler.
+
+`.header-btn-leading` marks the first member of the group;
+`margin-left: auto` on it pushes the whole group to the right edge, so
+it moves to whichever button comes first on a given page.
 
 ### Layout
 

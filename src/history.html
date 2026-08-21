@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SeeWhatISee — Capture history</title>
+<!-- Shared `.btn` chrome + `.app-header` bar theme, same as
+     capture.html / options.html. -->
+<link rel="stylesheet" href="shared-styles.css">
+<style>
+  /*
+   * Same sticky-shell layout as options.html: fixed header on top,
+   * a non-scrolling toolbar row under it (so the search box stays
+   * put), and the table scrolling inside <main>.
+   */
+  :root {
+    /* Thumbnail box. `--thumb-w` doubles as the screenshot column's
+       width and `--thumb-h` as the prompt cell's height cap, so the
+       column hugs its images and the two tall cells in a row match.
+       Change these two numbers to resize the thumbnails; nothing else
+       needs touching. */
+    --thumb-w: 192px;
+    --thumb-h: 144px;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    color: #000;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    flex: none;
+    padding: 16px 24px;
+  }
+  /* Deliberately no `border-bottom`: it would span the full page
+     width while the table below is inset by <main>'s side padding,
+     leaving a rule sticking out past both table edges. The table's
+     own top border already separates it from this row. */
+  .toolbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+  }
+  /* Matches the Capture page's "Prompt:" label so the two field
+     titles read as siblings. */
+  .toolbar label[for="search"] {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  #search {
+    font: inherit;
+    font-size: 14px;
+    padding: 6px 10px;
+    border: 1px solid #999;
+    border-radius: 4px;
+    width: 360px;
+  }
+  .toolbar .count {
+    font-size: 13px;
+    color: #555;
+  }
+  /* No padding at the top: the sticky header row below pins to the
+     top of this scroll box, so any padding here would be a strip that
+     rows stay visible in as they scroll past *above* the header. */
+  main {
+    flex: 1;
+    overflow: auto;
+    padding: 0 24px 24px 24px;
+  }
+  /*
+   * `separate` (not `collapse`) because the header row is sticky:
+   * with collapsed borders the cell borders belong to the table, not
+   * the cells, so they stay behind while the sticky <th>s travel and
+   * the header ends up with no outline of its own. With `separate` +
+   * zero spacing each cell owns its borders; the right/bottom-only
+   * convention (plus left on the first column, top on the header)
+   * reproduces the collapsed single-line grid.
+   */
+  /*
+   * `fixed` because the column widths below are otherwise only
+   * *suggestions*: under auto layout the browser redistributes
+   * leftover space across every column, so on a wide window the
+   * screenshot column drifts far past its declared width and the
+   * thumbnails stop lining up with it. Fixed layout honours the
+   * widths exactly and gives the remainder to the last column
+   * (Prompt). Every cell that can hold unbreakable content already
+   * wraps it (`word-break` on the URL and prompt, `nowrap` columns
+   * sized for their longest label), so nothing overflows.
+   */
+  table {
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+    width: 100%;
+  }
+  thead th, tbody td {
+    border-right: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
+    padding: 6px 10px;
+  }
+  thead th:first-child, tbody td:first-child {
+    border-left: 1px solid #ddd;
+  }
+  /* Sticky header row so the column labels survive a long scroll
+     inside <main>. Opaque background + z-index keep the rows passing
+     underneath from showing through. */
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #f5f5f5;
+    border-top: 1px solid #ddd;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody td {
+    vertical-align: top;
+  }
+  /* Column sizing, honoured exactly thanks to `table-layout: fixed`.
+     The three narrow columns are sized to their widest content (a
+     two-line date, a full-width thumbnail, the longest Files label);
+     Page takes a share of the rest and Prompt absorbs the remainder.
+
+     The screenshot column is exactly `--thumb-w` — the *same* token
+     the thumbnail's `max-width` uses. Sizing the two independently
+     leaves the difference as dead space down the right of every row,
+     because a fixed column can't shrink to its content. */
+  td.date-cell, th.date-cell { white-space: nowrap; width: 110px; }
+  td.shot-cell, th.shot-cell { width: var(--thumb-w); }
+  td.files-cell, th.files-cell { white-space: nowrap; width: 130px; }
+  th.page-cell { width: 30%; }
+
+  .date-cell .time { color: #555; }
+  /* The N/A marker used wherever a record has nothing to show for a
+     column (no screenshot saved, no prompt entered, unknown URL). */
+  .na { color: #999; font-style: italic; }
+
+  /* Thumbnails are the on-disk PNG scaled down by the browser.
+     `--thumb-w` is shared with the screenshot column's width so the
+     widest thumbnails sit flush against the column edge (see the
+     column-sizing block above); `--thumb-h` is shared with the prompt
+     cell's cap so a row's two tall cells agree. */
+  .thumb {
+    display: block;
+    max-width: var(--thumb-w);
+    max-height: var(--thumb-h);
+    border: 1px solid #ccc;
+    background: #fff;
+  }
+  .thumb-link { text-decoration: none; }
+
+  /* One artifact per line — `block` on every child so the unlinked
+     fallback (when the capture directory can't be resolved) stacks the
+     same way the links do. */
+  .files-cell > * { display: block; }
+  /* Unlinked fallback for a saved artifact we can't build a file://
+     URL for — greyed so it doesn't read as a dead link. */
+  .files-cell .flag { color: #777; }
+
+  .page-cell .title { font-weight: 600; }
+  .page-cell .url { color: #1a5fb4; word-break: break-all; }
+
+  /* Prompt is capped to the thumbnail height and scrolls in place, so
+     one long prompt can't stretch the whole row. `pre-wrap` keeps the
+     user's line breaks. */
+  .prompt-box {
+    max-height: var(--thumb-h);
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.4;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 3px;
+    padding: 4px 6px;
+  }
+
+  /* Empty / error states shown instead of the table. The top margin
+     replaces the padding <main> can't have (see its rule above). */
+  .notice {
+    margin-top: 16px;
+    font-size: 14px;
+    color: #555;
+    max-width: 60ch;
+    line-height: 1.5;
+  }
+  .notice code {
+    background: #f0f0f0;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <img src="icons/icon-48.png" alt="">
+  <span><span class="app-brand">SeeWhatISee</span> — Capture history</span>
+  <button type="button" id="options-btn"
+          class="btn header-btn header-btn-leading">Options</button>
+  <a id="help-btn" class="btn header-btn"
+     href="https://github.com/jshute96/SeeWhatISee/blob/main/README.md"
+     target="_blank" rel="noreferrer noopener">Help</a>
+</header>
+
+<div class="toolbar">
+  <label for="search">Search:</label>
+  <input type="search" id="search" placeholder="Search URL, title, or prompt…"
+         autocomplete="off" spellcheck="false">
+  <span class="count" id="count"></span>
+</div>
+
+<main>
+  <p class="notice" id="empty" hidden>
+    No captures in the log yet. Capture something and it will show up here.
+  </p>
+  <p class="notice" id="no-matches" hidden>
+    No captures match your search.
+  </p>
+  <table id="table" hidden>
+    <thead>
+      <tr>
+        <th class="date-cell">Date</th>
+        <th class="shot-cell">Screenshot</th>
+        <th class="files-cell">Files</th>
+        <th class="page-cell">Page</th>
+        <th class="prompt-cell">Prompt</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="notice" id="file-access-hint" hidden>
+    Thumbnails and file links read the saved files straight off disk.
+    To let them load, enable <b>Allow access to file URLs</b> for
+    SeeWhatISee at <code>chrome://extensions</code>.
+  </p>
+</main>
+
+<script type="module" src="history.js"></script>
+</body>
+</html>

@@ -11,7 +11,11 @@ import {
   getAskPin,
 } from '../ask/index.js';
 import { type CaptureRecord } from '../capture/types.js';
-import { DOWNLOAD_SUBDIR } from '../capture/downloads.js';
+import {
+  getCaptureDirectory,
+  joinCapturePath,
+  pathToFileUrl,
+} from '../capture/downloads.js';
 import { LOG_STORAGE_KEY } from '../capture/log-store.js';
 import { getLastCapture } from './last-capture.js';
 import {
@@ -48,6 +52,9 @@ export const SHORTCUT_SUFFIX = '-shortcut';
 
 // Id used by the "Clear log history" entry under the More submenu.
 export const CLEAR_LOG_MENU_ID = 'clear-log';
+// Id used by the top-level "History" entry (directly above the More
+// submenu) — opens `history.html`, the table view over the capture log.
+export const HISTORY_MENU_ID = 'history-page';
 // Id used by the "Snapshots directory" entry under the More submenu.
 export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
 // Id used by the "Upload image to Capture..." entry under the More
@@ -513,55 +520,6 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-/**
- * Resolve the absolute on-disk directory where this extension writes
- * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
- * is OS- and config-dependent and not exposed by any Chrome API, so we
- * derive it by searching `chrome.downloads.search` for our `log.json`
- * record (every capture overwrites it, so the most recent match points
- * at the live directory — even on a fresh SW load where in-memory
- * state is empty).
- *
- * - Pinning the search to `log.json` rather than any file under a
- *   `SeeWhatISee/` folder avoids false matches in same-named
- *   directories the user happens to use (e.g. `/tmp/SeeWhatISee/`).
- * - `byExtensionId` is checked client-side (the `DownloadQuery` type
- *   doesn't accept it as a filter — it's a result-only field) as a
- *   second guard against an unrelated `log.json` in such a folder.
- *
- * Throws when no capture has happened yet so the caller can surface
- * a "capture once first" message via the icon/tooltip error channel.
- */
-async function getCaptureDirectory(): Promise<string> {
-  const candidates = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
-    orderBy: ['-startTime'],
-  });
-  const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id);
-  const fullPath = ours?.filename;
-  if (!fullPath) {
-    throw new Error(
-      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
-    );
-  }
-  // Strip the basename. `chrome.downloads.search().filename` is
-  // documented to be the absolute path to a file (never ends in a
-  // separator), so this always trims one segment.
-  return fullPath.replace(/[/\\][^/\\]+$/, '');
-}
-
-/**
- * Join `dir` and `name` using whichever separator `dir` already uses.
- * `chrome.downloads.search` returns OS-native paths — backslashes on
- * Windows, forward slashes elsewhere — so reusing the existing
- * separator keeps the result paste-ready in the user's OS shell /
- * file manager.
- */
-function joinCapturePath(dir: string, name: string): string {
-  const sep = dir.includes('\\') ? '\\' : '/';
-  return `${dir}${sep}${name}`;
-}
-
 // The `if (!r) ...` / `if (!r.screenshot) ...` branches below are
 // defensive — under normal use the menu items are greyed out (so the
 // click can't fire), but the user can still hit a small race window
@@ -623,14 +581,42 @@ export async function openUploadCapturePage(
  */
 export async function openSnapshotsDirectory(): Promise<void> {
   const dir = await getCaptureDirectory();
-  // Build a properly-encoded file:// URL. Normalize Windows backslashes
-  // to forward slashes, prepend a leading `/` for Windows paths like
-  // `C:/Users/…` so the URL parser sees an absolute path, and let
-  // `new URL` percent-encode anything weird (spaces in user names,
-  // `#`, `?`, non-ASCII characters).
-  const normalized = dir.replace(/\\/g, '/');
-  const fileUrl = new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
-  await chrome.tabs.create({ url: fileUrl });
+  await chrome.tabs.create({ url: pathToFileUrl(dir) });
+}
+
+/**
+ * Fail loudly if the toolbar menu's top-level row count exceeds
+ * Chrome's cap. See the call site in `installContextMenu` for why a
+ * silent overflow is so easy to miss.
+ *
+ * `ACTION_MENU_TOP_LEVEL_LIMIT` is a read-only constant reporting a
+ * hard limit baked into Chrome, not a setting we can raise. It's
+ * absent in some test/stub environments, so we fall back to the
+ * documented value rather than skipping the check.
+ */
+let topLevelCreated = 0;
+
+/**
+ * Create a top-level (`contexts: ['action']`, no `parentId`) menu row
+ * and count it. Every top-level row must go through here — a raw
+ * `chrome.contextMenus.create` would be invisible to
+ * `assertTopLevelBudget` below, which is exactly the bookkeeping
+ * mistake the budget check exists to catch.
+ */
+function createTopLevelMenu(props: chrome.contextMenus.CreateProperties): void {
+  topLevelCreated++;
+  chrome.contextMenus.create(props);
+}
+
+function assertTopLevelBudget(): void {
+  const limit = chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT ?? 6;
+  if (topLevelCreated > limit) {
+    throw new Error(
+      `installContextMenu: ${topLevelCreated} top-level action-menu entries `
+      + `exceeds Chrome's limit of ${limit}; entries past the cap are dropped `
+      + 'silently. Move one into the More submenu.',
+    );
+  }
 }
 
 // ───────────────────────── installContextMenu ────────────────────────
@@ -640,6 +626,7 @@ export async function openSnapshotsDirectory(): Promise<void> {
 //   Capture...                         (top-level shortcut row, id = capture-shortcut)
 //   Save default items                 (top-level shortcut row, id = save-defaults-shortcut)
 //   Capture... in 3s                   (top-level shortcut row, id = capture-3s-shortcut)
+//   History                            (opens history.html — the capture-log table view)
 //   More  ▸                         (submenu — full action catalog + utilities)
 //       • Capture...                     (same as the top-level shortcut)
 //       • Save default items             (runs Capture-page Save with stored defaults, no dialog)
@@ -673,11 +660,12 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6` top-level
 // items in the action context menu. Overflow fails silently via
 // `chrome.runtime.lastError`, so a careless addition silently drops
-// a previously-working entry. The menu above currently uses 5 of the
-// 6 slots (three shortcut rows, the More submenu parent, plus the Pin
-// Ask target row), leaving one free slot — but adding a sixth row
-// puts the menu back at the cap, so be deliberate about what to
-// promote.
+// a previously-working entry. The menu above is at exactly 6 (three
+// shortcut rows, History, the More submenu parent, the Pin Ask
+// target row) — there is no headroom, and a new top-level entry has
+// to displace one of those or live inside More.
+// `assertTopLevelBudget` at the end of installContextMenu turns an
+// overflow into a thrown error rather than a vanished row.
 //
 // In-submenu separators are free (they don't count against the
 // top-level cap) so we use them to group the "More" submenu into
@@ -705,6 +693,11 @@ export async function openSnapshotsDirectory(): Promise<void> {
 // near the constants for their contract.
 
 export async function installContextMenu(): Promise<void> {
+  // The whole menu is torn down and rebuilt on every install (hotkey
+  // edits, default-action changes), so the top-level tally has to
+  // start from zero each time or it would climb past the cap and
+  // throw on the second rebuild.
+  topLevelCreated = 0;
   const platform = await chrome.runtime.getPlatformInfo();
   // ChromeOS rendering of `type: 'separator'` in extension menus is
   // sometimes broken/invisible; on that platform we fall back to a
@@ -778,12 +771,24 @@ export async function installContextMenu(): Promise<void> {
       // drop a top-level entry.
       throw new Error(`installContextMenu: missing CAPTURE_ACTIONS entry "${actionId}"`);
     }
-    chrome.contextMenus.create({
+    createTopLevelMenu({
       id: `${actionId}${SHORTCUT_SUFFIX}`,
       title: actionMenuTitle(action, defaultId, clickWithSelId, dblId, dblWithSelId, shortcuts, defaults),
       contexts: ['action'],
     });
   }
+
+  // ── Top-level "History" entry ───────────────────────────────
+  // Sits directly above the More submenu. A utility rather than a
+  // capture action, so it isn't in CAPTURE_ACTIONS and doesn't take
+  // a `-shortcut` suffix; it's also deliberately *not* duplicated
+  // inside More (unlike Capture..., which is there to keep More a
+  // complete catalog of capture actions — History isn't one).
+  createTopLevelMenu({
+    id: HISTORY_MENU_ID,
+    title: 'History',
+    contexts: ['action'],
+  });
 
   // ── "More" submenu ──────────────────────────────────────────
   // Home for:
@@ -793,7 +798,7 @@ export async function installContextMenu(): Promise<void> {
   //     or both checkboxes, minus the dialog round-trip)
   //   - infrequent utilities that would otherwise compete for a
   //     top-level slot against the primary capture entries
-  chrome.contextMenus.create({
+  createTopLevelMenu({
     id: MORE_PARENT_ID,
     title: 'More',
     contexts: ['action'],
@@ -940,7 +945,7 @@ export async function installContextMenu(): Promise<void> {
   // `PIN_ASK_TARGET_SET_TITLE` for why we use a ballot-box prefix
   // instead of the 📌 emoji here. `refreshPinAskTargetMenu` flips
   // the title between Set / Unset on every tab/window event.
-  chrome.contextMenus.create({
+  createTopLevelMenu({
     id: PIN_ASK_TARGET_MENU_ID,
     title: PIN_ASK_TARGET_SET_TITLE,
     enabled: false,
@@ -974,6 +979,23 @@ export async function installContextMenu(): Promise<void> {
   // there's no point waiting for a tab event to arrive before the
   // menu reflects the current page.
   await refreshPinAskTargetMenu();
+
+  // Chrome silently drops any `contexts: ['action']` entry past
+  // `ACTION_MENU_TOP_LEVEL_LIMIT` (6): `create()` sets
+  // `chrome.runtime.lastError` on the offending call and, since we
+  // pass no callback, nothing reads it — the entry just isn't there.
+  // That has bitten this menu before (a 7th entry silently dropped
+  // "Clear log history"), and the top level is now *exactly* at the
+  // cap, so assert rather than trust a future edit to count
+  // correctly. The tally comes from `createTopLevelMenu`, which every
+  // top-level row goes through — no hand-maintained number to fall
+  // out of sync.
+  //
+  // Deliberately last: throwing here aborts the rest of
+  // `installContextMenu`, so asserting mid-way would take the
+  // image right-click entries down as collateral for an unrelated
+  // top-level mistake. By this point every entry exists.
+  assertTopLevelBudget();
 }
 
 /**

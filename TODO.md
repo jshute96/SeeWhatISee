@@ -62,7 +62,15 @@
 
 ### Pending docs for features not released yet
 
-(None — the 1.1.0 items are now in `README.md`.)
+* **History page** — a searchable table of recent captures: date,
+  screenshot thumbnail, links to the saved HTML / selection files,
+  page URL + title, and the prompt.
+  * Open it from the **History** entry on the toolbar icon's
+    right-click menu, or the **History** button in the header of the
+    Capture and Options pages.
+  * The search box filters on URL, title, or prompt text.
+  * Thumbnails and file links need "Allow access to file URLs"
+    enabled for the extension.
 
 ### Not documented
 

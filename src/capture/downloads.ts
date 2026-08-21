@@ -14,9 +14,9 @@ import { unpackText } from './packed-text.js';
 
 /**
  * Subdirectory under the user's download root where every capture
- * file lands. Exported so the More-submenu "Open snapshots
- * directory" entry can build its filter regex against the same
- * string.
+ * file lands. Also the string `getCaptureDirectory` below builds its
+ * `log.json` filter regex from, so the write path and the
+ * where-did-it-land lookup can't disagree.
  */
 export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
@@ -148,4 +148,72 @@ export async function waitForDownloadComplete(
     await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error(`Download ${downloadId} did not complete within ${timeoutMs}ms`);
+}
+
+/**
+ * Resolve the absolute on-disk directory where this extension writes
+ * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
+ * is OS- and config-dependent and not exposed by any Chrome API, so we
+ * derive it by searching `chrome.downloads.search` for our `log.json`
+ * record (every capture overwrites it, so the most recent match points
+ * at the live directory — even on a fresh SW load where in-memory
+ * state is empty).
+ *
+ * - Pinning the search to `log.json` rather than any file under a
+ *   `SeeWhatISee/` folder avoids false matches in same-named
+ *   directories the user happens to use (e.g. `/tmp/SeeWhatISee/`).
+ * - `byExtensionId` is checked client-side (the `DownloadQuery` type
+ *   doesn't accept it as a filter — it's a result-only field) as a
+ *   second guard against an unrelated `log.json` in such a folder.
+ *
+ * Throws when no capture has happened yet so the caller can surface
+ * a "capture once first" message on whatever surface it owns (the
+ * icon/tooltip error channel for the More-submenu entries, an inline
+ * banner on the History page).
+ *
+ * Lives here rather than next to its menu call sites because both the
+ * service worker (`background/context-menu.ts`) and the History page
+ * (`history.ts`) need it, and `downloads.ts` is the module that owns
+ * everything about where capture files land.
+ */
+export async function getCaptureDirectory(): Promise<string> {
+  const candidates = await chrome.downloads.search({
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]log\\.json$`,
+    orderBy: ['-startTime'],
+  });
+  const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id);
+  const fullPath = ours?.filename;
+  if (!fullPath) {
+    throw new Error(
+      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
+    );
+  }
+  // Strip the basename. `chrome.downloads.search().filename` is
+  // documented to be the absolute path to a file (never ends in a
+  // separator), so this always trims one segment.
+  return fullPath.replace(/[/\\][^/\\]+$/, '');
+}
+
+/**
+ * Join `dir` and `name` using whichever separator `dir` already uses.
+ * `chrome.downloads.search` returns OS-native paths — backslashes on
+ * Windows, forward slashes elsewhere — so reusing the existing
+ * separator keeps the result paste-ready in the user's OS shell /
+ * file manager.
+ */
+export function joinCapturePath(dir: string, name: string): string {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return `${dir}${sep}${name}`;
+}
+
+/**
+ * Turn an OS-native absolute path into a properly-encoded `file://`
+ * URL. Normalizes Windows backslashes to forward slashes, prepends a
+ * leading `/` for Windows paths like `C:/Users/…` so the URL parser
+ * sees an absolute path, and lets `new URL` percent-encode anything
+ * weird (spaces in user names, `#`, `?`, non-ASCII characters).
+ */
+export function pathToFileUrl(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  return new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
 }

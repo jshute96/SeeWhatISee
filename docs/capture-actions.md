@@ -399,11 +399,19 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
 - Chrome enforces
   `chrome.contextMenus.ACTION_MENU_TOP_LEVEL_LIMIT = 6`.
   Top-level separators count against it.
-- **The menu currently uses 5 of the 6 slots.** Three top-level
-  shortcut rows (Capture..., Save default items, Capture... in 3s),
-  the More submenu parent, and the Pin-Ask-target row. One slot is
-  free, but a sixth row would put the menu back at the cap and any
-  later addition would silently displace an existing entry.
+- **The top level is currently full.** The rows are the three
+  capture shortcut rows (Capture..., Save default items,
+  Capture... in 3s), **History**, the **More** submenu parent, and
+  the Set/Unset Ask-target row.
+  - There is no headroom: a new top-level entry has to displace one
+    of those or live inside More.
+- Every top-level row is created through `createTopLevelMenu`, which
+  tallies them; `assertTopLevelBudget()` throws at the end of
+  `installContextMenu` if the tally exceeds the limit.
+  - The tally is observed rather than declared, so it can't drift
+    out of sync the way a hand-maintained count would — and a
+    hand-maintained count would be updated by exactly the person who
+    already noticed the cap, i.e. not the one who needs the check.
 - **New work defaults to the More submenu** (the natural home for
   infrequent utilities and per-base shortcuts). Promote a new
   action to the top level only when it earns the slot.
