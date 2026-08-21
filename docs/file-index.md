@@ -185,9 +185,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
-| `src/history.html` | Capture history page — Search box + fixed-layout, newest-first table of the stored capture log |
+| `src/history.html` | Capture history page — a searchable, newest-first table of recent captures |
 | `src/history.ts` | Controller for `history.html`: reads `captureLog` + the capture dir, renders rows, live search filter |
-| `src/shared-styles.css` | Page-wide `.btn` chrome + `.app-header` / `.app-footer` bar layout/colour + `.header-btn` trailing chrome shared by `capture.html`, `options.html`, and `history.html` |
+| `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
 

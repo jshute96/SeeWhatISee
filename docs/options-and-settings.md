@@ -270,6 +270,31 @@ you're already on:
 `margin-left: auto` on it pushes the whole group to the right edge, so
 it moves to whichever button comes first on a given page.
 
+### Shared typography tokens
+
+`shared-styles.css` defines two `:root` custom properties that every
+page's inline `<style>` references instead of restating the stack:
+
+- `--font-ui` — the OS UI face, used for page body text so extension
+  pages read as part of the browser rather than as a web page.
+- `--font-mono` — used anywhere column alignment carries meaning or
+  glyphs must not be confusable.
+
+Deliberately stated as rules rather than a list of call sites, which
+would rot the next time a page is added. A page needing something else
+still just sets `font-family` locally.
+
+**Not for the Ask widget.** `ask-widget.ts`'s `WIDGET_CSS` keeps its
+font stacks literal, even though one is byte-identical to
+`--font-mono`:
+
+- That CSS is injected into a shadow root on an arbitrary host page.
+- Custom properties inherit *through* a shadow boundary from the host
+  document, so `var(--font-mono)` there would resolve to whatever the
+  host site defines — or to nothing.
+- See [ask-widget.md](ask-widget.md) for the widget's wider style-
+  isolation policy (all units explicit, nothing inherited).
+
 ### Layout
 
 Sections are rendered top-to-bottom in this order:

@@ -53,6 +53,14 @@ laid out, the cross-world architecture that lets it drive the inject.
   outer border's deep-purple-200.
 - Outer border is `#b39ddb` for theme consistency with the shared
   `.app-header` / `.app-footer` chrome in `shared-styles.css`.
+- Font stacks stay **literal** here, and must not be swapped for
+  `shared-styles.css`'s `--font-ui` / `--font-mono` tokens even where
+  the value is byte-identical.
+  - Custom properties inherit *through* a shadow boundary from the
+    host document, so a `var()` would resolve to whatever the host
+    site defines — or to nothing.
+  - Same reasoning as the all-units-explicit rule: nothing about the
+    widget's appearance may depend on the page it lands on.
 
 ## States
 

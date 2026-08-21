@@ -1,8 +1,10 @@
 /*
- * Shared chrome for every extension page (Capture page, Options
- * page, History page, any future page). Linked from each HTML's
- * <head> via `<link rel="stylesheet" href="shared-styles.css">`.
- * Build copies this file verbatim into dist/.
+ * Shared typography tokens and chrome for every extension page
+ * (Capture page, Options page, History page, any future page).
+ * Linked from each HTML's <head> via
+ * `<link rel="stylesheet" href="shared-styles.css">`, ahead of that
+ * page's own inline <style>. Build copies this file verbatim into
+ * dist/.
  *
  * For most buttons, per-page sizing/padding/border still lives next
  * to each button's own selectors — the `.btn` rules below add only
@@ -22,6 +24,31 @@
  *   - `#edit-shortcuts` on options.html (inline link-style button
  *     that sits mid-prose)
  */
+
+/*
+ * Typography tokens. Every page wants the same two stacks, so they
+ * live here instead of being restated in each page's inline <style>.
+ *
+ *   - `--font-ui` — the OS UI face, so extension pages read as part
+ *     of the browser rather than as a web page. Page body text.
+ *   - `--font-mono` — anywhere column alignment carries meaning or
+ *     glyphs must not be confusable.
+ *
+ * Stated as rules, not as a list of call sites: an inventory here
+ * would rot the next time a page is added.
+ *
+ * NOT for the Ask widget (`ask-widget.ts`'s `WIDGET_CSS`), which
+ * keeps its stacks literal even though one is byte-identical to
+ * `--font-mono`. That CSS is injected into a shadow root on an
+ * arbitrary host page, and custom properties inherit *through* a
+ * shadow boundary from the host document — so `var(--font-mono)`
+ * there would resolve to whatever the host site defines, or to
+ * nothing. Don't "finish the sweep" into that file.
+ */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 
 .btn {
   /* Subtle outer shadow gives the button an obvious raised look so
