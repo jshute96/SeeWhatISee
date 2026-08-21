@@ -34,6 +34,7 @@ import {
 } from './default-action.js';
 import { buildMenuHint } from './menu-hint.js';
 import { saveDefaultsMenuTitle } from './tooltip.js';
+import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
 export const MORE_PARENT_ID = 'more-parent';
 // Suffix appended to the menu-item id of the top-level "shortcut"
@@ -599,9 +600,10 @@ export async function copyLastSelectionFilename(): Promise<void> {
  * per-tab session, and the page falls into the normal Capture-page
  * flow.
  *
- * Tab-placement mirrors `openCapturePageWithSession` (right of the
- * opener, `openerTabId` linked) so the new tab visually groups with
- * the page the user was on. Pulled out of the inline menu-click
+ * Tab-placement mirrors `openCapturePageWithSession` via the shared
+ * `tabPlacement` helper (opener's window, right of the opener,
+ * `openerTabId` linked) so the new tab visually groups with the page
+ * the user was on. Pulled out of the inline menu-click
  * handler in `background.ts` so e2e tests can drive the same logic
  * without going through `chrome.contextMenus.onClicked` (which
  * Chrome's API doesn't expose a programmatic dispatch for).
@@ -609,12 +611,10 @@ export async function copyLastSelectionFilename(): Promise<void> {
 export async function openUploadCapturePage(
   opener: chrome.tabs.Tab | undefined,
 ): Promise<void> {
-  const createProps: chrome.tabs.CreateProperties = {
+  await createTabWithPlacement({
     url: chrome.runtime.getURL('capture.html?upload=true'),
-  };
-  if (opener?.index !== undefined) createProps.index = opener.index + 1;
-  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
-  await chrome.tabs.create(createProps);
+    ...(await tabPlacement(opener)),
+  });
 }
 
 /**

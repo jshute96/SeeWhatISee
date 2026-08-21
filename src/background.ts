@@ -309,9 +309,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // tab. The page renders an upload-landing card; selecting an
   // image initializes the per-tab session and falls into the
   // normal Capture-page flow. Mirrors the image-right-click path's
-  // tab placement (`active.index + 1`, `openerTabId` linked) so
-  // the user lands the new tab next to the page they triggered
-  // from.
+  // tab placement (shared `tabPlacement` — opener's window, right of
+  // it, `openerTabId` linked) so the user lands the new tab next to
+  // the page they triggered from.
   if (id === UPLOAD_IMAGE_MENU_ID) {
     await runWithErrorReporting(() => openUploadCapturePage(tab));
     return;

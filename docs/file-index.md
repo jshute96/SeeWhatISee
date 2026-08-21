@@ -194,6 +194,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `src/background/error-reporting.ts` | Capture-failed-page error surface: `runWithErrorReporting`, `reportCaptureError`, `friendlyErrorMessage`, unhandled-rejection suppression |
+| `src/background/open-tab.ts` | Shared tab placement next to an opener (same normal window, right of it, `openerTabId`) with an unplaced-tab fallback |
 | `src/background/session-quota.ts` | Pre-flight `chrome.storage.session` quota check + size-aware error formatter shared by the Capture, Upload, and Ask write paths |
 | `src/background/capture-actions.ts` | `CAPTURE_ACTIONS` table — base actions × delays, the `captureUrlOnly` / `saveDefaults` / `captureAll` shortcuts, delay/title helpers |
 | `src/background/default-action.ts` | Click + Double-click defaults (with/without selection), `handleActionClick` dispatcher, `runDblDefault`, `getDefaultActionTooltip` builder |
@@ -360,6 +361,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
 | `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
 | `tests/unit/last-capture.test.mjs` | Unit tests for `src/background/last-capture.ts` — denylist contents, round-trip, `bases` regression, auto-carry of future fields, quota-swallow |
+| `tests/unit/open-tab.test.mjs` | Unit tests for `src/background/open-tab.ts` — placement fields, popup/missing-window skips, unplaced retry, error propagation |
 
 ## Design Docs (`docs/`)
 

@@ -1,4 +1,5 @@
 import { noSelectionContentMessage } from '../capture/types.js';
+import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
 // User-visible error reporting for failed captures.
 //
@@ -96,9 +97,10 @@ export function friendlyErrorMessage(err: unknown): string {
  * sees the failure on a real page they can read and copy from.
  *
  * `opener` is the source tab (the one the user was on when they
- * triggered the action). When provided, the error tab is placed
- * immediately to its right so the visual relationship matches the
- * normal Capture-page flow. When absent (e.g. no active-tab lookup
+ * triggered the action). When provided, the error tab is placed in
+ * the opener's window immediately to its right (shared
+ * `tabPlacement`) so the visual relationship matches the normal
+ * Capture-page flow. When absent (e.g. no active-tab lookup
  * available), Chrome picks the position.
  */
 export async function reportCaptureError(
@@ -112,11 +114,8 @@ export async function reportCaptureError(
   // failure is already handled via the error page.
   console.info('[SeeWhatISee] capture failed:', err);
   const url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
-  const createProps: chrome.tabs.CreateProperties = { url };
-  if (opener?.index !== undefined) createProps.index = opener.index + 1;
-  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
   try {
-    await chrome.tabs.create(createProps);
+    await createTabWithPlacement({ url, ...(await tabPlacement(opener)) });
   } catch (e) {
     // If even the tab open fails (very rare — manifest restriction,
     // SW shutdown mid-call), we have no surface left. Log and move

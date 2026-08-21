@@ -1860,6 +1860,29 @@ Only meaningful when the page stays open across multiple saves
 it appears immediately to the right of the tab the user captured
 from.
 
+Placement comes from the shared `tabPlacement` /
+`createTabWithPlacement` helpers in `src/background/open-tab.ts`,
+also used by the upload landing card and the error page:
+
+- **`windowId: opener.windowId` is required, not optional.** With
+  no `windowId`, `chrome.tabs.create` targets Chrome's *current*
+  window — from a service worker, the last-focused normal window.
+- That isn't always the opener's window: the opener can live in an
+  app/popup-type window, or focus can shift between the active-tab
+  lookup and the create.
+- If the two disagree, Chrome rejects the whole call with "Tab
+  opener must be in the same window as the updated tab." and no
+  tab opens.
+- **Popup / app windows get no placement at all.** Chrome would
+  happily put the tab in one, but a chromeless window with no tab
+  strip would hide our page behind the page the user was on, so
+  `tabPlacement` checks `chrome.windows.get(...).type` and returns
+  nothing but the URL for a non-`normal` window.
+- `createTabWithPlacement` retries once without the placement
+  fields if Chrome refuses them anyway (opener tab or window closed
+  between the lookup and the create), so the page always opens
+  somewhere. If the retry fails too, the original error propagates.
+
 On close, the `saveDetails` happy path runs `closeCapturePageTab`
 with `focusOpener: true`:
 

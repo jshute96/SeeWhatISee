@@ -125,8 +125,8 @@ test('upload: menu-click handler opens capture.html?upload=true adjacent to the 
   const sw = await getServiceWorker();
 
   // Spy on `chrome.tabs.create`. Capture the create-properties
-  // (URL, index, openerTabId) without actually opening the tab so
-  // the test doesn't accumulate stray windows.
+  // (URL, windowId, index, openerTabId) without actually opening the
+  // tab so the test doesn't accumulate stray windows.
   await sw.evaluate(async () => {
     interface CreateSpy {
       __seeCreate?: chrome.tabs.CreateProperties[];
@@ -146,19 +146,26 @@ test('upload: menu-click handler opens capture.html?upload=true adjacent to the 
   });
 
   try {
-    const calls = await sw.evaluate(async () => {
+    const result = await sw.evaluate(async () => {
       type Seam = { openUploadCapturePage: (t: chrome.tabs.Tab) => Promise<void> };
       const api = (self as unknown as { SeeWhatISee: Seam }).SeeWhatISee;
       // Synthetic opener at index 3, id 42 — same shape Chrome
-      // hands to the real `onClicked` listener.
-      await api.openUploadCapturePage({ id: 42, index: 3 } as chrome.tabs.Tab);
+      // hands to the real `onClicked` listener. The window id is the
+      // test browser's real (normal-type) window so `tabPlacement`'s
+      // window-type check resolves the same way it does in Chrome.
+      const windowId = (await chrome.windows.getCurrent()).id;
+      await api.openUploadCapturePage({ id: 42, index: 3, windowId } as chrome.tabs.Tab);
       const g = self as unknown as { __seeCreate?: chrome.tabs.CreateProperties[] };
-      return g.__seeCreate ?? [];
+      return { calls: g.__seeCreate ?? [], windowId };
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toMatch(/\/capture\.html\?upload=true$/);
-    expect(calls[0].index).toBe(4); // opener.index + 1
-    expect(calls[0].openerTabId).toBe(42);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0].url).toMatch(/\/capture\.html\?upload=true$/);
+    // windowId is the load-bearing one: without it Chrome puts the tab
+    // in the last-focused normal window and rejects the whole call
+    // with "Tab opener must be in the same window as the updated tab."
+    expect(result.calls[0].windowId).toBe(result.windowId);
+    expect(result.calls[0].index).toBe(4); // opener.index + 1
+    expect(result.calls[0].openerTabId).toBe(42);
   } finally {
     // Restore so later tests in this file (and the rest of the
     // suite sharing this SW) see the real `chrome.tabs.create`.

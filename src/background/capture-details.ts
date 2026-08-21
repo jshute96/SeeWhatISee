@@ -54,6 +54,7 @@ import {
   isUsableAnnotationTransfer,
   setAnnotationClipboard,
 } from './annotation-clipboard.js';
+import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
 /**
  * Hard cap on what one capture's HTML may cost in
@@ -769,6 +770,10 @@ function getCombinedCaptureError(data: InMemoryCapture): string {
  *
  * `openerTabId` helps Chrome group the new tab visually with its
  * opener; it has no role in close-time activation.
+ *
+ * Placement (window + index + opener link) comes from the shared
+ * `tabPlacement` helper in `open-tab.ts` — see there for why the
+ * opener's `windowId` has to be named explicitly.
  */
 async function openCapturePageWithSession(
   data: InMemoryCapture,
@@ -786,13 +791,12 @@ async function openCapturePageWithSession(
 ): Promise<void> {
   const createProps: chrome.tabs.CreateProperties = {
     url: chrome.runtime.getURL('capture.html'),
+    ...(await tabPlacement(opener)),
   };
-  if (opener?.index !== undefined) createProps.index = opener.index + 1;
-  if (opener?.id !== undefined) createProps.openerTabId = opener.id;
 
   if (isTotalCaptureFailure(data)) {
     const message = getCombinedCaptureError(data);
-    await chrome.tabs.create({
+    await createTabWithPlacement({
       ...createProps,
       url: capturePageUrlWithError(message),
     });
@@ -859,14 +863,14 @@ async function openCapturePageWithSession(
   );
   if (!probe.ok) {
     const message = `${formatQuotaError('capture', probe, captureBreakdown(data))}\n${CAPTURE_DIRECTLY_HINT}`;
-    await chrome.tabs.create({
+    await createTabWithPlacement({
       ...createProps,
       url: capturePageUrlWithError(message),
     });
     return;
   }
 
-  const tab = await chrome.tabs.create(createProps);
+  const tab = await createTabWithPlacement(createProps);
   if (tab.id === undefined) {
     throw new Error('Failed to open Capture page tab');
   }
