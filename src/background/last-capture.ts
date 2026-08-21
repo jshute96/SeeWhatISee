@@ -13,6 +13,11 @@
 // freely clear `lastCapture` — the snapshot is best-effort, not
 // a durable history.
 //
+// The slot also carries `logKey` when the session saved at least
+// once — the identity of its newest `log.json` record. That's what
+// lets the History page put a Restore button on the row this slot
+// would re-open; see `docs/history-page.md` "Restore from a row".
+//
 // Every promote also mirrors the page's annotations into the
 // separate, never-reclaimed `lastCaptureAnnotations` slot (see
 // `annotation-clipboard.ts`) — that's what the Capture page's

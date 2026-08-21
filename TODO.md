@@ -78,6 +78,12 @@
     being discarded. Needs the same file-access permission.
     * *Clear log history* doesn't delete those archive files, so the
       History page can still load them afterwards.
+  * A **Restore** button appears in the Date cell of the one row that
+    *Restore last capture* would re-open, so the capture you're
+    looking at can be re-opened from where you found it.
+    * Only ever on one row, and only for a capture that was saved —
+      one closed without saving is still on the toolbar menu, but has
+      no row here to sit on.
 
 ### Not documented
 

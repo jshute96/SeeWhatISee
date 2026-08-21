@@ -18,6 +18,17 @@
 // handlers, because it is neither: Chrome dispatches an onMessage to
 // every registered listener, so a page can talk to whichever module
 // actually owns the behaviour.
+//
+// The one thing the page *can't* do itself is *Restore last capture*
+// from a row: reading the `lastCapture` slot and re-opening a Capture
+// page are both SW-side, and importing `last-capture.js` into the page
+// would drag the whole capture module graph into it. So the SW hands
+// the page the restorable record's `logKey` (on registration, and
+// again whenever the slot changes) and takes the restore click back as
+// a message.
+
+import { restoreLastCapture } from './capture-details.js';
+import { getLastCapture } from './last-capture.js';
 
 /**
  * `chrome.storage.session` key holding the tab id of the open History
@@ -97,6 +108,51 @@ export async function openHistoryPage(): Promise<void> {
   await chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
 }
 
+/**
+ * `logKey` of the capture a *Restore last capture* would re-open, or
+ * `null` when there's nothing to restore — or when the restorable
+ * capture never saved, so no log row describes it.
+ */
+async function restorableLogKey(): Promise<string | null> {
+  const record = await getLastCapture();
+  return record?.logKey ?? null;
+}
+
+/**
+ * Push the current restorable `logKey` to an open History page so its
+ * Restore button follows the slot.
+ *
+ * Pings first, through the same `historyTabAlive` helper
+ * `openHistoryPage` uses. Not paranoia about wasted messages: a stale
+ * id can belong to a completely unrelated tab (ids are reused), and
+ * the payload is the serialized log record — the captured URL, page
+ * title and the user's prompt text. That doesn't get sent anywhere we
+ * haven't confirmed is our own page.
+ *
+ * Fire-and-forget past that: a page mid-load, or one that goes away
+ * between the ping and the send, just doesn't get the update, and it
+ * re-asks on its next load anyway.
+ *
+ * Driven from the same `chrome.storage.onChanged` listener in
+ * `background.ts` that re-enables the menu entry, so every writer of
+ * the slot (Capture-page close, new capture, restore, quota relief) is
+ * covered without threading a call through each one.
+ */
+export async function notifyHistoryPageRestorable(): Promise<void> {
+  const tabId = await getHistoryTabId();
+  if (tabId === undefined) return;
+  if (!(await historyTabAlive(tabId))) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      action: 'restorableCaptureChanged',
+      logKey: await restorableLogKey(),
+    });
+  } catch {
+    // The page went away between the ping and the send. Nothing to
+    // update, and its next load re-asks.
+  }
+}
+
 export function installHistoryMessageHandler(): void {
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!msg || typeof msg !== 'object' || !('action' in msg)) return false;
@@ -120,8 +176,41 @@ export function installHistoryMessageHandler(): void {
         sendResponse({ error: 'no sender tab id' });
         return true;
       }
-      void chrome.storage.session.set({ [HISTORY_TAB_KEY]: id }).then(
-        () => sendResponse({ ok: true }),
+      // The reply carries the restorable `logKey` too, so the page
+      // gets its initial Restore-button state from the same round
+      // trip it was already making. A failure here just means no
+      // button — the page treats that as "nothing to restore".
+      //
+      // Kept in the two-callback `.then(onOk, onErr)` shape rather
+      // than a try/catch around the reply: with `sendResponse` inside
+      // the try, a throw from `sendResponse` itself (the page
+      // navigated away mid-load, closing the channel) would reach the
+      // handler and send a *second* response, which Chrome reports as
+      // an error on the extension's Errors page.
+      void (async () => {
+        await chrome.storage.session.set({ [HISTORY_TAB_KEY]: id });
+        return await restorableLogKey();
+      })().then(
+        (logKey) => sendResponse({ ok: true, logKey }),
+        (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
+      );
+      return true;
+    }
+
+    // Restore click on a History row. The page can't do this itself
+    // (see the module comment); `sender.tab` is the History tab, so
+    // the Capture page opens beside it and returns focus there on
+    // close, the same as any other opener.
+    //
+    // An empty slot is reported as a failure, not as `ok`. The page's
+    // button is gone-or-disabled after a success, so silently
+    // succeeding on nothing to restore would strand a dead button on
+    // the row; the page re-enables it with this message instead.
+    if (action === 'restoreLastCaptureFromHistory') {
+      void restoreLastCapture(sender.tab).then(
+        (restored) => sendResponse(
+          restored ? { ok: true } : { error: 'That capture is no longer available to restore.' },
+        ),
         (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
       );
       return true;

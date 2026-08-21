@@ -1981,6 +1981,9 @@ named by `LAST_CAPTURE_EXCLUDED_KEYS`, and writes the result under
   original un-bumped names, the restored session would feed an
   already-bumped stem back into `bumpedFilename` and produce
   `…-3-4.png` on the next save instead of `…-4.png`.
+- `logKey` rides along: the serialized `log.json` record of the
+  session's newest save, which is how the History page knows which
+  row the slot describes. Absent when the session never saved.
 - Download caches don't carry over — they point at on-disk files
   the new session doesn't own.
 - `openerTabId` doesn't carry over — the restore handler picks a
@@ -2028,6 +2031,10 @@ and responds once persisted, so the page's `await` is meaningful.
 
 - Menu entry **Restore last capture** lives under the More
   submenu, near Upload (and the Snapshots / Clear log items).
+- A second entry point, same action: the **Restore** button the
+  History page puts on the row the slot describes. See
+  [history-page.md → Restore from a row](history-page.md#restore-from-a-row)
+  — including why only a *saved* capture can be offered there.
 - Greyed when no `lastCapture` slot exists.
   `refreshRestoreLastCaptureMenuState` toggles `enabled` based on
   `getLastCapture()`, driven by a `chrome.storage.onChanged`

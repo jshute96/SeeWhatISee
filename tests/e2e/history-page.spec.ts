@@ -26,7 +26,7 @@
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { openDetailsFlow } from './details-helpers';
+import { configureAndCapture, openDetailsFlow } from './details-helpers';
 
 interface SeededRecord {
   timestamp: string;
@@ -344,4 +344,103 @@ test('a long URL scrolls inside the Page cell instead of stretching the row', as
   await expect(page.locator('#file-access-hint')).toBeHidden();
 
   await page.close();
+});
+
+// The Restore button needs a *real* capture, not a seeded log: the row
+// is identified by `logKey` — the serialized `log.json` record the
+// Capture-page save wrote — which only the real save path produces.
+//
+// The row the button lands on is the point of the whole design, so the
+// interesting assertion is the one with a *newer* row above the
+// restorable one. That also covers the negative case (a seeded record,
+// which has no `logKey`, must not light up) deterministically: the
+// button is provably live by then, so "no button here" means something.
+test('the Restore button lands on the restorable row, not the newest', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // A real capture, saved and closed → its session promotes into the
+  // `lastCapture` slot carrying the `logKey` of the row it just wrote.
+  // `openDetailsFlow` clears `storage.local` first, so this capture is
+  // the only row to start with.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  // Opened before the save so the button has to arrive by push rather
+  // than by first paint. Can't use `openHistory` here — it waits on
+  // `#count`, which stays empty until there's a record, and
+  // `openDetailsFlow` just cleared the log. The empty notice is the
+  // first-render signal on this side of the capture.
+  const historyPage = await extensionContext.newPage();
+  await historyPage.goto(`chrome-extension://${extensionId}/history.html`);
+  await expect(historyPage.locator('#empty')).toBeVisible();
+  const rows = historyPage.locator('#rows tr');
+  const restoreBtn = historyPage.locator('.restore-btn');
+
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'restore me from the history page',
+  });
+
+  // The button arrives on the open tab without a reload: the SW pushes
+  // `restorableCaptureChanged` from the same storage listener that
+  // re-enables the toolbar menu entry.
+  await expect(rows).toHaveCount(1);
+  await expect(restoreBtn).toHaveCount(1);
+  // In the Date cell, under the timestamp.
+  await expect(rows.nth(0).locator('.date-cell .restore-btn')).toHaveText('Restore');
+
+  // Now stack a newer row on top — the shape every quick-capture menu
+  // entry produces: a log record with no Capture-page session behind
+  // it, so nothing promoted and it can't be the restorable one.
+  const sw = await getServiceWorker();
+  const log = await sw.evaluate(async () => {
+    const data = await chrome.storage.local.get('captureLog');
+    return (data.captureLog ?? []) as unknown[];
+  });
+  expect(log).toHaveLength(1);
+  await sw.evaluate((existing) => chrome.storage.local.set({
+    captureLog: [...existing, {
+      timestamp: '2026-06-07T08:09:10.000Z',
+      screenshot: { filename: 'screenshot-20260607-080910-000.png' },
+      url: 'https://example.com/newer',
+      title: 'Newer quick capture',
+    }],
+  }), log);
+
+  // Newest first, so the quick capture leads — and the button stays
+  // put on the row below it rather than following the top of the table.
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator('.page-cell .title')).toHaveText('Newer quick capture');
+  await expect(restoreBtn).toHaveCount(1);
+  await expect(rows.nth(1).locator('.date-cell .restore-btn')).toHaveText('Restore');
+  await expect(rows.nth(1).locator('.prompt-box')).toHaveText(
+    'restore me from the history page',
+  );
+
+  // Clicking it does what the More-submenu entry does: re-opens the
+  // Capture page with the state it was closed with.
+  const restored = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 20000,
+  });
+  await rows.nth(1).locator('.restore-btn').click();
+  const restoredPage = await restored;
+  await expect(restoredPage.locator('#prompt-text')).toHaveValue(
+    'restore me from the history page',
+  );
+
+  // A restore consumes the slot, so the button leaves with it — the
+  // page is told, rather than having to be reloaded to find out.
+  await expect(restoreBtn).toHaveCount(0);
+  await expect(rows).toHaveCount(2);
+
+  await restoredPage.close();
+  await historyPage.close();
+  await openerPage.close();
 });

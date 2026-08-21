@@ -85,9 +85,12 @@ async function restoreAndWaitForCapturePage(
     await (
       self as unknown as {
         SeeWhatISee: {
+          // Resolves false when the slot was empty and nothing
+          // opened; this helper always expects a real restore, and
+          // the `waitForEvent` below is what enforces it.
           restoreLastCapture: (
             tab: chrome.tabs.Tab | undefined,
-          ) => Promise<void>;
+          ) => Promise<boolean>;
         };
       }
     ).SeeWhatISee.restoreLastCapture(active);

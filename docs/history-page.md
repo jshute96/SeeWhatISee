@@ -1,8 +1,11 @@
 # History page
 
-A read-only table view over the capture log — the same `captureLog`
+A table view over the capture log — the same `captureLog`
 array in `chrome.storage.local` that backs the on-disk `log.json`
 sidecar (see [architecture.md](architecture.md) for the log itself).
+
+- Read-only with respect to the log. The one action it offers is
+  [Restore from a row](#restore-from-a-row).
 
 - Files: `src/history.html` + `src/history.ts`.
 
@@ -195,7 +198,7 @@ Finding that tab is less obvious than it looks:
 
 | Column | Contents |
 |--------|----------|
-| Date | Local date over local time, from the record's UTC `timestamp` |
+| Date | Local date over local time, from the record's UTC `timestamp`; plus the Restore button on the one restorable row |
 | Screenshot | Browser-scaled thumbnail of the saved PNG, linked to the full-size file |
 | Files | One link per saved HTML / selection artifact; the selection link names its format |
 | Page | Captured tab's title over its URL (the URL links back to the live page) |
@@ -219,6 +222,86 @@ Finding that tab is less obvious than it looks:
     path worth reading in a table.
   - The cap is on an inner `<div>`, not the `<td>`: `overflow` on a
     table cell isn't reliably honoured.
+
+## Restore from a row
+
+A **Restore** button under the timestamp in the Date cell, on the one
+row that *Restore last capture* would re-open. Same action as the
+More-submenu entry (see [capture-page.md → Restore last
+capture](capture-page.md#restore-last-capture)) — the tooltip says so.
+
+### Finding the row
+
+- Each Capture-page save stashes `serializeRecord` of the `log.json`
+  record it just wrote on its session, as `logKey`. That rides into
+  the `lastCapture` slot on close like any other session field.
+- The page renders the button on the row whose `serializeRecord`
+  equals that key. **At most one row can match**: `mergedRecords` is
+  deduped on exactly this key, so byte-identical records have already
+  collapsed into one.
+- **Not "the newest row".** Cases that break that shortcut:
+  - The quick-capture menu entries (`capture-actions.ts`) write log
+    rows without ever opening a Capture page, so they never touch
+    `lastCapture`. Any number of them can stack above the restorable
+    row. This is the common case.
+  - A shift-click save keeps its Capture page open and so never
+    promotes, which lets a newer row sit above the restorable one.
+  - A capture closed without ever saving has no row at all. It's still
+    restorable from the menu; `logKey` is simply absent, so no row
+    lights up.
+- The row is the one the session **last wrote**, which isn't always
+  what the restored page will show: shift-click save, then edit the
+  prompt, then close without saving, and the button sits on a row
+  carrying the older prompt while the restored page opens with the
+  newer one. The slot is the authority on what comes back.
+- Keying on anything looser is not an option — a record's `timestamp`
+  does not identify it. Same reasoning as `dedupeRecords`; see
+  [Older captures](#older-captures).
+- Archived rows are matched too. The key is computed per rendered
+  record, so a restorable capture that has aged out of storage still
+  gets its button once the archives are loaded.
+
+### Plumbing
+
+- The page **can't read the slot itself**: `lastCapture` lives in
+  `chrome.storage.session` under a key owned by
+  `background/last-capture.ts`, and importing that module would pull
+  the whole capture module graph into the page (no bundler — pages
+  load the compiled modules directly).
+- So the SW hands it over:
+  - The `historyPageReady` reply carries the initial `logKey`, reusing
+    the round trip the page already makes to register its tab id.
+  - `notifyHistoryPageRestorable()` pushes `restorableCaptureChanged`
+    afterwards, driven from the same `chrome.storage.onChanged`
+    listener in `background.ts` that re-enables the menu entry — so
+    every writer of the slot is covered without per-writer plumbing.
+  - The push pings with `historyTabAlive` first, the same guard
+    `openHistoryPage` uses. A stored tab id can belong to an unrelated
+    tab, and the payload carries the captured URL, title and prompt.
+  - Both are best-effort. A failure costs the button, nothing else.
+  - **The push wins any race with the reply.** The SW reads the slot
+    before it replies, so a change in that window travels down the
+    other channel, and the page can't order the two. Once a push has
+    landed the page ignores the reply (`sawRestorablePush`).
+- The click goes back as `restoreLastCaptureFromHistory` →
+  `restoreLastCapture(sender.tab)`. The History tab is the opener, so
+  the Capture page opens beside it and returns focus there on close.
+- The button disables itself for the round trip and **stays** disabled
+  on success: a restore consumes the slot, so the push that follows
+  takes the button off the row. Only a failure re-enables it (with the
+  reason in the tooltip).
+  - The in-flight flag is module state, not the element's `disabled` —
+    `render()` rebuilds every row, so a re-render mid-restore would
+    otherwise hand back a live button. The push clears it.
+  - An **empty slot counts as a failure**, which is why
+    `restoreLastCapture` returns a boolean. Reporting `ok` for a
+    restore that opened nothing would strand a disabled button on a
+    row with nothing behind it — reachable whenever the page's view of
+    the slot is stale, which the best-effort push allows.
+- Errors surface in the button's tooltip, not through
+  `runWithErrorReporting` (the toolbar-icon error surface the menu
+  entry uses). The user is looking at the History page; that is where
+  the answer belongs.
 
 ## File links and `file://`
 

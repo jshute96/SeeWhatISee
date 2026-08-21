@@ -73,6 +73,9 @@ listeners. The substantive logic lives in `src/background/`:
   promote-on-close, restore-on-menu-click, low-priority quota
   relief. See [`capture-page.md` → Restore last
   capture](capture-page.md#restore-last-capture).
+  - Restore is also offered from the row it describes on the History
+    page, matched via the slot's `logKey`. See [`history-page.md` →
+    Restore from a row](history-page.md#restore-from-a-row).
 - `annotation-clipboard.ts` — the two geometry-only session slots
   behind the Capture page's Copy / Paste / Import annotations items
   (`annotationClipboard`, `lastCaptureAnnotations`). See

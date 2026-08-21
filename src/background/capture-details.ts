@@ -14,7 +14,7 @@ import {
   downloadSelection,
   waitForDownloadComplete,
 } from '../capture/downloads.js';
-import { compactTimestamp } from '../capture/log-store.js';
+import { compactTimestamp, serializeRecord } from '../capture/log-store.js';
 import {
   type MaybePackedText,
   isBlankText,
@@ -563,6 +563,30 @@ export interface DetailsSession {
     selections?: Partial<Record<SelectionFormat, string>>;
   };
   /**
+   * `serializeRecord` of the `log.json` record this session's most
+   * recent save wrote — the identity key the History page uses to
+   * find the row that a *Restore last capture* would re-open.
+   *
+   * Why a stored key rather than matching fields at display time:
+   * nothing else on a record identifies it. `timestamp` explicitly
+   * doesn't (one session pins one stamp and writes a record per
+   * save — see `CaptureRecord.timestamp`), and reconstructing the
+   * saved filenames from `bases` + `saved` would duplicate the bump
+   * logic in a second place. The serialized record is the same
+   * canonical key `dedupeRecords` already keys on, so a row and the
+   * session that wrote it compare equal by construction.
+   *
+   * Absent until the first save, which is the point: a capture the
+   * user closed without ever saving has no log row, so it must not
+   * light up a Restore button on someone else's.
+   *
+   * Carried across a Restore (it isn't on
+   * `LAST_CAPTURE_EXCLUDED_KEYS`): the restored session describes
+   * the same capture, so it should keep pointing at the same row
+   * until it saves again.
+   */
+  logKey?: string;
+  /**
    * Last-known page-side UI state, pushed by the Capture page via
    * the `pushUiState` message. Promoted to the `lastCapture`
    * session-storage slot on every Capture-page close path so a
@@ -694,9 +718,19 @@ export async function startCaptureWithDetailsFromImage(
 
 /**
  * Re-open a Capture page tab seeded from the saved `lastCapture`
- * record. Wired to the More-submenu "Restore last capture" entry,
- * which the menu refresh leaves disabled when no record exists, so
- * the no-record branch here is a defensive no-op.
+ * record. Wired to the More-submenu "Restore last capture" entry and
+ * to the History page's per-row Restore button.
+ *
+ * Returns `false` when the slot was empty and nothing was opened.
+ * Both callers keep a stale view of the slot — the menu entry's
+ * `enabled` state and the History button's presence are both refreshed
+ * asynchronously — so "nothing to restore" is a reachable outcome, not
+ * just a defensive check. The History path needs to tell it apart from
+ * success: its button stays disabled after a successful restore
+ * (the slot is consumed, and the button is about to disappear), so
+ * treating an empty slot as success would leave a dead button on a row
+ * with nothing behind it. The menu caller has no such state and
+ * ignores the result.
  *
  * Drops the `lastCapture` slot eagerly inside
  * `openCapturePageWithSession` (the same quota-relief clear every
@@ -707,15 +741,16 @@ export async function startCaptureWithDetailsFromImage(
  */
 export async function restoreLastCapture(
   opener: chrome.tabs.Tab | undefined,
-): Promise<void> {
+): Promise<boolean> {
   const record = await getLastCapture();
-  if (!record) return;
+  if (!record) return false;
   // Pass the whole record minus `capture` (already the `data` arg)
   // straight through — `openCapturePageWithSession` spreads it into
   // the new session, so any field that was carried by promote rides
   // back out of restore automatically.
   const { capture, ...restored } = record;
   await openCapturePageWithSession(capture, opener, restored);
+  return true;
 }
 
 /**
@@ -2030,7 +2065,7 @@ export function installDetailsMessageHandlers(): void {
           // multi-capture bump and the screenshot extension rewrite
           // mutate `capture.<x>Filename` in place.
           const postEnsure = await requireDetailsSession(tabId);
-          await recordDetailedCapture({
+          const logged = await recordDetailedCapture({
             capture: postEnsure.capture,
             includeScreenshot: msg.screenshot,
             includeHtml: msg.html,
@@ -2060,6 +2095,11 @@ export function installDetailsMessageHandlers(): void {
           // (when nothing changed since the last save) or that +1
           // (when the user edited and the rebump fired).
           const postSave = await requireDetailsSession(tabId);
+          // Identity of the row this session just wrote, so a later
+          // Restore can be offered from that row on the History page.
+          // Overwritten on every save: the newest record is the one
+          // a restored session would re-save against.
+          postSave.logKey = serializeRecord(logged);
           postSave.saved = postSave.saved ?? {};
           if (msg.screenshot) {
             const rev = msg.editVersion ?? 0;

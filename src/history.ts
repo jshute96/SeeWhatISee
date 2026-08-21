@@ -2,8 +2,13 @@
 //
 // A read-only table view over the same capture log that backs
 // `log.json`: the `captureLog` array in `chrome.storage.local`, newest
-// entry first. Nothing here writes; the page is purely a way to look
-// back at what was captured and jump to the saved files.
+// entry first. Nothing here writes to the log; the page is a way to
+// look back at what was captured and jump to the saved files.
+//
+// The one action it offers is *Restore last capture*, on the single
+// row (if any) the restorable capture corresponds to — see
+// `restorableLogKey` below. The SW owns both halves of that; the page
+// only renders the button and forwards the click.
 //
 // Loaded as a module script (unlike `options.ts`) so it can import the
 // log-store / downloads helpers directly instead of round-tripping
@@ -33,7 +38,12 @@ import {
   joinCapturePath,
   pathToFileUrl,
 } from './capture/downloads.js';
-import { dedupeRecords, LOG_STORAGE_KEY, parseLogText } from './capture/log-store.js';
+import {
+  dedupeRecords,
+  LOG_STORAGE_KEY,
+  parseLogText,
+  serializeRecord,
+} from './capture/log-store.js';
 import type { CaptureRecord, SelectionFormat } from './capture/types.js';
 
 const searchInput = document.getElementById('search') as HTMLInputElement;
@@ -88,6 +98,56 @@ optionsBtn.addEventListener('click', () => {
 
 /** Newest-first view of the log, rebuilt on every storage change. */
 let records: CaptureRecord[] = [];
+/**
+ * `serializeRecord` key of the capture that *Restore last capture*
+ * would re-open, or `null` when there is nothing to restore.
+ *
+ * Supplied by the SW — the page can't read the `lastCapture`
+ * session-storage slot without importing the capture module graph.
+ * Set from the `historyPageReady` reply and refreshed by the
+ * `restorableCaptureChanged` push; see `background/history-page.ts`.
+ *
+ * Matching on the serialized record rather than on position is what
+ * makes the button land on the *right* row. "Newest row" is wrong
+ * often enough to matter: a shift-click save keeps its Capture page
+ * open and so never promotes, letting a newer row sit above the
+ * restorable one — and a capture closed without ever saving has no
+ * row at all, which is `logKey` being absent.
+ */
+let restorableLogKey: string | null = null;
+/**
+ * Set once the initial load has rendered.
+ *
+ * Both routes that deliver `restorableLogKey` — the registration
+ * reply and the SW's push — can land *before* the storage reads at
+ * the bottom of this file finish, and neither waits for them.
+ * Rendering from there early would flash "No captures in the log yet"
+ * on a page that has plenty; setting the value and letting the
+ * initial render use it costs nothing.
+ */
+let firstRenderDone = false;
+/**
+ * Set once a `restorableCaptureChanged` push has been applied, which
+ * makes the `historyPageReady` reply stale for good.
+ *
+ * The two channels are unordered: the SW reads the slot *before* it
+ * replies, so a slot change in that window pushes the fresh value
+ * down a different path — and the page has no guarantee the reply
+ * resolves first. Without this, a push that wins the race gets
+ * overwritten by the older reply and the button sits on the wrong
+ * row until the next slot change.
+ */
+let sawRestorablePush = false;
+/**
+ * Set while a restore round trip is in flight, so the button stays
+ * disabled through it.
+ *
+ * Module scope rather than left on the element: `render()` rebuilds
+ * every row with `replaceChildren`, so a re-render mid-flight — a
+ * `captureLog` change, a downloads sweep, a keystroke in the search
+ * box — would otherwise hand back a fresh, enabled button.
+ */
+let restoreInFlight = false;
 /**
  * Absolute path of `<downloads>/SeeWhatISee/`, or `null` when it
  * couldn't be resolved (no capture has been written yet, so there is
@@ -205,20 +265,89 @@ function isDeleted(filename: string): boolean {
 // ───────────────────────────── rendering ─────────────────────────────
 
 /**
- * Format an ISO timestamp for the Date column: local date on the first
- * line, local time on the second. Two lines keeps the column narrow
- * without truncating either half.
+ * True for the one row the saved last-capture describes.
+ *
+ * At most one row can match: `mergedRecords` is deduped on exactly
+ * this key, so byte-identical records — the *Restore last capture*
+ * re-saved-unchanged case — have already collapsed into one.
+ *
+ * Guarded on `restorableLogKey` first so the common "nothing to
+ * restore" case doesn't serialize every record on every keystroke.
+ */
+function isRestorable(r: CaptureRecord): boolean {
+  return restorableLogKey !== null && serializeRecord(r) === restorableLogKey;
+}
+
+/**
+ * Tooltip on the Restore button. Deliberately echoes the toolbar's
+ * *Restore last capture* entry, which does exactly the same thing —
+ * the two are one feature with two entry points, and a user who has
+ * met one shouldn't have to work out that the other is the same.
+ */
+const RESTORE_TOOLTIP = 'Restore last capture — re-open this capture\'s page with '
+  + 'the prompt, drawings and checkbox state it was closed with';
+
+/**
+ * Send the restore click to the SW, which reads the `lastCapture` slot
+ * and opens the Capture page (see `background/history-page.ts`).
+ *
+ * The button is disabled for the round trip so a double-click can't
+ * fire two restores — and it stays disabled on success, because a
+ * restore *consumes* the slot: the SW's `restorableCaptureChanged`
+ * push arrives moments later and takes the button off the row
+ * entirely. Only a failure puts it back, with the reason in its
+ * tooltip.
+ *
+ * A slot that turned out to be empty counts as a failure — the SW
+ * says so explicitly rather than reporting success on a restore that
+ * opened nothing, which would leave the button dead on a row with
+ * nothing behind it.
+ */
+function restoreFromRow(btn: HTMLButtonElement): void {
+  restoreInFlight = true;
+  btn.disabled = true;
+  // Drop any error left by a previous attempt — it describes what
+  // happened last time, not what this click is doing.
+  btn.title = RESTORE_TOOLTIP;
+  void (async () => {
+    try {
+      const resp = (await chrome.runtime.sendMessage({
+        action: 'restoreLastCaptureFromHistory',
+      })) as { ok?: boolean; error?: string } | undefined;
+      if (resp?.ok) return;
+      throw new Error(resp?.error ?? 'The restore did not go through.');
+    } catch (err) {
+      // Expected-and-handled: the user sees the button come back, and
+      // the tooltip carries the reason. Not `console.error` — Chrome
+      // promotes that onto the extension's Errors page.
+      console.info('[SeeWhatISee] history: restore failed:', err);
+      restoreInFlight = false;
+      btn.disabled = false;
+      btn.title = `Could not restore this capture: ${
+        err instanceof Error ? err.message : String(err)}`;
+    }
+  })();
+}
+
+/**
+ * Date column: local date on the first line, local time on the second.
+ * Two lines keeps the column narrow without truncating either half.
  *
  * Records written before a field existed — or a hand-edited log — can
  * carry a timestamp that `Date` can't parse; we fall back to showing
  * the raw string rather than rendering "Invalid Date".
+ *
+ * The Restore button (on the one restorable row) hangs below the
+ * timestamp, on both the parsed and unparseable paths — the row is
+ * restorable either way.
  */
-function dateCell(timestamp: string): HTMLElement {
+function dateCell(r: CaptureRecord): HTMLElement {
   const td = document.createElement('td');
   td.className = 'date-cell';
-  const d = new Date(timestamp);
+  const d = new Date(r.timestamp);
   if (Number.isNaN(d.getTime())) {
-    td.textContent = timestamp;
+    td.textContent = r.timestamp;
+    appendRestoreButton(td, r);
     return td;
   }
   td.append(d.toLocaleDateString());
@@ -227,7 +356,23 @@ function dateCell(timestamp: string): HTMLElement {
   time.className = 'time';
   time.textContent = d.toLocaleTimeString();
   td.append(time);
+  appendRestoreButton(td, r);
   return td;
+}
+
+/** Add the Restore button to `td` if `r` is the restorable row. */
+function appendRestoreButton(td: HTMLElement, r: CaptureRecord): void {
+  if (!isRestorable(r)) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn restore-btn';
+  btn.textContent = 'Restore';
+  // A re-render mid-restore rebuilds this element; carry the in-flight
+  // disable across it rather than handing back a live button.
+  btn.disabled = restoreInFlight;
+  btn.title = RESTORE_TOOLTIP;
+  btn.addEventListener('click', () => restoreFromRow(btn));
+  td.append(btn);
 }
 
 /** A greyed-out "N/A" placeholder for a column with nothing to show. */
@@ -446,7 +591,7 @@ function promptCell(r: CaptureRecord): HTMLElement {
 
 function buildRow(r: CaptureRecord): HTMLTableRowElement {
   const tr = document.createElement('tr');
-  tr.append(dateCell(r.timestamp), screenshotCell(r), filesCell(r), pageCell(r), promptCell(r));
+  tr.append(dateCell(r), screenshotCell(r), filesCell(r), pageCell(r), promptCell(r));
   return tr;
 }
 
@@ -762,23 +907,63 @@ chrome.downloads.onChanged.addListener((delta) => {
 // see `tab.url` at all, and neither covers `chrome-extension://`. So
 // we tell it who we are, and answer a ping so it can tell a live
 // History page from a stale tab id. See `background/history-page.ts`.
+//
+// Registering also opens the channel the SW pushes restorable-capture
+// updates down — it needs a tab id to send to, and this is where it
+// gets one.
 
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
-  if (
-    !msg
-    || typeof msg !== 'object'
-    || (msg as { action?: unknown }).action !== 'pingHistoryPage'
-  ) {
+  if (!msg || typeof msg !== 'object') return false;
+  const action = (msg as { action?: unknown }).action;
+
+  if (action === 'pingHistoryPage') {
+    sendResponse({ ok: true });
     return false;
   }
-  sendResponse({ ok: true });
+
+  // The `lastCapture` slot changed: a Capture page closed (promote),
+  // or a new capture / restore / quota relief cleared it. Re-render so
+  // the Restore button moves to the row that now owns it, or goes
+  // away. Not a `chrome.storage.onChanged` listener here because the
+  // page has no clean way to name that key — see `restorableLogKey`.
+  if (action === 'restorableCaptureChanged') {
+    const key = (msg as { logKey?: unknown }).logKey;
+    restorableLogKey = typeof key === 'string' ? key : null;
+    sawRestorablePush = true;
+    // The slot moved, so whatever restore was in flight has resolved
+    // one way or the other. Clearing here (rather than on the success
+    // path, which deliberately leaves the button disabled) is what
+    // stops a later capture's button from being born disabled.
+    restoreInFlight = false;
+    // Same first-render guard as the registration reply: a push that
+    // beats the initial storage reads only has to leave the value
+    // behind for that render to pick up.
+    if (firstRenderDone) render();
+    // Answered so the SW's `sendMessage` resolves instead of
+    // rejecting with "message port closed" on every successful
+    // delivery — which would make its catch block a lie.
+    sendResponse({ ok: true });
+    return false;
+  }
+
   return false;
 });
 
 void (async () => {
-  // Fire-and-forget: if the SW can't be reached the only cost is that
-  // the next History click opens a second tab.
-  chrome.runtime.sendMessage({ action: 'historyPageReady' }).catch(() => {});
+  // The reply carries the initial restorable-capture key. A failure
+  // costs only the Restore button (and the next History click opening
+  // a second tab) — neither is worth surfacing. Deliberately not
+  // awaited: waking the SW must not hold up the rows.
+  chrome.runtime.sendMessage({ action: 'historyPageReady' }).then((resp: unknown) => {
+    // A push that already landed read the slot later than this reply
+    // did, so it wins — see `sawRestorablePush`.
+    if (sawRestorablePush) return;
+    const key = (resp as { logKey?: unknown } | undefined)?.logKey;
+    restorableLogKey = typeof key === 'string' ? key : null;
+    // Either order works: land first and the initial render below
+    // draws the button; land second and this re-render adds it.
+    if (firstRenderDone) render();
+  }).catch(() => {});
 
   fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
   await Promise.all([
@@ -787,5 +972,6 @@ void (async () => {
     loadFileExistence(),
     loadArchiveList(),
   ]);
+  firstRenderDone = true;
   render();
 })();

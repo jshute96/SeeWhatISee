@@ -86,6 +86,7 @@ import {
 import { LAST_CAPTURE_STORAGE_KEY } from './background/last-capture.js';
 import {
   installHistoryMessageHandler,
+  notifyHistoryPageRestorable,
   openHistoryPage,
 } from './background/history-page.js';
 import { installOptionsMessageHandlers } from './background/options.js';
@@ -209,8 +210,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // happens from several paths (Capture-page close, new-capture
   // start, restore, Ask quota relief), so we listen for the key
   // rather than threading refresh calls through each writer.
+  // The History page's per-row Restore button tracks the same slot,
+  // so it refreshes from here too rather than growing its own
+  // listener chain in the page.
   if (area === 'session' && changes[LAST_CAPTURE_STORAGE_KEY]) {
     void refreshRestoreLastCaptureMenuState();
+    void notifyHistoryPageRestorable();
   }
   // User toggled an Ask provider's enabled state on the Options page:
   // the toolbar Set/Unset entry's eligibility on the active tab may

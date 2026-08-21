@@ -186,7 +186,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
 | `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus archived |
-| `src/history.ts` | Controller for `history.html`: reads `captureLog` and the on-disk archives, renders rows, live search filter |
+| `src/history.ts` | Controller for `history.html`: reads `captureLog` and the on-disk archives, renders rows, live search filter, per-row Restore |
 | `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
@@ -207,7 +207,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
-| `src/background/history-page.ts` | SW side of the History page — `openHistoryPage` (focus-or-create its tab) + the message handler the header buttons call |
+| `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, and the restorable-capture push |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
