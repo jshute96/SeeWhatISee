@@ -39,6 +39,10 @@ The background script is an MV3 service worker. That means:
     `chrome.storage.local` on every capture.
   - The log is capped at 100 entries so the per-capture rewrite
     stays O(1) instead of growing with total capture count.
+  - Entries past the cap aren't dropped: they're flushed to
+    `history-<timestamp>.json` files beside `log.json`, which is
+    how the full history survives the whole-file constraint. See
+    [architecture.md → Archived logs](architecture.md#archived-logs).
 - **Unhandled rejections get promoted to `chrome://extensions` →
   Errors.** Any promise that rejects without a `.catch` lands on
   the extension's Errors page, which makes the extension look

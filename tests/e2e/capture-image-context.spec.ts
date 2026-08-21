@@ -445,7 +445,7 @@ test('image flow: fetch failure on a 404 image URL throws + writes no record', a
   // re-throws so the toolbar error channel surfaces it.
   expect(errorMessage).toMatch(/HTTP 404|Failed to fetch|fetching image/i);
   // No log record should have landed — the throw aborts before
-  // `appendToLog`.
+  // `recordCapture`.
   expect(recordCount).toBe(0);
 
   await openerPage.close();

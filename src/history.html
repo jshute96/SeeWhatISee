@@ -216,6 +216,20 @@
     padding: 4px 6px;
   }
 
+  /* "Load older captures" row under the table. Scrolls with the rows
+     (it's inside <main>) so it sits at the end of the history, which
+     is where the records it loads are appended. */
+  .older {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  .older-note {
+    font-size: 13px;
+    color: #555;
+  }
+
   /* Empty / error states shown instead of the table. The top margin
      replaces the padding <main> can't have (see its rule above). */
   .notice {
@@ -307,6 +321,15 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
+  <!-- Older captures live in `history-*.json` files on disk rather
+       than in storage, so they're loaded on demand — reading them
+       means a file:// fetch, which the same "Allow access to file
+       URLs" toggle gates. Sits below the table because that's where
+       the rows it adds go. -->
+  <div class="older" id="older" hidden>
+    <button type="button" id="load-older" class="btn">Load older captures</button>
+    <span class="older-note" id="older-note"></span>
+  </div>
 </main>
 
 <script type="module" src="history.js"></script>

@@ -222,9 +222,42 @@ Every record has `timestamp` and `url`, plus optional fields:
   state immediately. `get-latest.sh` treats an empty `log.json`
   the same as "no captures yet"; `watch.sh` swallows the clear's
   mtime bump without emitting a spurious empty record.
-- The log is capped at 100 entries (FIFO eviction of the oldest);
-  without a cap, rewriting the whole file on every capture would
-  be quadratic in capture count.
+- The in-storage log is capped at 100 entries; without a cap,
+  rewriting the whole file on every capture would be quadratic in
+  capture count.
+
+### Archived logs
+
+- Entries aging out of the 100-entry buffer are **not** discarded.
+  Once the log goes over the cap, the oldest 50 are written to
+  `history-<timestamp>.json` beside `log.json` and dropped from
+  storage.
+- So the full capture history lives on disk while no single write
+  grows without bound. Steady-state cost per capture is still one
+  `log.json` rewrite; the extra file lands once per 50 captures.
+- `<timestamp>` is the `compactTimestamp` of the newest record in
+  the file, so the name matches that capture's own files and
+  archives sort chronologically.
+- Consequence for readers: once the log has filled, `log.json`
+  holds **51–100** entries depending on where in the flush cycle
+  it is, not always 100.
+  - `get-latest.sh` / `watch.sh` only ever want the tail, so they
+    are unaffected.
+  - `SeeWhatISee.sh --after TIMESTAMP` replays from `log.json`, so
+    its catch-up window shrinks to as few as 51 records right
+    after a flush. An older timestamp falls back to plain watching
+    (with a warning), same as it always did.
+- An entry leaves storage only after its archive file is written,
+  one batch at a time, so nothing is trimmed out from under a write
+  that didn't happen.
+  - A failed archive write is **not** a failed capture: the flush is
+    abandoned, everything un-archived stays in storage (the new
+    record included), and the next capture retries. Rejecting would
+    orphan the screenshot already on disk and lose the record.
+- **Clear log history does not touch the archives.** It clears
+  storage and empties `log.json`; the `history-*.json` files stay
+  on disk (deleting user files isn't something the extension does)
+  and the History page can still load them.
 
 ## Permissions
 

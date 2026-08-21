@@ -192,7 +192,7 @@ chrome.runtime.onStartup.addListener(() => {
 // React to capture-log changes so the Copy-last-… menu entries
 // flip enabled state without explicit plumbing from capture.ts.
 // Covers every code path that mutates the log: each capture's
-// `appendToLog`, and `clearCaptureLog` (which removes the key).
+// `recordCapture`, and `clearCaptureLog` (which removes the key).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[LOG_STORAGE_KEY]) {
     void refreshCopyMenuState();

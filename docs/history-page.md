@@ -75,8 +75,95 @@ Finding that tab is less obvious than it looks:
 - A `chrome.storage.onChanged` listener re-reads the log, so a capture
   taken (or a *Clear log history*) while the tab sits open updates it
   in place.
-- The log is capped at 100 entries by `log-store.ts`, so the page never
-  has to paginate.
+- The in-storage log is capped at 100 entries by `log-store.ts`, so the
+  live view never has to paginate. Older captures are loaded on demand
+  — see below.
+
+### Older captures
+
+- Captures that age out of storage are archived to
+  `history-*.json` files on disk (see [architecture.md → Archived
+  logs](architecture.md#archived-logs)). The page reads them back so
+  the table can cover the whole history, not just the buffer.
+- **Load older captures** sits under the table — where the rows it adds
+  go — with a count of archive files not yet read.
+  - Opt-in rather than automatic: reading them is a `file://` fetch,
+    which is gated by the same **Allow access to file URLs** toggle as
+    the thumbnails, and a long history is a lot of rows to render for a
+    user who only wanted the recent ones.
+  - One click loads *all* remaining files. A batch is 50 captures, so
+    paging 50 at a time would be tedious; the search box is the tool
+    for narrowing what's on screen.
+- `getArchiveFilePaths()` (`capture/downloads.ts`) finds the files
+  through `chrome.downloads`, because an extension has no directory
+  listing — the download records are the only index of what we wrote.
+  - Clearing download history therefore hides archives that are still
+    on disk. The offer shrinks; nothing claims those records are gone.
+    - Files already read stay on screen. Losing the listing doesn't
+      make the records wrong, and dropping those rows would make
+      captures vanish for a reason unrelated to them. They sort after
+      the still-listed files (`archiveDisplayOrder`).
+- Merging is a plain concatenation: the storage log, then each archive
+  file's records, files in `getArchiveFilePaths()` order (newest first
+  by download start time). No sort; dedup only on exact record text.
+  - **Not sorted by `timestamp`.** File order is *append* order, which
+    isn't timestamp order: a Capture-page session pins its timestamp
+    when it opens, so a record saved later can carry an earlier stamp
+    than one appended before it. The live log has always been shown in
+    append order (`[...log].reverse()`), so archives match it — sorting
+    would reorder rows the page has always shown as-written.
+  - **Deduped on exact record text only** (`dedupeRecords`), keeping
+    the first occurrence.
+    - The case it's for is *Restore last capture* re-saved unchanged.
+      Restore rehydrates a session with its pinned timestamp and
+      filenames, so `recordDetailedCapture` writes a record identical
+      to the previous one, pointing at the same files — two rows the
+      user can't tell apart, for one capture they re-sent.
+    - Global, not adjacent-only: the copies can be separated by other
+      captures, or split across the storage/archive boundary.
+    - `serializeRecord` supplies the key, not `JSON.stringify` —
+      `chrome.storage.local` doesn't preserve key order, so only a
+      canonical field order compares equal.
+    - **Nothing looser.** Keying on `timestamp` shipped a bug: a
+      timestamp doesn't identify a record, so one session's six saves
+      (`…-733.png`, `…-733-1.png`, …) collapsed to a single row and
+      102 records rendered as 96.
+    - The log files themselves keep every save; this is display only.
+  - Files are keyed by path, not accumulated into one list, so an
+    archive written *after* others are loaded lands ahead of them
+    rather than at the end.
+  - A line that won't parse is skipped (`parseLogText`) rather than
+    failing the file: these sit in the user's Downloads folder where
+    they can be edited or truncated.
+- A capture taken while the tab is open can itself trigger a flush. The
+  storage listener re-reads the archive list, and re-reads the files
+  too if the user already opted in — otherwise records would appear to
+  vanish as they aged out of storage.
+- Failures are **per file**: whatever read is merged and marked read,
+  and the note reports how many didn't.
+  - All-or-nothing would let one dead file — deleted outside the
+    browser, so the download record's stale `exists` still lists it —
+    veto every other archive, permanently, since retrying wouldn't
+    heal it.
+  - The transient case still retries in full: with the file-URL toggle
+    off *every* read fails, so nothing is marked read.
+  - `res.ok` is checked. A missing file can resolve non-ok, which would
+    otherwise pass as a successful read of an empty archive and drop 50
+    captures off the page with no error.
+- The "No captures in the log yet" notice is suppressed while unread
+  archives exist — after a *Clear log history* on a long-running
+  install it would sit directly above an offer to load 40 files.
+- A *Clear log history* also drops the archived rows already loaded
+  into the tab, so the page reflects the clear instead of leaving
+  hundreds of rows under an emptied log. The files are untouched, so
+  the button just offers them again.
+  - A read still in flight when that happens is disowned via a
+    generation counter — merging its results afterwards would put the
+    cleared rows straight back on screen.
+- Not covered by the e2e tests: Playwright rewrites every download into
+  its own artifacts directory under a UUID, so a real capture's archive
+  never matches the path `getArchiveFilePaths()` searches for. The
+  archiving side is tested; the load side isn't.
 
 ## Layout
 

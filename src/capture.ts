@@ -27,6 +27,12 @@
 // authoritative log lives in chrome.storage.local and log.json is a
 // snapshot of it written on every capture. If a user manually deletes
 // log.json, the next capture will recreate it from storage.
+//
+// Entries that age out of that buffer are flushed to
+// `history-<timestamp>.json` archive files, so `log.json` stays a
+// bounded recent-captures window while the full history survives on
+// disk. Every path here records through `recordCapture`, which owns
+// both writes — see `capture/log-store.ts`.
 
 import { selectionMarkdownBody } from './markdown.js';
 import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-state.js';
@@ -38,11 +44,8 @@ import {
 } from './capture/downloads.js';
 import { unpackText } from './capture/packed-text.js';
 import {
-  appendToLog,
   compactTimestamp,
-  serializeRecord,
-  serializeWrite,
-  writeJsonFile,
+  recordCapture,
 } from './capture/log-store.js';
 import {
   captureImageTabToMemory,
@@ -202,11 +205,7 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   // shouldn't be written if the content itself failed to save.
   const downloadId = await downloadArtifact(filename, htmlDataUrl(html));
 
-  const sidecarDownloadIds = await serializeWrite(async () => {
-    const log = await appendToLog(record);
-    const logId = await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
-    return { log: logId };
-  });
+  const sidecarDownloadIds = { log: await recordCapture(record) };
 
   return { downloadId, sidecarDownloadIds, filename, ...record };
 }
@@ -350,10 +349,7 @@ export async function captureSelection(
   // shouldn't be written if the content itself failed to save.
   await downloadSelection(asCapture, format);
 
-  await serializeWrite(async () => {
-    const log = await appendToLog(record);
-    await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
-  });
+  await recordCapture(record);
 
   return record;
 }
@@ -621,10 +617,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     record.prompt = opts.prompt;
   }
 
-  await serializeWrite(async () => {
-    const log = await appendToLog(record);
-    await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
-  });
+  await recordCapture(record);
 
   return record;
 }
@@ -666,14 +659,7 @@ export async function saveCapture(
   // returning. Overkill for v1.
   const downloadId = await downloadArtifact(filename, dataUrl);
 
-  // Update the running log in storage and rewrite the JSON sidecar files.
-  // Serialized via writeChain so two rapid captures can't race on the
-  // storage read-modify-write.
-  const sidecarDownloadIds = await serializeWrite(async () => {
-    const log = await appendToLog(record);
-    const logId = await writeJsonFile('log.json', log.map((r) => serializeRecord(r)).join('\n') + '\n');
-    return { log: logId };
-  });
+  const sidecarDownloadIds = { log: await recordCapture(record) };
 
   return { downloadId, sidecarDownloadIds, filename, ...record };
 }

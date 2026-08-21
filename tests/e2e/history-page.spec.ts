@@ -16,6 +16,13 @@
 // reason `chrome.downloads` knows nothing about the seeded filenames,
 // so the `(deleted)` markers never fire and the file-access banner
 // stays hidden.
+//
+// The "load older captures" row is out of reach for a second reason:
+// Playwright rewrites every download into its own artifacts directory
+// under a UUID, so the `history-*.json` archives a real capture writes
+// never match the path `getArchiveFilePaths()` looks for. The
+// archiving itself is covered by `log-archive.spec.ts` and
+// `tests/unit/log-archive.test.mjs`.
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';

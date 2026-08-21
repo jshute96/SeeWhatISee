@@ -134,8 +134,28 @@ export type EditableArtifactKind =
   | 'selectionText'
   | 'selectionMarkdown';
 
+/**
+ * One line of `log.json` — a single saved capture.
+ *
+ * **Adding a field means editing `serializeRecord`** in
+ * `capture/log-store.ts`. It emits an explicit whitelist, so a field
+ * missed there is absent from `log.json` *and* invisible to
+ * `dedupeRecords`, which borrows it as a record's identity — two
+ * records differing only in the new field would silently merge into
+ * one row on the History page.
+ */
 export interface CaptureRecord {
-  /** ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z". */
+  /**
+   * ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z".
+   *
+   * **Not an identifier, and not in append order.** It's pinned when
+   * the capture is *taken*, so a Capture-page session that saves
+   * several times writes several records carrying the same timestamp
+   * (told apart by their `-1`, `-2`, … filename suffixes), and a
+   * record appended later can hold an earlier timestamp than one
+   * before it. Never key, dedupe, or join on it — that has already
+   * cost real captures on the History page.
+   */
   timestamp: string;
   /**
    * Captured screenshot artifact. Set on the immediate / delayed

@@ -21,6 +21,18 @@ import { unpackText } from './packed-text.js';
 export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
 /**
+ * Filename prefix for the capture-log archive files —
+ * `history-<compactTimestamp>.json`, holding the older entries that
+ * no longer fit in `log.json` (see `log-store.ts`).
+ *
+ * Lives here beside `DOWNLOAD_SUBDIR` because the writer
+ * (`log-store.ts`) and the "find them again" search below have to
+ * agree on it, and this module owns everything about where capture
+ * files land.
+ */
+export const ARCHIVE_FILE_PREFIX = 'history-';
+
+/**
  * Low-level download primitive. Used by every other write site
  * (screenshot / html / selection / log.json). `filename` is the
  * bare basename — we prefix it with `DOWNLOAD_SUBDIR/` here so
@@ -246,6 +258,46 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
     byName.set(base, item.exists);
   }
   return byName;
+}
+
+/**
+ * Absolute paths of the `history-*.json` archive files we've written,
+ * newest first — the on-disk tail of the capture log that no longer
+ * fits in `chrome.storage.local` (see `log-store.ts`).
+ *
+ * Found through `chrome.downloads` rather than by listing the
+ * directory, because an extension has no directory listing: the
+ * download records are the only index of what we wrote. Consequences
+ * worth knowing:
+ *
+ * - Clearing download history hides archives that are still on disk.
+ *   They come back into view on their own only if re-downloaded, so
+ *   the History page's "load older" offer simply shrinks — it never
+ *   claims records are gone.
+ * - `DownloadQuery.limit` defaults to 1000 records, and every capture
+ *   file (not just archives) counts toward it. A history long enough
+ *   to hit that loses its *oldest* archives from the listing first,
+ *   which are the ones a reader is least likely to want.
+ *
+ * Records for files Chrome knows are deleted are skipped — fetching
+ * them would just fail — as are duplicates from a re-written name,
+ * keeping the newest record per path.
+ */
+export async function getArchiveFilePaths(): Promise<string[]> {
+  const items = await chrome.downloads.search({
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${ARCHIVE_FILE_PREFIX}[^/\\\\]*\\.json$`,
+    orderBy: ['-startTime'],
+  });
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.byExtensionId !== chrome.runtime.id || !item.filename) continue;
+    if (item.state !== 'complete' || item.exists === false) continue;
+    if (seen.has(item.filename)) continue;
+    seen.add(item.filename);
+    paths.push(item.filename);
+  }
+  return paths;
 }
 
 /**

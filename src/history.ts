@@ -10,6 +10,13 @@
 // through the service worker. Everything it needs — `storage.local`
 // and `downloads.search` — is available to any extension page.
 //
+// **Older captures.** `chrome.storage.local` only buffers the most
+// recent captures; older ones are flushed to `history-*.json` files
+// beside `log.json` (see `capture/log-store.ts`). Those are read back
+// on demand, appended after the in-storage records — reading them is a
+// `file://` fetch, so it's opt-in per visit rather than something the
+// page does on load.
+//
 // **File access.** The saved screenshots / HTML / selection files live
 // on disk under `<downloads>/SeeWhatISee/`. The only way to reference
 // them from a page is a `file://` URL, which Chrome blocks unless the
@@ -20,12 +27,13 @@
 // way.
 
 import {
+  getArchiveFilePaths,
   getCaptureDirectory,
   getCaptureFileExistence,
   joinCapturePath,
   pathToFileUrl,
 } from './capture/downloads.js';
-import { LOG_STORAGE_KEY } from './capture/log-store.js';
+import { dedupeRecords, LOG_STORAGE_KEY, parseLogText } from './capture/log-store.js';
 import type { CaptureRecord, SelectionFormat } from './capture/types.js';
 
 const searchInput = document.getElementById('search') as HTMLInputElement;
@@ -37,6 +45,9 @@ const noMatchesEl = document.getElementById('no-matches') as HTMLElement;
 const fileAccessHintEl = document.getElementById('file-access-hint') as HTMLElement;
 const fileAccessLink = document.getElementById('file-access-btn') as HTMLAnchorElement;
 const optionsBtn = document.getElementById('options-btn') as HTMLButtonElement;
+const olderEl = document.getElementById('older') as HTMLElement;
+const loadOlderBtn = document.getElementById('load-older') as HTMLButtonElement;
+const olderNoteEl = document.getElementById('older-note') as HTMLElement;
 
 // The "Allow access to file URLs" toggle lives on Chrome's own
 // per-extension details page, not in our Options page — so this jumps
@@ -90,6 +101,97 @@ let captureDir: string | null = null;
  * renders as a normal link — see `getCaptureFileExistence`.
  */
 let fileExists = new Map<string, boolean>();
+
+/**
+ * Absolute paths of the `history-*.json` archive files, newest first
+ * (by download start time — see `getArchiveFilePaths`).
+ */
+let archivePaths: string[] = [];
+/**
+ * Records read out of each archive file we've loaded, keyed by path,
+ * each newest-first within its file. Keyed by path rather than
+ * accumulated into one list so the merge can walk `archivePaths` in
+ * order — an archive written *after* some are already loaded belongs
+ * ahead of them, not appended to the end.
+ */
+const archiveFileRecords = new Map<string, CaptureRecord[]>();
+/** Message from a failed archive read, shown next to the button. */
+let archiveError = '';
+/**
+ * True while a read is in flight. Both entry points — the button and
+ * the storage listener — go through `loadArchivesInteractively`, so
+ * this covers a click landing mid-capture as well as a double-click.
+ */
+let archiveLoading = false;
+
+/**
+ * Bumped whenever the loaded archives are discarded wholesale (a
+ * *Clear log history*). A read started before that must not write its
+ * results back afterwards — they'd reappear under the emptied log,
+ * which is the state the clear exists to avoid.
+ */
+let archiveGeneration = 0;
+
+/** Archive files we know about but haven't read yet. */
+function unloadedArchives(): string[] {
+  return archivePaths.filter((p) => !archiveFileRecords.has(p));
+}
+
+/**
+ * Loaded archives in display order: the current listing first, then
+ * any loaded file that has dropped off it.
+ *
+ * A path can vanish from the listing without its records becoming
+ * wrong — clearing Chrome's download history hides archives that are
+ * still on disk, and we've already read them. Dropping those rows
+ * would make captures disappear from the page for a reason that has
+ * nothing to do with them. The strays go last, which is where they
+ * belong in the common case: a cleared download history strands
+ * *every* loaded file at once, and `Map` iterates in insertion order,
+ * which is the newest-first order they were read in.
+ */
+function archiveDisplayOrder(): string[] {
+  const listed = new Set(archivePaths);
+  const strays = [...archiveFileRecords.keys()].filter((p) => !listed.has(p));
+  return [...archivePaths, ...strays];
+}
+
+/**
+ * The rows to render: the in-storage log, then the loaded archives in
+ * newest-file-first order. Cached rather than rebuilt per render,
+ * since `render()` runs on every keystroke in the search box.
+ */
+let mergedRecords: CaptureRecord[] = [];
+
+/**
+ * Recompute `mergedRecords`: concatenate in file order, then drop
+ * exact repeats.
+ *
+ * **No sort.** `archivePaths` is already newest-first by download
+ * start time, which is true write order, and each file's records are
+ * reversed out of append order. Sorting by `timestamp` would only
+ * reshuffle the records a single Capture session wrote — a session
+ * pins one timestamp and writes a record per save, so append order and
+ * timestamp order genuinely differ. The live log has always been shown
+ * in append order; archives match it.
+ *
+ * **Dedup is exact-match only**, via `dedupeRecords`. It's there for
+ * *Restore last capture* re-saved unchanged, which writes a record
+ * byte-identical to the previous one. Anything looser — keying on
+ * `timestamp` — merges the distinct records of a single editing
+ * session and drops real captures; that shipped once already.
+ * Duplicates can land anywhere relative to each other (adjacent, or
+ * split across the storage/archive boundary), so the pass is global
+ * rather than adjacent-only.
+ */
+function rebuildMerged(): void {
+  const all = [...records];
+  for (const path of archiveDisplayOrder()) {
+    const loaded = archiveFileRecords.get(path);
+    if (loaded?.length) all.push(...loaded);
+  }
+  mergedRecords = dedupeRecords(all);
+}
 
 /**
  * `true` only when Chrome positively tells us the file is gone.
@@ -362,20 +464,51 @@ function matches(r: CaptureRecord, terms: string[]): boolean {
   return terms.every((t) => haystack.includes(t));
 }
 
+/**
+ * The "Load older captures" row under the table.
+ *
+ * Hidden entirely when there's nothing more to offer — no archive
+ * files, or every one already read — so a user who never fills the
+ * 100-entry buffer never sees it. A read failure keeps the row up with
+ * its message so the button stays available to retry.
+ */
+function renderOlder(): void {
+  const remaining = unloadedArchives().length;
+  olderEl.hidden = remaining === 0 && !archiveError;
+  loadOlderBtn.disabled = archiveLoading || remaining === 0;
+  loadOlderBtn.textContent = archiveLoading ? 'Loading…' : 'Load older captures';
+  if (archiveError) {
+    olderNoteEl.textContent = archiveError;
+  } else if (remaining > 0) {
+    // File count, not record count: the records inside are only known
+    // after reading, and the file count is what the wait scales with.
+    olderNoteEl.textContent = `${remaining} archived log ${remaining === 1 ? 'file' : 'files'} on disk`;
+  } else {
+    olderNoteEl.textContent = '';
+  }
+}
+
 function render(): void {
   const terms = searchInput.value.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = records.filter((r) => matches(r, terms));
+  const all = mergedRecords;
+  const shown = all.filter((r) => matches(r, terms));
 
   rowsEl.replaceChildren(...shown.map(buildRow));
+  renderOlder();
 
-  const hasAny = records.length > 0;
-  emptyEl.hidden = hasAny;
+  const hasAny = all.length > 0;
+  // "No captures in the log yet. Capture something…" is the wrong
+  // story when archived captures are sitting right there unread — the
+  // usual way to get here is a *Clear log history* on an account with
+  // archives. Suppress it and let the "Load older captures" row below
+  // speak for itself.
+  emptyEl.hidden = hasAny || unloadedArchives().length > 0;
   noMatchesEl.hidden = !hasAny || shown.length > 0;
   tableEl.hidden = shown.length === 0;
   // Only mention the filtered count when a filter is actually active —
   // "12 of 12" is noise. The noun agrees with whichever number it
   // directly follows: "1 capture", but "1 of 12 captures".
-  const total = records.length;
+  const total = all.length;
   countEl.textContent = hasAny
     ? (terms.length
       ? `${shown.length} of ${total} ${total === 1 ? 'capture' : 'captures'}`
@@ -395,9 +528,14 @@ function render(): void {
   // set: the banner describes a standing browser setting, so having it
   // blink in and out as the user types in the search box would read as
   // a glitch.
+  //
+  // Unread archive files count as a reason too: reading one is a
+  // `file://` fetch, so the toggle is exactly what stands between the
+  // user and the older half of their history.
   fileAccessHintEl.hidden = !fileAccessBlocked
-    || captureDir === null
-    || !records.some((r) => r.screenshot || r.contents || r.selection);
+    || (captureDir === null && archivePaths.length === 0)
+    || !(unloadedArchives().length > 0
+      || all.some((r) => r.screenshot || r.contents || r.selection));
 }
 
 // ─────────────────────────────── loading ─────────────────────────────
@@ -432,12 +570,126 @@ async function loadFileExistence(): Promise<void> {
   }
 }
 
+async function loadArchiveList(): Promise<void> {
+  try {
+    archivePaths = await getArchiveFilePaths();
+  } catch {
+    // No download records to search, or the API refused — same
+    // outcome as having no archives: the page shows the in-storage log
+    // and doesn't offer more.
+    archivePaths = [];
+  }
+  // The merge walks this list, so the rows go stale the moment it
+  // changes — a newly-written archive has to take its place among the
+  // loaded ones now, not whenever some later load happens to rebuild.
+  // Records already read are kept even if their path dropped off; see
+  // `archiveDisplayOrder`.
+  rebuildMerged();
+}
+
+/**
+ * Read every archive file we haven't read yet and merge its records
+ * in, newest first.
+ *
+ * All of them in one pass rather than a file at a time: a batch is 50
+ * captures, so paging through them 50 at a time would be tedious, and
+ * a `file://` read of a few hundred KB of JSON is fast. The cost of
+ * loading the whole history is a longer table, which is what the
+ * search box is for.
+ *
+ * Each file's records are reversed into the page's newest-first
+ * order; `rebuildMerged` does the assembling, and neither sorts (see
+ * its comment for why timestamp order is the wrong order here).
+ *
+ * **Per-file outcomes.** A file that reads is merged and marked read
+ * even if others failed, and the count of failures is returned. One
+ * dead file (deleted outside the browser, so the download record's
+ * stale `exists` still says it's there) must not veto the archives
+ * that *are* readable — and it wouldn't heal on retry, so all-or-
+ * nothing would lock the rest of the history out for the session.
+ * The transient case still retries in full: with the file-URL toggle
+ * off every read fails, so nothing is marked and the button retries
+ * the whole set.
+ */
+async function loadArchives(): Promise<number> {
+  const pending = unloadedArchives();
+  if (pending.length === 0) return 0;
+  const generation = archiveGeneration;
+  const results = await Promise.allSettled(pending.map(async (path) => {
+    // A `file://` read that Chrome refuses (toggle off) rejects, but a
+    // missing file can resolve non-ok — and that would otherwise look
+    // like a successful read of an empty archive, silently dropping 50
+    // captures off the page. `fetchImageInSW` checks `ok` on this same
+    // scheme for the same reason.
+    const res = await fetch(pathToFileUrl(path));
+    if (!res.ok) throw new Error(`archive read failed: ${res.status}`);
+    return await res.text();
+  }));
+
+  // A *Clear log history* landing while these reads were in flight
+  // discards the loaded archives; merging in anyway would put the
+  // cleared rows straight back on screen.
+  if (generation !== archiveGeneration) return 0;
+
+  let failed = 0;
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      failed += 1;
+      return;
+    }
+    // Reversed to match the page's newest-first order, the same way
+    // `loadRecords` reverses the append-ordered storage log.
+    archiveFileRecords.set(pending[i], parseLogText(result.value).reverse());
+  });
+  rebuildMerged();
+  return failed;
+}
+
+/**
+ * Read the pending archives and fold the outcome into the page state.
+ * Shared by the button and the storage listener so both show the
+ * loading state and report failures the same way — and so neither can
+ * start a second read while one is in flight.
+ */
+async function loadArchivesInteractively(): Promise<void> {
+  if (archiveLoading) return;
+  archiveLoading = true;
+  archiveError = '';
+  renderOlder();
+  try {
+    const failed = await loadArchives();
+    // The newly-loaded rows reference files we haven't asked about
+    // yet, so refresh the "(deleted)" map alongside them.
+    await loadFileExistence();
+    if (failed > 0) {
+      // Anything readable has already been merged in; this names what
+      // is still missing rather than implying the whole load failed.
+      // The toggle being off fails *every* file, and the banner above
+      // is guaranteed visible in that case, so point at it.
+      archiveError = fileAccessBlocked
+        ? `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'} — see the note above.`
+        : `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'}.`;
+    }
+  } catch {
+    // `loadArchives` reports per-file failures through its return
+    // value, so reaching here means the read itself broke.
+    archiveError = 'Could not read the archived logs.';
+  }
+  archiveLoading = false;
+  render();
+}
+
+loadOlderBtn.addEventListener('click', () => {
+  void loadArchivesInteractively();
+});
+
 async function loadRecords(): Promise<void> {
   const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
   const log = (data[LOG_STORAGE_KEY] as CaptureRecord[] | undefined) ?? [];
   // The stored log is oldest-first (append order); the page shows
   // newest at the top.
   records = [...log].reverse();
+  rebuildMerged();
 }
 
 searchInput.addEventListener('input', render);
@@ -447,6 +699,16 @@ searchInput.addEventListener('input', render);
 // cheap enough to just do it wholesale.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !(LOG_STORAGE_KEY in changes)) return;
+  // A *Clear log history* wipes the key entirely. Drop the archived
+  // rows loaded into this tab along with it, so the page reflects the
+  // clear instead of leaving hundreds of rows under an empty log. The
+  // files stay on disk, so the button simply offers them again.
+  if (changes[LOG_STORAGE_KEY].newValue === undefined) {
+    archiveFileRecords.clear();
+    archiveError = '';
+    // Disown any read still in flight — see `archiveGeneration`.
+    archiveGeneration += 1;
+  }
   void (async () => {
     await loadRecords();
     // A first-ever capture is also what makes the capture directory
@@ -454,6 +716,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (!captureDir) await loadCaptureDir();
     // The new capture's own files won't be in the existence map yet.
     await loadFileExistence();
+    // A capture can also push the log over its cap and write a new
+    // archive file. Pick that up so the button's count stays right —
+    // and read it straight away if the user has already opted in, so
+    // records don't appear to vanish as they age out of storage.
+    await loadArchiveList();
+    if (archiveFileRecords.size > 0) {
+      await loadArchivesInteractively();
+      return; // it renders
+    }
     render();
   })();
 });
@@ -510,6 +781,11 @@ void (async () => {
   chrome.runtime.sendMessage({ action: 'historyPageReady' }).catch(() => {});
 
   fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
-  await Promise.all([loadRecords(), loadCaptureDir(), loadFileExistence()]);
+  await Promise.all([
+    loadRecords(),
+    loadCaptureDir(),
+    loadFileExistence(),
+    loadArchiveList(),
+  ]);
   render();
 })();

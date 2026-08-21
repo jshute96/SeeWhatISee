@@ -393,6 +393,10 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   an empty file so `/see-what-i-see` et al. see the cleared state
   immediately. Still exposed on `SeeWhatISee.clearCaptureLog()`
   for the devtools console.
+  - The `history-*.json` archives of older captures are left
+    alone — deleting the user's files isn't something this does.
+    The History page can still load them; removing them means
+    deleting the files.
 
 ### Top-level item cap
 
