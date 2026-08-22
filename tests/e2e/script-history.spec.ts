@@ -560,6 +560,54 @@ test.describe('SeeWhatISee.py --filter_time', () => {
       .toEqual(['apr7-2230z', 'apr8-0215z', 'apr8-2030z']);
   });
 
+  test('the compact stamp from a capture filename is accepted', () => {
+    // Capture filenames embed local time, e.g.
+    // screenshot-20260822-132959-259.png. Records here are seeded from
+    // local wall times, and this test deliberately uses run() rather
+    // than runTz() so Node and the script share one zone — whatever it
+    // is, the round-trip is exact. Don't "fix" it to pin a zone.
+    const local = (y: number, mo: number, d: number, h: number, mi: number,
+                   s: number, ms = 0) =>
+      new Date(y, mo - 1, d, h, mi, s, ms).toISOString();
+    writeFileOfRecords('log.json', [
+      { timestamp: local(2026, 8, 22, 13, 29, 59, 259), title: 'stamped' },
+      { timestamp: local(2026, 8, 22, 13, 45, 0), title: 'same-hour' },
+      { timestamp: local(2026, 8, 22, 17, 0, 0), title: 'later' },
+      { timestamp: local(2026, 8, 23, 9, 0, 0), title: 'next-day' },
+    ]);
+    const spanTitles = (span: string) => {
+      const r = run(['--all', '--filter_time', span, '--directory', tmpDir]);
+      expect(r.exitCode).toBe(0);
+      return parseAll(r.stdout).map((rec) => rec.title);
+    };
+    expect(spanTitles('20260822-132959-259')).toEqual(['stamped']);
+    expect(spanTitles('20260822-1329')).toEqual(['stamped']);
+    expect(spanTitles('20260822-13')).toEqual(['stamped', 'same-hour']);
+    expect(spanTitles('20260822')).toEqual(['stamped', 'same-hour', 'later']);
+    expect(spanTitles('202608'))
+      .toEqual(['stamped', 'same-hour', 'later', 'next-day']);
+    expect(spanTitles('20260822-13..20260822-17'))
+      .toEqual(['stamped', 'same-hour', 'later']);
+    expect(spanTitles('20260822-17..')).toEqual(['later', 'next-day']);
+    expect(spanTitles('..20260822-13')).toEqual(['stamped', 'same-hour']);
+    // Four digits stay a year — the compact pattern is tried last, and
+    // a reorder of POINT_PATTERNS must not change that.
+    expect(spanTitles('2026')).toHaveLength(4);
+  });
+
+  test('a trailing z reads a compact stamp as UTC', () => {
+    // Filenames stamp local time, but the zone rule is uniform across
+    // every form, so `z` still overrides.
+    writeFileOfRecords('log.json', [
+      { timestamp: '2026-08-22T13:30:00.000Z', title: 'utc-1330' },
+      { timestamp: '2026-08-22T20:30:00.000Z', title: 'utc-2030' },
+    ]);
+    expect(titles('20260822-13z', 'America/New_York')).toEqual(['utc-1330']);
+    // Same stamp read locally is a different hour entirely.
+    expect(titles('20260822-13', 'America/New_York')).toEqual([]);
+    expect(titles('20260822-16', 'America/New_York')).toEqual(['utc-2030']);
+  });
+
   test('a fractional second is padded on the right', () => {
     writeFileOfRecords('log.json', [
       { timestamp: '2026-04-08T20:30:12.300Z', title: 'at-300ms' },
@@ -658,6 +706,13 @@ test.describe('SeeWhatISee.py --filter_time', () => {
       ['2026-04-08z 20', 'cannot parse'],   // z has to come last
       ['20:30:', 'cannot parse'],           // trailing separator
       ['20:30:12.', 'cannot parse'],
+      ['2026082', 'cannot parse'],          // half a compact field
+      ['20268', 'cannot parse'],            // shorter than YYYYMM
+      ['20260822-13-259', 'cannot parse'],  // ms without minutes
+      ['20260822-1329-259', 'cannot parse'],  // ms without seconds
+      ['202608-13', 'cannot parse'],        // an hour with no day
+      ['20260822 13', 'cannot parse'],      // compact takes no separator
+      ['20260822t13', 'cannot parse'],
       ['   ', 'non-whitespace'],
     ];
     for (const [value, message] of bad) {

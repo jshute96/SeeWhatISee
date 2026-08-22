@@ -194,6 +194,17 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   `t` / `z` are case-insensitive.
   - Spacing is forgiving: a run of spaces reads as one, and spaces
     around `..` or at either end of the value are ignored.
+  - The compact stamp capture filenames carry is accepted too —
+    `screenshot-20260822-132959-259.png` → `20260822-132959-259`.
+    - It truncates from the right like the other forms: `20260822-13`
+      is that hour, `202608` that month. Shapes no filename can
+      produce, like `20260822-13-259`, are rejected.
+    - Its fixed-width fields run together, which is what tells it from
+      the dashed forms: a leading digit run longer than four can only
+      be this (`YYYYMM`, six digits, is the shortest).
+    - Filenames stamp local time (see [Save directory + metadata
+      sidecar](architecture.md#save-directory--metadata-sidecar)),
+      which is the default anyway; a trailing `z` still overrides.
   - A time alone means today: `14:30`, or `14:` for that whole hour. The
     colon is what marks it as a time — a bare `3` is rejected rather
     than guessed at, and a bare `1430` is read as the *year* 1430.

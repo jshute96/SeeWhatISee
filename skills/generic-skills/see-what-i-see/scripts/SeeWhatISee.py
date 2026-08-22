@@ -105,6 +105,7 @@ Filters apply to history records but not to future records from --watch.
     2026-04-08 20            that full hour
     14:30                    that minute today
     yesterday 14:30          that minute yesterday
+    20260822-132959          the compact format used in capture filenames
   Times are local unless the value ends in `z`, which means UTC.
   Date and time may be separated with space or `t`.
 
@@ -511,6 +512,21 @@ POINT_PATTERNS = (
     # (malformed) year, so it is rejected rather than guessed at.
     re.compile(r"(?P<h>\d{1,2}):(?:(?P<mi>\d{1,2})"
                r"(?::(?P<s>\d{1,2})(?:\.(?P<ms>\d{1,3}))?)?)?(?P<z>z)?"),
+    # The compact stamp capture filenames carry, as in
+    # `screenshot-20260822-132959-259.png`, so one can be pasted
+    # straight out of a filename. Its fields are fixed-width and run
+    # together, which is what tells it apart from the dashed forms
+    # above: a leading digit run longer than four can only be this
+    # (six is the shortest one, `YYYYMM`).
+    # Each field nests inside the one before it, so a stamp can only
+    # be truncated from the right — the only shapes a filename can
+    # actually produce.
+    # Filenames stamp local time (see src/capture/types.ts), which is
+    # the default here anyway; a trailing `z` still overrides, so the
+    # zone rule stays the same across every form.
+    re.compile(r"(?P<y>\d{4})(?P<mo>\d{2})(?:(?P<d>\d{2})"
+               r"(?:-(?P<h>\d{2})(?:(?P<mi>\d{2})"
+               r"(?:(?P<s>\d{2})(?:-(?P<ms>\d{3}))?)?)?)?)?(?P<z>z)?"),
 )
 
 # Finest-to-coarsest, so the last field present in a value gives its

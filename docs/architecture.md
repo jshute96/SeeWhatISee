@@ -134,6 +134,9 @@ Captures are written via `chrome.downloads.download` into
 - The timestamp is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond
   precision) — fine-grained enough that filenames are always
   unique in practice.
+  - `SeeWhatISee.py --filter_time` accepts that stamp, whole or
+    truncated, so a filename can be pasted back as a time filter (see
+    [Time spans](cli_commands.md#time-spans)).
 - We use the downloads API rather than a native messaging host so
   v1 has no native dependencies.
 - Trade-off: the directory must live under the user's configured
