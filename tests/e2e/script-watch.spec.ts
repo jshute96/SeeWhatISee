@@ -6,9 +6,9 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
 // The Claude /see-what-i-see-watch wrapper was a thin
-// `exec SeeWhatISee.sh --watch --pid-lockfile "$@"` script. These
+// `exec SeeWhatISee.py --watch --pid-lockfile "$@"` script. These
 // tests inline that prefix so they exercise the unified backend
 // directly. The single exception is --help, which doesn't combine
 // with an action, so we drop the prefix in that one test below.
@@ -27,7 +27,7 @@ function startWatch(args: string[], opts?: { cwd?: string }): {
   output: () => string;
   kill: () => void;
 } {
-  const proc = spawn('bash', [SCRIPT, ...WATCH_PREFIX, ...args], {
+  const proc = spawn(SCRIPT, [...WATCH_PREFIX, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: opts?.cwd,
   });
@@ -92,7 +92,7 @@ function waitForPattern(
 function runScript(
   script: string, args: string[], opts?: { cwd?: string; env?: Record<string, string> },
 ): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [script, ...args], {
+  const result = spawnSync(script, [...args], {
     timeout: 5_000,
     encoding: 'utf8',
     cwd: opts?.cwd,
@@ -182,13 +182,13 @@ test.beforeEach(() => {
 
 test.afterEach(() => {
   // Kill any watcher left behind.
-  try { execSync(`bash ${SCRIPT} --stop --directory ${tmpDir}`, { timeout: 3000 }); } catch { /* ok */ }
+  try { execSync(`${SCRIPT} --stop --directory ${tmpDir}`, { timeout: 3000 }); } catch { /* ok */ }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 // ---- Functional tests ------------------------------------------------------
 
-test.describe('SeeWhatISee.sh --watch', () => {
+test.describe('SeeWhatISee.py --watch', () => {
   // These tests have >1s waits between simulated captures (filesystem
   // mtime granularity), so total time can add up.
   test.setTimeout(30_000);
@@ -650,7 +650,7 @@ test.describe('SeeWhatISee.sh --watch', () => {
 
 // ---- Concurrency tests -----------------------------------------------------
 
-test.describe('SeeWhatISee.sh --watch concurrency', () => {
+test.describe('SeeWhatISee.py --watch concurrency', () => {
   test.setTimeout(30_000);
   test('pidfile is created and cleaned up on exit', async () => {
     const pidfile = path.join(tmpDir, '.watch.pid');
@@ -711,7 +711,7 @@ test.describe('SeeWhatISee.sh --watch concurrency', () => {
 
 // ---- Config file (.SeeWhatISee) tests ---------------------------------------
 
-test.describe('SeeWhatISee.sh --watch config file', () => {
+test.describe('SeeWhatISee.py --watch config file', () => {
   test.setTimeout(30_000);
 
   // These tests run watch.sh from a temp directory that contains a

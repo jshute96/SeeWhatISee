@@ -326,7 +326,7 @@ of recent captures.
 - The authoritative log lives in Chrome extension storage; `log.json`
   is a snapshot rewritten on every capture. If deleted, it's restored
   from extension storage on the next capture.
-- Scripts use `tail -1 log.json` to get the latest record.
+- Scripts read the last line of `log.json` to get the latest record.
 
 ### `log.json` record schema
 
@@ -444,11 +444,11 @@ claude --plugin-dir $(pwd)/skills/claude-plugin
 ### Watching for screenshots from CLI
 
 ```bash
-scripts/SeeWhatISee.sh                          # print the latest capture record
-scripts/SeeWhatISee.sh --watch                  # wait for the next capture, print it, exit
-scripts/SeeWhatISee.sh --watch --loop           # keep printing captures until ^C
-scripts/SeeWhatISee.sh --watch --pid-lockfile   # killable from another shell via --stop
-scripts/SeeWhatISee.sh --stop                   # stop a watcher running with --pid-lockfile
+scripts/SeeWhatISee.py                          # print the latest capture record
+scripts/SeeWhatISee.py --watch                  # wait for the next capture, print it, exit
+scripts/SeeWhatISee.py --watch --loop           # keep printing captures until ^C
+scripts/SeeWhatISee.py --watch --pid-lockfile   # killable from another shell via --stop
+scripts/SeeWhatISee.py --stop                   # stop a watcher running with --pid-lockfile
 ```
 
 ### MCP server

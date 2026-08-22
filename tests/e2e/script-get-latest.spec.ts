@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // All actions go through the unified backend; --get-latest is the
 // implicit default but pass it explicitly for clarity.
-const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
 
 function run(
   args: string[], opts?: { cwd?: string },
 ): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [SCRIPT, '--get-latest', ...args], {
+  const result = spawnSync(SCRIPT, ['--get-latest', ...args], {
     timeout: 5_000,
     encoding: 'utf8',
     cwd: opts?.cwd,
@@ -41,7 +41,7 @@ function writeLog(dir: string, records: Record<string, unknown>[]) {
   fs.writeFileSync(path.join(dir, 'log.json'), ndjson);
 }
 
-test.describe('SeeWhatISee.sh --get-latest', () => {
+test.describe('SeeWhatISee.py --get-latest', () => {
   test('prints JSON with absolute screenshot path', () => {
     writeLog(tmpDir, [{
       timestamp: '2026-04-09T12:00:00.001Z',

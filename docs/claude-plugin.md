@@ -34,19 +34,19 @@ SeeWhatISee-claude/                  # release repo
         ├── see-what-i-see/
         │   ├── SKILL.md
         │   └── scripts/
-        │       ├── SeeWhatISee.sh    # unified backend (verbatim copy of skills/SeeWhatISee.sh)
-        │       └── get-latest.sh     # wrapper → SeeWhatISee.sh --get-latest
+        │       ├── SeeWhatISee.py    # unified backend (verbatim copy of skills/SeeWhatISee.py)
+        │       └── get-latest.sh     # wrapper → SeeWhatISee.py --get-latest
         ├── see-what-i-see-watch/
         │   ├── SKILL.md
-        │   └── scripts/watch.sh      # wrapper → SeeWhatISee.sh --watch --pid-lockfile
+        │   └── scripts/watch.sh      # wrapper → SeeWhatISee.py --watch --pid-lockfile
         └── see-what-i-see-stop/
             ├── SKILL.md
-            └── scripts/stop.sh       # wrapper → SeeWhatISee.sh --stop
+            └── scripts/stop.sh       # wrapper → SeeWhatISee.py --stop
 ```
 
-`SeeWhatISee.sh` is owned by the `see-what-i-see` skill; the
+`SeeWhatISee.py` is owned by the `see-what-i-see` skill; the
 other skills' wrappers reach in sibling-relative via
-`../../see-what-i-see/scripts/SeeWhatISee.sh`. No
+`../../see-what-i-see/scripts/SeeWhatISee.py`. No
 plugin-root-level `scripts/` dir.
 
 In **this** repo, those release directories are mirrored under
@@ -252,9 +252,9 @@ two are relevant here.
   `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each skill bundles its own
   `scripts/` dir under `plugin/skills/<name>/scripts/` (release-repo
   path; dev-repo equivalent under `skills/claude-plugin/skills/<name>/scripts/`).
-  The unified `SeeWhatISee.sh` backend lives next to the
+  The unified `SeeWhatISee.py` backend lives next to the
   `see-what-i-see` skill's wrapper; the other skills' wrappers reach it
-  via a sibling-relative `../../see-what-i-see/scripts/SeeWhatISee.sh`
+  via a sibling-relative `../../see-what-i-see/scripts/SeeWhatISee.py`
   that stays inside the plugin root.
 - Why this over `${CLAUDE_PLUGIN_ROOT}`: it's the documented per-skill
   substitution, so a skill is self-contained and doesn't depend on knowing
@@ -391,8 +391,8 @@ check — run it before committing any manifest changes.
   can't traverse outside the plugin root via `../`. Keep shared
   scripts inside the plugin dir.
   - The sibling skills (`watch`, `stop`) `exec` the unified
-    `SeeWhatISee.sh` via
-    `../../see-what-i-see/scripts/SeeWhatISee.sh` — up two levels
+    `SeeWhatISee.py` via
+    `../../see-what-i-see/scripts/SeeWhatISee.py` — up two levels
     out of their own `scripts/`, across to the `see-what-i-see`
     skill, and back down into its `scripts/`. That's allowed
     because it stays inside the plugin root. What's disallowed is
@@ -431,13 +431,13 @@ check — run it before committing any manifest changes.
     symlinks out as plain text files.
   - **Current layout.** Each main script sits in a real
     `plugin/skills/<name>/scripts/` directory; no plugin-root
-    `scripts/` dir. The unified `SeeWhatISee.sh` backend lives
+    `scripts/` dir. The unified `SeeWhatISee.py` backend lives
     next to the `see-what-i-see` skill's own wrapper.
-  - **How sibling skills share `SeeWhatISee.sh`.** They `exec` it
-    via `../../see-what-i-see/scripts/SeeWhatISee.sh` —
+  - **How sibling skills share `SeeWhatISee.py`.** They `exec` it
+    via `../../see-what-i-see/scripts/SeeWhatISee.py` —
     `..`-traversal inside the plugin root, no symlinks involved.
-  - **Dev-repo `scripts/SeeWhatISee.sh`.** A single relative
-    symlink to the canonical `skills/SeeWhatISee.sh`, so e2e
+  - **Dev-repo `scripts/SeeWhatISee.py`.** A single relative
+    symlink to the canonical `skills/SeeWhatISee.py`, so e2e
     tests and ad-hoc CLI use can hit the unified backend at a
     stable path. There is no per-skill dev wrapper — tests
     inline the install-time wrapper flags themselves

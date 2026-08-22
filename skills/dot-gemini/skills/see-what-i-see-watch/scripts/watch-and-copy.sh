@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin wrapper: compute the Gemini-readable tmp dir and defer to
-# SeeWhatISee.sh in single-shot --watch mode.
+# SeeWhatISee.py in single-shot --watch mode.
 #
 # Gemini CLI has no async background worker with a completion
 # callback, so its /see-what-i-see-watch command runs as a series of
@@ -23,7 +23,7 @@ if [[ -z "${TARGET_DIR:-}" ]]; then
 fi
 TARGET_DIR="$TARGET_DIR/SeeWhatISee"
 
-# SeeWhatISee.sh lives in the see-what-i-see skill's scripts/ dir;
+# SeeWhatISee.py lives in the see-what-i-see skill's scripts/ dir;
 # reach across sibling-relative.
-exec "$(dirname "${BASH_SOURCE[0]}")/../../see-what-i-see/scripts/SeeWhatISee.sh" \
+exec "$(dirname "${BASH_SOURCE[0]}")/../../see-what-i-see/scripts/SeeWhatISee.py" \
   --watch --catch-up-one --copy-to-dir "$TARGET_DIR" "$@"

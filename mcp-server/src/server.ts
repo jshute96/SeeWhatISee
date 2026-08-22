@@ -1,6 +1,6 @@
 // SeeWhatISee MCP server.
 //
-// Exposes the same operations as `skills/SeeWhatISee.sh` over MCP, plus a
+// Exposes the same operations as `skills/SeeWhatISee.py` over MCP, plus a
 // subscribable resource that pushes notifications when new captures arrive.
 //
 // Source-dir resolution mirrors the shell script: `--directory` startup
@@ -65,7 +65,7 @@ const WATCH_DEBOUNCE_MS = 100;
 const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // ---------------------------------------------------------------------------
-// Source-dir resolution. Mirrors SeeWhatISee.sh.
+// Source-dir resolution. Mirrors SeeWhatISee.py.
 // ---------------------------------------------------------------------------
 
 export interface ResolveOpts {

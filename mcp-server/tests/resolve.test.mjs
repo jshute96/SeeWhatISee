@@ -1,5 +1,5 @@
 // Unit tests for resolveSourceDir — the source-dir resolution that
-// mirrors SeeWhatISee.sh.
+// mirrors SeeWhatISee.py.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

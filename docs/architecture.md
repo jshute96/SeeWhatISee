@@ -142,7 +142,7 @@ Captures are written via `chrome.downloads.download` into
 Alongside the content file, every capture also writes a JSON
 sidecar into the same directory. `log.json` is newline-delimited
 JSON (one record per line), grep-friendly history of recent
-captures. Scripts use `tail -1 log.json` to get the latest record.
+captures. Scripts read the last line of `log.json` to get the latest record.
 
 ### Record fields
 
@@ -246,12 +246,12 @@ Every record has `timestamp` and `url`, plus optional fields:
   it is, not always 100.
   - `get-latest.sh` / `watch.sh` only ever want the tail, so they
     are unaffected.
-  - `SeeWhatISee.sh --all` / `--limit N` read the archives too, so
+  - `SeeWhatISee.py --all` / `--limit N` read the archives too, so
     they see the whole history rather than that window. Archives
     are globbed from the download dir and read in name order
     (= chronological), then `log.json` last; `--limit` walks that
     list from the newest end and stops once it has enough.
-  - `SeeWhatISee.sh --after TIMESTAMP` replays from `log.json`, so
+  - `SeeWhatISee.py --after TIMESTAMP` replays from `log.json`, so
     its catch-up window shrinks to as few as 51 records right
     after a flush. An older timestamp falls back to plain watching
     (with a warning), same as it always did.
@@ -326,15 +326,15 @@ Layout:
   `skills/claude-plugin/skills/<name>/scripts/` directory. No
   plugin-root-level `scripts/` dir.
 - All per-skill scripts are thin wrappers around a single unified
-  backend, `SeeWhatISee.sh`. The backend lives next to its owning
+  backend, `SeeWhatISee.py`. The backend lives next to its owning
   skill's wrapper at
-  `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh`,
-  and is a verbatim copy of the canonical `skills/SeeWhatISee.sh`
+  `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`,
+  and is a verbatim copy of the canonical `skills/SeeWhatISee.py`
   (propagated by `skills/generate-skills.py`). Sibling-skill
   wrappers reach across to it via
-  `../../see-what-i-see/scripts/SeeWhatISee.sh`.
+  `../../see-what-i-see/scripts/SeeWhatISee.py`.
 - The repo-root `scripts/` directory holds a single relative
-  symlink, `scripts/SeeWhatISee.sh -> ../skills/SeeWhatISee.sh`,
+  symlink, `scripts/SeeWhatISee.py -> ../skills/SeeWhatISee.py`,
   for direct dev-time and e2e-test invocation of the unified
   backend. The per-skill wrappers' install-time defaults
   (`--watch --pid-lockfile`, `--copy-to-dir <tmp>`, etc.) are
@@ -349,8 +349,10 @@ Layout:
 
 The scripts:
 
-- `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh`
-  — unified backend with all the actual logic. Actions
+- `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`
+  — unified backend with all the actual logic, written in
+  stdlib-only Python 3 (no third-party packages, so a skill bundle
+  installs by copying files). Actions
   (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
   combinable; options (`--directory`, `--copy-to-dir`,
   `--pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
@@ -362,16 +364,16 @@ The scripts:
   and `--after` catch-up. See `cli_commands.md` for the full
   flag inventory.
 - `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`
-  — `exec`s `SeeWhatISee.sh --get-latest`. Reads the last line of
+  — `exec`s `SeeWhatISee.py --get-latest`. Reads the last line of
   `log.json` and prints a single JSON record with absolute paths.
 - `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`
-  — `exec`s `SeeWhatISee.sh --watch --pid-lockfile` and forwards
+  — `exec`s `SeeWhatISee.py --watch --pid-lockfile` and forwards
   the watcher flags (`--loop`, `--after`, `--print_selection`,
   `--stop`, `--directory`). The backend polls `log.json`'s mtime
   every 0.5s and emits records with absolute paths to stdout;
   status messages go to stderr.
 - `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
-  — `exec`s `SeeWhatISee.sh --stop` (which auto-implies
+  — `exec`s `SeeWhatISee.py --stop` (which auto-implies
   `--pid-lockfile`). Used by `/see-what-i-see-stop`.
 
 All of these resolve the download directory the same way: if

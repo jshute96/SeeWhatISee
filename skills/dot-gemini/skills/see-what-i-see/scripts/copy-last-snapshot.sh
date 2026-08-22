@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin wrapper: compute the Gemini-readable tmp dir and defer to
-# SeeWhatISee.sh in --get-latest --copy-to-dir mode.
+# SeeWhatISee.py in --get-latest --copy-to-dir mode.
 #
 # Gemini CLI restricts tool file reads to a workspace-named tmp dir
 # under $HOME/.gemini/tmp/. The Chrome extension writes captures into
@@ -26,5 +26,5 @@ if [[ -z "${TARGET_DIR:-}" ]]; then
 fi
 TARGET_DIR="$TARGET_DIR/SeeWhatISee"
 
-exec "$(dirname "${BASH_SOURCE[0]}")/SeeWhatISee.sh" \
+exec "$(dirname "${BASH_SOURCE[0]}")/SeeWhatISee.py" \
   --get-latest --copy-to-dir "$TARGET_DIR" "$@"

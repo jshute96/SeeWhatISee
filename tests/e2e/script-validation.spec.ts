@@ -4,15 +4,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
 
-// SeeWhatISee.sh refuses nonsense flag combinations rather than
+// SeeWhatISee.py refuses nonsense flag combinations rather than
 // silently no-op'ing them. These tests pin that behavior so a
 // regression doesn't leak past the type system into a confused user
 // session ("I passed --after but nothing came out!").
 
 function run(args: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [SCRIPT, ...args], {
+  const result = spawnSync(SCRIPT, [...args], {
     timeout: 5_000,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -24,7 +24,7 @@ function run(args: string[]): { stdout: string; stderr: string; exitCode: number
   };
 }
 
-test.describe('SeeWhatISee.sh flag-combo validation', () => {
+test.describe('SeeWhatISee.py flag-combo validation', () => {
   test('--get-latest --after errors out', () => {
     const r = run(['--get-latest', '--after', '2026-01-01T00:00:00.000Z']);
     expect(r.exitCode).toBe(2);

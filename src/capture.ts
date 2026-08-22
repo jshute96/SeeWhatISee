@@ -527,7 +527,7 @@ export function buildInMemoryCapture(input: BuildInMemoryCaptureInput): InMemory
  * the same "set iff truthy" conditional.
  *
  * Wire-format constraint: the shell consumer of `log.json` in
- * `skills/SeeWhatISee.sh` (propagated verbatim into both install
+ * `skills/SeeWhatISee.py` (propagated verbatim into both install
  * trees by `skills/generate-skills.py`) anchors its sed rewrites on
  * `"filename"` appearing *first* inside the artifact object.
  * `JSON.stringify` preserves insertion order, so the object literal
@@ -559,7 +559,7 @@ function selectionArtifactOf(
  * Build a `ScreenshotArtifact` object for inclusion in a
  * `CaptureRecord`. Same wire-format constraint as `artifact()`:
  * `filename` must appear first (before any edit flags) so the shell
- * consumer in `skills/SeeWhatISee.sh` (propagated verbatim into both
+ * consumer in `skills/SeeWhatISee.py` (propagated verbatim into both
  * install trees by `skills/generate-skills.py`) can anchor its
  * rewrites on `"filename"` being the first key inside the object.
  *

@@ -39,7 +39,7 @@
 ## Skills and plugins
 
 ### History access from the CLI
-* `SeeWhatISee.sh` can now list history (`--all` / `--limit N`, narrowed
+* `SeeWhatISee.py` can now list history (`--all` / `--limit N`, narrowed
   by `--search` / `--filter_site`, which default to the last 10), but no
   skill or MCP tool exposes it yet — nothing but the script itself uses
   those flags.

@@ -5,8 +5,8 @@ and Gemini CLI) read them via slash commands. This doc covers:
 
 - what each command does,
 - how the two CLIs' versions differ,
-- the shell scripts that back them, and
-- the unified `SeeWhatISee.sh` backend they all wrap.
+- the shell wrappers that back them, and
+- the unified `SeeWhatISee.py` backend they all wrap.
 
 ## Commands at a glance
 
@@ -35,10 +35,10 @@ field on the record. See
 ### Claude Code
 
 - Backed by `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`,
-  a thin wrapper that `exec`s `SeeWhatISee.sh --get-latest`.
-- The unified script `tail -1`s `log.json` and rewrites the
-  `screenshot` / `contents` / `selection` filenames to absolute
-  paths under `$DIR`.
+  a thin wrapper that `exec`s `SeeWhatISee.py --get-latest`.
+- The unified script takes the last record in `log.json` and
+  rewrites the `screenshot` / `contents` / `selection` filenames to
+  absolute paths under `$DIR`.
 - Claude reads referenced files in place from `$DIR` — no copy
   needed.
 
@@ -46,7 +46,7 @@ field on the record. See
 
 - Backed by `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`,
   a wrapper that computes the workspace-specific tmp dir and `exec`s
-  `SeeWhatISee.sh --get-latest --copy-to-dir <tmp>`.
+  `SeeWhatISee.py --get-latest --copy-to-dir <tmp>`.
 - `--copy-to-dir` triggers the unified script to copy referenced
   files from the source dir into the tmp dir before emitting, so
   the rewritten paths point into `$TARGET_DIR` (where Gemini can
@@ -78,17 +78,17 @@ field on the record. See
 ### Claude Code (Monitor + persistent loop)
 
 - Backed by `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`,
-  a thin wrapper that `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile`.
+  a thin wrapper that `exec`s `SeeWhatISee.py --watch --loop --pid-lockfile`.
 - Claude Code's `Monitor` tool runs a long-lived process and
   delivers each stdout line as its own notification. The skill
   launches `watch.sh` via `Monitor` with `persistent: true`; the
-  `--loop` flag keeps `SeeWhatISee.sh` emitting one JSON record
+  `--loop` flag keeps `SeeWhatISee.py` emitting one JSON record
   per capture without exiting, so the agent gets a notification
   per capture without relaunching the watcher.
 - `--pid-lockfile` makes the watcher write `.watch.pid` so a second
   invocation auto-kills the first. `/see-what-i-see-stop` runs the
   dedicated `stop.sh` wrapper (sibling skill, which `exec`s
-  `SeeWhatISee.sh --stop`) to terminate; the previous `Monitor`
+  `SeeWhatISee.py --stop`) to terminate; the previous `Monitor`
   observes the script exit and notifies the agent that the watcher
   stopped.
 
@@ -96,7 +96,7 @@ field on the record. See
 
 - Backed by `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh`,
   a wrapper that computes the workspace tmp dir and `exec`s
-  `SeeWhatISee.sh --watch --catch-up-one --copy-to-dir <tmp>`.
+  `SeeWhatISee.py --watch --catch-up-one --copy-to-dir <tmp>`.
 - Gemini CLI has no async background worker with a completion
   callback, so the loop is built agent-side: each iteration runs
   `watch-and-copy.sh` synchronously, which blocks until there's
@@ -113,7 +113,7 @@ field on the record. See
 ## Reading the capture history (`--all` / `--limit`)
 
 No slash command wraps these yet — they're backend actions on
-`SeeWhatISee.sh` for an agent (or a user) that wants more than the
+`SeeWhatISee.py` for an agent (or a user) that wants more than the
 latest capture.
 
 - **What they read.** The whole history, not just `log.json`: the
@@ -171,32 +171,25 @@ Both apply before `--limit` counts, so `--limit N` means "N most recent
   that arrives afterwards is emitted regardless — a watcher that
   silently dropped the capture the user just took would look broken.
 
-### Field extraction
+### Reading the records
 
-- Fields are pulled from the raw JSON text by a small `awk` scanner,
-  not a JSON parser, keeping the script to bash + coreutils (no `jq`,
-  no `python`).
-- Matching therefore runs against the JSON-escaped text with
-  backslashes stripped: a search term containing a literal `"` or `\`,
-  or a character JSON writes as `\n` / `\uXXXX`, can fail to match.
-  Words typed from a title, url, or prompt are unaffected.
-- `tolower` is byte-wise on mawk and BSD awk (what Debian and macOS
-  ship), so a non-ASCII search term is case-sensitive there. The
-  History page's `toLowerCase()` is Unicode-aware, so the two agree on
-  ASCII only.
-- A line is emitted only if it starts with `{` and ends with `}` after
-  trimming surrounding whitespace, so a record truncated mid-write is
-  dropped rather than handed to a JSONL consumer that would choke on
-  it. That's cheaper and less strict than `parseLogText` on the
-  extension side, which really parses: a line with the right braces but
-  malformed innards still gets through here. These files live in the
-  user's Downloads folder and can be hand-edited, hence the leniency in
-  both places.
+- Every line goes through `json.loads`, so fields are read from the
+  parsed record rather than matched in raw text. Search terms
+  containing quotes, backslashes, or escaped characters behave like any
+  other text, and case-folding is Unicode-aware — the same as the
+  History page's `toLowerCase()`.
+- A line that isn't a JSON object is skipped, the same leniency
+  `parseLogText` applies on the extension side: these files live in the
+  user's Downloads folder and can be hand-edited, truncated mid-write,
+  or concatenated. Losing one row beats losing the file.
+- Emitted records are re-serialized compactly, so surrounding
+  whitespace and stray carriage returns from a hand-edit don't ride
+  along into the output.
 
 ## `/see-what-i-see-stop` (Claude only)
 
 - Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
-  a thin wrapper that `exec`s `SeeWhatISee.sh --stop`. The unified
+  a thin wrapper that `exec`s `SeeWhatISee.py --stop`. The unified
   script resolves the watch directory the same way the watcher
   does, kills the PID stored in `$DIR/.watch.pid`, and removes the
   file. (`watch.sh --stop` reaches the same backend code path,
@@ -207,43 +200,49 @@ Both apply before `--limit` counts, so `--limit N` means "N most recent
 
 All five per-skill scripts (Claude get-latest / watch / stop and
 Gemini copy-last-snapshot / watch-and-copy) are now thin wrappers
-around a single unified backend, `SeeWhatISee.sh`. Each wrapper
+around a single unified backend, `SeeWhatISee.py`. Each wrapper
 just `exec`s the backend with the right action flag(s) and,
 where needed, computes the Gemini target dir for `--copy-to-dir`.
 
+**Runtime.** The wrappers are `bash`; the backend is Python 3 with
+nothing outside the standard library, so a bundle still installs by
+copying files. `python3` must be on `PATH` — near-universal on Linux,
+and on macOS it comes with the Xcode Command Line Tools rather than the
+base system.
+
 ```
 skills/claude-plugin/                ← Claude plugin install tree (mirrored into ../SeeWhatISee-claude/plugin/)
-  skills/see-what-i-see/scripts/SeeWhatISee.sh            ← unified backend (verbatim copy of skills/SeeWhatISee.sh)
-  skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.sh --get-latest
-  skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch    → SeeWhatISee.sh --watch --loop --pid-lockfile
-  skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.sh --stop
+  skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
+  skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.py --get-latest
+  skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch    → SeeWhatISee.py --watch --loop --pid-lockfile
+  skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.py --stop
 skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
-  skills/see-what-i-see/scripts/SeeWhatISee.sh            ← unified backend (verbatim copy of skills/SeeWhatISee.sh)
-  skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see          → SeeWhatISee.sh --get-latest --copy-to-dir <tmp>
-  skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch    → SeeWhatISee.sh --watch --catch-up-one --copy-to-dir <tmp>
+  skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
+  skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see          → SeeWhatISee.py --get-latest --copy-to-dir <tmp>
+  skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one --copy-to-dir <tmp>
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
 ```
 
 Each install tree is self-contained: each tree carries its own
-verbatim copy of `SeeWhatISee.sh` next to its `see-what-i-see`
+verbatim copy of `SeeWhatISee.py` next to its `see-what-i-see`
 skill's `scripts/` dir. The plugin tree ships as part of the
 Claude Code plugin (mirrored into `../SeeWhatISee-claude` by
 `skills/copy-claude-plugin-release.sh`); the Gemini tree is
 mirrored into `../SeeWhatISee-gemini` (Gemini extension install)
 by `skills/copy-gemini-extension-release.sh`. The two
-`SeeWhatISee.sh` copies are kept byte-identical by
+`SeeWhatISee.py` copies are kept byte-identical by
 `skills/generate-skills.py`, which propagates the canonical
-`skills/SeeWhatISee.sh`.
+`skills/SeeWhatISee.py`.
 
 Wrappers in `see-what-i-see-watch` / `see-what-i-see-stop` /
 `see-what-i-see-xtract` reach across to the see-what-i-see
 skill's `scripts/` dir for the backend via
-`../../see-what-i-see/scripts/SeeWhatISee.sh` (sibling-relative).
+`../../see-what-i-see/scripts/SeeWhatISee.py` (sibling-relative).
 
 ### The wrapper scripts
 
-| Wrapper | Forwards to `SeeWhatISee.sh` flags | Source → Target | Emits |
+| Wrapper | Forwards to `SeeWhatISee.py` flags | Source → Target | Emits |
 |---------|------------------------------------|------------------|-------|
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`        | `--get-latest`                                  | `$DIR` (in place) | last record |
 | `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | one JSON record per capture, streaming until killed |
@@ -276,7 +275,7 @@ Key differences come from the wrapper-supplied defaults:
 
 ### `SNAP_REAL_HOME` handling
 
-Snap-installed Gemini CLI mangles `$HOME`. `SeeWhatISee.sh`
+Snap-installed Gemini CLI mangles `$HOME`. `SeeWhatISee.py`
 honors `$SNAP_REAL_HOME` (when set) only for paths it *defaults*
 off of `$HOME` — namely the source download dir and the
 `.SeeWhatISee` config file lookup in the user's home dir.

@@ -6,9 +6,9 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
 
-// SeeWhatISee.sh runs combinable actions in a fixed order: --stop,
+// SeeWhatISee.py runs combinable actions in a fixed order: --stop,
 // then --get-latest, then --watch. These tests pin both that order
 // and the lenient "missing/empty log is OK when combined with --watch"
 // behavior — when --get-latest is used standalone, missing/empty log
@@ -18,7 +18,7 @@ const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
 // ---- Helpers ---------------------------------------------------------------
 
 function run(args: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [SCRIPT, ...args], {
+  const result = spawnSync(SCRIPT, [...args], {
     timeout: 5_000,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -35,7 +35,7 @@ function startProc(args: string[]): {
   output: () => string;
   kill: () => void;
 } {
-  const proc = spawn('bash', [SCRIPT, ...args], {
+  const proc = spawn(SCRIPT, [...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const chunks: Buffer[] = [];
@@ -85,14 +85,14 @@ test.beforeEach(() => {
 test.afterEach(() => {
   // Kill any watcher that might still be running.
   try {
-    spawnSync('bash', [SCRIPT, '--stop', '--directory', tmpDir], { timeout: 3000 });
+    spawnSync(SCRIPT, ['--stop', '--directory', tmpDir], { timeout: 3000 });
   } catch { /* ok */ }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 // ---- Tests -----------------------------------------------------------------
 
-test.describe('SeeWhatISee.sh combined actions', () => {
+test.describe('SeeWhatISee.py combined actions', () => {
   test.setTimeout(15_000);
 
   test('--get-latest --watch emits current then waits for next', async () => {
@@ -271,7 +271,7 @@ test.describe('SeeWhatISee.sh combined actions', () => {
 
 // ---- --watch + --copy-to-dir (Gemini watch-and-copy flow) ------------------
 
-test.describe('SeeWhatISee.sh --watch --catch-up-one --copy-to-dir', () => {
+test.describe('SeeWhatISee.py --watch --catch-up-one --copy-to-dir', () => {
   test.setTimeout(15_000);
 
   test('emits one record on a fresh capture, copying files into the target dir', async () => {
@@ -337,9 +337,9 @@ test.describe('SeeWhatISee.sh --watch --catch-up-one --copy-to-dir', () => {
       );
 
       const r = spawnSync(
-        'bash',
+        SCRIPT,
         [
-          SCRIPT, '--watch', '--catch-up-one',
+          '--watch', '--catch-up-one',
           '--after', '2026-04-09T12:00:00.000Z',
           '--directory', tmpDir,
           '--copy-to-dir', targetDir,

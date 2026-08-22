@@ -6,10 +6,10 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.sh');
+const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
 
 function run(args: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync('bash', [SCRIPT, ...args], {
+  const result = spawnSync(SCRIPT, [...args], {
     timeout: 5_000,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -73,7 +73,7 @@ function seedHistory() {
   ]);
 }
 
-test.describe('SeeWhatISee.sh history listing', () => {
+test.describe('SeeWhatISee.py history listing', () => {
   test('--all emits every record, archives first, in capture order', () => {
     seedHistory();
     const r = run(['--all', '--directory', tmpDir]);
@@ -366,8 +366,8 @@ test.describe('SeeWhatISee.sh history listing', () => {
       seedHistory();
       // A filter that matches nothing in the seeded history, so the
       // only output can come from the watch.
-      const proc = spawn('bash', [
-        SCRIPT, '--search', 'nothingmatchesthis', '--watch', '--directory', tmpDir,
+      const proc = spawn(SCRIPT, [
+        '--search', 'nothingmatchesthis', '--watch', '--directory', tmpDir,
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
       const chunks: Buffer[] = [];
       proc.stdout!.on('data', (d: Buffer) => chunks.push(d));

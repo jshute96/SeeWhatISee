@@ -83,10 +83,10 @@ and the same steps to take for each. To keep them consistent, they are
 **generated from shared templates** in `skills/` — never edit the
 generated files directly.
 
-The same generator also propagates `skills/SeeWhatISee.sh` (the
-unified backend script behind every per-skill wrapper) into each
+The same generator also propagates `skills/SeeWhatISee.py` (the
+unified Python backend behind every per-skill wrapper) into each
 release bundle's `scripts/` dir as a verbatim byte-for-byte copy.
-Edit the canonical `skills/SeeWhatISee.sh` and re-run the generator —
+Edit the canonical `skills/SeeWhatISee.py` and re-run the generator —
 do not edit the per-bundle copies.
 
 - Templates live in `skills/` (one file per generated target, plus
@@ -113,9 +113,9 @@ do not edit the per-bundle copies.
   - `skills/generic-skills/see-what-i-see/SKILL.md`
   - `skills/generic-skills/see-what-i-see-watch/SKILL.md`
   - `skills/generic-skills/see-what-i-see-stop/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
-  - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
-  - `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh` (verbatim copy)
+  - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
+  - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
+  - `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

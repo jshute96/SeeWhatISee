@@ -33,7 +33,7 @@ from pathlib import Path
 #  optional transform name applied to the expanded template).
 #
 # The "verbatim" transform skips template expansion entirely and just
-# copies the source file's bytes — used for the SeeWhatISee.sh master
+# copies the source file's bytes — used for the SeeWhatISee.py master
 # script, which is propagated unchanged into each release-bundle's
 # install location so it can be invoked sibling-relative.
 PAIRS = [
@@ -53,13 +53,13 @@ PAIRS = [
     # sets, with the client-specific workarounds removed. Reference-only
     # (the README points users at them to copy/adapt); not mirrored to a
     # release repo. The wrapper scripts are committed directly; only the
-    # SeeWhatISee.sh backend is propagated verbatim like the other bundles.
+    # SeeWhatISee.py backend is propagated verbatim like the other bundles.
     ("generic.see.md",   "skills/generic-skills/see-what-i-see/SKILL.md"),
     ("generic.watch.md", "skills/generic-skills/see-what-i-see-watch/SKILL.md"),
     ("generic.stop.md",  "skills/generic-skills/see-what-i-see-stop/SKILL.md"),
-    ("SeeWhatISee.sh",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh", "verbatim"),
-    ("SeeWhatISee.sh",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh",    "verbatim"),
-    ("SeeWhatISee.sh",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh",       "verbatim"),
+    ("SeeWhatISee.py",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py", "verbatim"),
+    ("SeeWhatISee.py",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py",    "verbatim"),
+    ("SeeWhatISee.py",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py",       "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
@@ -126,7 +126,7 @@ def main(argv: list[str]) -> int:
             any_diff = True
             continue
         # The "verbatim" transform skips the [[...]] expansion pass —
-        # shell scripts can legitimately contain `[[ test ]]` syntax
+        # source code can legitimately contain `[[ ... ]]` sequences
         # that would otherwise be misinterpreted as template includes.
         if transform == "verbatim":
             generated = src_path.read_text()
@@ -144,7 +144,7 @@ def main(argv: list[str]) -> int:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(generated)
                 # Preserve the source file's mode bits — matters for the
-                # SeeWhatISee.sh propagation (exec bit) and is harmless for
+                # SeeWhatISee.py propagation (exec bit) and is harmless for
                 # markdown targets, which inherit 0644 either way.
                 target_path.chmod(src_path.stat().st_mode & 0o777)
                 print(f"  updated    {target_rel}")

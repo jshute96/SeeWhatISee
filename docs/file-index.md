@@ -40,8 +40,8 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.sh` verbatim into each release bundle's `scripts/` dir |
-| `skills/SeeWhatISee.sh` | Canonical unified backend script (`--get-latest` / `--all` / `--limit` / `--watch` / `--stop` actions, shared helpers); generator copies it verbatim into both release bundles |
+| `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.py` verbatim into each release bundle's `scripts/` dir |
+| `skills/SeeWhatISee.py` | Canonical unified backend (stdlib-only Python: `--get-latest` / `--all` / `--limit` / `--watch` / `--stop` actions); generator copies it verbatim into both release bundles |
 | `skills/record-common.template.md` | Shared block describing the capture-record shape (fields + flags), embedded by `json-record` and `mcp-record` via `[[...]]` |
 | `skills/json-record.template.md` | Shell-skill record block: includes `record-common.template.md` then the filename-based artifact tail |
 | `skills/mcp-record.template.md` | MCP-prompt record block: includes `record-common.template.md` then the `resource_link` artifact tail |
@@ -76,10 +76,10 @@ Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skill
 | File | Description |
 |------|-------------|
 | `skills/claude-plugin/.claude-plugin/plugin.json` | Plugin manifest — name and repository URL |
-| `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.sh` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
-| `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.sh --get-latest` |
-| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`) |
-| `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --stop` |
+| `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.py` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
+| `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.py --get-latest` |
+| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`) |
+| `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --stop` |
 
 **NOTE: the skills below are generated from `skills/`, do not edit directly**
 
@@ -96,9 +96,9 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 | File | Description |
 |------|-------------|
 | `skills/dot-gemini/gemini-extension.json` | Gemini extension manifest — installed at the release-repo root |
-| `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.sh` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.sh` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
-| `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` | Thin wrapper — computes the Gemini workspace tmp dir then `exec`s `SeeWhatISee.sh --get-latest --copy-to-dir <dir>` |
-| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --catch-up-one --copy-to-dir <dir>` (single-shot per invocation; supports `--after TIMESTAMP`) |
+| `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.py` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
+| `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh` | Thin wrapper — computes the Gemini workspace tmp dir then `exec`s `SeeWhatISee.py --get-latest --copy-to-dir <dir>` |
+| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --watch --catch-up-one --copy-to-dir <dir>` (single-shot per invocation; supports `--after TIMESTAMP`) |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh` | Thin wrapper — execs the sibling `see-what-i-see/scripts/copy-last-snapshot.sh` so the alias shares one implementation |
 
 **NOTE: the SKILL.md files below are generated from `skills/`, do not edit directly**
@@ -126,11 +126,11 @@ Client-agnostic hybrid of the Claude and Gemini skills, with the client-specific
 
 | File | Description |
 |------|-------------|
-| `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.sh` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.sh` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
-| `skills/generic-skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.sh --get-latest` |
-| `skills/generic-skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --loop --pid-lockfile` (streaming background watcher) |
-| `skills/generic-skills/see-what-i-see-watch/scripts/watch-once.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --watch --catch-up-one` (one blocking poll iteration; supports `--after TIMESTAMP`) |
-| `skills/generic-skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.sh --stop` |
+| `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py` | Unified backend for every see-what-i-see skill — verbatim copy of `skills/SeeWhatISee.py` (do not edit directly; copy is propagated by `skills/generate-skills.py`) |
+| `skills/generic-skills/see-what-i-see/scripts/get-latest.sh` | Thin wrapper — `exec`s sibling `SeeWhatISee.py --get-latest` |
+| `skills/generic-skills/see-what-i-see-watch/scripts/watch.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --watch --loop --pid-lockfile` (streaming background watcher) |
+| `skills/generic-skills/see-what-i-see-watch/scripts/watch-once.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --watch --catch-up-one` (one blocking poll iteration; supports `--after TIMESTAMP`) |
+| `skills/generic-skills/see-what-i-see-stop/scripts/stop.sh` | Thin wrapper — `exec`s `SeeWhatISee.py --stop` |
 
 **NOTE: the SKILL.md files below are generated from `skills/`, do not edit directly**
 
@@ -143,7 +143,7 @@ Client-agnostic hybrid of the Claude and Gemini skills, with the client-specific
 ## MCP Server (`mcp-server/`)
 
 Standalone TypeScript MCP server. Exposes the same captures as
-`SeeWhatISee.sh`, plus a subscribable `seewhatisee://captures/stream`.
+`SeeWhatISee.py`, plus a subscribable `seewhatisee://captures/stream`.
 Own `package.json` (pnpm workspace), bundled to a single
 `dist/seewhatisee-mcp.js`. Not part of the extension build.
 
@@ -268,7 +268,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
 | `scripts/test-md-slice.mjs` | Fetches a URL / reads an HTML file, slices main content at balanced tag boundaries, runs each slice through the markdown converter, emits a structured report |
 | `scripts/open-test-browser.sh` | Launches Playwright's Chromium with the extension + remote debugging on port 9222 + persistent profile, used by the live e2e suite (CDP-attach pattern; sidesteps Google's automation block) |
-| `scripts/SeeWhatISee.sh` | Dev-convenience symlink — `../skills/SeeWhatISee.sh` (the canonical unified backend); used by e2e tests and ad-hoc CLI runs |
+| `scripts/SeeWhatISee.py` | Dev-convenience symlink — `../skills/SeeWhatISee.py` (the canonical unified backend); used by e2e tests and ad-hoc CLI runs |
 
 ## Tests (`tests/`)
 
@@ -324,10 +324,10 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
-| `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
-| `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.sh --all` / `--limit` over log.json + archives, with `--search` / `--filter_site` |
-| `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.sh --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
-| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.sh --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |
+| `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
+| `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + archives, with `--search` / `--filter_site` |
+| `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
+| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
@@ -388,8 +388,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |
 | `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
-| `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing wrapper scripts, and the unified `SeeWhatISee.sh` backend |
-| `mcp-server.md` | Design doc for the `mcp-server/` MCP server — TS, single-bundled-file, mirrors `SeeWhatISee.sh` plus a subscription stream |
+| `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing wrapper scripts, and the unified `SeeWhatISee.py` backend |
+| `mcp-server.md` | Design doc for the `mcp-server/` MCP server — TS, single-bundled-file, mirrors `SeeWhatISee.py` plus a subscription stream |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |
 | `images/download-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Save-as button |

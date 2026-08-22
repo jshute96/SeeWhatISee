@@ -2,7 +2,7 @@
 
 A local MCP (Model Context Protocol) server that exposes the same
 "read the latest capture" / "watch for new captures" operations as the
-`SeeWhatISee.sh` skill backend, but as a structured server any
+`SeeWhatISee.py` skill backend, but as a structured server any
 MCP-aware client can call.
 
 ## Why
@@ -41,7 +41,7 @@ The shell scripts and SKILL.md wrappers stay; the MCP server is an
 
 ## Source-dir resolution
 
-Mirrors `SeeWhatISee.sh` exactly so users don't need separate config.
+Mirrors `SeeWhatISee.py` exactly so users don't need separate config.
 Resolved **once** at server startup; tool calls don't take per-call
 directory overrides — the server has one source dir for its whole
 lifetime.
@@ -104,7 +104,7 @@ Returns the most recent record from `log.json`.
 - **Output:** a JSON metadata block plus a `resource_link` per artifact
   (and optional inline content) — see
   [How files are returned](#how-files-are-returned-by-get_latest--watch).
-  The metadata mirrors `SeeWhatISee.sh --get-latest` (see
+  The metadata mirrors `SeeWhatISee.py --get-latest` (see
   `skills/json-record.template.md`) except each artifact's `filename` is
   dropped; the file's locator rides on its `resource_link`.
 - **Errors:** structured error if `log.json` is missing or empty
@@ -316,9 +316,9 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   direct `node --test tests/<file>.mjs` invocation. The `test` and
   `build` scripts also re-run it on every test / build.
 
-## Differences from `SeeWhatISee.sh`
+## Differences from `SeeWhatISee.py`
 
-| Concern              | `SeeWhatISee.sh`                          | MCP server                          |
+| Concern              | `SeeWhatISee.py`                          | MCP server                          |
 |----------------------|-------------------------------------------|-------------------------------------|
 | Single read          | `--get-latest`                            | `get_latest` tool                   |
 | Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
@@ -359,7 +359,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   this server parallels.
 - [`docs/claude-plugin.md`](claude-plugin.md) — how the SKILL.md
   surface is wired in Claude Code today.
-- [`skills/SeeWhatISee.sh`](../skills/SeeWhatISee.sh) — the unified
+- [`skills/SeeWhatISee.py`](../skills/SeeWhatISee.py) — the unified
   backend whose flag surface this server mirrors.
 - [`skills/mcp-record.template.md`](../skills/mcp-record.template.md)
   (+ its [`record-common.template.md`](../skills/record-common.template.md)
