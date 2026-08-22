@@ -130,15 +130,13 @@ next one if none are pending.
   - With `after`: behaves like `--watch --after <ts>` (without
     `--catch-up-one`) — emit *all* the records it hasn't seen,
     immediately, then return.
-    - When `after` matches a record, the drain is positional: it emits
-      whatever follows that record in log order. Several records can
-      share a timestamp, so the cursor lands on the last of them (see
-      `cli_commands.md`).
-    - When `after` isn't an exact in-log timestamp, the blocking wait's
-      chronological compare takes over — already-present records newer
-      than it are still returned at once rather than blocking.
-  - With `after` and no newer records yet: fall through to the blocking
-    wait. On wake it returns *every* record newer than `after` (a
+    - The drain is positional: it emits whatever follows that record in
+      log order (see [`cli_commands.md`](cli_commands.md)).
+    - When `after` isn't an exact in-log timestamp, the chronological
+      fallback takes over — already-present records newer than it are
+      still returned at once rather than blocking.
+  - With `after` and nothing following it yet: fall through to the
+    blocking wait. On wake it returns *every* record it hasn't seen (a
     coalesced burst is delivered whole, never just the latest), or empty
     on timeout.
   - Without `after`: blocking wait only — on wake, every record that
@@ -146,9 +144,10 @@ next one if none are pending.
 - **No missed records.** The watcher is armed before a catch-up read, so
   a capture landing in the gap between the call and the watch arming is
   caught by that read, not stranded until the next change. Combined with
-  returning the whole newer-than-cursor batch on every wake, a client
-  that cursors forward by the newest returned timestamp never skips a
-  capture.
+  returning the whole batch on every wake, a client that advances its
+  cursor to the **last** record returned never skips a capture. Last in
+  log order, which isn't always the newest timestamp — a slow save can
+  arrive carrying an earlier one.
 - **Why a single tool, not two:** matches the "drain + wait" loop a
   client naturally writes. Splitting it into `pending_since` +
   `wait_for_next` would force every caller to compose them.
@@ -215,23 +214,20 @@ delivery channel — the lossless path is a **cursored read**:
   latest record (`{ record: null }` when the log is empty). A client
   reads this once on subscribe to seed its cursor.
 - **Cursored read** (`seewhatisee://captures/stream?after=<timestamp>`)
-  scans the whole log and returns `{ records: [...] }` — every record
-  *strictly newer* than the cursor, in log order. An empty cursor
-  (`?after=`) means "from the start" and returns all records — what a
-  client that bootstrapped on an empty log uses.
-- The cursor is the record `timestamp` and the compare is exclusive
-  (`>`). ISO-8601 UTC timestamps are fixed-width, so a lexical compare
-  is chronological. A non-empty cursor that isn't a canonical ISO-8601
-  UTC timestamp is rejected (the lexical compare only holds for that
-  format).
-- **This is deliberately chronological, unlike the `watch` tool's
-  positional `after`.** Scanning the whole log by timestamp means a
-  read recovers from a coalesced or dropped ping without depending on
-  log positions, which shift when an archive flush rewrites `log.json`.
-  - The cost: records sharing the cursor's timestamp are excluded. A
-    client cursored on the first of such a run never receives the rest.
-  - Not yet reconciled with the `watch` tool, which resumes past the
-    last record carrying the timestamp instead.
+  returns `{ records: [...] }` — everything the client hasn't seen, in
+  log order. Re-reading after each notification recovers a coalesced or
+  dropped ping.
+- **Same cursor rule as the `watch` tool**: positional from the record
+  carrying that timestamp, not a `>` compare. The log is in append
+  order, and a slow save can carry an earlier timestamp than the record
+  before it — comparing would skip those permanently.
+- The fallback compare covers a cursor that has aged into an archive,
+  and the empty cursor (`?after=`) a client bootstrapped on an empty log
+  uses: no record matches `''` and every timestamp sorts after it, so
+  the whole log comes back.
+- A non-empty cursor that isn't a canonical ISO-8601 UTC timestamp is
+  rejected — the fallback compare is lexical, which is chronological
+  only for that fixed-width format.
 
 **Discovery.**
 
@@ -251,8 +247,8 @@ delivery channel — the lossless path is a **cursored read**:
   cursor.
 - A coalesced or even dropped notification is harmless — the next read
   still drains everything after the cursor.
-- Scanning the whole log (rather than slicing after a matched cursor)
-  also tolerates out-of-order arrivals.
+- Slicing after the matched cursor, rather than comparing timestamps,
+  is what tolerates out-of-order arrivals.
 
 **Residual gaps (irreducible on stdio).** If the *final* notification is
 dropped and no capture ever follows, the client won't learn of the last

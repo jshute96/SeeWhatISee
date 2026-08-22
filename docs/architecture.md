@@ -205,16 +205,21 @@ Every record has `timestamp` and `url`, plus optional fields:
   `selection.filename` timestamps share the *same* compact
   local-time suffix so all three sort together for a single
   capture.
-- A record's `timestamp` does *not* identify it. A Capture-page
-  session pins one timestamp and writes a record per save, so
-  re-cropping or editing highlights leaves several records carrying
-  it, told apart only by their `-1`, `-2`, … filename suffixes.
-  - Anything keying, deduping, or joining on `timestamp` alone
-    silently merges real captures — this has already caused a bug on
-    the History page.
-  - `--after` resumes past the *last* record carrying the cursor's
-    timestamp for this reason (see
-    [`cli_commands.md`](cli_commands.md)).
+- A record's `timestamp` is unique within `log.json`, so it can serve
+  as a cursor (`--after`, the MCP `watch` tool).
+  - It isn't unique when captured: a Capture-page session pins one
+    timestamp and writes a record per save, so re-cropping or editing
+    highlights produces several records built from the same stamp.
+  - `uniqueTimestamp` (`capture/log-store.ts`) advances each collision
+    by a millisecond as the record enters the log. The milliseconds are
+    a uniqueness device, not a measurement — nothing displays them.
+  - Only the record moves. Its files keep the compact stamp they were
+    written with, so a second save's record can sit a millisecond past
+    its own filenames.
+  - No exception for a re-save that changed nothing: it's still its
+    own save, and the cursor consumers need every record nameable.
+  - Dedupe on the whole record — keying on the timestamp alone has
+    already caused a bug on the History page.
 
 ### Storage model
 
@@ -252,8 +257,10 @@ Every record has `timestamp` and `url`, plus optional fields:
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.
 - `<timestamp>` is the `compactTimestamp` of the newest record in
-  the file, so the name matches that capture's own files and
-  archives sort chronologically.
+  the file, so archives sort chronologically and the name normally
+  matches that capture's own files — normally, because a repeat
+  save's record can sit a millisecond past the stamp its files
+  carry.
 - Consequence for readers: once the log has filled, `log.json`
   holds **51–100** entries depending on where in the flush cycle
   it is, not always 100.

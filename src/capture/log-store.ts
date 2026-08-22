@@ -49,22 +49,26 @@ export const LOG_ARCHIVE_BATCH = 50;
 /**
  * Name of the archive file holding `batch`.
  *
- * Named for the **newest** record it contains, so the file's name
- * matches that capture's own screenshot / HTML filenames and the name
- * says what the file ends at. Deterministic, so a retried flush can't
- * produce two files with the same contents under different names.
+ * Named for the **newest** record it contains, so the name says what
+ * the file ends at and normally matches that capture's own screenshot
+ * / HTML filenames — normally, because `uniqueTimestamp` can leave a
+ * repeat save's record a millisecond past the stamp its files were
+ * written with. Deterministic, so a retried flush can't produce two
+ * files with the same contents under different names.
  *
  * Falls back to `fallback` for a record whose timestamp won't parse (a
  * hand-edited log).
  *
  * **Never returns a name already in `used`** — the names handed out
- * during *this* drain — disambiguating with a `-1`, `-2`, … suffix the
- * way repeated saves in one Capture-page session name their
- * screenshots. Two batches *can* end on records sharing a timestamp,
- * because a record's `timestamp` doesn't identify it (a Capture
- * session pins one and writes a record per save), and every write uses
- * `conflictAction: 'overwrite'`, so a collision would silently destroy
- * the batch that landed first.
+ * during *this* drain — advancing the stamp a millisecond at a time
+ * until it's free. Every write uses `conflictAction: 'overwrite'`, so
+ * a collision would silently destroy the batch that landed first.
+ *
+ * Bumping the stamp rather than appending a `-1`, `-2`, … suffix keeps
+ * every archive name matching one pattern, so anything reading the
+ * directory can parse the stamp without a special case. It essentially
+ * never fires, because `uniqueTimestamp` keeps the record timestamps
+ * these names come from unique.
  *
  * Batches from *separate* `recordCapture` calls aren't covered: they'd
  * have to be 50 apart yet still share a millisecond-precision stamp,
@@ -80,11 +84,12 @@ function archiveFileName(
   used: Set<string>,
 ): string {
   const last = batch[batch.length - 1];
-  const d = new Date(last?.timestamp ?? '');
-  const stamp = compactTimestamp(Number.isNaN(d.getTime()) ? fallback : d);
-  let name = `${ARCHIVE_FILE_PREFIX}${stamp}.json`;
-  for (let n = 1; used.has(name); n += 1) {
-    name = `${ARCHIVE_FILE_PREFIX}${stamp}-${n}.json`;
+  const parsed = new Date(last?.timestamp ?? '');
+  let d = Number.isNaN(parsed.getTime()) ? fallback : parsed;
+  let name = `${ARCHIVE_FILE_PREFIX}${compactTimestamp(d)}.json`;
+  while (used.has(name)) {
+    d = new Date(d.getTime() + 1);
+    name = `${ARCHIVE_FILE_PREFIX}${compactTimestamp(d)}.json`;
   }
   used.add(name);
   return name;
@@ -132,21 +137,22 @@ export function parseLogText(text: string): CaptureRecord[] {
  * list, keeping the first occurrence. For *display* only — the log
  * files stay a faithful record of every save.
  *
- * The case this exists for is **Restore last capture**: it rehydrates
- * a session with its pinned timestamp and filenames intact, so saving
- * without changing anything writes a record identical to the previous
- * one, pointing at the same files on disk. Two rows the user cannot
- * tell apart, describing one capture they re-sent.
+ * `uniqueTimestamp` gives every save its own timestamp, so no two
+ * records the log *writes* can collide here. What's left is one copy
+ * of a record reaching the History page twice: the page merges the
+ * in-storage log with the archive files, and a batch that reached an
+ * archive while the service worker died before the matching storage
+ * write sits in both.
  *
  * `serializeRecord` supplies the key, not `JSON.stringify`: a record
  * round-tripped through `chrome.storage.local` can come back with its
  * keys in a different order than the copy read from a file, and only
  * a canonical field order compares equal.
  *
- * **Exact equality is the whole point.** A record's `timestamp` does
- * not identify it (see `compactTimestamp`) — anything looser merges
- * the several distinct records one Capture session writes as the user
- * edits, which silently loses real captures.
+ * **Exact equality is the whole point.** Anything looser merges the
+ * several distinct records one Capture session writes as the user
+ * edits — they describe different content, and dropping one silently
+ * loses a real capture, which has already shipped once.
  */
 export function dedupeRecords(records: CaptureRecord[]): CaptureRecord[] {
   const seen = new Set<string>();
@@ -181,6 +187,41 @@ export async function clearCaptureLog(): Promise<number> {
     await chrome.storage.local.remove(LOG_STORAGE_KEY);
     return await writeJsonFile('log.json', '');
   });
+}
+
+/**
+ * Advance `record`'s timestamp past every timestamp already in
+ * `stored`, so no two records in the log carry the same one.
+ *
+ * A Capture-page session pins one timestamp and writes a record per
+ * save, so re-cropping or editing highlights would otherwise append
+ * records no timestamp can tell apart — and every consumer that uses
+ * one as a cursor (`--after`, the MCP `watch` tool and
+ * `captures/stream`) needs "the record at T" to be a single record.
+ * Milliseconds are a uniqueness device rather than a measurement, so
+ * spending them this way costs nothing; nothing displays them.
+ *
+ * **Edits `record` in place** so every caller sees what landed. The
+ * save path stores `serializeRecord` of the record it passed here as
+ * the key the History page matches a *Restore last capture* row by; a
+ * copy would leave that key describing a record the log doesn't hold.
+ *
+ * Only the record moves — its files keep the stamp they were written
+ * with, so a repeat save's record can sit a millisecond past its own
+ * filenames. An unparseable timestamp is left alone.
+ */
+function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
+  if (!stored.some((r) => r.timestamp === record.timestamp)) return;
+  const parsed = new Date(record.timestamp);
+  if (Number.isNaN(parsed.getTime())) return;
+  const taken = new Set(stored.map((r) => r.timestamp));
+  let ms = parsed.getTime();
+  let bumped: string;
+  do {
+    ms += 1;
+    bumped = new Date(ms).toISOString();
+  } while (taken.has(bumped));
+  record.timestamp = bumped;
 }
 
 /**
@@ -220,11 +261,15 @@ export async function clearCaptureLog(): Promise<number> {
  * Goes through `serializeWrite` itself, so callers don't have to: the
  * read-modify-write of the storage key would otherwise race two rapid
  * captures against each other.
+ *
+ * **Edits `record.timestamp`** on the way in, via `uniqueTimestamp` —
+ * a visible side effect on the caller's object, and deliberately so.
  */
 export async function recordCapture(record: CaptureRecord): Promise<number> {
   return await serializeWrite(async () => {
     const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
     const stored: CaptureRecord[] = data[LOG_STORAGE_KEY] ?? [];
+    uniqueTimestamp(record, stored);
     // Never mutated in place: `kept` is reassigned per successful
     // batch, so an abandoned flush leaves a coherent list either way.
     let kept = [...stored, record];
@@ -356,13 +401,18 @@ export function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  * it.
  *
  * **This is a guarantee about *filenames*, not about records.** A
- * `CaptureRecord.timestamp` does not identify a record: a Capture-page
- * session pins one timestamp and writes a record per save, so
- * re-cropping or editing highlights produces several log records
- * sharing a timestamp, told apart only by their `-1`, `-2`, … filename
- * suffixes. Anything keying, deduping, or joining on `timestamp` alone
- * will silently merge real captures — this has already caused one bug
- * on the History page.
+ * Capture-page session pins one timestamp and writes a record per
+ * save, so re-cropping or editing highlights produces several records
+ * that were all built from this one stamp — and they keep sharing
+ * these filenames.
+ *
+ * Their `CaptureRecord.timestamp`s are pulled apart on the way into
+ * the log by `uniqueTimestamp`, so one names a single record within
+ * `log.json` — enough to cursor on, and no more. Uniqueness is
+ * maintained there rather than across the archive files, and a
+ * record can sit a millisecond past the stamp in its own filenames.
+ * Exact-match dedup (`dedupeRecords`) still keys on the whole record
+ * — anything looser has already caused one bug on the History page.
  *
  * Example: a capture taken at 2026-04-08 20:30:12.345 local time
  * produces `20260408-203012-345`.

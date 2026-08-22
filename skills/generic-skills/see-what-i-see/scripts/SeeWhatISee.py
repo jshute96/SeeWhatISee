@@ -455,12 +455,7 @@ def history_files(source_dir, log_path):
 
     Each archive is named for the *newest* record it holds, using the
     same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture filenames,
-    so sorting the names is chronological. Sorting on the name with the
-    `.json` suffix removed is what keeps a disambiguated
-    `history-<stamp>-1.json` (written after `history-<stamp>.json`, and
-    holding the newer batch) after its base name rather than before it:
-    the byte following the stamp is `-` (0x2D) in one and `.` (0x2E) in
-    the other.
+    so the names are fixed-width and sorting them is chronological.
     """
     try:
         names = os.listdir(source_dir)
@@ -468,7 +463,7 @@ def history_files(source_dir, log_path):
         names = []
     archives = [name for name in names
                 if name.startswith("history-") and name.endswith(".json")]
-    archives.sort(key=lambda name: name[:-len(".json")])
+    archives.sort()
     files = [os.path.join(source_dir, name) for name in archives]
     if os.path.isfile(log_path):
         files.append(log_path)
@@ -861,14 +856,12 @@ def catch_up(opts, emitter, log_path):
     records = read_records(log_path)
     # A cursor, not a time comparison: emit whatever follows this record
     # in the log. Timestamps aren't ordered strictly enough for `>` to be
-    # safe, and they don't identify a record — a Capture-page session
-    # pins one timestamp and writes a record per save, so re-cropping or
-    # editing highlights leaves several records sharing it (see
-    # src/capture/log-store.ts).
+    # safe.
     #
-    # So scan backwards and resume after the *last* record carrying the
-    # timestamp. Matching the first would park the cursor mid-run and
-    # replay the rest of it on every call, which never advances.
+    # Scanning backwards costs nothing and degrades well: the extension
+    # keeps log.json timestamps unique, but against a log that repeats
+    # one, landing on the last record carrying it still advances, where
+    # matching the first would replay the rest on every call forever.
     #
     # Matching the parsed `timestamp` field, so a prompt whose text
     # happens to contain the same string can't be mistaken for it.

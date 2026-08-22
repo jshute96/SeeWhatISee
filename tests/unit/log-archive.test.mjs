@@ -174,10 +174,11 @@ test('a mid-drain failure keeps what it could not archive, and no more', async (
   assert.ok(archived.every((r) => !inStorage.has(serializeLog([r]))));
 });
 
-// A Capture-page session pins ONE timestamp and writes a record per
-// save, so several records legitimately share a `timestamp` and differ
-// only in their screenshot filename. Nothing may treat the timestamp
-// as a record's identity — doing so silently drops real captures.
+// Records that share a `timestamp` and differ only in their screenshot
+// filename. `recordCapture` no longer produces these — `uniqueTimestamp`
+// pulls them apart — so these fixtures are seeded straight into storage.
+// They pin the readers: nothing may treat the timestamp as a record's
+// identity, since doing so silently drops real captures.
 
 /**
  * `n` records sharing one timestamp, as one Capture session writes.
@@ -221,16 +222,21 @@ test('two batches ending on one timestamp get distinct archive names', async () 
   const names = archiveWrites().map((w) => w.filename);
   assert.equal(names.length, 3);
   assert.equal(new Set(names).size, 3);
+  // Disambiguated by advancing the stamp, not by a suffix, so every
+  // archive name still matches the one pattern a reader can parse.
+  for (const name of names) {
+    assert.match(name, /\/history-\d{8}-\d{6}-\d{3}\.json$/);
+  }
 });
 
-// `dedupeRecords` is display-side: the log files keep every save, the
-// History page shows a re-sent capture once. The line it has to walk
-// is between "byte-identical repeat" (drop) and "same timestamp,
-// different record" (keep) — getting that wrong loses real captures.
+// `dedupeRecords` is display-side: it collapses one record that
+// reached the History page from both of the sources the page merges.
+// The line it has to walk is between "the same record twice" (drop)
+// and "same timestamp, different record" (keep) — getting that wrong
+// loses real captures.
 
-test('dedupeRecords drops a byte-identical repeat, keeping the first', async () => {
-  // What Restore last capture writes when nothing was changed: the
-  // timestamp and filenames are pinned, so the record repeats exactly.
+test('dedupeRecords drops an exact repeat, keeping the first', async () => {
+  // A record the page loaded from an archive and from storage both.
   const a = rec(1);
   const resent = JSON.parse(JSON.stringify(a));
   const out = dedupeRecords([a, rec(2), resent]);
@@ -240,8 +246,8 @@ test('dedupeRecords drops a byte-identical repeat, keeping the first', async () 
 });
 
 test('dedupeRecords keeps same-timestamp records that differ at all', async () => {
-  // One Capture session's successive saves: same timestamp, different
-  // filename. These are distinct captures and must all survive.
+  // Same timestamp, different filename — distinct captures, so they must
+  // all survive however they got into the log.
   const out = dedupeRecords(sameStampRecords(6));
   assert.equal(out.length, 6);
 });
@@ -275,4 +281,121 @@ test('parseLogText skips blank and unparseable lines', async () => {
   assert.equal(parsed.length, 3);
   assert.deepEqual(parsed.map((r) => r.screenshot.filename),
     ['shot-1.png', 'shot-2.png', 'shot-3.png']);
+});
+
+// --- timestamp uniquification ---------------------------------------------
+//
+// A Capture-page session pins one timestamp and writes a record per
+// save, so the same one arrives repeatedly. The log pulls them apart by
+// a millisecond so a timestamp can serve as a cursor into `log.json`
+// (`--after` in `skills/SeeWhatISee.py`, the MCP `watch` tool).
+
+/** A record carrying `timestamp` verbatim, plus a distinguishing name. */
+function recAt(timestamp, name) {
+  return { timestamp, screenshot: { filename: `${name}.png` } };
+}
+
+test('a record repeating a stored timestamp is bumped a millisecond', async () => {
+  const t = '2026-01-01T00:00:05.000Z';
+  const store = stubChrome([recAt(t, 'save-1')]);
+  await recordCapture(recAt(t, 'save-2'));
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp),
+    [t, '2026-01-01T00:00:05.001Z']);
+  // Only the timestamp moves — the files keep the stamp they were
+  // written with.
+  assert.equal(store.captureLog[1].screenshot.filename, 'save-2.png');
+});
+
+test('a run of repeats keeps stepping past every one already taken', async () => {
+  const t = '2026-01-01T00:00:05.000Z';
+  const store = stubChrome();
+  for (const name of ['save-1', 'save-2', 'save-3']) {
+    await recordCapture(recAt(t, name));
+  }
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp), [
+    t, '2026-01-01T00:00:05.001Z', '2026-01-01T00:00:05.002Z',
+  ]);
+});
+
+test('a bump skips a timestamp another record already holds', async () => {
+  // The millisecond after the collision is itself taken, so the new
+  // record has to land past it rather than colliding again.
+  const store = stubChrome([
+    recAt('2026-01-01T00:00:05.000Z', 'a'),
+    recAt('2026-01-01T00:00:05.001Z', 'b'),
+  ]);
+  await recordCapture(recAt('2026-01-01T00:00:05.000Z', 'c'));
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp), [
+    '2026-01-01T00:00:05.000Z',
+    '2026-01-01T00:00:05.001Z',
+    '2026-01-01T00:00:05.002Z',
+  ]);
+});
+
+test('a fresh timestamp is left exactly as it is', async () => {
+  const store = stubChrome([rec(1)]);
+  await recordCapture(rec(2));
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp),
+    [rec(1).timestamp, rec(2).timestamp]);
+});
+
+test('an unparseable repeated timestamp is left alone', async () => {
+  // A hand-edited log: there is nothing meaningful to advance, and
+  // inventing a time would be worse than leaving the duplicate.
+  const store = stubChrome([recAt('not-a-date', 'a')]);
+  await recordCapture(recAt('not-a-date', 'b'));
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp),
+    ['not-a-date', 'not-a-date']);
+});
+
+test('the bump is visible on the record the caller passed in', async () => {
+  // `recordDetailedCapture` returns the record it handed to
+  // `recordCapture`, and the save path stores `serializeRecord` of it
+  // as the key the History page matches a Restore row by. A key built
+  // from the pre-bump timestamp would describe no record in the log.
+  const t = '2026-01-01T00:00:05.000Z';
+  stubChrome([recAt(t, 'save-1')]);
+  const mine = recAt(t, 'save-2');
+  await recordCapture(mine);
+  assert.equal(mine.timestamp, '2026-01-01T00:00:05.001Z');
+});
+
+test('a re-save that changed nothing still gets its own timestamp', async () => {
+  // *Restore last capture* re-saved unchanged writes a record matching an
+  // earlier one in every field. It's still its own save, and the cursor
+  // consumers need every record in the log to be nameable.
+  const t = '2026-01-01T00:00:05.000Z';
+  const store = stubChrome([recAt(t, 'save-1')]);
+  await recordCapture(recAt(t, 'save-1'));
+  assert.deepEqual(store.captureLog.map((r) => r.timestamp),
+    [t, '2026-01-01T00:00:05.001Z']);
+});
+
+test('every save in a session lands on its own timestamp', async () => {
+  // The session pins one stamp and saves three times — a re-crop, then a
+  // restore re-saved unchanged. All three arrive carrying the pinned stamp.
+  const t = '2026-01-01T00:00:05.000Z';
+  const store = stubChrome();
+  await recordCapture(recAt(t, 'save-1'));
+  await recordCapture(recAt(t, 'save-2'));
+  await recordCapture(recAt(t, 'save-2'));
+  assert.equal(new Set(store.captureLog.map((r) => r.timestamp)).size, 3);
+});
+
+test('a collision resolves against a record the same call is about to archive', async () => {
+  // `uniqueTimestamp` reads the stored log *before* the flush trims it, so a
+  // predecessor on its way into an archive still forces the bump. Reading the
+  // trimmed list would hand out a timestamp the archive already holds.
+  const t = '2026-01-01T00:00:05.000Z';
+  const store = stubChrome([
+    recAt(t, 'oldest'),
+    ...Array.from({ length: 100 }, (_, i) => rec(i)),
+  ]);
+  await recordCapture(recAt(t, 'newest'));
+  // The colliding predecessor went to the archive; the new record kept the
+  // bump it forced, so the two never share a timestamp.
+  const archived = parseLogText(archiveWrites()[0].body);
+  assert.equal(archived[0].timestamp, t);
+  assert.equal(store.captureLog[store.captureLog.length - 1].timestamp,
+    '2026-01-01T00:00:05.001Z');
 });

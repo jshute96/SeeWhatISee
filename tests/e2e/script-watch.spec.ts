@@ -146,10 +146,10 @@ function simulateCapture(dir: string, index: number): {
 }
 
 /**
- * Simulate a capture that reuses an earlier record's timestamp. A
- * Capture-page session pins one timestamp and writes a record per save,
- * so several log records legitimately share one (see
- * `src/capture/log-store.ts`).
+ * Simulate a capture that reuses an earlier record's timestamp — a log
+ * the extension wouldn't write (`uniqueTimestamp` in
+ * `src/capture/log-store.ts` keeps them unique), used to pin how the
+ * cursor degrades against one that repeats a timestamp anyway.
  */
 function simulateCaptureSharingTimestamp(
   dir: string, index: number, timestamp: string,
@@ -409,9 +409,9 @@ test.describe('SeeWhatISee.py --watch', () => {
   });
 
   test('--after resumes past the last record sharing the timestamp', async () => {
-    // Records 1 and 2 share a timestamp, as a Capture-page session that
-    // saves twice produces. --after that timestamp is a cursor onto the
-    // last of them, so neither copy replays.
+    // Records 1 and 2 share a timestamp. --after that timestamp is a
+    // cursor onto the last of them, so neither copy replays and the
+    // caller still advances.
     const r1 = simulateCapture(tmpDir, 1);
     const dup = simulateCaptureSharingTimestamp(tmpDir, 2, r1.timestamp);
 
@@ -423,10 +423,9 @@ test.describe('SeeWhatISee.py --watch', () => {
     expect(await waitForExit(idle.proc, 1_500)).toBeNull();
     idle.kill();
 
-    // The accepted tradeoff, pinned here so a future change doesn't quietly
-    // undo it: a cursor on the shared timestamp skips the rest of the run, so
-    // a client that saw only the first copy misses the second. Missing one
-    // record beats re-emitting it forever.
+    // The tradeoff of landing on the last copy: a client that saw only the
+    // first misses the second. Missing one record beats re-emitting it
+    // forever, and unique timestamps keep it out of reach anyway.
     const r3 = simulateCapture(tmpDir, 3);
     const after = runWatch(['--after', r1.timestamp, '--directory', tmpDir]);
     expect(after.exitCode).toBe(0);

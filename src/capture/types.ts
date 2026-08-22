@@ -148,13 +148,21 @@ export interface CaptureRecord {
   /**
    * ISO 8601 UTC timestamp, e.g. "2026-04-08T20:30:12.345Z".
    *
-   * **Not an identifier, and not in append order.** It's pinned when
-   * the capture is *taken*, so a Capture-page session that saves
-   * several times writes several records carrying the same timestamp
-   * (told apart by their `-1`, `-2`, … filename suffixes), and a
-   * record appended later can hold an earlier timestamp than one
-   * before it. Never key, dedupe, or join on it — that has already
-   * cost real captures on the History page.
+   * **Unique within `log.json`, but not in append order.** It's
+   * pinned when the capture is *taken*, so a Capture-page session that
+   * saves several times starts out with several records carrying one
+   * timestamp; `uniqueTimestamp` in `capture/log-store.ts` advances
+   * each collision by a millisecond on the way in. A record appended
+   * later can still hold an earlier timestamp than one before it.
+   *
+   * Names one record, which is what the cursor consumers need
+   * (`--after` in `skills/SeeWhatISee.py`, the MCP `watch` tool). Not
+   * an identifier beyond that: the bump can put a record a millisecond
+   * past the compact stamp in its own filenames, and uniqueness is
+   * maintained within `log.json` rather than across the archives.
+   *
+   * Dedupe on the whole record — keying on this alone has already cost
+   * real captures on the History page.
    */
   timestamp: string;
   /**

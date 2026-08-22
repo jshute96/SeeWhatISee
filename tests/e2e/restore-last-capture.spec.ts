@@ -278,6 +278,10 @@ test('restore-last-capture: round-trip with no edits reuses filenames; with edit
   expect(recordB.selection?.filename).toBe(recordA.selection?.filename);
   expect(recordB.contents?.isEdited).toBe(true);
   expect(recordB.selection?.isEdited).toBe(true);
+  // The Restore carries the session's pinned timestamp, so B arrives at
+  // the log on A's. It's still its own save and gets its own stamp —
+  // every record in the log has to be nameable by one.
+  expect(recordB.timestamp).not.toBe(recordA.timestamp);
 
   // Bytes are identical to A's — same source bytes flowed through.
   // (The HTML / selection bytes came from the carried `htmlEdited` /

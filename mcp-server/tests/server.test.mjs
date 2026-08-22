@@ -477,10 +477,10 @@ test('watch returns every record in a coalesced burst, not just the last', async
 });
 
 test('watch resumes past the last record sharing the cursor timestamp', async () => {
-  // A Capture-page session pins one timestamp and writes a record per save, so
-  // several log records can share it. The drain must resume after the last of
-  // them: matching the first would re-emit the rest on every call, so a client
-  // that keeps re-cursoring on the shared timestamp never advances.
+  // A log that repeats a timestamp, which the extension doesn't write
+  // (`uniqueTimestamp` in src/capture/log-store.ts). The drain resumes after
+  // the last of them, so a client re-cursoring on that timestamp still
+  // advances; matching the first would re-emit the rest on every call.
   const ctx = await setup({
     records: [
       record({ timestamp: '2026-04-08T20:30:00.000Z' }),
@@ -521,12 +521,37 @@ test('watch drains what follows a shared cursor timestamp, and neither copy', as
   }
 });
 
-test('watch wakes on a record that shares the cursor timestamp', async () => {
-  // A Capture-page session that saves again while the client is blocked
-  // appends a record carrying the same pinned timestamp. A purely
-  // chronological wake test never sees it (it isn't `>` the cursor), and the
-  // next drain can't recover it either — the cursor lands on it, being the
-  // last copy — so the capture would be dropped for good.
+test('watch with no cursor also wakes on an out-of-order arrival', async () => {
+  // No `after`, so the baseline is the tail at the moment the wait starts —
+  // still a position in the log, so the same positional rule applies.
+  const ctx = await setup({
+    records: [record({
+      timestamp: '2026-04-08T20:30:05.000Z',
+      screenshot: { filename: 'shot-a.png' },
+    })],
+    watchDefaultTimeoutMs: 2_000,
+  });
+  try {
+    const watchPromise = ctx.client.callTool({ name: 'watch', arguments: {} });
+    setTimeout(() => {
+      appendRecord(ctx.dir, record({
+        timestamp: '2026-04-08T20:29:00.000Z',
+        screenshot: { filename: 'shot-b.png' },
+      }));
+    }, 80);
+    const res = await watchPromise;
+    assert.equal(watchRecords(res).length, 1);
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'shot-b.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('watch wakes on a record whose timestamp precedes the cursor', async () => {
+  // The log is in append order, and a record appended later can carry an
+  // earlier timestamp: a Capture-page session pins its timestamp when the
+  // capture is *taken*, so a slow save lands after captures taken later. A
+  // chronological wake test never sees that record.
   const ctx = await setup({
     records: [record({
       timestamp: '2026-04-08T20:30:05.000Z',
@@ -541,13 +566,32 @@ test('watch wakes on a record that shares the cursor timestamp', async () => {
     });
     setTimeout(() => {
       appendRecord(ctx.dir, record({
-        timestamp: '2026-04-08T20:30:05.000Z',
+        timestamp: '2026-04-08T20:29:00.000Z',
         screenshot: { filename: 'shot-b.png' },
       }));
     }, 80);
     const res = await watchPromise;
     assert.equal(watchRecords(res).length, 1);
     assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'shot-b.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('the stream resource is positional too, so it returns an out-of-order arrival', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'shot-a.png' } }),
+      record({ timestamp: '2026-04-08T20:29:00.000Z', screenshot: { filename: 'shot-b.png' } }),
+    ],
+  });
+  try {
+    const res = await ctx.client.readResource({
+      uri: 'seewhatisee://captures/stream?after=2026-04-08T20:30:05.000Z',
+    });
+    const payload = JSON.parse(res.contents[0].text);
+    assert.deepEqual(payload.records.map((r) => r.timestamp),
+      ['2026-04-08T20:29:00.000Z']);
   } finally {
     await ctx.cleanup();
   }

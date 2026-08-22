@@ -117,20 +117,19 @@ Finding that tab is less obvious than it looks:
     would reorder rows the page has always shown as-written.
   - **Deduped on exact record text only** (`dedupeRecords`), keeping
     the first occurrence.
-    - The case it's for is *Restore last capture* re-saved unchanged.
-      Restore rehydrates a session with its pinned timestamp and
-      filenames, so `recordDetailedCapture` writes a record identical
-      to the previous one, pointing at the same files — two rows the
-      user can't tell apart, for one capture they re-sent.
-    - Global, not adjacent-only: the copies can be separated by other
-      captures, or split across the storage/archive boundary.
+    - `uniqueTimestamp` gives every save its own timestamp, so no two
+      records the log *writes* can collide here. What's left is one
+      record reaching the page twice: a batch that reached an archive
+      while the service worker died before the matching storage write
+      sits in both sources the page merges.
+    - Global, not adjacent-only: the copies land on opposite sides of
+      the storage/archive boundary.
     - `serializeRecord` supplies the key, not `JSON.stringify` —
       `chrome.storage.local` doesn't preserve key order, so only a
       canonical field order compares equal.
-    - **Nothing looser.** Keying on `timestamp` shipped a bug: a
-      timestamp doesn't identify a record, so one session's six saves
-      (`…-733.png`, `…-733-1.png`, …) collapsed to a single row and
-      102 records rendered as 96.
+    - **Nothing looser.** Keying on `timestamp` shipped a bug: one
+      session's six saves (`…-733.png`, `…-733-1.png`, …) collapsed to
+      a single row and 102 records rendered as 96.
     - The log files themselves keep every save; this is display only.
   - Files are keyed by path, not accumulated into one list, so an
     archive written *after* others are loaded lands ahead of them
@@ -237,8 +236,8 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   the `lastCapture` slot on close like any other session field.
 - The page renders the button on the row whose `serializeRecord`
   equals that key. **At most one row can match**: `mergedRecords` is
-  deduped on exactly this key, so byte-identical records have already
-  collapsed into one.
+  deduped on exactly this key, so a record that reached the page from
+  two sources has already collapsed into one.
 - **Not "the newest row".** Cases that break that shortcut:
   - The quick-capture menu entries (`capture-actions.ts`) write log
     rows without ever opening a Capture page, so they never touch
@@ -254,9 +253,9 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   prompt, then close without saving, and the button sits on a row
   carrying the older prompt while the restored page opens with the
   newer one. The slot is the authority on what comes back.
-- Keying on anything looser is not an option — a record's `timestamp`
-  does not identify it. Same reasoning as `dedupeRecords`; see
-  [Older captures](#older-captures).
+- Keying on anything looser is not an option — it would light the
+  button on the wrong row among a session's several saves. Same
+  reasoning as `dedupeRecords`; see [Older captures](#older-captures).
 - Archived rows are matched too. The key is computed per rendered
   record, so a restorable capture that has aged out of storage still
   gets its button once the archives are loaded.

@@ -77,13 +77,12 @@ field on the record. See
 - **`--after` is a cursor, not a time comparison.** It locates the
   record carrying that exact `timestamp` and emits whatever follows
   it in log order.
-  - Timestamps don't identify a record: a Capture-page session pins
-    one and writes a record per save, so re-cropping or editing
-    highlights leaves several records sharing it (see
-    [`architecture.md`](architecture.md#record-shapes-by-trigger)).
-  - So the cursor lands on the *last* record carrying the timestamp.
-    Resuming after the first would replay the rest of the run on
-    every call and never advance.
+  - The extension keeps timestamps unique within `log.json` for this
+    (see [`architecture.md`](architecture.md#record-shapes-by-trigger)),
+    so the cursor normally names exactly one record.
+  - Where that doesn't hold — e.g. a hand-edited log — the cursor lands
+    on the *last* record carrying the timestamp. Resuming after the first
+    would replay the rest of the run on every call and never advance.
   - A timestamp that isn't in `log.json` (typically aged out into an
     archive) warns and falls through to plain watching.
 
@@ -137,9 +136,8 @@ latest capture.
   `--print_selection` handling) as `--get-latest`.
   - Archives sort by name because each is named for the newest record
     it holds, using the zero-padded stamp capture filenames use. The
-    `.json` suffix is stripped before sorting, so a disambiguated
-    `history-<stamp>-1.json` lands *after* its base name rather than
-    before it (`-` sorts below `.`).
+    stamp is fixed-width, so every name is `history-<stamp>.json` and a
+    plain sort is chronological.
 - **Reading only what's needed.** `--limit N` walks the files from the
   newest end and stops as soon as it has N matches, so it never opens
   archives it wouldn't emit from. `--all` reads everything, by
@@ -179,8 +177,10 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   that matches everything — an agent interpolating an empty query
   would otherwise get a clean exit that reads as "no captures".
 - None of them dedupe, where the History page renders through
-  `dedupeRecords()`. **Restore last capture** re-saved unchanged
-  therefore appears twice, and costs `--limit N` a slot.
+  `dedupeRecords()`. Every save has its own timestamp, so the only
+  duplicate either side can see is a record that landed in an archive
+  while the matching `log.json` write was lost — here it appears
+  twice, and costs `--limit N` a slot.
 - They scope the listing only. Combined with `--watch`, every record
   that arrives afterwards is emitted regardless — a watcher that
   silently dropped the capture the user just took would look broken.

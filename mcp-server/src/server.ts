@@ -299,6 +299,34 @@ const SELECTION_INLINE_MAX_BYTES = 10 * 1024;
 
 const ARTIFACT_KEYS = ['screenshot', 'contents', 'selection'] as const;
 
+/**
+ * The records following the resume cursor `after`, or null when no record
+ * carries that timestamp.
+ *
+ * Positional, not a `timestamp > after` compare: the log is in append order,
+ * and a record appended later can carry an earlier timestamp than one before
+ * it (a Capture-page session pins its timestamp when the capture is *taken*,
+ * so a slow save lands out of order). Comparing would skip those.
+ *
+ * Scanning backwards costs nothing and degrades well: the extension keeps
+ * `log.json` timestamps unique, but against a log that repeats one, landing on
+ * the last record carrying it still advances, where resuming after the first
+ * would replay the rest on every call.
+ *
+ * Returning null rather than [] is what lets callers tell "you're up to date"
+ * from "that cursor isn't in the log" — the latter has aged into an archive,
+ * and they fall back to a chronological compare.
+ */
+function recordsAfterCursor(
+  all: CaptureRecord[],
+  after: string,
+): CaptureRecord[] | null {
+  for (let i = all.length - 1; i >= 0; i -= 1) {
+    if (all[i].timestamp === after) return all.slice(i + 1);
+  }
+  return null;
+}
+
 /** Record with each artifact reduced to its capture flags (no locator). */
 function flagsRecord(rec: CaptureRecord): Record<string, unknown> {
   const out: Record<string, unknown> = { ...rec };
@@ -569,8 +597,8 @@ export function createServer(opts: ServerOpts): Server {
       {
         name: 'watch',
         description:
-          "Return new capture records. With `after`, emits every record strictly newer " +
-          "than that timestamp immediately. If nothing is pending, blocks for up to " +
+          "Return new capture records. With `after`, emits every record following " +
+          "the one with that timestamp immediately. If nothing is pending, blocks for up to " +
           "`timeout_ms` waiting for the next capture. For long-running watches, " +
           "subscribe to the `seewhatisee://captures/stream` resource instead.",
         inputSchema: {
@@ -636,18 +664,12 @@ export function createServer(opts: ServerOpts): Server {
     // If `after` doesn't match any record (e.g. caller's known timestamp is
     // not in the log), match the shell script's lenient semantics and fall
     // through to the blocking wait — don't error.
-    if (after) {
-      const all = readAllRecords(logPath);
-      // Scan backwards: several records can share a timestamp (a Capture-page
-      // session pins one and writes a record per save, see
-      // src/capture/log-store.ts), and resuming after the *first* would park
-      // the cursor mid-run and replay the rest of it on every call.
-      let idx = -1;
-      for (let i = all.length - 1; i >= 0; i -= 1) {
-        if (all[i].timestamp === after) { idx = i; break; }
-      }
-      if (idx >= 0 && idx < all.length - 1) {
-        const pending = all.slice(idx + 1);
+    // On the param being *present*, not truthy, so `after: ''` stays in the
+    // cursored shape the way it does on the stream resource. No record carries
+    // `''`, so it falls through to the wait's compare and drains from the start.
+    if (after !== undefined) {
+      const pending = recordsAfterCursor(readAllRecords(logPath), after);
+      if (pending && pending.length > 0) {
         return { content: pending.flatMap((r) => recordContent(r, sourceDir, inline)) };
       }
     }
@@ -657,7 +679,7 @@ export function createServer(opts: ServerOpts): Server {
     return { content: fresh.flatMap((r) => recordContent(r, sourceDir, inline)) };
   }
 
-  // Block until the log gains records newer than the caller's cursor, then
+  // Block until the log gains records past the caller's cursor, then
   // resolve with ALL of them (not just the latest). Returning the whole batch
   // is what makes a burst safe: fs events are debounced and coalesced, so two
   // captures landing close together fan out as a single wake. If we resolved
@@ -673,15 +695,6 @@ export function createServer(opts: ServerOpts): Server {
     const baseline =
       after ??
       (startRecords.length ? startRecords[startRecords.length - 1].timestamp : '');
-    // How many records already carry the cursor's timestamp. A record appended
-    // while we wait can carry it too (a Capture-page session pins one timestamp
-    // and writes a record per save), and `>` would never see that one — so also
-    // treat a *growth* in that count as fresh. Counting rather than indexing
-    // keeps this safe across an archive flush, which rewrites log.json with
-    // fewer records: the count can only shrink, yielding nothing.
-    const baselineShared = after
-      ? startRecords.filter((r) => r.timestamp === after).length
-      : 0;
     return new Promise((resolve) => {
       let settled = false;
       const finish = (val: CaptureRecord[]) => {
@@ -693,17 +706,18 @@ export function createServer(opts: ServerOpts): Server {
       };
       const onChange = () => {
         const all = readAllRecords(logPath);
-        // ISO-8601 UTC timestamps are fixed-width, so `>` is chronological.
-        // This also drops no-op changes (the cursor's own record is not `>`
-        // itself) and skips a truncated/empty log until real records return.
-        // Records sharing the cursor's timestamp beyond the ones that were
-        // already there, then everything chronologically past it. Log order,
-        // since the shared-timestamp ones can't sort after the newer ones.
-        const shared = after ? all.filter((r) => r.timestamp === after) : [];
-        const fresh = [
-          ...shared.slice(baselineShared),
-          ...all.filter((r) => r.timestamp > baseline),
-        ];
+        // Positional while the baseline record is in the log, so an
+        // out-of-order arrival still counts as fresh. That covers the
+        // no-cursor call too: its baseline is the tail at the moment we
+        // started waiting, which is a record like any other.
+        //
+        // The fallback is chronological, for a cursor that has aged into an
+        // archive and for the empty log (baseline ''). ISO-8601 UTC timestamps
+        // are fixed-width, so `>` compares chronologically, and it drops no-op
+        // changes (the baseline's own record is not `>` itself) and skips a
+        // truncated log until real records return.
+        const fresh = recordsAfterCursor(all, baseline)
+          ?? all.filter((r) => r.timestamp > baseline);
         if (fresh.length === 0) return;
         finish(fresh);
       };
@@ -749,7 +763,7 @@ export function createServer(opts: ServerOpts): Server {
         uriTemplate: `${STREAM_URI}{?after}`,
         name: 'Read capture stream (cursored)',
         description:
-          'Read every capture record strictly newer than ?after=<ISO-8601 timestamp>, ' +
+          'Read every capture record following ?after=<ISO-8601 timestamp>, ' +
           'in log order, as { records: [...] }. An empty cursor (?after=) returns all ' +
           'records; omit `after` entirely for the latest record only.',
         mimeType: 'application/json',
@@ -784,21 +798,29 @@ export function createServer(opts: ServerOpts): Server {
             `2026-01-01T00:00:00.000Z): ${after}`,
         );
       }
-      // Cursored drain: `?after=<ts>` returns EVERY record strictly newer than
-      // the cursor, in log order, so a client that re-reads after each
-      // notification never misses an intermediate capture — coalesced or even
-      // dropped pings are recovered on the next read. We scan the whole log
-      // (not a position after a matching cursor), so out-of-order arrivals are
-      // still caught. ISO-8601 UTC timestamps are fixed-width, so a lexical
-      // compare is chronological. An empty cursor (`?after=`) means "from the
-      // start" — every timestamp sorts after '' — which is what a client that
-      // bootstrapped on an empty log uses. Branch on the param being *present*
-      // (not truthy) so `?after=` stays in the cursored shape. With no cursor
-      // at all, return just the latest record — the bootstrap a client reads
-      // once to seed its cursor.
+      // Cursored drain: `?after=<ts>` returns every record the client hasn't
+      // seen, in log order, so re-reading after each notification never misses
+      // an intermediate capture — coalesced or even dropped pings are recovered
+      // on the next read. Same cursor rule as the `watch` tool: positional from
+      // the matching record, since the log is in append order and a slow save
+      // can carry an earlier timestamp than the record before it.
+      //
+      // The fallback compare covers a cursor that has aged into an archive, and
+      // the empty cursor (`?after=`) that a client bootstrapped on an empty log
+      // uses — no record matches '', and every timestamp sorts after it, so the
+      // whole log comes back. ISO-8601 UTC timestamps are fixed-width, so the
+      // lexical compare is chronological.
+      //
+      // Branch on the param being *present* (not truthy) so `?after=` stays in
+      // the cursored shape. With no cursor at all, return just the latest
+      // record — the bootstrap a client reads once to seed its cursor.
       const payload =
         after !== null
-          ? { records: records.filter((r) => r.timestamp > after).map((r) => toResourceRecord(r, sourceDir)) }
+          ? {
+              records: (recordsAfterCursor(records, after)
+                ?? records.filter((r) => r.timestamp > after)
+              ).map((r) => toResourceRecord(r, sourceDir)),
+            }
           : records.length === 0
             ? { record: null }
             : toResourceRecord(records[records.length - 1], sourceDir);

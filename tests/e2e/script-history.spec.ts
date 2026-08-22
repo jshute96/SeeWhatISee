@@ -92,13 +92,12 @@ test.describe('SeeWhatISee.py history listing', () => {
     expect(records[0].screenshot.filename).toBe(`${tmpDir}/screenshot-20260400.png`);
   });
 
-  test('a disambiguated archive sorts after its base name', () => {
-    // `history-<stamp>-1.json` is written after `history-<stamp>.json`
-    // and holds the newer batch (see archiveFileName in
-    // capture/log-store.ts). Sorting the names as-is puts it first,
-    // because `-` (0x2D) sorts before `.` (0x2E).
+  test('archives a millisecond apart still read in order', () => {
+    // Two flushes in one drain land a millisecond apart (`archiveFileName`
+    // advances the stamp rather than suffixing the name), so the names differ
+    // only in their last digit. A plain sort has to get that right.
     writeFileOfRecords('history-20260409-120001-000.json', [rec(0)]);
-    writeFileOfRecords('history-20260409-120001-000-1.json', [rec(1)]);
+    writeFileOfRecords('history-20260409-120001-001.json', [rec(1)]);
     writeFileOfRecords('log.json', [rec(2)]);
 
     const order = ['2026-04-09T12:00:00.000Z', '2026-04-09T12:00:01.000Z',

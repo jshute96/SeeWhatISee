@@ -230,19 +230,21 @@ let mergedRecords: CaptureRecord[] = [];
  * **No sort.** `archivePaths` is already newest-first by download
  * start time, which is true write order, and each file's records are
  * reversed out of append order. Sorting by `timestamp` would only
- * reshuffle the records a single Capture session wrote — a session
- * pins one timestamp and writes a record per save, so append order and
- * timestamp order genuinely differ. The live log has always been shown
- * in append order; archives match it.
+ * reshuffle things: a record appended later can carry an earlier
+ * timestamp than one before it, and a session's repeat saves are
+ * ordered by a millisecond the log invented for uniqueness
+ * (`uniqueTimestamp`) rather than by when the user saved. The live log
+ * has always been shown in append order; archives match it.
  *
- * **Dedup is exact-match only**, via `dedupeRecords`. It's there for
- * *Restore last capture* re-saved unchanged, which writes a record
- * byte-identical to the previous one. Anything looser — keying on
- * `timestamp` — merges the distinct records of a single editing
- * session and drops real captures; that shipped once already.
- * Duplicates can land anywhere relative to each other (adjacent, or
- * split across the storage/archive boundary), so the pass is global
- * rather than adjacent-only.
+ * **Dedup is exact-match only**, via `dedupeRecords`. Every save gets
+ * its own timestamp, so what it's left catching is one record arriving
+ * from both sources merged here — a batch that reached an archive
+ * while the service worker died before the matching storage write.
+ * Anything looser — keying on `timestamp` — merges the distinct
+ * records of a single editing session and drops real captures; that
+ * shipped once already.
+ * The two copies land on opposite sides of the storage/archive
+ * boundary, so the pass is global rather than adjacent-only.
  */
 function rebuildMerged(): void {
   const all = [...records];
@@ -267,9 +269,9 @@ function isDeleted(filename: string): boolean {
 /**
  * True for the one row the saved last-capture describes.
  *
- * At most one row can match: `mergedRecords` is deduped on exactly
- * this key, so byte-identical records — the *Restore last capture*
- * re-saved-unchanged case — have already collapsed into one.
+ * At most one row can match: every save has its own timestamp, and
+ * `mergedRecords` is deduped on exactly this key, so a record that
+ * reached the page from two sources has already collapsed into one.
  *
  * Guarded on `restorableLogKey` first so the common "nothing to
  * restore" case doesn't serialize every record on every keystroke.
