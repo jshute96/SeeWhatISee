@@ -41,7 +41,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.py` verbatim into each release bundle's `scripts/` dir |
-| `skills/SeeWhatISee.py` | Canonical unified backend (stdlib-only Python: `--get-latest` / `--all` / `--limit` / `--watch` / `--stop` actions); generator copies it verbatim into both release bundles |
+| `skills/SeeWhatISee.py` | Canonical unified backend (stdlib-only Python: `--get-latest` / `--all` / `--limit` / `--watch` / `--stop` actions); generator copies it verbatim into each skill bundle |
 | `skills/record-common.template.md` | Shared block describing the capture-record shape (fields + flags), embedded by `json-record` and `mcp-record` via `[[...]]` |
 | `skills/json-record.template.md` | Shell-skill record block: includes `record-common.template.md` then the filename-based artifact tail |
 | `skills/mcp-record.template.md` | MCP-prompt record block: includes `record-common.template.md` then the `resource_link` artifact tail |

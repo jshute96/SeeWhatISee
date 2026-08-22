@@ -155,8 +155,8 @@ Both apply before `--limit` counts, so `--limit N` means "N most recent
   order). Same rule as the History page's search box, so the two agree
   on what a query means.
 - `--filter_site "str"` — substring match against the host of the
-  record's url. Only `http(s)` urls have a host, so `file://` /
-  `chrome://` captures never match.
+  record's url, including any `:port`. Only `http(s)` urls have a host,
+  so `file://` / `chrome://` captures never match.
 - Either one with neither `--all` nor `--limit` means `--limit 10`. A
   bare search is an interactive "what did I capture about X" question,
   and a whole history of matches is rarely the wanted answer; `--all`
@@ -198,9 +198,10 @@ Both apply before `--limit` counts, so `--limit N` means "N most recent
 
 ## Scripts
 
-All five per-skill scripts (Claude get-latest / watch / stop and
-Gemini copy-last-snapshot / watch-and-copy) are now thin wrappers
-around a single unified backend, `SeeWhatISee.py`. Each wrapper
+Every per-skill script — Claude's get-latest / watch / stop, Gemini's
+copy-last-snapshot / watch-and-copy, and the generic set under
+`skills/generic-skills/` — is a thin wrapper around a single unified
+backend, `SeeWhatISee.py`. Each wrapper
 just `exec`s the backend with the right action flag(s) and,
 where needed, computes the Gemini target dir for `--copy-to-dir`.
 
@@ -230,7 +231,7 @@ skill's `scripts/` dir. The plugin tree ships as part of the
 Claude Code plugin (mirrored into `../SeeWhatISee-claude` by
 `skills/copy-claude-plugin-release.sh`); the Gemini tree is
 mirrored into `../SeeWhatISee-gemini` (Gemini extension install)
-by `skills/copy-gemini-extension-release.sh`. The two
+by `skills/copy-gemini-extension-release.sh`. The
 `SeeWhatISee.py` copies are kept byte-identical by
 `skills/generate-skills.py`, which propagates the canonical
 `skills/SeeWhatISee.py`.

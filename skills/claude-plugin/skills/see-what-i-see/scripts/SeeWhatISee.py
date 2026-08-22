@@ -11,11 +11,13 @@ Multiple actions combine and run in that order.
 
 History spans more than log.json: the extension keeps only the most
 recent captures there and flushes older ones to `history-*.json`
-archive files beside it (see src/capture/log-store.ts). --all / --limit
-read the archives oldest-first and then log.json, so the emitted stream
-is the full history in capture order. --search / --filter_site narrow
-it. They narrow only that listing — records --watch emits later are
-never filtered.
+archive files beside it (see src/capture/log-store.ts). --all reads the
+archives oldest-first and then log.json. --limit N instead walks from
+log.json backwards through the archives and stops as soon as it has N
+records, so it opens only the files it needs. Either way the emitted
+stream is in capture order, oldest first. --search / --filter_site
+narrow it. They narrow only the records listed from history; records
+that arrive later under --watch are emitted regardless.
 
 Source-dir resolution (used for both reading log.json and writing the
 pidfile) is the same regardless of action:
@@ -27,16 +29,18 @@ $SNAP_REAL_HOME is used instead of $HOME if set (snap installs of
 Gemini CLI mangle $HOME).
 
 Output: each emitted record is the log.json record re-serialized with
-`screenshot` / `contents` / `selection` filenames rewritten to absolute
-paths. Records are emitted as JSONL — one per line — with a trailing
-blank line only after a multi-line `Selection:` block
-(--print_selection). With --copy-to-dir, the referenced files are first
-copied into that dir and the absolute paths point there instead of the
-source dir; this lets Gemini CLI (which can only read its own workspace
-tmp dir) consume captures the extension wrote into
-~/Downloads/SeeWhatISee.
+filenames rewritten to absolute paths pointing into the source dir
+(or the --copy-to-dir directory). Records are emitted as JSONL, one per
+line. --print_selection appends a `Selection:` block after the record it
+belongs to.
 
-Stdlib only, so the skill bundles stay installable by copying files.
+With --copy-to-dir, the referenced files are first copied into that dir and the
+rewritten paths point there instead of the source dir; this lets Gemini CLI
+(which can only read its own workspace tmp dir) consume captures the extension
+wrote into ~/Downloads/SeeWhatISee.
+
+This script uses only the Python standard library, so installing a
+skill bundle is just copying its files.
 
 Wrappers under each skill customized for each AI tool just `exec` this
 script with the right defaults.
@@ -76,22 +80,14 @@ Actions (combinable; run in this order):
   --limit N            Emit up to the N most recent records, oldest first.
   --watch              Watch log.json and emit new records as they arrive.
 
-History covers the archived `history-*.json` files beside log.json as
-well as log.json itself. Unlike --get-latest, --all / --limit treat an
-empty history as "no records" (no output, exit 0) rather than an error.
+Options for the history listing:
+  --search "words"     Show records where all words in the search string
+                       appear in the url, title, or prompt (case-insensitive).
+  --filter_site "str"  Show records whose http hosts contain this
+                       substring (case-insensitive).
 
-Options for --all / --limit:
-  --search "words"     Keep only records where every whitespace-separated
-                       word appears in the url, title, or prompt
-                       (case-insensitive), the same rule as the History
-                       page's search box.
-  --filter_site "str"  Keep only records whose url is http(s) and whose
-                       host contains this substring (case-insensitive).
-
-Either filter with neither --all nor --limit means --limit 10; an empty
-or whitespace-only value is rejected. Both filter the history listing
-only: with --watch, every record that arrives later is emitted
-regardless of them.
+Filters without --all or --limit default to --limit 10.
+Filters apply to history records but not to future records from --watch.
 
 General options:
   --directory DIR      Source dir to read log.json from. If unset, read
@@ -100,7 +96,7 @@ General options:
                        $HOME/Downloads/SeeWhatISee.
   --copy-to-dir DIR    Copy each emitted record's referenced files into DIR
                        before emitting, and rewrite paths to point under DIR.
-                       Default is to emit absolute paths under the source dir.
+                       By default, emitted paths point into the source dir.
   --print_selection    For records with a `selection` artifact, append its
                        file contents after the JSON line.
   --help               Show this help and exit.
@@ -212,7 +208,8 @@ def parse_args(argv):
     # interactive "what did I capture about X" question, and dumping a
     # whole history of matches at an agent is rarely what was wanted.
     # Ask for --all to get the rest.
-    if (opts.search is not None or opts.filter_site is not None) and not opts.list:
+    filtering = opts.search is not None or opts.filter_site is not None
+    if filtering and not opts.list:
         opts.limit = str(SEARCH_DEFAULT_LIMIT)
         opts.list = True
 
@@ -253,7 +250,8 @@ def validate(opts):
     if opts.search is not None and not opts.search.strip():
         die("Error: --search needs at least one non-whitespace character", 2)
     if opts.filter_site is not None and not opts.filter_site.strip():
-        die("Error: --filter_site needs at least one non-whitespace character", 2)
+        die("Error: --filter_site needs at least one non-whitespace character",
+            2)
 
 
 # ---------------------------------------------------------------------------
@@ -275,10 +273,14 @@ def parse_config(path):
                 continue
             if line.startswith("directory="):
                 directory = line[len("directory="):]
-                if len(directory) >= 2 and directory[0] == directory[-1] and directory[0] in "\"'":
+                quoted = (len(directory) >= 2
+                          and directory[0] == directory[-1]
+                          and directory[0] in "\"'")
+                if quoted:
                     directory = directory[1:-1]
             else:
-                die("Error: unrecognized option in %s line %d: %s" % (path, line_no, line))
+                die("Error: unrecognized option in %s line %d: %s"
+                    % (path, line_no, line))
     return directory
 
 
@@ -293,6 +295,10 @@ def resolve_dir(opts):
             directory = parse_config(candidate)
             if directory:
                 return directory
+            # The nearest config file wins even when it sets no
+            # directory: a project-local .SeeWhatISee is a deliberate
+            # statement about this directory, so falling back past it
+            # to the home one would ignore what the user wrote.
             break
     return os.path.join(home, "Downloads", "SeeWhatISee")
 
@@ -337,8 +343,10 @@ class Emitter:
 
     def _artifact_name(self, record, key):
         artifact = record.get(key)
-        if isinstance(artifact, dict) and isinstance(artifact.get("filename"), str):
-            return artifact["filename"]
+        if isinstance(artifact, dict):
+            filename = artifact.get("filename")
+            if isinstance(filename, str):
+                return filename
         return None
 
     def _copy_artifacts(self, record):
@@ -364,9 +372,9 @@ class Emitter:
             return
         with open(path, encoding="utf-8", errors="replace") as handle:
             body = handle.read()
-        # The blank line after the body terminates the block, so the
-        # next record's JSON starts on its own line even when the
-        # selection file doesn't end in a newline.
+        # The trailing newline terminates the block, so the next
+        # record's JSON starts on its own line even when the selection
+        # file doesn't end in one.
         sys.stdout.write("\nSelection:\n" + body + "\n")
 
 
@@ -427,8 +435,8 @@ def history_files(source_dir, log_path):
         names = []
     archives = [name for name in names
                 if name.startswith("history-") and name.endswith(".json")]
-    files = [os.path.join(source_dir, name)
-             for name in sorted(archives, key=lambda name: name[:-len(".json")])]
+    archives.sort(key=lambda name: name[:-len(".json")])
+    files = [os.path.join(source_dir, name) for name in archives]
     if os.path.isfile(log_path):
         files.append(log_path)
     return files
@@ -588,8 +596,8 @@ def catch_up(opts, emitter, log_path):
     an archive, and watching from now on is still useful.
     """
     if not os.path.isfile(log_path):
-        print("Warning: %s not found; ignoring --after and watching as usual" % log_path,
-              file=sys.stderr)
+        print("Warning: %s not found; ignoring --after and watching as usual"
+              % log_path, file=sys.stderr)
         return False
 
     records = read_records(log_path)
@@ -598,8 +606,8 @@ def catch_up(opts, emitter, log_path):
     index = next((i for i, record in enumerate(records)
                   if record.get("timestamp") == opts.after), None)
     if index is None:
-        print("Warning: '%s' not found in %s; ignoring --after and watching as usual"
-              % (opts.after, log_path), file=sys.stderr)
+        print("Warning: '%s' not found in %s; ignoring --after and watching"
+              " as usual" % (opts.after, log_path), file=sys.stderr)
         return False
 
     pending = records[index + 1:]
@@ -608,8 +616,8 @@ def catch_up(opts, emitter, log_path):
     if opts.catch_up_one:
         emitter.emit(pending[0])
         return not opts.loop
-    print("%d pending %s:" % (len(pending), "capture" if len(pending) == 1 else "captures"),
-          file=sys.stderr)
+    noun = "capture" if len(pending) == 1 else "captures"
+    print("%d pending %s:" % (len(pending), noun), file=sys.stderr)
     for record in pending:
         emitter.emit(record)
     return not opts.loop
