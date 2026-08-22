@@ -41,7 +41,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `skills/generate-skills.py` | Generator/validator that produces the Claude and Gemini skill files from the templates below, and propagates `skills/SeeWhatISee.sh` verbatim into each release bundle's `scripts/` dir |
-| `skills/SeeWhatISee.sh` | Canonical unified backend script (`--get-latest` / `--watch` / `--stop` actions, shared helpers); generator copies it verbatim into both release bundles |
+| `skills/SeeWhatISee.sh` | Canonical unified backend script (`--get-latest` / `--all` / `--limit` / `--watch` / `--stop` actions, shared helpers); generator copies it verbatim into both release bundles |
 | `skills/record-common.template.md` | Shared block describing the capture-record shape (fields + flags), embedded by `json-record` and `mcp-record` via `[[...]]` |
 | `skills/json-record.template.md` | Shell-skill record block: includes `record-common.template.md` then the filename-based artifact tail |
 | `skills/mcp-record.template.md` | MCP-prompt record block: includes `record-common.template.md` then the `resource_link` artifact tail |
@@ -325,6 +325,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.sh --get-latest` (absolute paths, config file, error cases) |
+| `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.sh --all` / `--limit` over log.json + archives, with `--search` / `--filter_site` |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.sh --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
 | `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.sh --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |

@@ -246,6 +246,11 @@ Every record has `timestamp` and `url`, plus optional fields:
   it is, not always 100.
   - `get-latest.sh` / `watch.sh` only ever want the tail, so they
     are unaffected.
+  - `SeeWhatISee.sh --all` / `--limit N` read the archives too, so
+    they see the whole history rather than that window. Archives
+    are globbed from the download dir and read in name order
+    (= chronological), then `log.json` last; `--limit` walks that
+    list from the newest end and stops once it has enough.
   - `SeeWhatISee.sh --after TIMESTAMP` replays from `log.json`, so
     its catch-up window shrinks to as few as 51 records right
     after a flush. An older timestamp falls back to plain watching
@@ -346,9 +351,11 @@ The scripts:
 
 - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.sh`
   — unified backend with all the actual logic. Actions
-  (`--get-latest`, `--watch`, `--stop`) are combinable; options
-  (`--directory`, `--copy-to-dir`, `--pid-lockfile`, `--loop`,
-  `--after`, `--catch-up-one`, `--print_selection`) tune behavior.
+  (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
+  combinable; options (`--directory`, `--copy-to-dir`,
+  `--pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
+  `--print_selection`, and `--search` / `--filter_site` for the
+  history listing) tune behavior.
   Handles directory resolution (config file / `--directory` /
   default), JSON path absolutization, optional file copy into a
   sandbox-readable target dir, mtime polling, pidfile management,

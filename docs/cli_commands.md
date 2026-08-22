@@ -110,6 +110,89 @@ field on the record. See
   The user interrupts Gemini (or tells the agent to stop) to end
   the loop.
 
+## Reading the capture history (`--all` / `--limit`)
+
+No slash command wraps these yet — they're backend actions on
+`SeeWhatISee.sh` for an agent (or a user) that wants more than the
+latest capture.
+
+- **What they read.** The whole history, not just `log.json`: the
+  extension keeps recent captures there and flushes older batches to
+  `history-<timestamp>.json` archives beside it (see
+  [History page](history-page.md)).
+- **Order.** Archives oldest first, then `log.json` — one JSONL record
+  per line, capture order, same path rewriting (and `--copy-to-dir` /
+  `--print_selection` handling) as `--get-latest`.
+  - Archives sort by name because each is named for the newest record
+    it holds, using the zero-padded stamp capture filenames use. The
+    `.json` suffix is stripped before sorting, so a disambiguated
+    `history-<stamp>-1.json` lands *after* its base name rather than
+    before it (`-` sorts below `.`).
+- **Reading only what's needed.** `--limit N` walks the files from the
+  newest end and stops as soon as it has N matches, so it never opens
+  archives it wouldn't emit from. `--all` reads everything, by
+  definition.
+- **Actions.**
+  - `--all` — every record.
+  - `--limit N` — the N most recent records, still emitted oldest
+    first. `--limit 1` is `--get-latest`, except when `log.json` holds
+    no records — then `--get-latest` errors while `--limit 1` falls
+    back to the newest archived record.
+  - The two are mutually exclusive, and neither combines with
+    `--get-latest` — that would emit the newest record twice, under two
+    different empty-history rules.
+- **Empty history.** No output, exit 0 — where `--get-latest` errors.
+  A listing that finds nothing is a legitimate answer; "describe the
+  latest capture" with no captures is not.
+
+### Filters
+
+Both apply before `--limit` counts, so `--limit N` means "N most recent
+*matching*".
+
+- `--search "words"` — every whitespace-separated word must appear in
+  the record's url, title, or prompt (case-insensitive, any field, any
+  order). Same rule as the History page's search box, so the two agree
+  on what a query means.
+- `--filter_site "str"` — substring match against the host of the
+  record's url. Only `http(s)` urls have a host, so `file://` /
+  `chrome://` captures never match.
+- Either one with neither `--all` nor `--limit` means `--limit 10`. A
+  bare search is an interactive "what did I capture about X" question,
+  and a whole history of matches is rarely the wanted answer; `--all`
+  opts out of the cap.
+- An empty or whitespace-only value is an error (exit 2), not a filter
+  that matches everything — an agent interpolating an empty query
+  would otherwise get a clean exit that reads as "no captures".
+- Neither dedupes, where the History page renders through
+  `dedupeRecords()`. **Restore last capture** re-saved unchanged
+  therefore appears twice, and costs `--limit N` a slot.
+- They scope the listing only. Combined with `--watch`, every record
+  that arrives afterwards is emitted regardless — a watcher that
+  silently dropped the capture the user just took would look broken.
+
+### Field extraction
+
+- Fields are pulled from the raw JSON text by a small `awk` scanner,
+  not a JSON parser, keeping the script to bash + coreutils (no `jq`,
+  no `python`).
+- Matching therefore runs against the JSON-escaped text with
+  backslashes stripped: a search term containing a literal `"` or `\`,
+  or a character JSON writes as `\n` / `\uXXXX`, can fail to match.
+  Words typed from a title, url, or prompt are unaffected.
+- `tolower` is byte-wise on mawk and BSD awk (what Debian and macOS
+  ship), so a non-ASCII search term is case-sensitive there. The
+  History page's `toLowerCase()` is Unicode-aware, so the two agree on
+  ASCII only.
+- A line is emitted only if it starts with `{` and ends with `}` after
+  trimming surrounding whitespace, so a record truncated mid-write is
+  dropped rather than handed to a JSONL consumer that would choke on
+  it. That's cheaper and less strict than `parseLogText` on the
+  extension side, which really parses: a line with the right braces but
+  malformed innards still gets through here. These files live in the
+  user's Downloads folder and can be hand-edited, hence the leniency in
+  both places.
+
 ## `/see-what-i-see-stop` (Claude only)
 
 - Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,

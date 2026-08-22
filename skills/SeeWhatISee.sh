@@ -4,9 +4,18 @@
 # All actions a skill can take collapse to flags on this one script:
 #   --stop                   Kill any existing watcher (implies --pid-lockfile).
 #   --get-latest (default)   Emit the current last record from log.json.
+#   --all / --limit N        Emit records from the whole capture history.
 #   --watch                  Watch log.json and emit new records.
 #
 # Multiple actions combine and run in that order.
+#
+# History spans more than log.json: the extension keeps only the most
+# recent captures there and flushes older ones to `history-*.json`
+# archive files beside it (see src/capture/log-store.ts). --all /
+# --limit read the archives oldest-first and then log.json, so the
+# emitted stream is the full history in capture order. --search /
+# --filter_site narrow it. They narrow only that listing — records
+# --watch emits later are never filtered.
 #
 # Source-dir resolution (used for both reading log.json and writing
 # the pidfile) is the same regardless of action:
@@ -40,9 +49,24 @@ set -euo pipefail
 REAL_HOME="${SNAP_REAL_HOME:-$HOME}"
 
 DO_GET_LATEST=false
+DO_LIST=false
 DO_WATCH=false
 DO_STOP=false
 ANY_ACTION=false
+
+ALL=false
+LIMIT=""
+SEARCH=""
+FILTER_SITE=""
+# Tracked separately from the values so an empty `--search ""` is a
+# rejected mistake rather than a filter that quietly matches everything.
+SEARCH_GIVEN=false
+FILTER_SITE_GIVEN=false
+
+# How many records --search / --filter_site emit when neither --all nor
+# --limit says otherwise. Keep in sync with the usage text below and
+# with docs/cli_commands.md, which can't interpolate it.
+SEARCH_DEFAULT_LIMIT=10
 
 DIR=""
 COPY_TO_DIR=""
@@ -62,8 +86,29 @@ Usage: SeeWhatISee.sh [ACTIONS] [OPTIONS]
 
 Actions (combinable; run in this order):
   --stop               Kill any existing watcher (implies --pid-lockfile).
-  --get-latest         Emit the current last record (default if no action given).
+  --get-latest         Emit the current last record (default if no action
+                       given). Cannot be combined with the history actions
+                       below.
+  --all                Emit every record in the capture history, oldest first.
+  --limit N            Emit up to the N most recent records, oldest first.
   --watch              Watch log.json and emit new records as they arrive.
+
+History covers the archived `history-*.json` files beside log.json as
+well as log.json itself. Unlike --get-latest, --all / --limit treat an
+empty history as "no records" (no output, exit 0) rather than an error.
+
+Options for --all / --limit:
+  --search "words"     Keep only records where every whitespace-separated
+                       word appears in the url, title, or prompt
+                       (case-insensitive), the same rule as the History
+                       page's search box.
+  --filter_site "str"  Keep only records whose url is http(s) and whose
+                       host contains this substring (case-insensitive).
+
+Either filter with neither --all nor --limit means --limit 10; an empty
+or whitespace-only value is rejected. Both filter the history listing
+only: with --watch, every record that arrives later is emitted
+regardless of them.
 
 General options:
   --directory DIR      Source dir to read log.json from. If unset, read
@@ -99,6 +144,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --help)              usage; exit 0 ;;
     --get-latest)        DO_GET_LATEST=true; ANY_ACTION=true; shift ;;
+    --all)               ALL=true; DO_LIST=true; ANY_ACTION=true; shift ;;
+    --limit)             LIMIT="$2"; DO_LIST=true; ANY_ACTION=true; shift 2 ;;
+    --search)            SEARCH="$2"; SEARCH_GIVEN=true; ANY_ACTION=true; shift 2 ;;
+    --filter_site)       FILTER_SITE="$2"; FILTER_SITE_GIVEN=true; ANY_ACTION=true; shift 2 ;;
     --watch)             DO_WATCH=true;      ANY_ACTION=true; shift ;;
     --stop)              DO_STOP=true; PID_LOCKFILE=true; ANY_ACTION=true; shift ;;
     --directory)         DIR="$2"; shift 2 ;;
@@ -113,6 +162,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 $ANY_ACTION || DO_GET_LATEST=true
+
+# --search / --filter_site are filters on a history listing, so on their
+# own they mean "list the history, filtered". They default to the most
+# recent 10 matches rather than --all: a bare search is an interactive
+# "what did I capture about X" question, and dumping a whole history of
+# matches at an agent is rarely what was wanted. Ask for --all to get
+# the rest.
+if { $SEARCH_GIVEN || $FILTER_SITE_GIVEN; } && ! $DO_LIST; then
+  LIMIT=$SEARCH_DEFAULT_LIMIT
+  DO_LIST=true
+fi
 
 # ---------------------------------------------------------------------------
 # Reject nonsense flag combinations
@@ -139,6 +199,34 @@ fi
 # contradictory.
 if $CATCH_UP_ONE && $LOOP; then
   echo "Error: --catch-up-one and --loop are mutually exclusive" >&2
+  exit 2
+fi
+# "everything" and "at most N" are contradictory asks.
+if $ALL && [[ -n "$LIMIT" ]]; then
+  echo "Error: --all and --limit are mutually exclusive" >&2
+  exit 2
+fi
+# --get-latest is "the one newest record" — already what a listing of
+# the newest record(s) gives, and with different empty-history
+# behavior. Combining them would emit the newest record twice, so make
+# it an error and let the caller pick which semantics it wants.
+if $DO_GET_LATEST && $DO_LIST; then
+  echo "Error: --get-latest cannot be combined with --all / --limit / --search / --filter_site" >&2
+  exit 2
+fi
+if [[ -n "$LIMIT" ]] && ! [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Error: --limit takes a positive integer, got '$LIMIT'" >&2
+  exit 2
+fi
+# A filter with nothing in it is a caller bug — an agent interpolating
+# an empty query string, most likely. Matching everything (or nothing)
+# and exiting 0 would look like a real answer, so say so instead.
+if $SEARCH_GIVEN && [[ -z "${SEARCH//[[:space:]]/}" ]]; then
+  echo "Error: --search needs at least one non-whitespace character" >&2
+  exit 2
+fi
+if $FILTER_SITE_GIVEN && [[ -z "${FILTER_SITE//[[:space:]]/}" ]]; then
+  echo "Error: --filter_site needs at least one non-whitespace character" >&2
   exit 2
 fi
 
@@ -215,11 +303,23 @@ mtime() {
   stat -c %Y "$LOG" 2>/dev/null || stat -f %m "$LOG"
 }
 
+# Rewrite `screenshot` / `contents` / `selection` filenames to absolute
+# paths under OUT_DIR, for every JSON line on stdin. Already-absolute
+# paths (those starting with `/`) are left alone.
+#
+# Stream-shaped (any number of lines) rather than per-record, so a
+# history listing pays one `sed` for the whole run instead of one per
+# record. `process_record` runs single records through the same
+# expressions, so the two paths can't drift.
+rewrite_paths() {
+  sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
+      -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
+      -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$OUT_DIR_SED/\\1\"|"
+}
+
 # Read a single JSON record from stdin. If --copy-to-dir is set, copy
 # its referenced files into OUT_DIR. Print the record to stdout with
-# the `screenshot` / `contents` / `selection` filenames rewritten to
-# absolute paths under OUT_DIR. Already-absolute paths (those starting
-# with `/`) are left alone.
+# its artifact filenames absolutized by `rewrite_paths`.
 process_record() {
   local line
   line=$(cat)
@@ -236,10 +336,7 @@ process_record() {
       [[ -f "$DIR/$f" ]] && cp "$DIR/$f" "$OUT_DIR/"
     done
   fi
-  printf '%s' "$line" \
-    | sed -e "s|\"screenshot\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"screenshot\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
-          -e "s|\"contents\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"contents\":{\"filename\":\"$OUT_DIR_SED/\\1\"|" \
-          -e "s|\"selection\": *{\"filename\": *\"\\([^/][^\"]*\\)\"|\"selection\":{\"filename\":\"$OUT_DIR_SED/\\1\"|"
+  printf '%s' "$line" | rewrite_paths
 }
 
 # Read a single JSON record from stdin and emit it with framing:
@@ -274,6 +371,187 @@ emit_record() {
   # the `... | emit_record` pipelines would propagate as a fatal error.
   if $printed_selection; then
     printf '\n'
+  fi
+}
+
+# Print the files holding the capture history, one per line, in capture
+# order: the `history-*.json` archives oldest first, then log.json.
+#
+# Each archive is named for the *newest* record it holds, using the
+# same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture filenames, so
+# sorting the names is chronological.
+#
+# The `.json` suffix is stripped before sorting and put back after,
+# which is what keeps a disambiguated `history-<stamp>-1.json` (written
+# after `history-<stamp>.json`, and holding the newer batch) sorted
+# after its base name. Sorting the names as-is puts it *before*: the
+# byte following the stamp is `-` (0x2D) in one and `.` (0x2E) in the
+# other. Suffix-stripped, the base name is a prefix of the other and so
+# sorts first, which is the order they were written in.
+history_files() {
+  local archives=() had_nullglob=false
+  shopt -q nullglob && had_nullglob=true
+  shopt -s nullglob
+  archives=("$DIR"/history-*.json)
+  $had_nullglob || shopt -u nullglob
+  if [[ ${#archives[@]} -gt 0 ]]; then
+    printf '%s\n' "${archives[@]}" \
+      | sed 's|\.json$||' | LC_ALL=C sort | sed 's|$|.json|'
+  fi
+  [[ -f "$LOG" ]] && printf '%s\n' "$LOG"
+  return 0
+}
+
+# Print the records matching --search / --filter_site from the history
+# files named as arguments. With no filters, everything passes through
+# (minus blank / malformed lines). Output is always oldest-first.
+#
+# Two modes, because "the N newest matches" wants to read backwards:
+#   $1 == 0  — no limit. awk streams the files in argument order and
+#              prints each matching line as it reads it.
+#   $1 == N  — awk walks the file list from the newest end, reading
+#              each file with `getline` and scanning it back-to-front,
+#              and stops the moment N matches are in hand. A
+#              `--limit 10` on a long history therefore opens one file,
+#              not all of them. Driving the reads by hand (rather than
+#              letting awk consume its arguments) is what makes the
+#              "stop now" decision land *between* files: `nextfile` and
+#              `ENDFILE` are gawk extensions, and detecting a file
+#              boundary via `FNR == 1` means already having opened and
+#              read from the file you wanted to skip.
+#
+# Either way awk opens the files itself rather than taking a `cat` of
+# them on stdin, so that a file missing its trailing newline
+# (hand-edited, or truncated mid-write) can't glue its last record onto
+# the first record of the next file.
+#
+# The search text, the site filter, and the file list travel through the
+# environment rather than `-v`, which would expand backslash escapes in
+# them.
+#
+# The fields are pulled out of the raw JSON text with a small scanner
+# rather than a real parser, so the script keeps its "bash + coreutils
+# only" dependency footprint (no jq / python). Two consequences worth
+# knowing:
+#   - Matching runs against the JSON-escaped text with the backslashes
+#     removed, so a search term containing a character JSON escapes (a
+#     literal `"` or `\`, or a control character written as `\n` /
+#     `\uXXXX`) can fail to match. Terms users actually type — words
+#     from a title, url, or prompt — are unaffected.
+#   - `tolower` is byte-wise on mawk and BSD awk, so a non-ASCII search
+#     term is case-sensitive there, unlike the History page's
+#     Unicode-aware `toLowerCase()`.
+# `read -r -d ''` rather than `$(cat <<'…')`: same quoted-heredoc text,
+# without forking a process to read it. It returns non-zero at EOF,
+# which `set -e` would otherwise treat as fatal.
+IFS= read -r -d '' SELECT_AWK <<'SELECT_AWK_PROGRAM' || true
+    # Value of top-level string field `key`, unescaped enough to match
+    # against (a backslash escape yields the character it precedes).
+    # Empty string if the key is missing or its value is not a string.
+    function jsonstr(line, key,    i, s, out, c, esc, n) {
+      i = index(line, "\"" key "\":")
+      if (i == 0) return ""
+      s = substr(line, i + length(key) + 3)
+      sub(/^[ \t]*/, "", s)
+      if (substr(s, 1, 1) != "\"") return ""
+      s = substr(s, 2)
+      out = ""; esc = 0; n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (esc) { out = out c; esc = 0; continue }
+        if (c == "\\") { esc = 1; continue }
+        if (c == "\"") break
+        out = out c
+      }
+      return out
+    }
+    # Host part of an http(s) url, lowercased; empty for anything else
+    # (file://, chrome://, a missing url), which therefore never
+    # matches --filter_site.
+    function urlsite(u,    s, p) {
+      s = tolower(u)
+      if (s !~ /^https?:\/\//) return ""
+      sub(/^https?:\/\//, "", s)
+      p = index(s, "/"); if (p > 0) s = substr(s, 1, p - 1)
+      p = index(s, "?"); if (p > 0) s = substr(s, 1, p - 1)
+      p = index(s, "#"); if (p > 0) s = substr(s, 1, p - 1)
+      p = index(s, "@"); if (p > 0) s = substr(s, p + 1)   # drop userinfo
+      return s
+    }
+    # Whether one line should be emitted: a plausible record that
+    # passes both filters.
+    #
+    # These files live in the user's Downloads folder and can be
+    # hand-edited or truncated mid-write, so lines that are not a whole
+    # JSON object are dropped rather than handed to a downstream JSONL
+    # consumer that would choke on them. Cheaper and less strict than
+    # parseLogText on the extension side, which really parses: a line
+    # that starts `{` and ends `}` but is malformed in between still
+    # gets through here.
+    function keep(line,    i, hay) {
+      if (line !~ /^\{/ || line !~ /\}$/) return 0
+      if (site != "" && index(urlsite(jsonstr(line, "url")), site) == 0) return 0
+      if (nkeep > 0) {
+        hay = tolower(jsonstr(line, "url") "\n" jsonstr(line, "title") "\n" \
+                      jsonstr(line, "prompt"))
+        for (i = 1; i <= nkeep; i++) if (index(hay, terms[i]) == 0) return 0
+      }
+      return 1
+    }
+    # Leading / trailing whitespace (a CR from a hand-edit on Windows,
+    # say) is trimmed rather than being allowed to fail keep()'s shape
+    # test or ride along into the emitted JSON.
+    function trim(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    # Read one file and collect its matches newest-first, up to the
+    # limit. `buf` entries past `nbuf` are stale leftovers from a
+    # previous, longer file and are never read.
+    function scanback(f,    nbuf, i, r, line) {
+      nbuf = 0
+      while ((r = (getline line < f)) > 0) buf[++nbuf] = trim(line)
+      close(f)
+      if (r < 0) {
+        print "Error: cannot read " f > "/dev/stderr"
+        readerr = 1
+        return
+      }
+      for (i = nbuf; i >= 1 && nout < limit; i--) {
+        if (keep(buf[i])) out[++nout] = buf[i]
+      }
+    }
+    BEGIN {
+      site = tolower(ENVIRON["SWIS_SITE"])
+      nterms = split(tolower(ENVIRON["SWIS_SEARCH"]), raw, /[ \t]+/)
+      nkeep = 0
+      for (i = 1; i <= nterms; i++) if (raw[i] != "") terms[++nkeep] = raw[i]
+      if (limit > 0) {
+        # Newest file first, stopping as soon as we have enough. The
+        # collected matches are newest-first, so print them backwards.
+        nfiles = split(ENVIRON["SWIS_FILES"], files, "\n")
+        for (fi = nfiles; fi >= 1 && nout < limit && !readerr; fi--) {
+          if (files[fi] != "") scanback(files[fi])
+        }
+        if (!readerr) for (i = nout; i >= 1; i--) print out[i]
+        # Exits before awk reads any input, so the streaming rule below
+        # never runs in this mode.
+        exit readerr ? 2 : 0
+      }
+    }
+    { line = trim($0); if (keep(line)) print line }
+SELECT_AWK_PROGRAM
+
+select_records() {
+  local limit="$1"; shift
+  if [[ "$limit" == 0 ]]; then
+    SWIS_SEARCH="$SEARCH" SWIS_SITE="$FILTER_SITE" \
+      awk -v limit=0 "$SELECT_AWK" "$@"
+  else
+    SWIS_SEARCH="$SEARCH" SWIS_SITE="$FILTER_SITE" \
+      SWIS_FILES="$(printf '%s\n' "$@")" \
+      awk -v limit="$limit" "$SELECT_AWK" </dev/null
   fi
 }
 
@@ -340,8 +618,42 @@ if $DO_GET_LATEST; then
 fi
 
 # ---------------------------------------------------------------------------
+# Action: --all / --limit (with --search / --filter_site)
+# ---------------------------------------------------------------------------
+
+if $DO_LIST; then
+  history_paths=()
+  while IFS= read -r history_path; do
+    history_paths+=("$history_path")
+  done < <(history_files)
+
+  # No log and no archives is not an error here: unlike --get-latest,
+  # which exists to hand the agent one specific capture, a listing of
+  # an empty history is legitimately empty.
+  if [[ ${#history_paths[@]} -gt 0 ]]; then
+    if [[ -n "$COPY_TO_DIR" ]] || $PRINT_SELECTION; then
+      # Per-record work (copying artifacts, reading a selection file
+      # back) needs a shell loop, and that costs several processes per
+      # record.
+      while IFS= read -r record; do
+        printf '%s\n' "$record" | emit_record
+      done < <(select_records "${LIMIT:-0}" "${history_paths[@]}")
+    else
+      # The common case is pure text transformation, so the whole
+      # listing is two processes rather than ~8 per record.
+      select_records "${LIMIT:-0}" "${history_paths[@]}" | rewrite_paths
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Action: --watch
 # ---------------------------------------------------------------------------
+#
+# Deliberately unfiltered: --search / --filter_site scope the history
+# listing above, not the live stream. A watcher that silently dropped
+# captures the user just took would look broken, and the point of
+# watching is to see what happens next.
 
 $DO_WATCH || exit 0
 

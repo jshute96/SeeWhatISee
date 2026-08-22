@@ -327,6 +327,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Inline selection     | `--print_selection`                       | small selections inline by default; otherwise `return_inline`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
+| History listing      | `--all` / `--limit N`, narrowed by `--search` / `--filter_site`; reads the `history-*.json` archives as well as `log.json` | no equivalent yet — the server only ever reads the tail of `log.json` |
 
 ## Decisions
 
