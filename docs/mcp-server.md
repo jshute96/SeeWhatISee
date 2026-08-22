@@ -116,8 +116,8 @@ Returns new capture records — drains any pending, then blocks for the
 next one if none are pending.
 
 - **Input:**
-  - `after?: string` — timestamp from a prior record. Returns all
-    records strictly newer than this in the array. If absent or `null`,
+  - `after?: string` — timestamp from a prior record, used as a resume
+    cursor. Returns the records that follow it. If absent or `null`,
     pending state is "empty" — falls straight through to the blocking
     wait.
   - `timeout_ms?: number` — max time to block waiting for a new
@@ -128,10 +128,15 @@ next one if none are pending.
   block if the timeout fired with nothing new.
 - **Behavior:**
   - With `after`: behaves like `--watch --after <ts>` (without
-    `--catch-up-one`) — emit *all* records newer than `after`,
-    immediately, then return. This holds even when `after` isn't an
-    exact in-log timestamp: any already-present records newer than it
-    are returned at once rather than blocking.
+    `--catch-up-one`) — emit *all* the records it hasn't seen,
+    immediately, then return.
+    - When `after` matches a record, the drain is positional: it emits
+      whatever follows that record in log order. Several records can
+      share a timestamp, so the cursor lands on the last of them (see
+      `cli_commands.md`).
+    - When `after` isn't an exact in-log timestamp, the blocking wait's
+      chronological compare takes over — already-present records newer
+      than it are still returned at once rather than blocking.
   - With `after` and no newer records yet: fall through to the blocking
     wait. On wake it returns *every* record newer than `after` (a
     coalesced burst is delivered whole, never just the latest), or empty
@@ -214,11 +219,19 @@ delivery channel — the lossless path is a **cursored read**:
   *strictly newer* than the cursor, in log order. An empty cursor
   (`?after=`) means "from the start" and returns all records — what a
   client that bootstrapped on an empty log uses.
-- The cursor is the record `timestamp`; the compare is exclusive (`>`),
-  matching the `watch` tool's `after`. ISO-8601 UTC timestamps are
-  fixed-width, so a lexical compare is chronological. A non-empty cursor
-  that isn't a canonical ISO-8601 UTC timestamp is rejected (the lexical
-  compare only holds for that format).
+- The cursor is the record `timestamp` and the compare is exclusive
+  (`>`). ISO-8601 UTC timestamps are fixed-width, so a lexical compare
+  is chronological. A non-empty cursor that isn't a canonical ISO-8601
+  UTC timestamp is rejected (the lexical compare only holds for that
+  format).
+- **This is deliberately chronological, unlike the `watch` tool's
+  positional `after`.** Scanning the whole log by timestamp means a
+  read recovers from a coalesced or dropped ping without depending on
+  log positions, which shift when an archive flush rewrites `log.json`.
+  - The cost: records sharing the cursor's timestamp are excluded. A
+    client cursored on the first of such a run never receives the rest.
+  - Not yet reconciled with the `watch` tool, which resumes past the
+    last record carrying the timestamp instead.
 
 **Discovery.**
 

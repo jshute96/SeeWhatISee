@@ -74,6 +74,18 @@ field on the record. See
   blocking. Claude's `Monitor`-backed watcher doesn't relaunch
   per-event so it doesn't need `--after` — the underlying
   `--loop` keeps streaming every new record without gaps.
+- **`--after` is a cursor, not a time comparison.** It locates the
+  record carrying that exact `timestamp` and emits whatever follows
+  it in log order.
+  - Timestamps don't identify a record: a Capture-page session pins
+    one and writes a record per save, so re-cropping or editing
+    highlights leaves several records sharing it (see
+    [`architecture.md`](architecture.md#record-shapes-by-trigger)).
+  - So the cursor lands on the *last* record carrying the timestamp.
+    Resuming after the first would replay the rest of the run on
+    every call and never advance.
+  - A timestamp that isn't in `log.json` (typically aged out into an
+    archive) warns and falls through to plain watching.
 
 ### Claude Code (Monitor + persistent loop)
 

@@ -126,11 +126,11 @@ Options for --watch:
                        --watch can find and replace this watcher.
   --loop               Keep polling after each emission; default is to exit
                        after the first.
-  --after TIMESTAMP    Before polling, emit any record(s) in log.json whose
-                       timestamp is strictly after TIMESTAMP. TIMESTAMP must
-                       match an existing record's `timestamp` field exactly.
-  --catch-up-one       Constrain --after to emit just the single record
-                       immediately after TIMESTAMP, not all newer ones.
+  --after TIMESTAMP    Before polling, emit the record(s) that follow the last
+                       record with TIMESTAMP in log.json. TIMESTAMP must match
+                       an existing record's `timestamp` field exactly.
+  --catch-up-one       Constrain --after to emit just a single record, not all
+                       available records.
                        Mutually exclusive with --loop.
 """
 
@@ -859,10 +859,21 @@ def catch_up(opts, emitter, log_path):
         return False
 
     records = read_records(log_path)
+    # A cursor, not a time comparison: emit whatever follows this record
+    # in the log. Timestamps aren't ordered strictly enough for `>` to be
+    # safe, and they don't identify a record — a Capture-page session
+    # pins one timestamp and writes a record per save, so re-cropping or
+    # editing highlights leaves several records sharing it (see
+    # src/capture/log-store.ts).
+    #
+    # So scan backwards and resume after the *last* record carrying the
+    # timestamp. Matching the first would park the cursor mid-run and
+    # replay the rest of it on every call, which never advances.
+    #
     # Matching the parsed `timestamp` field, so a prompt whose text
     # happens to contain the same string can't be mistaken for it.
-    index = next((i for i, record in enumerate(records)
-                  if record.get("timestamp") == opts.after), None)
+    index = next((i for i in range(len(records) - 1, -1, -1)
+                  if records[i].get("timestamp") == opts.after), None)
     if index is None:
         print("Warning: '%s' not found in %s; ignoring --after and watching"
               " as usual" % (opts.after, log_path), file=sys.stderr)

@@ -205,6 +205,16 @@ Every record has `timestamp` and `url`, plus optional fields:
   `selection.filename` timestamps share the *same* compact
   local-time suffix so all three sort together for a single
   capture.
+- A record's `timestamp` does *not* identify it. A Capture-page
+  session pins one timestamp and writes a record per save, so
+  re-cropping or editing highlights leaves several records carrying
+  it, told apart only by their `-1`, `-2`, … filename suffixes.
+  - Anything keying, deduping, or joining on `timestamp` alone
+    silently merges real captures — this has already caused a bug on
+    the History page.
+  - `--after` resumes past the *last* record carrying the cursor's
+    timestamp for this reason (see
+    [`cli_commands.md`](cli_commands.md)).
 
 ### Storage model
 

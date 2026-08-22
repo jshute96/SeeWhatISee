@@ -638,7 +638,14 @@ export function createServer(opts: ServerOpts): Server {
     // through to the blocking wait — don't error.
     if (after) {
       const all = readAllRecords(logPath);
-      const idx = all.findIndex((r) => r.timestamp === after);
+      // Scan backwards: several records can share a timestamp (a Capture-page
+      // session pins one and writes a record per save, see
+      // src/capture/log-store.ts), and resuming after the *first* would park
+      // the cursor mid-run and replay the rest of it on every call.
+      let idx = -1;
+      for (let i = all.length - 1; i >= 0; i -= 1) {
+        if (all[i].timestamp === after) { idx = i; break; }
+      }
       if (idx >= 0 && idx < all.length - 1) {
         const pending = all.slice(idx + 1);
         return { content: pending.flatMap((r) => recordContent(r, sourceDir, inline)) };
@@ -666,6 +673,15 @@ export function createServer(opts: ServerOpts): Server {
     const baseline =
       after ??
       (startRecords.length ? startRecords[startRecords.length - 1].timestamp : '');
+    // How many records already carry the cursor's timestamp. A record appended
+    // while we wait can carry it too (a Capture-page session pins one timestamp
+    // and writes a record per save), and `>` would never see that one — so also
+    // treat a *growth* in that count as fresh. Counting rather than indexing
+    // keeps this safe across an archive flush, which rewrites log.json with
+    // fewer records: the count can only shrink, yielding nothing.
+    const baselineShared = after
+      ? startRecords.filter((r) => r.timestamp === after).length
+      : 0;
     return new Promise((resolve) => {
       let settled = false;
       const finish = (val: CaptureRecord[]) => {
@@ -680,7 +696,14 @@ export function createServer(opts: ServerOpts): Server {
         // ISO-8601 UTC timestamps are fixed-width, so `>` is chronological.
         // This also drops no-op changes (the cursor's own record is not `>`
         // itself) and skips a truncated/empty log until real records return.
-        const fresh = all.filter((r) => r.timestamp > baseline);
+        // Records sharing the cursor's timestamp beyond the ones that were
+        // already there, then everything chronologically past it. Log order,
+        // since the shared-timestamp ones can't sort after the newer ones.
+        const shared = after ? all.filter((r) => r.timestamp === after) : [];
+        const fresh = [
+          ...shared.slice(baselineShared),
+          ...all.filter((r) => r.timestamp > baseline),
+        ];
         if (fresh.length === 0) return;
         finish(fresh);
       };

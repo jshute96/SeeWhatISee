@@ -146,6 +146,21 @@ function simulateCapture(dir: string, index: number): {
 }
 
 /**
+ * Simulate a capture that reuses an earlier record's timestamp. A
+ * Capture-page session pins one timestamp and writes a record per save,
+ * so several log records legitimately share one (see
+ * `src/capture/log-store.ts`).
+ */
+function simulateCaptureSharingTimestamp(
+  dir: string, index: number, timestamp: string,
+): { timestamp: string; screenshot: string } {
+  const { json, screenshot } = fakeRecord(index);
+  const record = { ...JSON.parse(json), timestamp };
+  fs.appendFileSync(path.join(dir, 'log.json'), JSON.stringify(record) + '\n');
+  return { timestamp, screenshot };
+}
+
+/**
  * Simulate a capture that also has a `selection` artifact. Writes the
  * selection file with the provided contents and appends a log.json
  * record that references it. Used to exercise the `--print_selection`
@@ -391,6 +406,33 @@ test.describe('SeeWhatISee.py --watch', () => {
     // Should still be running (null = didn't exit within timeout).
     expect(code2).toBeNull();
     after2.kill();
+  });
+
+  test('--after resumes past the last record sharing the timestamp', async () => {
+    // Records 1 and 2 share a timestamp, as a Capture-page session that
+    // saves twice produces. --after that timestamp is a cursor onto the
+    // last of them, so neither copy replays.
+    const r1 = simulateCapture(tmpDir, 1);
+    const dup = simulateCaptureSharingTimestamp(tmpDir, 2, r1.timestamp);
+
+    // Nothing follows the pair yet, so the watcher should wait for a new
+    // capture. Matching the *first* copy instead would re-emit the second
+    // here — and again on every follow-up call, never advancing.
+    const idle = startWatch(['--after', r1.timestamp, '--catch-up-one',
+                             '--directory', tmpDir]);
+    expect(await waitForExit(idle.proc, 1_500)).toBeNull();
+    idle.kill();
+
+    // The accepted tradeoff, pinned here so a future change doesn't quietly
+    // undo it: a cursor on the shared timestamp skips the rest of the run, so
+    // a client that saw only the first copy misses the second. Missing one
+    // record beats re-emitting it forever.
+    const r3 = simulateCapture(tmpDir, 3);
+    const after = runWatch(['--after', r1.timestamp, '--directory', tmpDir]);
+    expect(after.exitCode).toBe(0);
+    expect(after.stderr).toContain('1 pending capture:');
+    expect(after.stdout).toContain(`${tmpDir}/${r3.screenshot}`);
+    expect(after.stdout).not.toContain(dup.screenshot);
   });
 
   test('--after + --loop emits pending then continues watching', async () => {

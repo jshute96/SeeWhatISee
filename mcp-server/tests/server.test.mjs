@@ -476,6 +476,83 @@ test('watch returns every record in a coalesced burst, not just the last', async
   }
 });
 
+test('watch resumes past the last record sharing the cursor timestamp', async () => {
+  // A Capture-page session pins one timestamp and writes a record per save, so
+  // several log records can share it. The drain must resume after the last of
+  // them: matching the first would re-emit the rest on every call, so a client
+  // that keeps re-cursoring on the shared timestamp never advances.
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'shot-a.png' } }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'shot-b.png' } }),
+    ],
+    watchDefaultTimeoutMs: 300,
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:05.000Z' },
+    });
+    assert.deepEqual(watchRecords(res), []);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('watch drains what follows a shared cursor timestamp, and neither copy', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'shot-a.png' } }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'shot-b.png' } }),
+      record({ timestamp: '2026-04-08T20:30:09.000Z', screenshot: { filename: 'shot-c.png' } }),
+    ],
+    watchDefaultTimeoutMs: 300,
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:05.000Z' },
+    });
+    assert.equal(watchRecords(res).length, 1);
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'shot-c.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('watch wakes on a record that shares the cursor timestamp', async () => {
+  // A Capture-page session that saves again while the client is blocked
+  // appends a record carrying the same pinned timestamp. A purely
+  // chronological wake test never sees it (it isn't `>` the cursor), and the
+  // next drain can't recover it either — the cursor lands on it, being the
+  // last copy — so the capture would be dropped for good.
+  const ctx = await setup({
+    records: [record({
+      timestamp: '2026-04-08T20:30:05.000Z',
+      screenshot: { filename: 'shot-a.png' },
+    })],
+    watchDefaultTimeoutMs: 2_000,
+  });
+  try {
+    const watchPromise = ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:05.000Z' },
+    });
+    setTimeout(() => {
+      appendRecord(ctx.dir, record({
+        timestamp: '2026-04-08T20:30:05.000Z',
+        screenshot: { filename: 'shot-b.png' },
+      }));
+    }, 80);
+    const res = await watchPromise;
+    assert.equal(watchRecords(res).length, 1);
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'shot-b.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('watch returns already-present newer records immediately, without blocking', async () => {
   // Records newer than the cursor already sit in the log when watch is called
   // (the cursor isn't an exact in-log timestamp, so the drain's exact-match
