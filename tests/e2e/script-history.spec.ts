@@ -354,6 +354,7 @@ test.describe('SeeWhatISee.py history listing', () => {
       ['--get-latest', '--limit', '2'],
       ['--get-latest', '--search', 'x'],
       ['--get-latest', '--filter_site', 'example.com'],
+      ['--get-latest', '--filter_time', '2026-04-08'],
     ]) {
       const r = run([...args, '--directory', tmpDir]);
       expect(r.exitCode).toBe(2);
@@ -390,4 +391,304 @@ test.describe('SeeWhatISee.py history listing', () => {
         try { proc.kill('SIGTERM'); } catch { /* already dead */ }
       }
     });
+});
+
+/**
+ * --filter_time.
+ *
+ * $TZ is pinned per-run so the local-time cases are deterministic
+ * wherever the suite runs. America/New_York is UTC-4 in April, which
+ * puts the boundary between records 20:00Z and 02:00Z the next day —
+ * the whole point of distinguishing local from UTC.
+ */
+test.describe('SeeWhatISee.py --filter_time', () => {
+  /** Records an hour apart around a day boundary, titled by UTC time. */
+  const TIMED = [
+    { timestamp: '2026-04-07T22:30:00.000Z', title: 'apr7-2230z' },
+    { timestamp: '2026-04-08T02:15:00.000Z', title: 'apr8-0215z' },
+    { timestamp: '2026-04-08T20:30:12.345Z', title: 'apr8-2030z' },
+    { timestamp: '2026-04-09T06:00:00.000Z', title: 'apr9-0600z' },
+    { timestamp: '2026-05-02T10:00:00.000Z', title: 'may2-1000z' },
+  ];
+
+  function runTz(tz: string, args: string[]) {
+    const result = spawnSync(SCRIPT, [...args], {
+      timeout: 5_000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, TZ: tz },
+    });
+    return {
+      stdout: (result.stdout as string) ?? '',
+      stderr: (result.stderr as string) ?? '',
+      exitCode: result.status ?? 1,
+    };
+  }
+
+  /** Titles of the records a span selects, in emitted order. */
+  function titles(span: string, tz = 'UTC'): string[] {
+    const result = runTz(tz, ['--all', '--filter_time', span,
+                             '--directory', tmpDir]);
+    expect(result.exitCode).toBe(0);
+    return parseAll(result.stdout).map((r) => r.title);
+  }
+
+  test.beforeEach(() => {
+    writeFileOfRecords('log.json', TIMED);
+  });
+
+  test('a date matches that whole local day', () => {
+    expect(titles('2026-04-08')).toEqual(['apr8-0215z', 'apr8-2030z']);
+  });
+
+  test('a trailing z reads the same date as UTC', () => {
+    // In New York, UTC 02:15 on the 8th is still the evening of the
+    // 7th, so only the z form includes it.
+    expect(titles('2026-04-08', 'America/New_York')).toEqual(['apr8-2030z']);
+    expect(titles('2026-04-08z', 'America/New_York'))
+      .toEqual(['apr8-0215z', 'apr8-2030z']);
+  });
+
+  test('a month, a year, and an hour each span their own unit', () => {
+    expect(titles('2026-04')).toEqual([
+      'apr7-2230z', 'apr8-0215z', 'apr8-2030z', 'apr9-0600z',
+    ]);
+    expect(titles('2026')).toHaveLength(5);
+    expect(titles('2026-04-08 20')).toEqual(['apr8-2030z']);
+  });
+
+  test('a timestamp copied from log.json matches its own record', () => {
+    expect(titles('2026-04-08T20:30:12.345Z')).toEqual(['apr8-2030z']);
+  });
+
+  test('t or a space separates date and time, and case is ignored', () => {
+    expect(titles('2026-04-08t20:30')).toEqual(['apr8-2030z']);
+    expect(titles('2026-04-08 20:30')).toEqual(['apr8-2030z']);
+    expect(titles('2026-04-08T20:30:12.345z')).toEqual(['apr8-2030z']);
+  });
+
+  test('leading zeros are optional', () => {
+    expect(titles('2026-4-8')).toEqual(['apr8-0215z', 'apr8-2030z']);
+  });
+
+  test('a range covers both endpoints entirely', () => {
+    expect(titles('2026-04-08..2026-04-09'))
+      .toEqual(['apr8-0215z', 'apr8-2030z', 'apr9-0600z']);
+    // Month endpoints span the whole months, not their first instants.
+    expect(titles('2026-04..2026-05')).toHaveLength(5);
+  });
+
+  test('either end of a range may be left open', () => {
+    expect(titles('..2026-04-07')).toEqual(['apr7-2230z']);
+    expect(titles('2026-05..')).toEqual(['may2-1000z']);
+  });
+
+  test('a bare time and today/yesterday resolve against the clock', () => {
+    // Seeded at `now` rather than a few minutes back: a record minutes
+    // old belongs to *yesterday* when the suite runs just after UTC
+    // midnight, which would fail this roughly five minutes a day.
+    const now = new Date();
+    const iso = (d: Date) => d.toISOString();
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    writeFileOfRecords('log.json', [
+      { timestamp: iso(now), title: 'just-now' },
+      { timestamp: iso(dayAgo), title: 'a-day-ago' },
+      { timestamp: '2020-01-01T00:00:00.000Z', title: 'ancient' },
+    ]);
+    // Run in UTC so "today" and the record clock agree regardless of
+    // where the suite runs.
+    expect(titles('today')).toEqual(['just-now']);
+    expect(titles('YESTERDAY')).toEqual(['a-day-ago']);
+    expect(titles('yesterday..today')).toEqual(['just-now', 'a-day-ago']);
+    // The hour the record landed in, as an open range from its start.
+    expect(titles(`${now.getUTCHours()}:..`)).toEqual(['just-now']);
+  });
+
+  /**
+   * Daylight saving. Wall-clock spans are compared against wall-clock
+   * readings, so a transition day is simply every instant that reads as
+   * that date — no bound arithmetic to get wrong. 2026-03-08 skips
+   * 02:00-03:00 in New York; 2026-11-01 runs 01:00-02:00 twice.
+   */
+  test.describe('across a daylight-saving transition', () => {
+    const NY = 'America/New_York';
+    const DST = [
+      { timestamp: '2026-03-08T05:30:00.000Z', title: '0030-est' },
+      { timestamp: '2026-03-08T06:30:00.000Z', title: '0130-est' },
+      { timestamp: '2026-03-08T07:30:00.000Z', title: '0330-edt' },
+      { timestamp: '2026-11-01T05:30:00.000Z', title: '0130-edt-first' },
+      { timestamp: '2026-11-01T06:30:00.000Z', title: '0130-est-second' },
+    ];
+
+    test.beforeEach(() => {
+      writeFileOfRecords('log.json', DST);
+    });
+
+    test('the hour before a spring-forward gap is a real hour', () => {
+      expect(titles('2026-03-08 01', NY)).toEqual(['0130-est']);
+      // The whole short day, all 23 hours of it.
+      expect(titles('2026-03-08', NY))
+        .toEqual(['0030-est', '0130-est', '0330-edt']);
+    });
+
+    test('an hour that never happened matches nothing', () => {
+      // 02:00-03:00 does not exist locally that day. It must not
+      // silently resolve to a neighboring hour.
+      expect(titles('2026-03-08 02', NY)).toEqual([]);
+      expect(titles('2026-03-08 02:30', NY)).toEqual([]);
+    });
+
+    test('an hour that happened twice matches both times', () => {
+      expect(titles('2026-11-01 01', NY))
+        .toEqual(['0130-edt-first', '0130-est-second']);
+      expect(titles('2026-11-01 01:30', NY))
+        .toEqual(['0130-edt-first', '0130-est-second']);
+    });
+  });
+
+  test('spaces are allowed around the range separator', () => {
+    expect(titles('2026-04-07 .. 2026-04-08'))
+      .toEqual(['apr7-2230z', 'apr8-0215z', 'apr8-2030z']);
+    expect(titles('2026-05 ..')).toEqual(['may2-1000z']);
+    expect(titles('.. 2026-04-07')).toEqual(['apr7-2230z']);
+  });
+
+  test('runs of spaces, and leading or trailing ones, are tolerated', () => {
+    expect(titles('  2026-04-08  ')).toEqual(['apr8-0215z', 'apr8-2030z']);
+    expect(titles('2026-04-08   20')).toEqual(['apr8-2030z']);
+    expect(titles('  2026-04-07  ..   2026-04-08  '))
+      .toEqual(['apr7-2230z', 'apr8-0215z', 'apr8-2030z']);
+  });
+
+  test('a fractional second is padded on the right', () => {
+    writeFileOfRecords('log.json', [
+      { timestamp: '2026-04-08T20:30:12.300Z', title: 'at-300ms' },
+      { timestamp: '2026-04-08T20:30:12.030Z', title: 'at-030ms' },
+    ]);
+    // `.3` is 300ms, as in the ISO form — not 3ms.
+    expect(titles('2026-04-08 20:30:12.3')).toEqual(['at-300ms']);
+    expect(titles('2026-04-08 20:30:12.03')).toEqual(['at-030ms']);
+  });
+
+  test('a bare hour spans the hour, not the minute', () => {
+    writeFileOfRecords('log.json', [
+      { timestamp: '2026-04-08T14:00:30.000Z', title: 'top-of-hour' },
+      { timestamp: '2026-04-08T14:45:00.000Z', title: 'late-in-hour' },
+      { timestamp: '2026-04-08T15:00:00.000Z', title: 'next-hour' },
+    ]);
+    expect(titles('14:', 'UTC')).toEqual([]);   // that hour, but today
+    expect(titles('2026-04-08 14:'))
+      .toEqual(['top-of-hour', 'late-in-hour']);
+    expect(titles('2026-04-08 14:00')).toEqual(['top-of-hour']);
+  });
+
+  test('combines with --filter_site', () => {
+    writeFileOfRecords('log.json', [
+      { timestamp: '2026-04-08T01:00:00.000Z', url: 'https://github.com/a',
+        title: 'gh-in-span' },
+      { timestamp: '2026-04-08T02:00:00.000Z', url: 'https://other.test/b',
+        title: 'other-in-span' },
+      { timestamp: '2026-04-09T03:00:00.000Z', url: 'https://github.com/c',
+        title: 'gh-out-of-span' },
+    ]);
+    const result = runTz('UTC', ['--all', '--filter_time', '2026-04-08',
+                                 '--filter_site', 'github.com',
+                                 '--directory', tmpDir]);
+    expect(parseAll(result.stdout).map((r) => r.title)).toEqual(['gh-in-span']);
+  });
+
+  test('--limit stops reading once it has enough matches', () => {
+    // The oldest archive is unreadable, so opening it would fail the
+    // run — the span and limit must be satisfied before reaching it.
+    seedHistory();
+    const oldest = fs.readdirSync(tmpDir)
+      .filter((n) => n.startsWith('history-')).sort()[0];
+    fs.chmodSync(path.join(tmpDir, oldest), 0o000);
+    try {
+      const result = runTz('UTC', ['--limit', '1', '--filter_time', '2026',
+                                   '--directory', tmpDir]);
+      expect(result.exitCode).toBe(0);
+      expect(parseAll(result.stdout)).toHaveLength(1);
+    } finally {
+      fs.chmodSync(path.join(tmpDir, oldest), 0o600);
+    }
+  });
+
+  test('filters combine with --search and --limit', () => {
+    writeFileOfRecords('log.json', [
+      { timestamp: '2026-04-08T01:00:00.000Z', title: 'keep me' },
+      { timestamp: '2026-04-08T02:00:00.000Z', title: 'skip me' },
+      { timestamp: '2026-04-09T03:00:00.000Z', title: 'keep me' },
+    ]);
+    const result = runTz('UTC', ['--all', '--filter_time', '2026-04-08',
+                                 '--search', 'keep', '--directory', tmpDir]);
+    expect(parseAll(result.stdout).map((r) => r.timestamp))
+      .toEqual(['2026-04-08T01:00:00.000Z']);
+  });
+
+  test('a bare --filter_time lists the 10 most recent matches', () => {
+    const many = Array.from({ length: 14 }, (_, i) => ({
+      timestamp: `2026-04-08T0${Math.floor(i / 10)}:${String(i % 10).padStart(2, '0')}:00.000Z`,
+      title: `t${i}`,
+    }));
+    writeFileOfRecords('log.json', many);
+    const result = runTz('UTC', ['--filter_time', '2026-04-08',
+                                 '--directory', tmpDir]);
+    expect(result.exitCode).toBe(0);
+    expect(parseAll(result.stdout)).toHaveLength(10);
+  });
+
+  test('records with an unparseable timestamp never match a span', () => {
+    writeFileOfRecords('log.json', [
+      { timestamp: 'not a timestamp', title: 'broken' },
+      { timestamp: '2026-04-08T05:00:00.000Z', title: 'fine' },
+    ]);
+    expect(titles('2026')).toEqual(['fine']);
+  });
+
+  test.describe('rejected values', () => {
+    const bad: [string, string][] = [
+      ['3', 'cannot parse'],
+      ['2026-13-01', 'not a real date'],
+      ['garbage', 'cannot parse'],
+      ['2026-04..2026-03', 'ends before it starts'],
+      ['2026-01..2026-02z', 'mixes local and UTC'],
+      ['1..2..3', "more than one '..'"],
+      ['..', 'needs a date or time'],
+      ['2026-04-08z 20', 'cannot parse'],   // z has to come last
+      ['20:30:', 'cannot parse'],           // trailing separator
+      ['20:30:12.', 'cannot parse'],
+      ['   ', 'non-whitespace'],
+    ];
+    for (const [value, message] of bad) {
+      test(`rejects '${value}'`, () => {
+        const result = runTz('UTC', ['--all', '--filter_time', value,
+                                     '--directory', tmpDir]);
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain(message);
+        expect(result.stdout).toBe('');
+      });
+    }
+  });
+
+  test('the span does not filter records --watch emits later', async () => {
+    const proc = spawn(SCRIPT, [
+      '--filter_time', '2020-01-01', '--watch', '--directory', tmpDir,
+    ], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TZ: 'UTC' } });
+    const chunks: Buffer[] = [];
+    proc.stdout!.on('data', (d: Buffer) => chunks.push(d));
+    const output = () => Buffer.concat(chunks).toString('utf8');
+
+    try {
+      await new Promise((r) => setTimeout(r, 1200));
+      fs.appendFileSync(
+        path.join(tmpDir, 'log.json'),
+        ndjson([{ timestamp: '2026-06-01T00:00:00.000Z', title: 'Brand new' }]),
+      );
+      await expect.poll(() => output(), { timeout: 10_000 })
+        .toContain('Brand new');
+    } finally {
+      try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+    }
+  });
 });

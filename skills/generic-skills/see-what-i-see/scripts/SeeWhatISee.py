@@ -15,9 +15,10 @@ archive files beside it (see src/capture/log-store.ts). --all reads the
 archives oldest-first and then log.json. --limit N instead walks from
 log.json backwards through the archives and stops as soon as it has N
 records, so it opens only the files it needs. Either way the emitted
-stream is in capture order, oldest first. --search / --filter_site
-narrow it. They narrow only the records listed from history; records
-that arrive later under --watch are emitted regardless.
+stream is in capture order, oldest first. --search / --filter_site /
+--filter_time narrow it. They narrow only the records listed from
+history; records that arrive later under --watch are emitted
+regardless.
 
 Source-dir resolution (used for both reading log.json and writing the
 pidfile) is the same regardless of action:
@@ -55,10 +56,11 @@ import shutil
 import signal
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-# How many records --search / --filter_site emit when neither --all nor
-# --limit says otherwise. Keep in sync with the usage text below and
+# How many records a filter emits when neither --all nor --limit says
+# otherwise. Keep in sync with the usage text below and
 # with docs/cli_commands.md, which can't interpolate it.
 SEARCH_DEFAULT_LIMIT = 10
 
@@ -85,9 +87,26 @@ Options for the history listing:
                        appear in the url, title, or prompt (case-insensitive).
   --filter_site "str"  Show records whose http hosts contain this
                        substring (case-insensitive).
+  --filter_time SPAN   Show records captured within SPAN (see below).
 
 Filters without --all or --limit default to --limit 10.
 Filters apply to history records but not to future records from --watch.
+
+--filter_time spans:
+  A span is one point, or a range of points written with `..`.
+  Leaving an end off opens that end.
+    2026-04-08               that day
+    2026-04                  that month
+    2026-04-08..2026-04-14   that date range, both ends included
+    14:30..                  since 14:30 today
+    ..2026-04-08 17          until the 17:00 hour that day
+  A point is a date, a time, or both, or any partial prefix.
+    2026-04-08 20:30:12.345  a full timestamp from the log
+    2026-04-08 20            that full hour
+    14:30                    that minute today
+    yesterday 14:30          that minute yesterday
+  Times are local unless the value ends in `z`, which means UTC.
+  Date and time may be separated with space or `t`.
 
 General options:
   --directory DIR      Source dir to read log.json from. If unset, read
@@ -139,6 +158,8 @@ class Options:
         self.limit = None          # None = unlimited
         self.search = None         # None = flag absent, "" = given but empty
         self.filter_site = None
+        self.filter_time = None
+        self.time_span = None      # Span, set by validate()
         self.directory = None
         self.copy_to_dir = None
         self.pid_lockfile = False
@@ -176,6 +197,9 @@ def parse_args(argv):
         elif arg == "--filter_site":
             opts.filter_site = value(arg, rest)
             any_action = True
+        elif arg == "--filter_time":
+            opts.filter_time = value(arg, rest)
+            any_action = True
         elif arg == "--watch":
             opts.watch = any_action = True
         elif arg == "--stop":
@@ -202,13 +226,14 @@ def parse_args(argv):
     if not any_action:
         opts.get_latest = True
 
-    # --search / --filter_site are filters on a history listing, so on
-    # their own they mean "list the history, filtered". They default to
-    # the most recent 10 matches rather than --all: a bare search is an
-    # interactive "what did I capture about X" question, and dumping a
-    # whole history of matches at an agent is rarely what was wanted.
-    # Ask for --all to get the rest.
-    filtering = opts.search is not None or opts.filter_site is not None
+    # The filters narrow a history listing, so on their own they mean
+    # "list the history, filtered". They default to the most recent 10
+    # matches rather than --all: a bare search is an interactive "what
+    # did I capture about X" question, and dumping a whole history of
+    # matches at an agent is rarely what was wanted. Ask for --all to
+    # get the rest.
+    filtering = any(getattr(opts, name) is not None
+                    for name in ("search", "filter_site", "filter_time"))
     if filtering and not opts.list:
         opts.limit = str(SEARCH_DEFAULT_LIMIT)
         opts.list = True
@@ -239,8 +264,8 @@ def validate(opts):
     # of the newest record(s) gives, and with different empty-history
     # behavior. Combining them would emit the newest record twice.
     if opts.get_latest and opts.list:
-        die("Error: --get-latest cannot be combined with --all / --limit / "
-            "--search / --filter_site", 2)
+        die("Error: --get-latest cannot be combined with --all / --limit "
+            "or a filter", 2)
     if opts.limit is not None and not re.fullmatch(r"[1-9][0-9]*", opts.limit):
         die("Error: --limit takes a positive integer, got '%s'" % opts.limit, 2)
     # A filter with nothing in it is a caller bug — an agent
@@ -252,6 +277,13 @@ def validate(opts):
     if opts.filter_site is not None and not opts.filter_site.strip():
         die("Error: --filter_site needs at least one non-whitespace character",
             2)
+    if opts.filter_time is not None:
+        if not opts.filter_time.strip():
+            die("Error: --filter_time needs at least one non-whitespace "
+                "character", 2)
+        # Parsed here rather than at match time so a malformed span is a
+        # startup error, not a listing that quietly matches nothing.
+        opts.time_span = parse_span(opts.filter_time)
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +445,7 @@ def read_last_line(path):
 
 
 # ---------------------------------------------------------------------------
-# History listing
+# History files
 # ---------------------------------------------------------------------------
 
 
@@ -442,12 +474,215 @@ def history_files(source_dir, log_path):
     return files
 
 
-def matches(record, terms, site):
-    """Does one record pass --search and --filter_site?
+# ---------------------------------------------------------------------------
+# --filter_time parsing
+# ---------------------------------------------------------------------------
+#
+# A value names a span, never an instant: every accepted form has a
+# resolution, and it matches from the start of that unit to the end of
+# it. `2026-04` is April; `14:` is the 14:00 hour today. A range
+# START..END runs from the start of START's unit to the end of END's.
+#
+# `..` is the range separator because `-` and `:` both occur inside the
+# values themselves — in `2026-04-08T20:30..2026-04-08T21:00` a `:`
+# separator would sit between two digits exactly like the one in
+# `20:30`, with nothing to tell them apart. A `.` only ever appears
+# before fractional seconds, and never doubled.
+
+# Time of day. The minutes and seconds are each optional so `20:` is
+# the hour and `20:30` the minute, matching the span rule above.
+TIME_PATTERN = (r"(?P<h>\d{1,2})"
+                r"(?::(?:(?P<mi>\d{1,2})"
+                r"(?::(?P<s>\d{1,2})(?:\.(?P<ms>\d{1,3}))?)?)?)?")
+
+POINT_PATTERNS = (
+    # `today` / `yesterday`, optionally with a time. The date is
+    # already established, so the time needs no colon: `today 14` is
+    # the 14:00 hour. Only whitespace separates them — a `t` would
+    # read as part of the word.
+    re.compile(r"(?P<kw>today|yesterday)(?:\s+%s)?(?P<z>z)?" % TIME_PATTERN),
+    # A date, optionally with a time after a `t` or whitespace
+    # separator. The separator is required: without it `2026-04-0820`
+    # would parse as a date plus an hour.
+    re.compile(r"(?P<y>\d{4})(?:-(?P<mo>\d{1,2})(?:-(?P<d>\d{1,2}))?)?"
+               r"(?:(?:t|\s+)%s)?(?P<z>z)?" % TIME_PATTERN),
+    # A time by itself, meaning today. The colon is what identifies it
+    # as a time at all — a bare `3` would be indistinguishable from a
+    # (malformed) year, so it is rejected rather than guessed at.
+    re.compile(r"(?P<h>\d{1,2}):(?:(?P<mi>\d{1,2})"
+               r"(?::(?P<s>\d{1,2})(?:\.(?P<ms>\d{1,3}))?)?)?(?P<z>z)?"),
+)
+
+# Finest-to-coarsest, so the last field present in a value gives its
+# resolution.
+UNITS = ("ms", "s", "mi", "h", "d", "mo", "y")
+
+
+def parse_span(value):
+    """--filter_time value -> a Span.
+
+    Both bounds stay naive wall-clock times, read in the zone the value
+    asks for; matching converts each record into that same zone. That
+    keeps daylight-saving transitions out of the arithmetic entirely —
+    see Span.holds.
+    """
+    text = value.strip().lower()
+    if ".." in text:
+        left, _, right = text.partition("..")
+        if ".." in right:
+            die("Error: --filter_time: '%s' has more than one '..'" % value, 2)
+        # Each side is stripped separately: `2026-04 .. 2026-05` is the
+        # natural way to type a range, and the inner spaces of a
+        # `2026-04-08 20` endpoint have to survive.
+        left, right = left.strip(), right.strip()
+        if not left and not right:
+            die("Error: --filter_time: '..' needs a date or time on at "
+                "least one end", 2)
+        first = parse_point(left, value) if left else None
+        last = parse_point(right, value) if right else None
+    else:
+        # A lone point spans its own unit, so both ends come from it.
+        first = last = parse_point(text, value)
+
+    # A range half in local time and half in UTC is far more often a
+    # forgotten `z` than a deliberate mix, and the mistake silently
+    # shifts one end of the window by the zone offset.
+    if first is not None and last is not None and first.utc != last.utc:
+        die("Error: --filter_time: '%s' mixes local and UTC ends; mark both "
+            "with a trailing z or neither" % value, 2)
+
+    start = first.start if first is not None else None
+    end = last.end if last is not None else None
+    if start is not None and end is not None and start >= end:
+        die("Error: --filter_time: '%s' ends before it starts" % value, 2)
+    return Span(start, end, (first or last).utc)
+
+
+class Point:
+    """One end of a span: the naive bounds of the unit it names."""
+
+    def __init__(self, start, end, utc):
+        self.start = start
+        self.end = end
+        self.utc = utc
+
+
+class Span:
+    """A --filter_time window, as wall-clock bounds plus their zone."""
+
+    def __init__(self, start, end, utc):
+        self.start = start          # naive, inclusive; None = unbounded
+        self.end = end              # naive, exclusive; None = unbounded
+        self.utc = utc
+
+    def holds(self, moment):
+        """Is this instant (an aware datetime) inside the span?
+
+        The comparison runs on wall-clock readings in the span's own
+        zone rather than on converted bounds, which is what makes
+        daylight-saving transitions behave. A local day is simply every
+        instant that reads as that date, so it is 23 or 25 hours long as
+        the zone requires; an hour that runs twice matches both times;
+        and an hour that never happens matches nothing, instead of
+        silently resolving to a neighboring hour the way converting the
+        bounds would.
+        """
+        wall = moment.astimezone(timezone.utc if self.utc else None)
+        wall = wall.replace(tzinfo=None)
+        if self.start is not None and wall < self.start:
+            return False
+        if self.end is not None and wall >= self.end:
+            return False
+        return True
+
+
+def parse_point(text, value):
+    for pattern in POINT_PATTERNS:
+        match = pattern.fullmatch(text)
+        if match:
+            break
+    else:
+        die("Error: --filter_time: cannot parse '%s' in '%s'" % (text, value),
+            2)
+
+    parts = match.groupdict()
+    utc = bool(parts.get("z"))
+    fields = {name: int(parts[name])
+              for name in ("y", "mo", "d", "h", "mi", "s")
+              if parts.get(name) is not None}
+    if parts.get("ms") is not None:
+        # Zero-padded on the right: `.3` is 300ms, as in an ISO timestamp.
+        fields["ms"] = int(parts["ms"].ljust(3, "0"))
+
+    if "y" not in fields:
+        # `today` / `yesterday`, or a bare time. Either way the date is
+        # "now" in whichever zone the value is written in, so `14:z`
+        # is the 14:00 UTC hour of today's UTC date.
+        now = datetime.now(timezone.utc if utc else None)
+        if parts.get("kw") == "yesterday":
+            now -= timedelta(days=1)
+        # Whatever time fields were given; the date fields are implied
+        # and so never set the resolution.
+        given = [name for name in UNITS if name in fields]
+        fields["y"], fields["mo"], fields["d"] = now.year, now.month, now.day
+        unit = given[0] if given else "d"
+    else:
+        unit = next(name for name in UNITS if name in fields)
+
+    try:
+        start = datetime(fields["y"], fields.get("mo", 1), fields.get("d", 1),
+                         fields.get("h", 0), fields.get("mi", 0),
+                         fields.get("s", 0), fields.get("ms", 0) * 1000)
+    except ValueError as err:
+        die("Error: --filter_time: '%s' is not a real date or time (%s)"
+            % (text, err), 2)
+    return Point(start, advance(start, unit), utc)
+
+
+def advance(start, unit):
+    """The start of the unit after the one `start` opens."""
+    if unit == "y":
+        return start.replace(year=start.year + 1)
+    if unit == "mo":
+        if start.month == 12:
+            return start.replace(year=start.year + 1, month=1)
+        return start.replace(month=start.month + 1)
+    return start + {
+        "d": timedelta(days=1),
+        "h": timedelta(hours=1),
+        "mi": timedelta(minutes=1),
+        "s": timedelta(seconds=1),
+        "ms": timedelta(milliseconds=1),
+    }[unit]
+
+
+def record_time(record):
+    """A record's `timestamp` as an aware datetime, or None."""
+    stamp = record.get("timestamp")
+    if not isinstance(stamp, str):
+        return None
+    if stamp.endswith(("z", "Z")):
+        stamp = stamp[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    # log.json always writes UTC; a record hand-edited to drop the `Z`
+    # is read the same way rather than as local time.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# History listing
+# ---------------------------------------------------------------------------
+
+
+def matches(record, terms, site, span):
+    """Does one record pass --search / --filter_site / --filter_time?
 
     The search rule mirrors the History page's box (src/history.ts):
     every term must appear somewhere in url / title / prompt, in any
-    field and any order.
+    field and any order. `span` is the Span from --filter_time, or None.
     """
     if site:
         url = record.get("url")
@@ -468,11 +703,17 @@ def matches(record, terms, site):
         ).lower()
         if not all(term in haystack for term in terms):
             return False
+    if span is not None:
+        when = record_time(record)
+        # A record whose timestamp won't parse can't be placed in time,
+        # so it can't satisfy a time filter.
+        if when is None or not span.holds(when):
+            return False
     return True
 
 
 def list_history(opts, emitter, source_dir, log_path):
-    """--all / --limit, narrowed by --search / --filter_site.
+    """--all / --limit, narrowed by the --search / --filter_* options.
 
     An empty history is not an error here: unlike --get-latest, which
     exists to hand the agent one specific capture, a listing of an empty
@@ -480,13 +721,14 @@ def list_history(opts, emitter, source_dir, log_path):
     """
     terms = opts.search.lower().split() if opts.search else []
     site = opts.filter_site.lower() if opts.filter_site else ""
+    span = opts.time_span
     files = history_files(source_dir, log_path)
     limit = int(opts.limit) if opts.limit else 0
 
     if not limit:
         for path in files:
             for record in read_records(path):
-                if matches(record, terms, site):
+                if matches(record, terms, site, span):
                     emitter.emit(record)
         return
 
@@ -497,7 +739,7 @@ def list_history(opts, emitter, source_dir, log_path):
     collected = []
     for path in reversed(files):
         for record in reversed(read_records(path)):
-            if matches(record, terms, site):
+            if matches(record, terms, site, span):
                 collected.append(record)
                 if len(collected) == limit:
                     break

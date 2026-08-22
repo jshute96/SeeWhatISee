@@ -35,3 +35,7 @@ dist/
 # holds login sessions for Claude / Gemini / ChatGPT. Never commit —
 # these grant account access to anyone who reads the profile dir.
 /.chrome-test-profile/
+
+# Python bytecode from importing skills/SeeWhatISee.py as a module
+__pycache__/
+*.pyc

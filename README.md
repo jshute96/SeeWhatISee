@@ -441,7 +441,7 @@ claude --plugin-dir $(pwd)/skills/claude-plugin
 
 (The repo also auto-discovers the plugin via `.claude/skills/` symlinks, so running `claude` from inside this checkout normally works without the flag.)
 
-### Watching for screenshots from CLI
+### Reading captures from the CLI
 
 ```bash
 scripts/SeeWhatISee.py                          # print the latest capture record
@@ -450,6 +450,20 @@ scripts/SeeWhatISee.py --watch --loop           # keep printing captures until ^
 scripts/SeeWhatISee.py --watch --pid-lockfile   # killable from another shell via --stop
 scripts/SeeWhatISee.py --stop                   # stop a watcher running with --pid-lockfile
 ```
+
+The capture history — `log.json` plus the older `history-*.json`
+archives — can be listed and filtered too:
+
+```bash
+scripts/SeeWhatISee.py --limit 5                # the 5 most recent captures
+scripts/SeeWhatISee.py --all                    # every capture, oldest first
+scripts/SeeWhatISee.py --search "release notes" # match url, title, or prompt
+scripts/SeeWhatISee.py --filter_site github.com # match the site
+scripts/SeeWhatISee.py --filter_time yesterday  # a date, time, or range
+scripts/SeeWhatISee.py --help                   # every action and option
+```
+
+A filter with no `--all` / `--limit` shows the 10 most recent matches.
 
 ### MCP server
 

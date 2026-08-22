@@ -147,7 +147,7 @@ latest capture.
 
 ### Filters
 
-Both apply before `--limit` counts, so `--limit N` means "N most recent
+They apply before `--limit` counts, so `--limit N` means "N most recent
 *matching*".
 
 - `--search "words"` — every whitespace-separated word must appear in
@@ -157,19 +157,72 @@ Both apply before `--limit` counts, so `--limit N` means "N most recent
 - `--filter_site "str"` — substring match against the host of the
   record's url, including any `:port`. Only `http(s)` urls have a host,
   so `file://` / `chrome://` captures never match.
-- Either one with neither `--all` nor `--limit` means `--limit 10`. A
+- `--filter_time SPAN` — the capture's `timestamp` falls inside SPAN.
+  See [Time spans](#time-spans) below.
+- Any of them with neither `--all` nor `--limit` means `--limit 10`. A
   bare search is an interactive "what did I capture about X" question,
   and a whole history of matches is rarely the wanted answer; `--all`
   opts out of the cap.
 - An empty or whitespace-only value is an error (exit 2), not a filter
   that matches everything — an agent interpolating an empty query
   would otherwise get a clean exit that reads as "no captures".
-- Neither dedupes, where the History page renders through
+- None of them dedupe, where the History page renders through
   `dedupeRecords()`. **Restore last capture** re-saved unchanged
   therefore appears twice, and costs `--limit N` a slot.
 - They scope the listing only. Combined with `--watch`, every record
   that arrives afterwards is emitted regardless — a watcher that
   silently dropped the capture the user just took would look broken.
+
+### Time spans
+
+`--filter_time` takes a span, never an instant.
+
+- **A point names a unit, and matches all of it.** `2026-04` is April;
+  `2026-04-08 20` is that hour; a full `2026-04-08T20:30:12.345` is that
+  millisecond. So a value pasted from a record's `timestamp` matches
+  that record, and a shorter one widens the window.
+- **Ranges use `..`,** inclusive of both endpoints' whole units:
+  `2026-04..2026-05` is April *and* May. Either end may be omitted for
+  an open range (`2026-04-08..`, `..2026-03`).
+  - `-` and `:` can't serve as the separator because both occur inside
+    the values. In `2026-04-08T20:30..2026-04-08T21:00` a `:` separator
+    would sit between two digits exactly like the one in `20:30`, with
+    nothing to distinguish them. `.` appears only before fractional
+    seconds, and never doubled.
+- **Accepted forms.** `YYYY`, `-MM`, `-DD`, then a time after a `t` or
+  a space, cut off at any component. Leading zeros are optional, and
+  `t` / `z` are case-insensitive.
+  - Spacing is forgiving: a run of spaces reads as one, and spaces
+    around `..` or at either end of the value are ignored.
+  - A time alone means today: `14:30`, or `14:` for that whole hour. The
+    colon is what marks it as a time — a bare `3` is rejected rather
+    than guessed at, and a bare `1430` is read as the *year* 1430.
+  - `today` and `yesterday` are accepted, with an optional time
+    (`yesterday 14:30`).
+
+#### Time zones
+
+- **Local unless the value ends in `z`,** which means UTC. Records store
+  UTC (`CaptureRecord.timestamp` is ISO 8601 `Z`), but the History page
+  renders local time, so a date the user names is the local one they saw
+  there. `2026-04-08z` asks for the UTC day instead.
+- A copied `2026-04-08T20:30:12.345Z` therefore needs no special case —
+  its trailing `Z` already says UTC.
+- `today` / `yesterday` and bare times resolve against "now" in whichever
+  zone the value asks for, so `14:z` is the 14:00 UTC hour of today's
+  UTC date.
+- **Daylight saving falls out of the comparison.** Spans are matched as
+  wall-clock readings in the requested zone rather than as converted
+  instants, so a local date is simply every instant that reads as that
+  date.
+  - A transition day is 23 or 25 hours long, as the zone requires.
+  - An hour that runs twice matches both times.
+  - An hour that never happened (`2026-03-08 02` in New York) matches
+    nothing, rather than silently resolving to a neighboring hour.
+- **Mixed-zone ranges are an error.** One end marked `z` and the other
+  not is far more often a forgotten suffix than a deliberate mix, and it
+  would silently shift one edge of the window by the zone offset.
+- Malformed spans fail at startup (exit 2), not as an empty listing.
 
 ### Reading the records
 

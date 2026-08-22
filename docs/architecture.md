@@ -356,8 +356,8 @@ The scripts:
   (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
   combinable; options (`--directory`, `--copy-to-dir`,
   `--pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
-  `--print_selection`, and `--search` / `--filter_site` for the
-  history listing) tune behavior.
+  `--print_selection`, and `--search` / `--filter_site` /
+  `--filter_time` for the history listing) tune behavior.
   Handles directory resolution (config file / `--directory` /
   default), JSON path absolutization, optional file copy into a
   sandbox-readable target dir, mtime polling, pidfile management,

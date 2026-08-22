@@ -40,9 +40,9 @@
 
 ### History access from the CLI
 * `SeeWhatISee.py` can now list history (`--all` / `--limit N`, narrowed
-  by `--search` / `--filter_site`, which default to the last 10), but no
-  skill or MCP tool exposes it yet — nothing but the script itself uses
-  those flags.
+  by `--search` / `--filter_site` / `--filter_time`, which default to the
+  last 10), but no skill or MCP tool exposes it yet — nothing but the
+  script itself uses those flags.
 
 ### Claude plugin
 * Is there a way to give the `-watch` skill the Read permission it needs without editing `settings.json`?
