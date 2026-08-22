@@ -438,6 +438,20 @@ def read_records(path):
     return [record for record in map(parse_record, lines) if record is not None]
 
 
+def read_lines(path):
+    """Every non-empty line of a file, in file order.
+
+    Unreadable reads as empty rather than fatal, unlike the readers
+    above: its caller is the poll loop, which holds a cursor and so
+    recovers on the next poll. Anything one-shot wants the error.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return [line for line in handle.read().splitlines() if line.strip()]
+    except OSError:
+        return []
+
+
 def read_last_line(path):
     """The last non-empty line of a file, or None."""
     with open(path, encoding="utf-8", errors="replace") as handle:
@@ -841,8 +855,12 @@ def log_mtime(log_path):
         return None
 
 
-def catch_up(opts, emitter, log_path):
+def catch_up(opts, emitter, log_path, lines):
     """--after replay. Returns True if the caller should stop watching.
+
+    Works from the `lines` the caller already read, rather than reading
+    log.json again: a capture landing between the two reads would sit
+    behind the poll loop's cursor and never be emitted.
 
     If the timestamp isn't in the log, warn and fall through to the
     normal poll — the record has most likely aged out of log.json into
@@ -853,7 +871,8 @@ def catch_up(opts, emitter, log_path):
               % log_path, file=sys.stderr)
         return False
 
-    records = read_records(log_path)
+    records = [record for record in map(parse_record, lines)
+               if record is not None]
     # A cursor, not a time comparison: emit whatever follows this record
     # in the log. Timestamps aren't ordered strictly enough for `>` to be
     # safe.
@@ -885,6 +904,30 @@ def catch_up(opts, emitter, log_path):
     return not opts.loop
 
 
+def lines_after(lines, cursor):
+    """The lines following `cursor` in the log, in file order.
+
+    A cursor, not a time comparison — the same rule as `--after`, and
+    for the same reason. The whole line is the key rather than the
+    `timestamp` field; both are unique, since every record gets its own
+    timestamp.
+
+    Scanned backwards so a log that repeats a line (one written before
+    timestamps were unique) still advances instead of replaying.
+
+    A cursor that isn't in the log resumes from the newest record. It
+    can't have aged out into an archive from under a live watcher —
+    log.json holds at least 50 records — so this is a log that was
+    rewritten from somewhere else entirely.
+    """
+    if cursor is None:
+        return lines
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i] == cursor:
+            return lines[i + 1:]
+    return lines[-1:]
+
+
 def watch(opts, emitter, source_dir, log_path, pidfile):
     # Chrome only creates the source dir on the first download.
     # Watching can legitimately start before that, so create it now (we
@@ -897,22 +940,43 @@ def watch(opts, emitter, source_dir, log_path, pidfile):
     if opts.pid_lockfile:
         claim_pidfile(pidfile)
 
-    if opts.after is not None and catch_up(opts, emitter, log_path):
-        return
-
     # Don't emit the current contents on poll-loop entry — only changes
     # from this point. (--get-latest already handled "current".)
+    #
+    # mtime first, then the contents: a capture landing between the two
+    # reads leaves the stale mtime behind, so the next poll picks it up.
+    # The other order would record an mtime that already covers it.
     last_mtime = log_mtime(log_path)
+    lines = read_lines(log_path)
+    cursor = lines[-1] if lines else None
+
+    if opts.after is not None and catch_up(opts, emitter, log_path, lines):
+        return
+
     while True:
         current = log_mtime(log_path)
         if current is not None and current != last_mtime:
             last_mtime = current
+            # Every line past the cursor, not just the newest one: a
+            # burst of captures can land several between two polls, and
+            # log.json is rewritten whole each time, so a poll may first
+            # see a file that already grew by more than one record.
+            lines = read_lines(log_path)
             # An empty log.json (user just cleared history via More →
             # Clear log history) bumps mtime without producing a new
-            # record. Skip.
-            line = read_last_line(log_path)
-            if line is not None:
-                emitter.emit(parse_record(line), raw=line)
+            # record. Forget the cursor with it: whatever refills the
+            # file is all new.
+            if not lines:
+                cursor = None
+            for line in lines_after(lines, cursor):
+                record = parse_record(line)
+                # Anchor on lines that parse. A line caught mid-rewrite
+                # is still handed over, but by the next poll it's
+                # complete and no longer matches, and a cursor that
+                # can't be found skips everything behind it.
+                if record is not None:
+                    cursor = line
+                emitter.emit(record, raw=line)
                 if not opts.loop:
                     return
         time.sleep(POLL_SECONDS)

@@ -85,6 +85,21 @@ field on the record. See
     would replay the rest of the run on every call and never advance.
   - A timestamp that isn't in `log.json` (typically aged out into an
     archive) warns and falls through to plain watching.
+- **The poll loop carries the same cursor.** It wakes on an mtime
+  change and emits every line past the last one it emitted.
+  - Shift-clicking Capture writes several records well inside one
+    0.5s poll, and `log.json` is rewritten whole each time, so a poll
+    routinely sees a file that grew by more than one record.
+  - The cursor is the raw line, and only a line that parsed becomes
+    one. A line read mid-rewrite is still handed over, but by the next
+    poll it is complete and no longer matches itself.
+  - A cursor that isn't in the log resumes from the newest record. It
+    can't have aged into an archive — `log.json` holds at least 50
+    records — so it means the log was rewritten from elsewhere.
+  - Once mode (no `--loop`) emits the *oldest* unseen record and exits,
+    leaving the rest for the next invocation — which picks them up
+    because it passes `--after <last ts>`. A bare re-invocation re-seeds
+    the cursor from the log's last line and skips the middle.
 
 ### Claude Code (Monitor + persistent loop)
 

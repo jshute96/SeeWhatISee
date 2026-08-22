@@ -391,7 +391,9 @@ The scripts:
   the watcher flags (`--loop`, `--after`, `--print_selection`,
   `--stop`, `--directory`). The backend polls `log.json`'s mtime
   every 0.5s and emits records with absolute paths to stdout;
-  status messages go to stderr.
+  status messages go to stderr. Each change emits *every* record
+  past the last one it emitted, since a burst of captures can add
+  several between two polls.
 - `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
   — `exec`s `SeeWhatISee.py --stop` (which auto-implies
   `--pid-lockfile`). Used by `/see-what-i-see-stop`.

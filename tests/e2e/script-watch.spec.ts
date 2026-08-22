@@ -116,6 +116,16 @@ function runAction(args: string[], opts?: { cwd?: string }): { stdout: string; s
   return runScript(SCRIPT, args, opts);
 }
 
+/** The JSON records in a run's stdout, ignoring any status lines. */
+function emittedRecords(out: string): Array<{
+  timestamp: string;
+  screenshot: { filename: string };
+}> {
+  return out.split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line));
+}
+
 /** Build a fake capture record. */
 function fakeRecord(index: number): { json: string; timestamp: string; screenshot: string } {
   const ms = String(index).padStart(3, '0');
@@ -374,6 +384,127 @@ test.describe('SeeWhatISee.py --watch', () => {
     for (const fn of screenshots) {
       expect(out).toContain(`${tmpDir}/${fn}`);
     }
+  });
+
+  test('loop mode: emits every record of a burst landing between polls', async () => {
+    // Shift-clicking Capture writes several records well inside one
+    // poll interval, and the extension rewrites log.json whole each
+    // time, so a poll sees a file that grew by more than one record.
+    // Emitting only the newest one silently drops the rest.
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const screenshots: string[] = [];
+    for (let i = 1; i <= 4; i++) {
+      screenshots.push(simulateCapture(tmpDir, i).screenshot);
+    }
+
+    await waitForPattern(watch.output, screenshots[3], 1, 10_000);
+    watch.kill();
+
+    const out = watch.output();
+    for (const fn of screenshots) {
+      expect(out).toContain(`${tmpDir}/${fn}`);
+    }
+  });
+
+  test('loop mode: emits a burst delivered by a whole-file rewrite', async () => {
+    // The same burst, but written the way the extension writes it:
+    // log.json replaced wholesale rather than appended to.
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const seed = fakeRecord(0).json;
+    const added = [1, 2, 3].map((i) => fakeRecord(i));
+    fs.writeFileSync(
+      path.join(tmpDir, 'log.json'),
+      [seed, ...added.map((r) => r.json)].join('\n') + '\n',
+    );
+
+    await waitForPattern(watch.output, added[2].screenshot, 1, 10_000);
+    watch.kill();
+
+    const out = watch.output();
+    expect(out).not.toContain(fakeRecord(0).screenshot);
+    for (const { screenshot } of added) {
+      expect(out).toContain(`${tmpDir}/${screenshot}`);
+    }
+  });
+
+  test('loop mode: a poll catching a truncated line still gets the burst behind it', async () => {
+    // A rewrite read mid-flight ends in a partial line, which is
+    // emitted raw but must not become the cursor: by the next poll it
+    // is complete and no longer matches itself, and a cursor that
+    // can't be found skips the whole burst behind it.
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const added = [1, 2, 3].map((i) => fakeRecord(i));
+    const logPath = path.join(tmpDir, 'log.json');
+    const seed = fakeRecord(0).json;
+    fs.writeFileSync(logPath, seed + '\n' + added[0].json.slice(0, 40));
+    await new Promise((r) => setTimeout(r, 900));
+
+    fs.writeFileSync(logPath, [seed, ...added.map((r) => r.json)].join('\n') + '\n');
+    await waitForPattern(watch.output, added[2].screenshot, 1, 10_000);
+    watch.kill();
+
+    const out = watch.output();
+    for (const { screenshot } of added) {
+      expect(out).toContain(`${tmpDir}/${screenshot}`);
+    }
+  });
+
+  test('once mode: a burst emits the oldest unseen record', async () => {
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // One write, so both records are guaranteed to reach the watcher in
+    // the same poll — otherwise the poll could land between them and
+    // the test would pass under newest-only behavior too.
+    const added = [1, 2].map((i) => fakeRecord(i));
+    fs.writeFileSync(
+      path.join(tmpDir, 'log.json'),
+      [fakeRecord(0).json, ...added.map((r) => r.json)].join('\n') + '\n',
+    );
+
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    const out = watch.output();
+    expect(out).toContain(`${tmpDir}/${added[0].screenshot}`);
+    expect(out).not.toContain(added[1].screenshot);
+  });
+
+  test('once mode driven by an external --after loop drains a burst in order', async () => {
+    // The Gemini foreground loop: each iteration blocks for one record,
+    // then re-invokes with that record's timestamp as --after. A burst
+    // has to come out one per iteration, in order, losing nothing —
+    // the blocking iteration and the --after catch-up have to agree on
+    // where the cursor sits.
+    const watch = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const burst = [1, 2, 3, 4].map((i) => simulateCapture(tmpDir, i));
+
+    // Iteration 1 — the watcher was already blocking when the burst
+    // landed, so it emits the oldest of it and exits.
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    const records = emittedRecords(watch.output());
+    expect(records).toHaveLength(1);
+
+    // Iterations 2..n — re-invoke with the last timestamp seen.
+    for (let i = 1; i < burst.length; i++) {
+      const r = runWatch([
+        '--after', records[records.length - 1].timestamp,
+        '--catch-up-one', '--directory', tmpDir,
+      ]);
+      expect(r.exitCode).toBe(0);
+      const next = emittedRecords(r.stdout);
+      expect(next).toHaveLength(1);
+      records.push(...next);
+    }
+
+    expect(records.map((r) => r.screenshot.filename))
+      .toEqual(burst.map((b) => `${tmpDir}/${b.screenshot}`));
   });
 
   test('--after with pending captures emits them immediately', async () => {
