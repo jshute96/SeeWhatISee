@@ -39,10 +39,23 @@
 ## Skills and plugins
 
 ### History access from the CLI
-* `SeeWhatISee.py` can now list history (`--all` / `--limit N`, narrowed
-  by `--search` / `--filter_site` / `--filter_time`, which default to the
-  last 10), but no skill or MCP tool exposes it yet — nothing but the
-  script itself uses those flags.
+* Shipped for the shell skills: `see-what-i-see-history` (Claude plugin,
+  Gemini extension, generic bundle) wraps the `SeeWhatISee.py` history
+  actions.
+* The MCP server still doesn't expose them. It needs its own
+  `list_captures` tool taking limit / search / site / time, plus an
+  MCP-driven `see-what-i-see-history` skill + prompt. The shared
+  `skills/history-usage.template.md` block is reusable as-is.
+* Try the skill on real requests and see whether the guidance holds
+  up — especially the "narrow, then judge candidates by their
+  contents" path, where the right subagent shape varies by tool.
+  * A Claude subagent doesn't inherit the skill's
+    `Read(~/Downloads/SeeWhatISee/**)` pre-approval, so delegating the
+    look-at-the-image step prompts for permission. Check whether that
+    is worth pre-approving somewhere.
+* The Gemini workspace-tmp-dir computation is now copied in three
+  wrappers (`copy-last-snapshot.sh`, `watch-and-copy.sh`,
+  `history.sh`). Factor it into a sourced helper in that bundle.
 
 ### Claude plugin
 * Is there a way to give the `-watch` skill the Read permission it needs without editing `settings.json`?
@@ -67,6 +80,13 @@
 ## Documentation
 
 ### Pending docs for features not released yet
+
+* **`see-what-i-see-history` skill** — browse or search past captures
+  by count, date/time, site, or text, instead of only the latest one.
+  * README's command lists (Claude plugin, Gemini extension, generic
+    skills) each need the new skill.
+  * Gemini's `run_shell_command` allowlist in README needs
+    `skills/see-what-i-see-history/scripts/history.sh`.
 
 * **History page** — a searchable table of recent captures: date,
   screenshot thumbnail, links to the saved HTML / selection files,

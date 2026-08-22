@@ -332,13 +332,13 @@ icon/tooltip duo).
 ## Handoff to coding agents
 
 A coding agent (Claude Code, etc.) reads the latest file from
-`~/Downloads/SeeWhatISee/`. Four Claude Code plugin skills are
-provided:
+`~/Downloads/SeeWhatISee/`. The Claude Code plugin skills are:
 
 - `/see-what-i-see` — read the latest capture
 - `/see-what-i-see-watch` — background loop that describes each
   new capture as it arrives
 - `/see-what-i-see-stop` — stop the watcher
+- `see-what-i-see-history` — browse or search past captures
 
 Layout:
 
@@ -397,6 +397,10 @@ The scripts:
 - `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
   — `exec`s `SeeWhatISee.py --stop` (which auto-implies
   `--pid-lockfile`). Used by `/see-what-i-see-stop`.
+- `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`
+  — `exec`s `SeeWhatISee.py` with the caller's history flags and no
+  forced action, so the skill picks `--limit` / `--all` and the
+  filters itself.
 
 All of these resolve the download directory the same way: if
 `--directory` is not given, look for a `.SeeWhatISee` config file

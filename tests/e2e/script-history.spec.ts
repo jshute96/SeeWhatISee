@@ -746,3 +746,121 @@ test.describe('SeeWhatISee.py --filter_time', () => {
     }
   });
 });
+
+/**
+ * The per-bundle `history.sh` wrappers.
+ *
+ * They force no action — the skill supplies the history flags — and
+ * they own the skill-level `--copy` flag, which each bundle resolves
+ * differently: dropped where the agent reads the capture dir in
+ * place, turned into `--copy-to-dir <tmp>` for Gemini. `SeeWhatISee.py`
+ * itself rejects `--copy`, so a wrapper that failed to consume it
+ * would fail loudly; one that passed the wrong dir would not.
+ */
+test.describe('history.sh wrappers', () => {
+  const ROOT = path.resolve(__dirname, '../..');
+  const CLAUDE = `${ROOT}/skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`;
+  const GENERIC = `${ROOT}/skills/generic-skills/see-what-i-see-history/scripts/history.sh`;
+  const GEMINI = `${ROOT}/skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh`;
+
+  function runWrapper(script: string, args: string[], env: NodeJS.ProcessEnv = {}) {
+    const result = spawnSync(script, args, {
+      timeout: 5_000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
+    });
+    return {
+      stdout: (result.stdout as string) ?? '',
+      stderr: (result.stderr as string) ?? '',
+      exitCode: result.status ?? 1,
+    };
+  }
+
+  test.beforeEach(() => {
+    writeFileOfRecords('log.json', [rec(1), rec(2), rec(3)]);
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(tmpDir, `screenshot-2026040${n}.png`), 'png');
+    }
+  });
+
+  for (const [name, script] of [['claude', CLAUDE], ['generic', GENERIC]] as const) {
+    test(`${name}: forwards history flags, reading files in place`, () => {
+      const result = runWrapper(script, ['--limit', '2', '--directory', tmpDir]);
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      const records = parseAll(result.stdout);
+      expect(records.map((r) => r.url)).toEqual([
+        'http://example.com/page2', 'http://example.com/page3',
+      ]);
+      // Paths point at the source dir: these bundles never copy.
+      expect(records[0].screenshot.filename).toBe(
+        path.join(tmpDir, 'screenshot-20260402.png'));
+    });
+  }
+
+  test('gemini: --copy copies into $TARGET_DIR/SeeWhatISee', () => {
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-target-'));
+    try {
+      const result = runWrapper(
+        GEMINI, ['--limit', '1', '--copy', '--directory', tmpDir],
+        { TARGET_DIR: target });
+      expect(result.exitCode).toBe(0);
+      const [record] = parseAll(result.stdout);
+      const copied = path.join(target, 'SeeWhatISee', 'screenshot-20260403.png');
+      expect(record.screenshot.filename).toBe(copied);
+      expect(fs.existsSync(copied)).toBe(true);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  test('gemini: without --copy, nothing is copied', () => {
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-target-'));
+    try {
+      const result = runWrapper(
+        GEMINI, ['--limit', '1', '--directory', tmpDir], { TARGET_DIR: target });
+      expect(result.exitCode).toBe(0);
+      const [record] = parseAll(result.stdout);
+      expect(record.screenshot.filename).toBe(
+        path.join(tmpDir, 'screenshot-20260403.png'));
+      expect(fs.existsSync(path.join(target, 'SeeWhatISee'))).toBe(false);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  test('a run with no count or filter is refused', () => {
+    // The backend falls back to --get-latest when no action flag is
+    // given, so a history run that lost its flags would silently
+    // describe the newest capture. The wrappers stop that.
+    for (const script of [CLAUDE, GENERIC, GEMINI]) {
+      for (const args of [[], ['--directory', tmpDir]]) {
+        const result = runWrapper(script, args);
+        expect(result.exitCode).toBe(2);
+        expect(result.stdout).toBe('');
+        expect(result.stderr).toContain('pass a count');
+      }
+    }
+    // --copy alone is no more of a history action than no flags at all.
+    const copyOnly = runWrapper(GEMINI, ['--copy', '--directory', tmpDir]);
+    expect(copyOnly.exitCode).toBe(2);
+    expect(copyOnly.stdout).toBe('');
+  });
+
+  test('gemini: --copy is only consumed in flag position', () => {
+    // A search term that happens to read like the flag is a value,
+    // not the flag — stripping it blindly would shift the arguments.
+    writeFileOfRecords('log.json', [rec(1, { title: 'about --copy semantics' }), rec(2)]);
+    const result = runWrapper(GEMINI, ['--search', '--copy', '--directory', tmpDir]);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+    expect(parseAll(result.stdout).map((r) => r.title)).toEqual(['about --copy semantics']);
+  });
+
+  test('--help reaches the backend through the wrapper', () => {
+    const result = runWrapper(CLAUDE, ['--help']);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('--filter_time SPAN');
+  });
+});

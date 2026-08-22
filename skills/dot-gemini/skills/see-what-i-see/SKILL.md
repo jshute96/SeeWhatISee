@@ -6,6 +6,8 @@ description: >
   You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
 ---
 
+To look for older captures (the last few, by date or time, by site, or by text), use the `see-what-i-see-history` skill.
+
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 1. Read this JSON object:

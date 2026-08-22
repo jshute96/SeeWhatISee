@@ -5,6 +5,8 @@ description: Watch for new captures from the SeeWhatISee Chrome extension. Each 
 
 Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, process it as described below, then watch for the next one. Keep looping until the user tells you to stop, or until a failure.
 
+To look for older captures (the last few, by date or time, by site, or by text), use the `see-what-i-see-history` skill.
+
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 ## Getting captures in a loop

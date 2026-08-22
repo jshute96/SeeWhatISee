@@ -8,6 +8,8 @@ description: >
   (Alias for /see-what-i-see.)
 ---
 
+To look for older captures (the last few, by date or time, by site, or by text), use the `see-what-i-see-history` skill.
+
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
 1. Read this JSON object:

@@ -39,9 +39,12 @@ SeeWhatISee-claude/                  # release repo
         ├── see-what-i-see-watch/
         │   ├── SKILL.md
         │   └── scripts/watch.sh      # wrapper → SeeWhatISee.py --watch --pid-lockfile
-        └── see-what-i-see-stop/
+        ├── see-what-i-see-stop/
+        │   ├── SKILL.md
+        │   └── scripts/stop.sh       # wrapper → SeeWhatISee.py --stop
+        └── see-what-i-see-history/
             ├── SKILL.md
-            └── scripts/stop.sh       # wrapper → SeeWhatISee.py --stop
+            └── scripts/history.sh    # wrapper → SeeWhatISee.py, caller's history flags
 ```
 
 `SeeWhatISee.py` is owned by the `see-what-i-see` skill; the
@@ -78,10 +81,7 @@ install path:
 ```
 .claude/
 ├── settings.json                 # local-dev: bash permissions for plugin scripts + pnpm tests
-└── skills/                       # local-dev: symlinks into skills/claude-plugin/skills/
-    ├── see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
-    ├── see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
-    └── see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
+└── skills -> ../skills/claude-plugin/skills/   # local-dev: every plugin skill
 ```
 
 
@@ -290,7 +290,8 @@ Two pieces of glue make it work, plus the publishing step:
     "allow": [
       "Bash(skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
       "Bash(skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
+      "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
+      "Bash(skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh:*)"
     ]
   }
 }
@@ -309,14 +310,13 @@ Two pieces of glue make it work, plus the publishing step:
 ### `.claude/skills/` symlinks
 
 Claude Code auto-discovers user-scope skills from `.claude/skills/<name>/`.
-We add symlinks into `skills/claude-plugin/skills/` so that running
+`.claude/skills` is a symlink to the plugin's skills dir, so running
 `/see-what-i-see` in a local checkout picks up the same SKILL.md files
-the installed plugin would use:
+the installed plugin would use — and a skill added to the plugin shows
+up locally with no extra symlink:
 
 ```
-.claude/skills/see-what-i-see       -> ../../skills/claude-plugin/skills/see-what-i-see
-.claude/skills/see-what-i-see-watch -> ../../skills/claude-plugin/skills/see-what-i-see-watch
-.claude/skills/see-what-i-see-stop  -> ../../skills/claude-plugin/skills/see-what-i-see-stop
+.claude/skills -> ../skills/claude-plugin/skills/
 ```
 
 This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/claude-plugin` for

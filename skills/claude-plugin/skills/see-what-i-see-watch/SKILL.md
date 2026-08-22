@@ -6,6 +6,8 @@ allowed-tools: "Monitor,Bash(${CLAUDE_SKILL_DIR}/scripts/watch.sh:*),Read(~/Down
 
 Start a background loop that watches for new captures from the SeeWhatISee Chrome extension. Each time a screenshot or HTML snapshot is taken, describe what you see and start watching for the next one.
 
+To look for older captures (the last few, by date or time, by site, or by text), use the `see-what-i-see-history` skill.
+
 **If you get any failures, just report them. Don't try to find other solutions.**
 
 ## Getting snapshots in a loop

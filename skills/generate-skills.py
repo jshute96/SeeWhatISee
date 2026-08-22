@@ -40,9 +40,11 @@ PAIRS = [
     ("claude.see.md",    "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md",  "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
     ("claude.stop.md",   "skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md"),
+    ("claude.history.md","skills/claude-plugin/skills/see-what-i-see-history/SKILL.md"),
     ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md"),
     ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md"),
     ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md"),
+    ("gemini.history.md","skills/dot-gemini/skills/see-what-i-see-history/SKILL.md"),
     # MCP-driven skills. These double as (a) installable skills that drive
     # the `see-what-i-see` MCP server and (b) the prompt bodies the server
     # returns from `prompts/get` — `mcp-server/build-prompts.mjs` reads the
@@ -57,6 +59,7 @@ PAIRS = [
     ("generic.see.md",   "skills/generic-skills/see-what-i-see/SKILL.md"),
     ("generic.watch.md", "skills/generic-skills/see-what-i-see-watch/SKILL.md"),
     ("generic.stop.md",  "skills/generic-skills/see-what-i-see-stop/SKILL.md"),
+    ("generic.history.md", "skills/generic-skills/see-what-i-see-history/SKILL.md"),
     ("SeeWhatISee.py",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py", "verbatim"),
     ("SeeWhatISee.py",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py",    "verbatim"),
     ("SeeWhatISee.py",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py",       "verbatim"),

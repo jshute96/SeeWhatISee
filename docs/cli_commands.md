@@ -15,6 +15,11 @@ and Gemini CLI) read them via slash commands. This doc covers:
 | `/see-what-i-see`            | ✓           | ✓          | one-shot         |
 | `/see-what-i-see-watch`      | ✓ (async background) | ✓ (foreground loop) | loop |
 | `/see-what-i-see-stop`       | ✓           | —          | one-shot         |
+| `see-what-i-see-history`     | ✓           | ✓          | one-shot         |
+
+`see-what-i-see-history` is written without a slash because it isn't a
+hand-invoked command in the way the others are — the agent reaches for
+it on its own (it's still invokable by name).
 
 Both CLIs' `/see-what-i-see` and `/see-what-i-see-watch` use the
 same JSON record schema, share the same canonical "process each
@@ -138,9 +143,8 @@ field on the record. See
 
 ## Reading the capture history (`--all` / `--limit`)
 
-No slash command wraps these yet — they're backend actions on
-`SeeWhatISee.py` for an agent (or a user) that wants more than the
-latest capture.
+The backend actions for anything beyond the latest capture. The
+`see-what-i-see-history` skill (below) is what drives them.
 
 - **What they read.** The whole history, not just `log.json`: the
   extension keeps recent captures there and flushes older batches to
@@ -277,6 +281,83 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   whitespace and stray carriage returns from a hand-edit don't ride
   along into the output.
 
+## `see-what-i-see-history` — browse or search past captures
+
+- **What it does.** Runs the history actions above with whatever
+  flags the request implies, then reports (or opens) the matches.
+- **When to use it.** Anything past the newest capture: "the last
+  three screenshots", "what I captured yesterday", "that page from
+  example.com", "the screenshot where I asked about fonts".
+- **Not a hand-invoked-only skill.** `/see-what-i-see` and
+  `/see-what-i-see-watch` exist because the agent can't know when the
+  user just clicked the extension. History has no such tie to a
+  live click, so an agent may reach for it on its own whenever an
+  older capture would answer the question in front of it. That
+  difference in triggering is why it's a separate skill rather than
+  flags on `/see-what-i-see`.
+- **Cross-referenced.** The see / watch skills carry a one-line
+  pointer here, so a request for an older capture lands on this
+  skill instead of being answered with the newest one.
+
+### Three phases
+
+The skill works a request in three steps rather than fetching
+everything the flags match:
+
+1. **List candidates.** Run with the narrowing flags and read only the
+   JSON — no capture files are touched.
+2. **Narrow.** The flags are coarse. Usually the records themselves
+   settle which captures the user meant; when the criteria are about
+   capture *contents*, the candidates get looked at (below).
+3. **Act.** Answer from the records when that's enough, and open files
+   only for the captures that survived, and only when their contents
+   are needed to answer.
+
+Reading every screenshot a listing names is the failure mode this
+avoids: an image costs far more context than the record describing it,
+and `--all` can name a lot of them.
+
+Re-running the script mid-flow is a Gemini-only need — the records from
+step 1 are still in context, so nothing else has a reason to ask again.
+
+### No count, no filter, no run
+
+`SeeWhatISee.py` falls back to `--get-latest` when no action flag is
+given, so a history invocation that lost its flags would quietly
+describe the newest capture instead of failing. The wrappers refuse
+that case (exit 2, with a message naming the flags) rather than
+answer a different question than the one asked. `--help` still works.
+
+### The `--copy` flag (Gemini only)
+
+- A skill-level flag, not a `SeeWhatISee.py` one. The Gemini wrapper
+  turns it into `--copy-to-dir <workspace tmp dir>`, which keeps the
+  tmp-dir computation where the other Gemini wrappers already have it.
+- Copying is **opt-in** here, unlike the Gemini see / watch wrappers
+  which always copy. A listing can name many captures, and copying
+  every file before knowing which ones matter is wasted work.
+- So the Gemini skill lists and narrows without it, then re-runs with
+  `--copy` narrowed to the records it settled on — a record's exact
+  `timestamp` as `--filter_time` selects that one record.
+- Gemini is the only bundle with the flag at all — in its wrapper and
+  in its skill body. The others read the capture dir in place, so
+  nothing there passes `--copy` and nothing there handles it; the
+  shared instructions never mention it.
+
+### Narrowing on capture content
+
+Some requests can't be expressed as flags — "screenshots from
+example.com showing a picture of a bicycle". Step 2 then has to look at
+the candidates.
+
+- How is left to the agent: a cheap subagent per candidate (or per
+  small group) that reports back a timestamp and a yes/no, or an
+  inline look when the candidate set is tiny.
+- The guidance fixes the budget, not the mechanism — keep the images
+  out of the main conversation, then act on the survivors.
+- Tools vary too much here (subagents, batching, parallelism) to
+  prescribe one shape.
+
 ## `/see-what-i-see-stop` (Claude only)
 
 - Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
@@ -308,10 +389,12 @@ skills/claude-plugin/                ← Claude plugin install tree (mirrored in
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.py --get-latest
   skills/see-what-i-see-watch/scripts/watch.sh            ← /see-what-i-see-watch    → SeeWhatISee.py --watch --loop --pid-lockfile
   skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.py --stop
+  skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags
 skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
   skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
   skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see          → SeeWhatISee.py --get-latest --copy-to-dir <tmp>
   skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one --copy-to-dir <tmp>
+  skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags (--copy → --copy-to-dir <tmp>)
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
 ```
@@ -328,8 +411,8 @@ by `skills/copy-gemini-extension-release.sh`. The
 `skills/SeeWhatISee.py`.
 
 Wrappers in `see-what-i-see-watch` / `see-what-i-see-stop` /
-`see-what-i-see-xtract` reach across to the see-what-i-see
-skill's `scripts/` dir for the backend via
+`see-what-i-see-history` / `see-what-i-see-xtract` reach across to
+the see-what-i-see skill's `scripts/` dir for the backend via
 `../../see-what-i-see/scripts/SeeWhatISee.py` (sibling-relative).
 
 ### The wrapper scripts
@@ -339,8 +422,10 @@ skill's `scripts/` dir for the backend via
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`        | `--get-latest`                                  | `$DIR` (in place) | last record |
 | `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | one JSON record per capture, streaming until killed |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`         | `--stop`                                        | `$DIR` (in place) | none (just stops the watcher) |
+| `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`   | none forced — forwards the caller's history flags; refuses a run with no count or filter | `$DIR` (in place) | one JSON record per match |
 | `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`   | `--get-latest --copy-to-dir <tmp>`              | `$SRC_DIR` → `$TARGET_DIR` (copied) | last record |
 | `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | `--watch --catch-up-one --copy-to-dir <tmp>` (forwards `--after`) | `$SRC_DIR` → `$TARGET_DIR` (copied) | one new record per invocation |
+| `skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh`      | none forced — forwards the caller's history flags; `--copy` becomes `--copy-to-dir <tmp>`; refuses a run with no count or filter | `$SRC_DIR`, or → `$TARGET_DIR` with `--copy` | one JSON record per match |
 
 Key differences come from the wrapper-supplied defaults:
 
@@ -383,19 +468,25 @@ Several files drive the prompts:
 - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
 - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
 - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
+- `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
+- `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
 
 All skill prompts are **generated from templates** in `skills/`,
 which are themselves written in SKILL.md format (YAML frontmatter
 + markdown body) for both Claude and Gemini.
 
-Two shared blocks — the **JSON-record block** and the **"Process the
-capture:" block** — live as their own files (`json-record.template.md`,
-`process.template.md`) and get inlined into each top-level template via
-`[[filename]]` placeholders. That keeps those blocks identical
-across all generated files.
+Shared blocks live as their own files and get inlined into each
+top-level template via `[[filename]]` placeholders, which keeps them
+identical across all generated files:
+
+- `json-record.template.md` — the JSON-record block.
+- `process.template.md` — the "Process the capture:" block.
+- `history-usage.template.md` — the history flags, and the list /
+  narrow / act phases. Used by the history skills only, but by all of
+  them.
 
 Platform-specific differences stay in the top-level templates:
 
@@ -404,6 +495,9 @@ Platform-specific differences stay in the top-level templates:
   Gemini `watch.md` is a blocking single-shot loop + `--after` re-run.
 - Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses
   `copy-last-snapshot.sh` via `!{...}`.
+- Every `history.md` calls `history.sh`, but only Gemini's tells the
+  agent about `--copy` (see [The `--copy` flag
+  (Gemini only)](#the---copy-flag-gemini-only)).
 
 The generator `skills/generate-skills.py` runs in validate
 mode by default (exit 1 on drift), is wired into `pnpm test` via

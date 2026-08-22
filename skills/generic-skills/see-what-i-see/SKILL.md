@@ -7,6 +7,8 @@ Read the latest screenshot or HTML snapshot taken by the SeeWhatISee Chrome exte
 
 You can't run this autonomously since it requires the user to have just clicked the extension. Only run it when asked to.
 
+To look for older captures (the last few, by date or time, by site, or by text), use the `see-what-i-see-history` skill.
+
 **If anything fails, just report it. Don't try to debug or find another solution.**
 
 ## Steps
