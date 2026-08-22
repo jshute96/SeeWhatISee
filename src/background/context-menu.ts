@@ -2,9 +2,9 @@
 // keeps every row's title in sync with the current defaults + bound
 // hotkeys (`refreshMenusAndTooltip`, `refreshMenusIfHotkeysChanged`),
 // and hosts the More-submenu utilities (Copy-last-filename via an
-// offscreen clipboard doc, Snapshots directory, Clear log). Menu-item
-// ids are exported so `background.ts`'s `onClicked` dispatch can
-// route each click to the right action.
+// offscreen clipboard doc, Clear log). Menu-item ids are exported so
+// `background.ts`'s `onClicked` dispatch can route each click to the
+// right action.
 
 import {
   findProviderForTab,
@@ -14,7 +14,6 @@ import { type CaptureRecord } from '../capture/types.js';
 import {
   getCaptureDirectory,
   joinCapturePath,
-  pathToFileUrl,
 } from '../capture/downloads.js';
 import { LOG_STORAGE_KEY } from '../capture/log-store.js';
 import { getLastCapture } from './last-capture.js';
@@ -55,8 +54,6 @@ export const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the top-level "History" entry (directly above the More
 // submenu) — opens `history.html`, the table view over the capture log.
 export const HISTORY_MENU_ID = 'history-page';
-// Id used by the "Snapshots directory" entry under the More submenu.
-export const SNAPSHOTS_DIR_MENU_ID = 'snapshots-directory';
 // Id used by the "Upload image to Capture..." entry under the More
 // submenu. Unlike the other More entries (which act on existing
 // captures), this one *creates* a Capture-page session from a local
@@ -576,15 +573,6 @@ export async function openUploadCapturePage(
 }
 
 /**
- * Open the on-disk capture directory in a new tab as a `file://` URL
- * so the user can browse the saved screenshots / HTML / `log.json`.
- */
-export async function openSnapshotsDirectory(): Promise<void> {
-  const dir = await getCaptureDirectory();
-  await chrome.tabs.create({ url: pathToFileUrl(dir) });
-}
-
-/**
  * Fail loudly if the toolbar menu's top-level row count exceeds
  * Chrome's cap. See the call site in `installContextMenu` for why a
  * silent overflow is so easy to miss.
@@ -649,7 +637,6 @@ function assertTopLevelBudget(): void {
 //       ─────────
 //       • Upload image to Capture...
 //       • Restore last capture            (greyed unless a closed Capture page state is saved)
-//       • Snapshots directory
 //       ─────────
 //       • Clear log history
 //   Set this tab as Ask button target  (greyed unless current tab is a provider;
@@ -917,13 +904,7 @@ export async function installContextMenu(): Promise<void> {
     enabled: false,
     contexts: ['action'],
   });
-  chrome.contextMenus.create({
-    id: SNAPSHOTS_DIR_MENU_ID,
-    parentId: MORE_PARENT_ID,
-    title: 'Snapshots directory',
-    contexts: ['action'],
-  });
-  createSeparator(`${MORE_PARENT_ID}-sep-snapshots`, MORE_PARENT_ID);
+  createSeparator(`${MORE_PARENT_ID}-sep-restore`, MORE_PARENT_ID);
   chrome.contextMenus.create({
     id: CLEAR_LOG_MENU_ID,
     parentId: MORE_PARENT_ID,

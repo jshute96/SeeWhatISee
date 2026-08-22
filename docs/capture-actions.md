@@ -282,8 +282,8 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   `CAPTURE_ACTIONS`. The set of promoted actions lives in
   `TOP_LEVEL_SHORTCUT_ACTION_IDS`.
 - **More ▸** — submenu home for every action plus the
-  infrequent utilities (Copy-last filenames, Snapshots
-  directory, Clear log history). See below.
+  infrequent utilities (Copy-last filenames, Clear log
+  history). See below.
 - **☐  Set this tab as Ask button target** — pin/unpin the active
   tab as the Ask destination. Greyed unless the active tab is on
   an enabled provider; flips between Set and Unset. Sits last in
@@ -329,10 +329,10 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   three cases.
   - Path is built by
     `joinCapturePath(getCaptureDirectory(), filename)` — same
-    directory-resolution helper that powers **Snapshots
-    directory**. The separator (`/` vs `\`) reuses whatever
-    `getCaptureDirectory` returned so the result is OS-native and
-    paste-ready in a shell or file manager.
+    directory-resolution helper that powers the History page's
+    **Snapshots directory** button. The separator (`/` vs `\`)
+    reuses whatever `getCaptureDirectory` returned so the result
+    is OS-native and paste-ready in a shell or file manager.
   - Each entry is greyed out (`enabled: false`) when the most
     recent record in `chrome.storage.local` doesn't carry the
     matching field. A storage `onChanged` listener on
@@ -375,19 +375,6 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
     `replaceState` and falls into the normal `loadData` happy-path.
   - See [capture-page.md → Upload mode](capture-page.md#upload-mode)
     for the page-side wiring.
-- **Snapshots directory** — opens the on-disk capture directory
-  in a new tab.
-  - URL is `file://<downloads>/SeeWhatISee/`.
-  - The downloads root is OS- / config-dependent and not exposed
-    by any Chrome API, so the path is derived at runtime by
-    searching `chrome.downloads.search` for our `log.json` record
-    (every capture overwrites it, so the most recent match points
-    at the live directory).
-  - `byExtensionId` is checked client-side to reject any
-    unrelated `log.json` from another tool that happens to share
-    the path shape.
-  - If no capture has happened yet, throws a clear error that
-    surfaces via the icon/tooltip channel.
 - **Clear log history** — `clearCaptureLog()` erases the
   in-storage capture log *and* overwrites `log.json` on disk with
   an empty file so `/see-what-i-see` et al. see the cleared state

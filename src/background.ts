@@ -57,13 +57,11 @@ import {
   PIN_ASK_TARGET_MENU_ID,
   RESTORE_LAST_CAPTURE_MENU_ID,
   SHORTCUT_SUFFIX,
-  SNAPSHOTS_DIR_MENU_ID,
   UPLOAD_IMAGE_MENU_ID,
   copyLastHtmlFilename,
   copyLastScreenshotFilename,
   copyLastSelectionFilename,
   installContextMenu,
-  openSnapshotsDirectory,
   openUploadCapturePage,
   refreshActionTooltip,
   refreshCopyMenuState,
@@ -338,20 +336,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
-  // Open the on-disk capture directory in a new tab. Same
-  // error-reporting rationale as the Clear log path: the
-  // "no captures yet" failure surfaces via the icon swap +
-  // tooltip line so the user actually sees it.
-  if (id === SNAPSHOTS_DIR_MENU_ID) {
-    await runWithErrorReporting(() => openSnapshotsDirectory());
-    return;
-  }
-
   // Open the History page — a table view over the capture log.
-  // Unlike the Snapshots directory entry this can't fail on "no
-  // captures yet" (the page renders its own empty state), but it
-  // goes through the same wrapper so an unexpected tab-create
-  // failure still surfaces on the icon/tooltip channel.
+  // It can't fail on "no captures yet" (the page renders its own
+  // empty state), but it goes through the same wrapper so an
+  // unexpected tab-create failure still surfaces on the
+  // icon/tooltip channel.
   if (id === HISTORY_MENU_ID) {
     await runWithErrorReporting(() => openHistoryPage());
     return;
@@ -453,7 +442,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   captureImageAsScreenshot,
   captureImageToMemory,
   clearCaptureLog,
-  openSnapshotsDirectory,
   openHistoryPage,
   openUploadCapturePage,
   copyLastScreenshotFilename,

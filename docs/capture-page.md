@@ -2030,7 +2030,7 @@ and responds once persisted, so the page's `await` is meaningful.
 ### Restore (menu click)
 
 - Menu entry **Restore last capture** lives under the More
-  submenu, near Upload (and the Snapshots / Clear log items).
+  submenu, near Upload (and the Clear log item).
 - A second entry point, same action: the **Restore** button the
   History page puts on the row the slot describes. See
   [history-page.md → Restore from a row](history-page.md#restore-from-a-row)

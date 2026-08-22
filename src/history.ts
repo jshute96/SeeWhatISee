@@ -55,6 +55,8 @@ const noMatchesEl = document.getElementById('no-matches') as HTMLElement;
 const fileAccessHintEl = document.getElementById('file-access-hint') as HTMLElement;
 const fileAccessLink = document.getElementById('file-access-btn') as HTMLAnchorElement;
 const optionsBtn = document.getElementById('options-btn') as HTMLButtonElement;
+const snapshotsDirBtn = document.getElementById('snapshots-dir') as HTMLButtonElement;
+const snapshotsDirWrap = document.getElementById('snapshots-dir-wrap') as HTMLElement;
 const olderEl = document.getElementById('older') as HTMLElement;
 const loadOlderBtn = document.getElementById('load-older') as HTMLButtonElement;
 const olderNoteEl = document.getElementById('older-note') as HTMLElement;
@@ -88,6 +90,19 @@ fileAccessLink.addEventListener('click', (e) => {
 fileAccessLink.addEventListener('auxclick', (e) => {
   if (e.button !== 1) return;
   openFileAccessPage(e, false);
+});
+
+// Browse the on-disk capture directory — the same new-tab `file://`
+// open the More → Snapshots directory menu entry used to do, moved
+// here so it sits with the rest of the file-browsing affordances.
+//
+// A button rather than an `<a href>` (which the row file links show
+// works fine for `file://` from this page) because the destination
+// isn't known until the downloads search resolves, and an anchor has
+// no disabled state to hold in the meantime.
+snapshotsDirBtn.addEventListener('click', () => {
+  if (captureDir === null) return;
+  void chrome.tabs.create({ url: pathToFileUrl(captureDir) });
 });
 
 optionsBtn.addEventListener('click', () => {
@@ -705,6 +720,14 @@ async function loadCaptureDir(): Promise<void> {
     // directory) simply render without links.
     captureDir = null;
   }
+  // Nothing to browse until the directory is known, so the button
+  // stays disabled (its markup state) until this resolves. The tooltip
+  // — on the wrapper, since Chrome shows no tooltip for a disabled
+  // control — carries the reason, and the resolved path once enabled.
+  snapshotsDirBtn.disabled = captureDir === null;
+  snapshotsDirWrap.title = captureDir === null
+    ? 'No captures saved to disk yet, so there is no directory to open'
+    : captureDir;
 }
 
 async function loadFileExistence(): Promise<void> {

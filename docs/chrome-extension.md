@@ -378,7 +378,7 @@ the Chrome-platform mechanics of building it.
   shortcuts into clusters (`save-defaults` | the non-selection
   capture shortcuts | the delayed-shortcut block | the three
   `save-selection-*` shortcuts) and then fence off the
-  copy-last, snapshots-dir, and clear-log utility rows.
+  copy-last and clear-log utility rows.
   - **ChromeOS workaround.** ChromeOS sometimes fails to render
     native `type: 'separator'` items in the extension action
     menu. `installContextMenu` in `background/context-menu.ts`

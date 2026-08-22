@@ -63,7 +63,7 @@ listeners. The substantive logic lives in `src/background/`:
   `handleActionClick` dispatcher, `runDblDefault`,
   `getDefaultActionTooltip` builder.
 - `context-menu.ts` — `installContextMenu`, menu title refresh,
-  More-submenu utilities (copy-last, snapshots dir, offscreen
+  More-submenu utilities (copy-last filenames, offscreen
   clipboard).
 - `capture-details.ts` — Capture-page per-tab session,
   `ensure*Downloaded` cache, multi-capture filename bump (locks

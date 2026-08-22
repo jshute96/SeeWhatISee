@@ -63,6 +63,12 @@
     font-size: 13px;
     color: #555;
   }
+  /* Pushed to the far end of the row: it acts on the whole capture
+     directory rather than on the search beside it, so it reads as a
+     separate control instead of a third search-related field. */
+  #snapshots-dir-wrap {
+    margin-left: auto;
+  }
   /* No padding at the top: the sticky header row below pins to the
      top of this scroll box, so any padding here would be a strip that
      rows stay visible in as they scroll past *above* the header. */
@@ -306,6 +312,17 @@
   <input type="search" id="search" placeholder="Search URL, title, or prompt…"
          autocomplete="off" spellcheck="false">
   <span class="count" id="count"></span>
+  <!-- Opens `file://<downloads>/SeeWhatISee/` in a new tab. Starts
+       disabled: the directory path is only known once the downloads
+       list has been searched for our `log.json` record, and it stays
+       disabled when nothing has ever been captured (no directory yet).
+       The tooltip lives on the wrapper, not the button: Chrome doesn't
+       deliver mouse events to a disabled control, so a `title` on the
+       button itself would be invisible in exactly the state that needs
+       explaining. -->
+  <span id="snapshots-dir-wrap">
+    <button type="button" id="snapshots-dir" class="btn" disabled>Snapshots directory</button>
+  </span>
 </div>
 
 <!-- Sits outside <main> so it stays pinned under the search box

@@ -104,6 +104,9 @@
     being discarded. Needs the same file-access permission.
     * *Clear log history* doesn't delete those archive files, so the
       History page can still load them afterwards.
+  * A **Snapshots directory** button at the right end of the search
+    row opens the on-disk capture folder in a new tab. It replaces the
+    *More ▸ Snapshots directory* menu entry, which is gone.
   * A **Restore** button appears in the Date cell of the one row that
     *Restore last capture* would re-open, so the capture you're
     looking at can be re-opened from where you found it.

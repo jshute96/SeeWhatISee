@@ -302,6 +302,41 @@ test('the History page links out to Options and Help but not itself', async ({
   await page.close();
 });
 
+// The enabled case needs a resolvable capture directory, which this
+// harness can't produce even from a real capture: Playwright rewrites
+// every download into its own artifacts directory, so the `log.json`
+// record's path doesn't end in `SeeWhatISee/log.json` and
+// `getCaptureDirectory()`'s `filenameRegex` never matches it (see the
+// file header). So this covers the button's presence, its place at the
+// end of the toolbar row, and the no-directory state.
+test('the Snapshots directory button sits at the end of the toolbar', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedLog(sw, SEED);
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+
+  const btn = page.locator('#snapshots-dir');
+  await expect(btn).toHaveText('Snapshots directory');
+  await expect(btn).toBeDisabled();
+
+  const toolbar = await page.locator('.toolbar').boundingBox();
+  const box = await btn.boundingBox();
+  const search = await page.locator('#search').boundingBox();
+  // Right-justified: sitting on the toolbar's 24px right padding (not
+  // past the edge, which a one-sided upper bound would also accept),
+  // and well clear of the search box on the left.
+  const rightGap = toolbar!.x + toolbar!.width - (box!.x + box!.width);
+  expect(rightGap).toBeGreaterThan(16);
+  expect(rightGap).toBeLessThan(32);
+  expect(box!.x).toBeGreaterThan(search!.x + search!.width);
+
+  await page.close();
+});
+
 test('a long URL scrolls inside the Page cell instead of stretching the row', async ({
   extensionContext,
   extensionId,
