@@ -16,7 +16,11 @@
 
 set -euo pipefail
 
-case " $* " in
+# Match flag names, ignoring any =value.
+flags=
+for arg in "$@"; do flags+=" ${arg%%=*}"; done
+
+case "$flags " in
   *" --limit "*|*" --all "*|*" --search "*) ;;
   *" --filter_site "*|*" --filter_time "*|*" --help "*) ;;
   *)

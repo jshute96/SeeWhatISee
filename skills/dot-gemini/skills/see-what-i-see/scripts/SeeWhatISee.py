@@ -182,7 +182,17 @@ def parse_args(argv):
     rest = list(argv)
     while rest:
         arg = rest.pop(0)
+        # --flag=value: hand the value to rest so the branches below
+        # can pop it like any other.
+        given = arg
+        inline = None
+        if arg.startswith("--") and "=" in arg:
+            arg, inline = arg.split("=", 1)
+            rest.insert(0, inline)
+        unconsumed = len(rest)
         if arg == "--help":
+            if inline is not None:
+                die("Error: --help takes no value", 2)
             print(USAGE, end="")
             sys.exit(0)
         elif arg == "--get-latest":
@@ -220,9 +230,12 @@ def parse_args(argv):
         elif arg == "--print_selection":
             opts.print_selection = True
         else:
-            print("Unknown option: %s" % arg, file=sys.stderr)
+            print("Unknown option: %s" % given, file=sys.stderr)
             print(USAGE, end="", file=sys.stderr)
             sys.exit(2)
+
+        if inline is not None and len(rest) == unconsumed:
+            die("Error: %s takes no value" % arg, 2)
 
     if not any_action:
         opts.get_latest = True

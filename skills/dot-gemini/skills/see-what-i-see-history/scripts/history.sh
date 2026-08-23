@@ -26,6 +26,7 @@ set -euo pipefail
 #
 # --copy is matched only in flag position: a value-taking flag's
 # argument (--search --copy) belongs to that flag, not to us.
+# A --flag=value carries its own value, so it consumes no argument.
 VALUE_FLAGS=" --limit --search --filter_site --filter_time --directory --copy-to-dir --after "
 COUNT_OR_FILTER=" --all --limit --search --filter_site --filter_time "
 
@@ -33,14 +34,17 @@ args=()
 copy=
 expect_value=
 have_action=
+flags=
 for arg in "$@"; do
   if [[ -n "$expect_value" ]]; then
     expect_value=
     args+=("$arg")
     continue
   fi
-  [[ "$VALUE_FLAGS" == *" $arg "* ]] && expect_value=1
-  [[ "$COUNT_OR_FILTER" == *" $arg "* ]] && have_action=1
+  name="${arg%%=*}"
+  flags+=" $name"
+  [[ "$arg" != *=* && "$VALUE_FLAGS" == *" $name "* ]] && expect_value=1
+  [[ "$COUNT_OR_FILTER" == *" $name "* ]] && have_action=1
   if [[ "$arg" == "--copy" ]]; then
     copy=1
     continue
@@ -51,7 +55,7 @@ done
 # --help and --stop are actions of their own; everything else needs a
 # count or a filter to be a history listing.
 if [[ -z "$have_action" ]]; then
-  case " $* " in
+  case "$flags " in
     *" --help "*|*" --stop "*|*" --get-latest "*|*" --watch "*) ;;
     *)
       echo "history.sh: pass a count (--limit N / --all) or a filter" \

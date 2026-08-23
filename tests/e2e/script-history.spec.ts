@@ -341,6 +341,43 @@ test.describe('SeeWhatISee.py history listing', () => {
     expect(r.stdout).toContain('Selection:\nselected words');
   });
 
+  test('a value flag takes --flag=value as well as --flag value', () => {
+    seedHistory();
+    const spaced = run(['--limit', '2', '--search', 'github', '--directory', tmpDir]);
+    const equals = run(['--limit=2', '--search=github', `--directory=${tmpDir}`]);
+    expect(equals.exitCode).toBe(0);
+    expect(equals.stdout).toBe(spaced.stdout);
+    expect(parseAll(equals.stdout)).toHaveLength(2);
+  });
+
+  test('=value on a flag that takes none is an error', () => {
+    for (const [arg, flag] of [['--all=2', '--all'], ['--help=x', '--help']]) {
+      const r = run([arg, '--directory', tmpDir]);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(`${flag} takes no value`);
+    }
+  });
+
+  test('only the first = splits, so a value keeps its own', () => {
+    writeFileOfRecords('log.json', [rec(1, { title: 'a=b pair' }), rec(2)]);
+    const r = run(['--search=a=b', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(parseAll(r.stdout).map((x) => x.title)).toEqual(['a=b pair']);
+  });
+
+  test('a value that reads like a flag is still a value', () => {
+    writeFileOfRecords('log.json', [rec(1, { title: 'about --all' }), rec(2)]);
+    const r = run(['--search=--all', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(parseAll(r.stdout).map((x) => x.title)).toEqual(['about --all']);
+  });
+
+  test('an unknown option is reported as it was written', () => {
+    const r = run(['--nope=2']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('Unknown option: --nope=2');
+  });
+
   test('rejects --all with --limit, and a non-positive --limit', () => {
     expect(run(['--all', '--limit', '3', '--directory', tmpDir]).exitCode).toBe(2);
     expect(run(['--limit', '0', '--directory', tmpDir]).exitCode).toBe(2);
@@ -856,6 +893,51 @@ test.describe('history.sh wrappers', () => {
     expect(result.stderr).toBe('');
     expect(result.exitCode).toBe(0);
     expect(parseAll(result.stdout).map((r) => r.title)).toEqual(['about --copy semantics']);
+  });
+
+  test('the action check sees --flag=value too', () => {
+    // The wrappers look for a count or filter flag by name; the =value
+    // form is the same action written differently.
+    for (const script of [CLAUDE, GENERIC, GEMINI]) {
+      const result = runWrapper(script, ['--limit=2', `--directory=${tmpDir}`]);
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      expect(parseAll(result.stdout).map((r) => r.url)).toEqual([
+        'http://example.com/page2', 'http://example.com/page3',
+      ]);
+    }
+  });
+
+  test('gemini: --search=value does not swallow the next argument', () => {
+    // --search carries its own value here, so --copy after it is the
+    // flag, not that value.
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-target-'));
+    try {
+      const result = runWrapper(
+        GEMINI, ['--search=example', '--copy', `--directory=${tmpDir}`],
+        { TARGET_DIR: target });
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      expect(parseAll(result.stdout)).toHaveLength(3);
+      expect(fs.existsSync(path.join(target, 'SeeWhatISee'))).toBe(true);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  test('gemini: --search=--copy keeps --copy as the search term', () => {
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-target-'));
+    try {
+      writeFileOfRecords('log.json', [rec(1, { title: 'about --copy' }), rec(2)]);
+      const result = runWrapper(
+        GEMINI, ['--search=--copy', `--directory=${tmpDir}`], { TARGET_DIR: target });
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      expect(parseAll(result.stdout).map((r) => r.title)).toEqual(['about --copy']);
+      expect(fs.existsSync(path.join(target, 'SeeWhatISee'))).toBe(false);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
   });
 
   test('--help reaches the backend through the wrapper', () => {
