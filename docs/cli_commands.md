@@ -281,7 +281,7 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   whitespace and stray carriage returns from a hand-edit don't ride
   along into the output.
 
-## `see-what-i-see-history` — browse or search past captures
+## `see-what-i-see-history` — scan or search past captures
 
 - **What it does.** Runs the history actions above with whatever
   flags the request implies, then reports (or opens) the matches.

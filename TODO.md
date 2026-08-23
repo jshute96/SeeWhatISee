@@ -81,7 +81,7 @@
 
 ### Pending docs for features not released yet
 
-* **`see-what-i-see-history` skill** — browse or search past captures
+* **`see-what-i-see-history` skill** — scan or search past captures
   by count, date/time, site, or text, instead of only the latest one.
   * README's command lists (Claude plugin, Gemini extension, generic
     skills) each need the new skill.

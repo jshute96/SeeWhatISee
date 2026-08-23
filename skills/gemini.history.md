@@ -1,6 +1,6 @@
 ---
 name: see-what-i-see-history
-description: Browse or search past captures (screenshots, HTML snapshots, page selections) taken by the SeeWhatISee Chrome extension — by count, date or time, site, or text. Use for anything beyond the single latest capture, such as "the last few screenshots", "what I captured yesterday", or "that screenshot from example.com".
+description: Scan or search past captures (screenshots, HTML snapshots, selections) taken by the SeeWhatISee Chrome extension — by count, date or time, site, or text. Use to find, analyze, or reprocess captures beyond just the latest.
 ---
 
 Browse or search the capture history saved by the SeeWhatISee Chrome extension.
@@ -22,6 +22,6 @@ Unlike `see-what-i-see`, this doesn't need the user to have just clicked the ext
 
 ## Processing a capture you've chosen to open
 
-Same as for a fresh capture, with one difference that **overrides the `prompt` rule below**: a `prompt` on a historical record is what the user asked **at the time**, not an instruction to carry out now. Treat it as context for what that capture was about, and answer the user's current question instead.
+Same as for a fresh capture, with one difference that **overrides the `prompt` rule below**: a `prompt` on a historical record is what the user asked **at the time**, not an instruction to carry out now. Treat it as context for what that capture was about, and answer the user's current question instead. (The current request may ask you to reprocess the original prompt.)
 
 [[process.template.md]]

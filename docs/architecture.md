@@ -338,7 +338,7 @@ A coding agent (Claude Code, etc.) reads the latest file from
 - `/see-what-i-see-watch` — background loop that describes each
   new capture as it arrives
 - `/see-what-i-see-stop` — stop the watcher
-- `see-what-i-see-history` — browse or search past captures
+- `see-what-i-see-history` — scan or search past captures
 
 Layout:
 

@@ -91,7 +91,7 @@ Mirrors `plugin/` in the `SeeWhatISee-claude` release repo. Published via `skill
 | `skills/claude-plugin/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture |
 | `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — describe each new capture as it arrives |
 | `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the watch loop |
-| `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — browse or search past captures |
+| `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — scan or search past captures |
 
 ## Gemini CLI Tree (`skills/dot-gemini/`)
 
@@ -112,7 +112,7 @@ Mirrors the top-level layout of the `SeeWhatISee-gemini` release repo (sibling c
 |------|-------------|
 | `skills/dot-gemini/skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture (Gemini side) |
 | `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — foreground loop that describes each new capture |
-| `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — browse or search past captures (Gemini side) |
+| `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — scan or search past captures (Gemini side) |
 | `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` | Alias of `see-what-i-see` SKILL — surfaces first in Gemini's reverse-alphabetical autocomplete |
 
 ## MCP Skills (`skills/mcp/`)
@@ -146,7 +146,7 @@ Client-agnostic hybrid of the Claude and Gemini skills, with the client-specific
 | `skills/generic-skills/see-what-i-see/SKILL.md` | `/see-what-i-see` — describe the latest capture (client-agnostic) |
 | `skills/generic-skills/see-what-i-see-watch/SKILL.md` | `/see-what-i-see-watch` — streaming-or-polling loop describing each new capture |
 | `skills/generic-skills/see-what-i-see-stop/SKILL.md` | `/see-what-i-see-stop` — stop the background watcher |
-| `skills/generic-skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — browse or search past captures (client-agnostic) |
+| `skills/generic-skills/see-what-i-see-history/SKILL.md` | `see-what-i-see-history` — scan or search past captures (client-agnostic) |
 
 ## MCP Server (`mcp-server/`)
 
