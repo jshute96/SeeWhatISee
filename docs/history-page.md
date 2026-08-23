@@ -205,6 +205,32 @@ Finding that tab is less obvious than it looks:
   - It wraps (`flex-wrap`, plus `min-width: 0` on the search box):
     four clusters need ~900px, and without wrapping a narrow window
     pushes the trailing button off an edge nothing can scroll to.
+- Keyboard scrolling. `<main>` is the scroll box, not the document,
+  and Chrome sends arrows / Page Up-Down / Home-End to the focused
+  element's nearest scrollable ancestor.
+  - Unaided those keys therefore do nothing anywhere on the page:
+    focus sits on `<body>` or a toolbar button, and none of those has
+    a scrollable ancestor.
+  - So the keys are handled globally rather than by parking focus: a
+    `keydown` listener on `document` scrolls `<main>` whatever has
+    focus. Nothing auto-focuses, so no flow can strand the keys by
+    dropping focus back to `<body>`.
+  - Two exceptions it steps aside for, leaving the key to do what it
+    would have done natively:
+    - A form control, for the keys it uses itself — the arrows and
+      Home/End move the caret in the search box. Page Up/Down are not
+      among them: an `<input>` does nothing with those, and searching
+      and then paging through the hits has to work.
+    - A cell's own `.scroll-box`, for every scrolling key, so one
+      pressed inside a long URL or prompt scrolls that box.
+  - The `.scroll-box`es carry `tabindex="-1"` (set in `history.ts`)
+    only so that clicking one focuses it and Chrome aims the keys
+    there. Not a Tab stop, and no focus ring — it's a click target,
+    not a control.
+  - Modifiers stay with Chrome: Alt (Alt-Left is Back), Meta, Shift
+    (which extends a selection), and every Ctrl chord except
+    Ctrl-Home / Ctrl-End — notably Ctrl-Page Up/Down, which switches
+    browser tabs.
 - The table's header row is sticky. Two non-obvious consequences:
   - `<main>` carries **no top padding** — padding there would be a
     strip above the pinned header that rows stay visible in as they

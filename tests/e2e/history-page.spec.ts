@@ -330,6 +330,123 @@ test('Load older captures stays hidden when there are no archives', async ({
   await page.close();
 });
 
+// The table scrolls inside `<main>`, not on the document, so the
+// scrolling keys only reach it because `history.ts` routes them there
+// by hand. Everything here is about *where* a key lands.
+const TALL_SEED: SeededRecord[] = Array.from({ length: 40 }, (_, i) => ({
+  timestamp: `2026-01-02T03:04:${String(i).padStart(2, '0')}.000Z`,
+  url: `https://example.com/row-${i}`,
+  title: `Row ${i}`,
+}));
+
+async function scrollTopOfMain(page: Page): Promise<number> {
+  return page.locator('main').evaluate((el) => el.scrollTop);
+}
+
+test('scrolling keys scroll the table whatever has focus', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedLog(sw, TALL_SEED);
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+  const main = page.locator('main');
+  await expect(main).toHaveJSProperty('scrollTop', 0);
+
+  // Nothing clicked yet, so focus is on <body>, which has no
+  // scrollable ancestor. This is the case that was broken.
+  await page.keyboard.press('PageDown');
+  const paged = await scrollTopOfMain(page);
+  expect(paged).toBeGreaterThan(0);
+
+  await page.keyboard.press('ArrowUp');
+  expect(await scrollTopOfMain(page)).toBeLessThan(paged);
+
+  // A focused header button doesn't swallow the keys either.
+  await page.locator('#options-btn').focus();
+  await expect(page.locator('#options-btn')).toBeFocused();
+  await page.keyboard.press('End');
+  const ended = await scrollTopOfMain(page);
+  expect(ended).toBeGreaterThan(paged);
+
+  await page.keyboard.press('Home');
+  await expect(main).toHaveJSProperty('scrollTop', 0);
+
+  // Chrome's own chords are left alone: Ctrl-Page Down switches
+  // browser tabs, and Alt-Down is not ours either.
+  await page.keyboard.press('Control+PageDown');
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(main).toHaveJSProperty('scrollTop', 0);
+  // Ctrl-End is the exception — the familiar jump-to-the-bottom chord.
+  await page.keyboard.press('Control+End');
+  expect(await scrollTopOfMain(page)).toBe(ended);
+
+  await page.close();
+});
+
+test('the search box keeps the caret keys but not Page Up/Down', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedLog(sw, TALL_SEED);
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+  const main = page.locator('main');
+
+  await page.locator('#search').click();
+  await page.locator('#search').fill('example');
+  // Caret keys stay with the input: the table must sit still.
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#search')).toBeFocused();
+  await expect(main).toHaveJSProperty('scrollTop', 0);
+
+  // Page Up/Down do nothing in a single-line input, so they scroll the
+  // results the search just filtered — without taking focus away.
+  await page.keyboard.press('PageDown');
+  expect(await scrollTopOfMain(page)).toBeGreaterThan(0);
+  await expect(page.locator('#search')).toBeFocused();
+
+  await page.close();
+});
+
+test('a focused cell scroll-box takes the keys, but only if it overflows', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const longUrl = `https://example.com/search?${'utm_source=a&utm_medium=b&'.repeat(30)}q=cow`;
+  await seedLog(sw, [
+    ...TALL_SEED,
+    { timestamp: '2026-02-01T00:00:00.000Z', url: longUrl, title: 'Long' },
+  ]);
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+  const main = page.locator('main');
+
+  // Newest first, so the long-URL row leads. Clicking its box aims the
+  // keys at the box: it scrolls, and the table underneath doesn't.
+  const longBox = page.locator('#rows tr').first().locator('.page-cell .scroll-box');
+  await longBox.click({ position: { x: 4, y: 4 } });
+  await page.keyboard.press('PageDown');
+  await expect(longBox).not.toHaveJSProperty('scrollTop', 0);
+  await expect(main).toHaveJSProperty('scrollTop', 0);
+
+  // The subtle half: a box whose content fits has nothing to scroll,
+  // so the key must fall through to the table rather than being eaten.
+  const shortBox = page.locator('#rows tr').nth(1).locator('.page-cell .scroll-box');
+  await shortBox.click({ position: { x: 4, y: 4 } });
+  await page.keyboard.press('PageDown');
+  expect(await scrollTopOfMain(page)).toBeGreaterThan(0);
+
+  await page.close();
+});
+
 test('the Snapshots directory tooltip explains the disabled state', async ({
   extensionContext,
   extensionId,

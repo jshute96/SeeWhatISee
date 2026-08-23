@@ -237,6 +237,12 @@
     max-height: var(--thumb-h);
     overflow-y: auto;
   }
+  /* The box is focusable (`tabindex="-1"`, set in history.ts) purely
+     so that clicking it aims the scrolling keys at it. That's a click
+     target taking focus, not a control being operated, so it gets no
+     focus ring — one would draw a box around a cell the user just
+     clicked in and nothing else about it would have changed. */
+  .scroll-box:focus { outline: none; }
 
   /* `pre-wrap` keeps the user's line breaks in the prompt. */
   .prompt-box {
@@ -366,7 +372,11 @@
   <a href="chrome://extensions/" id="file-access-btn">extension settings</a>.
 </p>
 
-<main>
+<!-- `id` for history.ts, which scrolls this box in response to the
+     keyboard — the table scrolls in here rather than on the document,
+     so the scrolling keys have to be routed to it by hand. See the
+     "keyboard scrolling" block there. -->
+<main id="scroller">
   <p class="notice" id="empty" hidden>
     No captures in the log yet. Capture something and it will show up here.
   </p>

@@ -109,6 +109,9 @@
   * A **Snapshots directory** button at the right end of the search
     row opens the on-disk capture folder in a new tab. It replaces the
     *More ▸ Snapshots directory* menu entry, which is gone.
+  * The cursor keys, Page Up/Down and Home/End scroll the table
+    without clicking into it first. Click a long URL or prompt and
+    they scroll just that cell's box instead.
   * A **Restore** button appears in the Date cell of the one row that
     *Restore last capture* would re-open, so the capture you're
     looking at can be re-opened from where you found it.

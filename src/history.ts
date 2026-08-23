@@ -61,6 +61,108 @@ const olderEl = document.getElementById('older') as HTMLElement;
 const loadOlderBtn = document.getElementById('load-older') as HTMLButtonElement;
 const olderNoteEl = document.getElementById('older-note') as HTMLElement;
 const emptyArchivedEl = document.getElementById('empty-archived') as HTMLElement;
+const scrollerEl = document.getElementById('scroller') as HTMLElement;
+
+// ───────────────────────── keyboard scrolling ────────────────────────
+//
+// The table scrolls inside <main>, not on the document, and Chrome
+// sends the scrolling keys to the focused element's nearest scrollable
+// ancestor. Focus normally sits on <body> or on a header/toolbar
+// button — none of which has one — so out of the box the arrows and
+// Page Up/Down did nothing at all.
+//
+// Rather than parking focus somewhere, the page treats scrolling as a
+// background behaviour: whatever has focus, a scrolling key scrolls
+// <main>, with two deliberate exceptions.
+//   - A form control keeps the keys it uses itself — the arrows and
+//     Home/End move the caret in the search box. Page Up/Down aren't
+//     among them: a single-line input does nothing with those, and
+//     "type a search, then page through the hits" has to work.
+//   - A cell's own `.scroll-box` (a long URL or prompt) keeps them
+//     all, so a key pressed inside that box scrolls the box. The
+//     boxes are `tabindex="-1"` so that clicking one gives it focus
+//     and Chrome's native handling takes over — this handler only has
+//     to step aside.
+
+/** Fraction of the visible height one Page Up/Down moves. */
+const PAGE_SCROLL_FRACTION = 0.9;
+/** One arrow-key step. Chrome's own line step for a wheel-less scroll. */
+const LINE_SCROLL_PX = 40;
+
+/**
+ * How far this key should scroll `el`, or `null` if it isn't a
+ * scrolling key. Home/End ask for a full `scrollHeight` in either
+ * direction — more than the box can travel, and `scrollBy` clamps the
+ * excess, so it lands exactly at the end.
+ */
+function scrollStepFor(key: string, el: HTMLElement): number | null {
+  switch (key) {
+    case 'ArrowDown': return LINE_SCROLL_PX;
+    case 'ArrowUp': return -LINE_SCROLL_PX;
+    case 'PageDown': return el.clientHeight * PAGE_SCROLL_FRACTION;
+    case 'PageUp': return -el.clientHeight * PAGE_SCROLL_FRACTION;
+    case 'End': return el.scrollHeight;
+    case 'Home': return -el.scrollHeight;
+    default: return null;
+  }
+}
+
+/**
+ * The keys a focused form control uses for itself: they move the caret
+ * in a text field, and the selection in a `<select>`.
+ */
+const CARET_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End']);
+
+/** True for a control that consumes `CARET_KEYS` itself. */
+function usesCaretKeys(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+    || el.tagName === 'SELECT';
+}
+
+/**
+ * The innermost scrolling box between `start` and `<main>`, if any —
+ * i.e. a cell's `.scroll-box` that has content to scroll. Returns null
+ * once the walk reaches `<main>` itself, whose keys this handler owns,
+ * and for anything outside `<main>` (a toolbar button has no inner box
+ * to defer to, and walking on to <html> would let some future
+ * scrollable wrapper up there silently swallow the keys).
+ */
+function innerScroller(start: Element | null): HTMLElement | null {
+  if (!start || !scrollerEl.contains(start)) return null;
+  for (let el: Element | null = start; el instanceof HTMLElement && el !== scrollerEl;
+       el = el.parentElement) {
+    const overflowY = getComputedStyle(el).overflowY;
+    if ((overflowY === 'auto' || overflowY === 'scroll')
+        && el.scrollHeight > el.clientHeight) {
+      return el;
+    }
+  }
+  return null;
+}
+
+document.addEventListener('keydown', (e) => {
+  // A modified key that isn't ours must reach Chrome untouched: Alt
+  // and Meta combinations are browser navigation (Alt-Left is Back),
+  // and Shift-arrow / Shift-Home extend a text selection.
+  if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
+  // Ctrl-Home / Ctrl-End are the familiar jump-to-the-end chords, so
+  // those are ours. Every other Ctrl combination belongs to Chrome —
+  // notably Ctrl-Page Up/Down, which switches browser tabs.
+  if (e.ctrlKey && e.key !== 'Home' && e.key !== 'End') return;
+  const step = scrollStepFor(e.key, scrollerEl);
+  if (step === null) return;
+  const target = e.target instanceof Element ? e.target : null;
+  // Both exceptions above: leave the key alone and let the control or
+  // the inner box do what it would have done natively.
+  if (usesCaretKeys(target) && CARET_KEYS.has(e.key)) return;
+  if (innerScroller(target)) return;
+  scrollerEl.scrollBy({ top: step });
+  // Stops the double-scroll when focus already sits on a link inside
+  // <main>, where Chrome would have scrolled it as well.
+  e.preventDefault();
+});
 
 // The "Allow access to file URLs" toggle lives on Chrome's own
 // per-extension details page, not in our Options page — so this jumps
@@ -550,6 +652,24 @@ function filesCell(r: CaptureRecord): HTMLElement {
 }
 
 /**
+ * A cell box that scrolls internally rather than stretching its row
+ * (see `.scroll-box` in history.html).
+ *
+ * `tabindex="-1"` so a click lands focus on the box itself: Chrome
+ * then routes the scrolling keys to it, which is what makes "click a
+ * long URL, then Page Down" scroll that box instead of the table. -1
+ * keeps it out of the Tab order — there is one box per cell and
+ * tabbing through all of them to reach the next link would be worse
+ * than not being able to tab to any.
+ */
+function makeScrollBox(extraClass?: string): HTMLElement {
+  const box = document.createElement('div');
+  box.className = extraClass ? `${extraClass} scroll-box` : 'scroll-box';
+  box.tabIndex = -1;
+  return box;
+}
+
+/**
  * Page column — the captured tab's title above its URL. The URL is a
  * live link back to the page. Either half can be missing (restricted
  * tabs, uploads), so each is rendered only when present and the cell
@@ -566,8 +686,7 @@ function pageCell(r: CaptureRecord): HTMLElement {
   // Title and URL go in an inner scrolling box rather than capping the
   // <td> itself, because `overflow` on a table cell isn't reliably
   // honoured — and the cap has to cover the pair together anyway.
-  const box = document.createElement('div');
-  box.className = 'scroll-box';
+  const box = makeScrollBox();
   td.append(box);
   if (r.title) {
     const title = document.createElement('div');
@@ -600,8 +719,7 @@ function promptCell(r: CaptureRecord): HTMLElement {
     td.append(naSpan());
     return td;
   }
-  const box = document.createElement('div');
-  box.className = 'prompt-box scroll-box';
+  const box = makeScrollBox('prompt-box');
   box.textContent = r.prompt;
   td.append(box);
   return td;
