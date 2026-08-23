@@ -4,7 +4,7 @@ description: Scan or search past captures (screenshots, HTML snapshots, selectio
 allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/history.sh:*),Read(~/Downloads/SeeWhatISee/**)"
 ---
 
-Browse or search the capture history saved by the SeeWhatISee Chrome extension.
+Scan or search the capture history saved by the SeeWhatISee Chrome extension.
 
 Unlike `see-what-i-see`, this doesn't need the user to have just clicked the extension, so you can use it on your own whenever an earlier capture would answer the question at hand.
 

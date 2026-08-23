@@ -3,7 +3,7 @@ name: see-what-i-see-history
 description: Scan or search past captures (screenshots, HTML snapshots, selections) taken by the SeeWhatISee Chrome extension — by count, date or time, site, or text. Use to find, analyze, or reprocess captures beyond just the latest.
 ---
 
-Browse or search the capture history saved by the SeeWhatISee Chrome extension.
+Scan or search the capture history saved by the SeeWhatISee Chrome extension.
 
 Unlike `see-what-i-see`, this doesn't need the user to have just clicked the extension, so you can use it on your own whenever an earlier capture would answer the question at hand.
 
