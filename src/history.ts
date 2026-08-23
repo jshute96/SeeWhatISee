@@ -60,6 +60,7 @@ const snapshotsDirWrap = document.getElementById('snapshots-dir-wrap') as HTMLEl
 const olderEl = document.getElementById('older') as HTMLElement;
 const loadOlderBtn = document.getElementById('load-older') as HTMLButtonElement;
 const olderNoteEl = document.getElementById('older-note') as HTMLElement;
+const emptyArchivedEl = document.getElementById('empty-archived') as HTMLElement;
 
 // The "Allow access to file URLs" toggle lives on Chrome's own
 // per-extension details page, not in our Options page — so this jumps
@@ -627,27 +628,37 @@ function matches(r: CaptureRecord, terms: string[]): boolean {
 }
 
 /**
- * The "Load older captures" row under the table.
+ * The "Load older captures" control, next to the capture count in the
+ * toolbar.
  *
  * Hidden entirely when there's nothing more to offer — no archive
  * files, or every one already read — so a user who never fills the
- * 100-entry buffer never sees it. A read failure keeps the row up with
- * its message so the button stays available to retry.
+ * 100-entry buffer never sees it, and it disappears once every
+ * archive has been read. A read failure leaves its file unread, so the
+ * control stays up — carrying the message, with the button available
+ * to retry.
  */
 function renderOlder(): void {
   const remaining = unloadedArchives().length;
+  // A failed read leaves its file unread, so `remaining` alone already
+  // keeps this on screen after a failure; the `archiveError` term is
+  // belt-and-braces against a future failure mode that consumes the
+  // file anyway.
   olderEl.hidden = remaining === 0 && !archiveError;
   loadOlderBtn.disabled = archiveLoading || remaining === 0;
   loadOlderBtn.textContent = archiveLoading ? 'Loading…' : 'Load older captures';
-  if (archiveError) {
-    olderNoteEl.textContent = archiveError;
-  } else if (remaining > 0) {
-    // File count, not record count: the records inside are only known
-    // after reading, and the file count is what the wait scales with.
-    olderNoteEl.textContent = `${remaining} archived log ${remaining === 1 ? 'file' : 'files'} on disk`;
-  } else {
-    olderNoteEl.textContent = '';
-  }
+  // The count lives in the tooltip rather than beside the button: it's
+  // a file count, not a capture count, so on the toolbar row next to
+  // "88 captures" it read as a contradiction.
+  loadOlderBtn.title = remaining > 0
+    ? 'Recent captures from log.json are shown by default.\n'
+      + 'Older capture logs are stored in history*.json '
+      + `(${remaining} ${remaining === 1 ? 'file' : 'files'}).\n`
+      + 'Click to load them.'
+    : '';
+  // The note is for failures only — everything else this control has
+  // to say is in the tooltip.
+  olderNoteEl.textContent = archiveError;
 }
 
 function render(): void {
@@ -662,9 +673,16 @@ function render(): void {
   // "No captures in the log yet. Capture something…" is the wrong
   // story when archived captures are sitting right there unread — the
   // usual way to get here is a *Clear log history* on an account with
-  // archives. Suppress it and let the "Load older captures" row below
-  // speak for itself.
-  emptyEl.hidden = hasAny || unloadedArchives().length > 0;
+  // archives. The second notice points at the button instead of
+  // denying they exist.
+  //
+  // The notice used to be suppressed outright in that case, on the
+  // grounds that the "Load older captures" row sat right underneath
+  // it. It doesn't any more — it's up in the toolbar — so saying
+  // nothing would leave a blank page with no explanation at all.
+  const archivesWaiting = unloadedArchives().length > 0;
+  emptyEl.hidden = hasAny || archivesWaiting;
+  emptyArchivedEl.hidden = hasAny || !archivesWaiting;
   noMatchesEl.hidden = !hasAny || shown.length > 0;
   tableEl.hidden = shown.length === 0;
   // Only mention the filtered count when a filter is actually active —
@@ -727,7 +745,7 @@ async function loadCaptureDir(): Promise<void> {
   snapshotsDirBtn.disabled = captureDir === null;
   snapshotsDirWrap.title = captureDir === null
     ? 'No captures saved to disk yet, so there is no directory to open'
-    : captureDir;
+    : `Open the directory where capture files are stored:\n${captureDir}`;
 }
 
 async function loadFileExistence(): Promise<void> {
@@ -834,10 +852,13 @@ async function loadArchivesInteractively(): Promise<void> {
     if (failed > 0) {
       // Anything readable has already been merged in; this names what
       // is still missing rather than implying the whole load failed.
-      // The toggle being off fails *every* file, and the banner above
-      // is guaranteed visible in that case, so point at it.
+      // The toggle being off fails *every* file, and the file-access
+      // banner is guaranteed visible in that case, so point at it.
+      // Named, not placed ("above"/"below"): this text renders in the
+      // toolbar, which is above the banner, and was under the table,
+      // which was below it.
       archiveError = fileAccessBlocked
-        ? `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'} — see the note above.`
+        ? `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'} — see the file-access banner.`
         : `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'}.`;
     }
   } catch {

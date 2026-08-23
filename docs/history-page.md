@@ -88,8 +88,27 @@ Finding that tab is less obvious than it looks:
   `history-*.json` files on disk (see [architecture.md → Archived
   logs](architecture.md#archived-logs)). The page reads them back so
   the table can cover the whole history, not just the buffer.
-- **Load older captures** sits under the table — where the rows it adds
-  go — with a count of archive files not yet read.
+- **Load older captures** sits in the toolbar, right of the capture
+  count, and only while there is something left to load.
+  - It was under the table until users kept missing it: reaching it
+    meant scrolling the whole history, and the capture count at the
+    top read as surprisingly low with no visible explanation.
+  - It disappears again once every archive has been read. A partial
+    failure leaves its file unread, so the control stays up.
+    - `.older[hidden] { display: none }` is load-bearing: the
+      `display: flex` on `.older` outranks the UA `[hidden]` rule, so
+      without it the control showed even with nothing to load.
+  - The tooltip carries both the explanation and the count of unread
+    `history-*.json` files. That count isn't shown beside the button:
+    next to the capture count, a second and smaller *file* count read
+    as a contradiction.
+  - It quotes no entry count: the live log holds anywhere from
+    `LOG_MAX_ENTRIES - LOG_ARCHIVE_BATCH + 1` to `LOG_MAX_ENTRIES`
+    depending on where the flush cycle is, so any single number would
+    be wrong half the time.
+  - The text next to it is failure-only ("Could not read 2 archived
+    logs"), in error red and `role="status"` so it doesn't read as
+    more grey metadata next to the capture count.
   - Opt-in rather than automatic: reading them is a `file://` fetch,
     which is gated by the same **Allow access to file URLs** toggle as
     the thumbnails, and a long history is a lot of rows to render for a
@@ -106,6 +125,14 @@ Finding that tab is less obvious than it looks:
       make the records wrong, and dropping those rows would make
       captures vanish for a reason unrelated to them. They sort after
       the still-listed files (`archiveDisplayOrder`).
+- With the log empty but archives unread, a second empty-state notice
+  (`#empty-archived`) says so and points at the button.
+  - The usual "No captures in the log yet" would be a lie, and saying
+    nothing — what the page used to do, on the grounds that the button
+    sat directly below — leaves a blank page now that the button is up
+    in the toolbar.
+  - Two authored paragraphs toggled by `hidden`, not one whose text is
+    swapped, so the copy stays in the markup with the rest of it.
 - Merging is a plain concatenation: the storage log, then each archive
   file's records, files in `getArchiveFilePaths()` order (newest first
   by download start time). No sort; dedup only on exact record text.
@@ -171,6 +198,13 @@ Finding that tab is less obvious than it looks:
 
 - Sticky shell: header bar, then a non-scrolling toolbar row (so the
   search box stays put), then the table scrolling inside `<main>`.
+- The toolbar row, left to right: *Search:* + the box, the capture
+  count, *Load older captures* (only while there is something to
+  load), then *Snapshots directory* pushed to the right edge with
+  `margin-left: auto`. Nothing here scrolls away.
+  - It wraps (`flex-wrap`, plus `min-width: 0` on the search box):
+    four clusters need ~900px, and without wrapping a narrow window
+    pushes the trailing button off an edge nothing can scroll to.
 - The table's header row is sticky. Two non-obvious consequences:
   - `<main>` carries **no top padding** — padding there would be a
     strip above the pinned header that rows stay visible in as they
@@ -429,7 +463,7 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
     surfaced on the toolbar icon/tooltip. A greyed button says the
     same thing on the surface the user is already looking at, and its
     tooltip carries the reason.
-  - Enabled it shows the resolved path as its tooltip.
+  - Enabled, it shows the resolved path in its tooltip.
   - The `title` sits on a wrapper `<span>`, not the button: Chrome
     delivers no mouse events to a disabled control, so a tooltip on
     the button would vanish in the state that needs explaining.

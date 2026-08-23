@@ -17,12 +17,13 @@
 // so the `(deleted)` markers never fire and the file-access banner
 // stays hidden.
 //
-// The "load older captures" row is out of reach for a second reason:
-// Playwright rewrites every download into its own artifacts directory
-// under a UUID, so the `history-*.json` archives a real capture writes
-// never match the path `getArchiveFilePaths()` looks for. The
-// archiving itself is covered by `log-archive.spec.ts` and
-// `tests/unit/log-archive.test.mjs`.
+// *Load older captures* with something to load is out of reach for a
+// second reason: Playwright rewrites every download into its own
+// artifacts directory under a UUID, so the `history-*.json` archives a
+// real capture writes never match the path `getArchiveFilePaths()`
+// looks for. The archiving itself is covered by `log-archive.spec.ts`
+// and `tests/unit/log-archive.test.mjs`. Its *absence* — the control
+// hidden, and the plain empty-log notice — is covered below.
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -299,6 +300,46 @@ test('the History page links out to Options and Help but not itself', async ({
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/history.html`);
   await expect(page.locator('.app-header .header-btn')).toHaveText(['Options', 'Help']);
+  await page.close();
+});
+
+// The archives themselves are out of reach here (see the file
+// header), so this covers the other half: with nothing to load, the
+// control must not be on screen at all. It used to be — `.older`'s
+// `display: flex` outranks the UA `[hidden]` rule, so the row showed
+// with an empty note beside a disabled button.
+test('Load older captures stays hidden when there are no archives', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedLog(sw, SEED);
+  const page = await extensionContext.newPage();
+  await openHistory(page, extensionId);
+  await expect(page.locator('#older')).toBeHidden();
+  // It lives in the toolbar now, not under the table — a move back
+  // would leave every other assertion here passing.
+  await expect(page.locator('.toolbar #older')).toHaveCount(1);
+  await expect(page.locator('main #older')).toHaveCount(0);
+  // With no archives the plain empty-log notice is the right story;
+  // the archives-are-waiting one stays out of the way.
+  await seedLog(sw, []);
+  await expect(page.locator('#empty')).toBeVisible();
+  await expect(page.locator('#empty-archived')).toBeHidden();
+  await page.close();
+});
+
+test('the Snapshots directory tooltip explains the disabled state', async ({
+  extensionContext,
+  extensionId,
+}) => {
+  const page = await extensionContext.newPage();
+  await page.goto(`chrome-extension://${extensionId}/history.html`);
+  // On the wrapper, not the button: Chrome shows no tooltip for a
+  // disabled control.
+  await expect(page.locator('#snapshots-dir-wrap'))
+    .toHaveAttribute('title', /no directory to open/);
   await page.close();
 });
 

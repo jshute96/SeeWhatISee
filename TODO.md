@@ -98,10 +98,12 @@
   * Thumbnails and file links need "Allow access to file URLs"
     enabled for the extension; the page says so, with a link to the
     settings page carrying the toggle.
-  * **Load older captures** below the table pulls in captures older
-    than the most recent 100, which are archived to
+  * **Load older captures**, next to the capture count, pulls in
+    captures older than the most recent 100, which are archived to
     `history-<timestamp>.json` files next to `log.json` instead of
-    being discarded. Needs the same file-access permission.
+    being discarded. Needs the same file-access permission. It only
+    appears while there are unread archives, and its tooltip says how
+    many.
     * *Clear log history* doesn't delete those archive files, so the
       History page can still load them afterwards.
   * A **Snapshots directory** button at the right end of the search

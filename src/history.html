@@ -37,10 +37,16 @@
   /* Deliberately no `border-bottom`: it would span the full page
      width while the table below is inset by <main>'s side padding,
      leaving a rule sticking out past both table edges. The table's
-     own top border already separates it from this row. */
+     own top border already separates it from this row.
+
+     Wraps: the row carries four clusters (search, count, Load older
+     captures, Snapshots directory), which together need ~900px.
+     Without `flex-wrap` a narrow window pushes the trailing button off
+     the right edge, where nothing can scroll to it. */
   .toolbar {
     flex: none;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 12px 24px;
@@ -58,6 +64,9 @@
     border: 1px solid #999;
     border-radius: 4px;
     width: 360px;
+    /* An input's default intrinsic minimum keeps it near its `size`
+       width; this lets it give ground before the row wraps. */
+    min-width: 0;
   }
   .toolbar .count {
     font-size: 13px;
@@ -241,18 +250,24 @@
     padding: 4px 6px;
   }
 
-  /* "Load older captures" row under the table. Scrolls with the rows
-     (it's inside <main>) so it sits at the end of the history, which
-     is where the records it loads are appended. */
+  /* "Load older captures", inline in the toolbar, so no margins of its
+     own — the toolbar's own `gap` spaces it from the count beside it. */
   .older {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin: 12px 0;
   }
+  /* Needed: the `display: flex` above outranks the UA `[hidden]` rule,
+     so without this the control shows even when `hidden` is set. */
+  .older[hidden] {
+    display: none;
+  }
+  /* Only ever carries a read failure now; the archive-file count it
+     used to show lives in the button's tooltip instead. Error red so
+     it doesn't read as more grey metadata beside "88 captures". */
   .older-note {
     font-size: 13px;
-    color: #555;
+    color: #b00020;
   }
 
   /* Empty / error states shown instead of the table. The top margin
@@ -312,6 +327,19 @@
   <input type="search" id="search" placeholder="Search URL, title, or prompt…"
          autocomplete="off" spellcheck="false">
   <span class="count" id="count"></span>
+  <!-- Older captures live in `history-*.json` files on disk rather
+       than in storage, so they're loaded on demand — reading them
+       means a file:// fetch, which the same "Allow access to file
+       URLs" toggle gates. Next to the capture count because that
+       count is what it changes, and because under the table it was
+       a scroll away from the number it explains. Hidden unless there
+       is something left to load. -->
+  <span class="older" id="older" hidden>
+    <button type="button" id="load-older" class="btn">Load older captures</button>
+    <!-- Read failures only. `role="status"` so the failure is
+         announced: it appears with no focus change. -->
+    <span class="older-note" id="older-note" role="status"></span>
+  </span>
   <!-- Opens `file://<downloads>/SeeWhatISee/` in a new tab. Starts
        disabled: the directory path is only known once the downloads
        list has been searched for our `log.json` record, and it stays
@@ -342,6 +370,14 @@
   <p class="notice" id="empty" hidden>
     No captures in the log yet. Capture something and it will show up here.
   </p>
+  <!-- Same situation, different story: the log is empty but archived
+       captures are sitting on disk unread, so "capture something"
+       would be wrong. Two authored paragraphs rather than one whose
+       text gets swapped, so the copy stays in the markup. -->
+  <p class="notice" id="empty-archived" hidden>
+    Nothing in the current log, but older captures are archived on
+    disk — use <b>Load older captures</b> at the top to read them.
+  </p>
   <p class="notice" id="no-matches" hidden>
     No captures match your search.
   </p>
@@ -357,15 +393,6 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
-  <!-- Older captures live in `history-*.json` files on disk rather
-       than in storage, so they're loaded on demand — reading them
-       means a file:// fetch, which the same "Allow access to file
-       URLs" toggle gates. Sits below the table because that's where
-       the rows it adds go. -->
-  <div class="older" id="older" hidden>
-    <button type="button" id="load-older" class="btn">Load older captures</button>
-    <span class="older-note" id="older-note"></span>
-  </div>
 </main>
 
 <script type="module" src="history.js"></script>
