@@ -13,9 +13,9 @@
 // asked — see `docs/log-consistency.md`.
 //
 // Entries that age out of that buffer aren't lost: they're flushed
-// in batches to `history-<timestamp>.json` archive files beside
+// in batches to `history-<timestamp>.json` history files beside
 // `log.json`, so the full capture history survives on disk without
-// any single write growing without bound. See "Archiving" below.
+// any single write growing without bound. See "Flushing" below.
 //
 // Also home to `compactTimestamp` — the filename suffix every
 // capture uses to stay unique on disk. Lives here because the log
@@ -23,10 +23,10 @@
 
 import { type CaptureRecord } from './types.js';
 import {
-  ARCHIVE_FILE_PREFIX,
+  HISTORY_FILE_PREFIX,
   LOG_FILE_NAME,
   downloadArtifact,
-  getArchiveFilePaths,
+  getHistoryFilePaths,
   waitForDownloadComplete,
 } from './downloads.js';
 import { LogWriteBlockedError, inspectLogFile } from './log-reconcile.js';
@@ -44,21 +44,21 @@ export const LOG_STORAGE_KEY = 'captureLog';
  */
 export const LOG_MAX_ENTRIES = 100;
 /**
- * How many of the oldest entries are flushed to an archive file each
+ * How many of the oldest entries are flushed to a history file each
  * time the log goes over `LOG_MAX_ENTRIES`.
  *
  * Half the cap, deliberately, rather than evicting one entry per
- * capture: an archive write is a whole extra file, so amortising it
+ * capture: a history file write is a whole extra file, so amortising it
  * over 50 captures keeps the steady-state cost of a capture at one
  * `log.json` rewrite. The visible consequence is that once the log has
  * filled, `log.json` (and the History page's in-storage view) holds
- * `LOG_MAX_ENTRIES - LOG_ARCHIVE_BATCH + 1` to `LOG_MAX_ENTRIES`
+ * `LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1` to `LOG_MAX_ENTRIES`
  * entries depending on where in the cycle it is.
  */
-export const LOG_ARCHIVE_BATCH = 50;
+export const LOG_HISTORY_BATCH = 50;
 
 /**
- * Name of the archive file holding `batch`.
+ * Name of the history file holding `batch`.
  *
  * Named for the **newest** record it contains, so the name says what
  * the file ends at and normally matches that capture's own screenshot
@@ -70,20 +70,20 @@ export const LOG_ARCHIVE_BATCH = 50;
  * Falls back to `fallback` for a record whose timestamp won't parse (a
  * hand-edited log).
  *
- * **Never returns a name already in `used`** — the archive files
+ * **Never returns a name already in `used`** — the history files
  * already on disk, plus the names handed out during *this* drain —
  * advancing the stamp a millisecond at a time until it's free. Every
  * write uses `conflictAction: 'overwrite'`, so a collision would
- * silently destroy the batch that landed first, and archives on disk
+ * silently destroy the batch that landed first, and history files on disk
  * are exactly what a capture must never damage.
  *
- * A same-name clash with an existing archive isn't hypothetical: a
+ * A same-name clash with an existing history file isn't hypothetical: a
  * user who deletes rows out of a `log.json` that later refills past
  * the cap produces a different batch of 50 ending at the same record,
  * and so the same name.
  *
  * Bumping the stamp rather than appending a `-1`, `-2`, … suffix keeps
- * every archive name matching one pattern, so anything reading the
+ * every history file name matching one pattern, so anything reading the
  * directory can parse the stamp without a special case. It essentially
  * never fires, because `uniqueTimestamp` keeps the record timestamps
  * these names come from unique.
@@ -96,7 +96,7 @@ export const LOG_ARCHIVE_BATCH = 50;
  * A *retried* flush deliberately reuses the name: same batch, same
  * contents, and overwriting the failed write is what we want.
  */
-function archiveFileName(
+function historyFileName(
   batch: CaptureRecord[],
   fallback: Date,
   used: Set<string>,
@@ -104,10 +104,10 @@ function archiveFileName(
   const last = batch[batch.length - 1];
   const parsed = new Date(last?.timestamp ?? '');
   let d = Number.isNaN(parsed.getTime()) ? fallback : parsed;
-  let name = `${ARCHIVE_FILE_PREFIX}${compactTimestamp(d)}.json`;
+  let name = `${HISTORY_FILE_PREFIX}${compactTimestamp(d)}.json`;
   while (used.has(name)) {
     d = new Date(d.getTime() + 1);
-    name = `${ARCHIVE_FILE_PREFIX}${compactTimestamp(d)}.json`;
+    name = `${HISTORY_FILE_PREFIX}${compactTimestamp(d)}.json`;
   }
   used.add(name);
   return name;
@@ -115,7 +115,7 @@ function archiveFileName(
 
 /**
  * Render a slice of the log as the newline-delimited JSON both
- * `log.json` and the archive files use — one `serializeRecord` per
+ * `log.json` and the history files use — one `serializeRecord` per
  * line, trailing newline included.
  *
  * Every write of either file goes through here so the two formats
@@ -132,7 +132,7 @@ export function serializeLog(records: CaptureRecord[]): string {
 }
 
 /**
- * Parse the newline-delimited JSON of a `log.json` / archive file.
+ * Parse the newline-delimited JSON of a `log.json` / history file.
  *
  * Lenient on purpose: these files sit in the user's Downloads folder
  * where they can be edited, truncated mid-write, or concatenated. A
@@ -186,8 +186,8 @@ export function parseLogLines(
  * `uniqueTimestamp` gives every save its own timestamp, so no two
  * records the log *writes* can collide here. What's left is one copy
  * of a record reaching the History page twice: the page merges the
- * in-storage log with the archive files, and a batch that reached an
- * archive while the service worker died before the matching storage
+ * in-storage log with the history files, and a batch that reached a
+ * history file while the service worker died before the matching storage
  * write sits in both.
  *
  * `serializeRecord` supplies the key, not `JSON.stringify`: a record
@@ -224,7 +224,7 @@ export function dedupeRecords(records: CaptureRecord[]): CaptureRecord[] {
  * Wrapped in `serializeWrite` so it can't interleave with a
  * concurrent `recordCapture()` mid read-modify-write.
  *
- * Leaves `log.json` and the `history-*.json` archives alone: they're
+ * Leaves `log.json` and the `history-*.json` history files alone: they're
  * the user's files.
  */
 export async function clearCaptureLog(): Promise<void> {
@@ -270,14 +270,14 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
 
 /**
  * Append a record to the capture log: reconcile against the file on
- * disk, archive whatever the append pushes past the cap, write
- * `log.json`, then save the result to storage. Returns the
+ * disk, move whatever the append pushes past the cap into a history
+ * file, write `log.json`, then save the result to storage. Returns the
  * `chrome.downloads` id of the `log.json` write, which the tab-capture
  * paths hand back to the Capture page (and tests resolve to an on-disk
  * path).
  *
  * The single write path for every capture — screenshot, HTML,
- * selection, URL-only — so the reconcile and archiving rules can't
+ * selection, URL-only — so the reconcile and flush rules can't
  * apply on some paths and not others.
  *
  * ## Reconcile
@@ -300,7 +300,7 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * ## Out of sync
  *
  * A blocked reconcile **throws `LogWriteBlockedError`** before
- * anything is written: no archive files, no `log.json`, no storage
+ * anything is written: no history files, no `log.json`, no storage
  * change. The capture's screenshot / HTML are already on disk, and the
  * record rides on the error so the prompt that catches it can offer
  * Retry (call this again) or Overwrite (call this again with `force`).
@@ -319,31 +319,31 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  *
  * ## Ordering
  *
- * Archives, then `log.json`, then storage. Every step depends on the
+ * History files, then `log.json`, then storage. Every step depends on the
  * one before it having landed, and biasing the crash window toward
  * *the file being ahead of storage* is what makes it recoverable: the
  * next reconcile reads the file and heals. The reverse order loses a
  * record whose artifacts are already written.
  *
- * ## Archiving
+ * ## Flushing
  *
  * Once the log exceeds `LOG_MAX_ENTRIES` the oldest
- * `LOG_ARCHIVE_BATCH` entries are written to their own
+ * `LOG_HISTORY_BATCH` entries are written to their own
  * `history-<timestamp>.json` beside `log.json` and dropped from
  * storage. `while`, not `if`, so a log that starts far over the cap
- * (the cap was lowered, or entries predate archiving) drains in
+ * (the cap was lowered, or entries predate flushing) drains in
  * batches instead of one oversized file.
  *
- * **Order matters:** an entry leaves storage only *after* its archive
+ * **Order matters:** an entry leaves storage only *after* its history
  * file has been written. `kept` advances one batch at a time and only
  * once that batch is on disk, so entries are never trimmed out from
  * under a write that didn't happen.
  *
- * **A failed archive write is not a failed capture.** The capture's
+ * **A failed history file write is not a failed capture.** The capture's
  * screenshot / HTML is already on disk by the time we're called, so
  * rejecting here would leave that file referenced by nothing and lose
- * the record entirely. Instead the flush is abandoned, every
- * un-archived entry — the new record included — stays in storage, and
+ * the record entirely. Instead the flush is abandoned, every entry
+ * that hasn't moved — the new record included — stays in storage, and
  * the next capture retries. The log sits over its cap in the meantime,
  * which is the harmless failure. Entries whose batch *did* land are
  * already trimmed, so nothing is written twice.
@@ -375,7 +375,7 @@ export async function recordCapture(
       throw new LogWriteBlockedError(state.reason, record, state.directory);
     }
     // The probe already wrote the file it was probing, so the log is
-    // exactly what we handed it and there is nothing to archive.
+    // exactly what we handed it and there is nothing to move out.
     if (state.kind === 'written') {
       await chrome.storage.local.set({ [LOG_STORAGE_KEY]: [record] });
       return state.downloadId;
@@ -402,15 +402,15 @@ export async function recordCapture(
     // Never mutated in place: `kept` is reassigned per successful
     // batch, so an abandoned flush leaves a coherent list either way.
     let kept = [...base, record];
-    // `LOG_ARCHIVE_BATCH` is a tunable now that it's exported, and a
+    // `LOG_HISTORY_BATCH` is a tunable now that it's exported, and a
     // zero would make the loop below spin forever on an empty batch.
-    const batchSize = Math.max(1, LOG_ARCHIVE_BATCH);
+    const batchSize = Math.max(1, LOG_HISTORY_BATCH);
     const now = Date.now();
     let flushed = 0;
     const usedNames = new Set<string>();
-    // Seeded with the archives already on disk, so a flush can't land
+    // Seeded with the history files already on disk, so a flush can't land
     // on top of one. Only paid when a flush is actually about to
-    // happen — once per 50 captures, not once per capture. Archives
+    // happen — once per 50 captures, not once per capture. History files
     // Chrome has lost track of (download history cleared) are
     // invisible here, which is the residual case noted in
     // `docs/log-consistency.md`.
@@ -422,11 +422,11 @@ export async function recordCapture(
     // `log.json` growing without bound.
     if (kept.length > LOG_MAX_ENTRIES) {
       try {
-        for (const path of await getArchiveFilePaths()) {
+        for (const path of await getHistoryFilePaths()) {
           usedNames.add(path.replace(/^.*[/\\]/, ''));
         }
       } catch (err) {
-        console.info('[SeeWhatISee] could not list existing archives; names unseeded:', err);
+        console.info('[SeeWhatISee] could not list existing history files; names unseeded:', err);
       }
     }
     try {
@@ -446,7 +446,7 @@ export async function recordCapture(
         // the moment the write begins, so without this the ordering
         // would be nominal only — the same reason `log.json` waits.
         await writeJsonFileComplete(
-          archiveFileName(batch, fallback, usedNames),
+          historyFileName(batch, fallback, usedNames),
           serializeLog(batch),
         );
         kept = kept.slice(batchSize);
@@ -456,7 +456,7 @@ export async function recordCapture(
       // capture retries, so this must not reach the chrome://extensions
       // Errors page. `kept` is reassigned only after a batch lands, so
       // an abandoned drain leaves a coherent list either way.
-      console.info('[SeeWhatISee] log archive write failed; retrying next capture:', err);
+      console.info('[SeeWhatISee] history file write failed; retrying next capture:', err);
     }
     // File first, storage second — see "Ordering" above. Awaited to
     // completion, not just to the download *starting*, so the ordering
@@ -478,7 +478,8 @@ export async function recordCapture(
 }
 
 /**
- * Write a JSON sidecar to the download dir, overwriting any existing file.
+ * Write a JSON log file — `log.json` or a `history-*.json` — to the
+ * download dir, overwriting any existing file.
  * `text` is the pre-formatted JSON to write (callers use serializeRecord
  * to guarantee canonical key order). Returns the chrome.downloads
  * download id, which tests use to resolve the on-disk path.
@@ -604,7 +605,7 @@ export function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
  * Their `CaptureRecord.timestamp`s are pulled apart on the way into
  * the log by `uniqueTimestamp`, so one names a single record within
  * `log.json` — enough to cursor on, and no more. Uniqueness is
- * maintained there rather than across the archive files, and a
+ * maintained there rather than across the history files, and a
  * record can sit a millisecond past the stamp in its own filenames.
  * Exact-match dedup (`dedupeRecords`) still keys on the whole record
  * — anything looser has already caused one bug on the History page.

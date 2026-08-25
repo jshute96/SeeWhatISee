@@ -1,4 +1,4 @@
-// Unit tests for the capture log's archive rotation — `recordCapture`
+// Unit tests for the capture log's history file flushing — `recordCapture`
 // flushing the oldest entries into `history-<timestamp>.json` once the
 // in-storage buffer goes over its cap, plus the `parseLogText` reader
 // the History page uses to read those files back.
@@ -44,7 +44,7 @@ function stubChrome(existing = []) {
         remove: async (key) => { delete store[key]; },
       },
     },
-    // File reads off: these tests are about archiving, and the
+    // File reads off: these tests are about flushing, and the
     // record-only path is the one that appends without needing a
     // `fetch` stub as well.
     extension: { isAllowedFileSchemeAccess: async () => false },
@@ -99,7 +99,7 @@ function rec(n) {
 }
 
 /** The bodies of the `history-*.json` writes, in write order. */
-function archiveWrites() {
+function historyFileWrites() {
   return writes.filter((w) => w.filename.includes('/history-'));
 }
 
@@ -108,25 +108,25 @@ function lastLogWrite() {
   return writes.filter((w) => w.filename.endsWith('/log.json')).pop();
 }
 
-test('under the cap, nothing is archived', async () => {
+test('under the cap, nothing moves out of the log', async () => {
   const store = stubChrome([rec(1), rec(2)]);
   await recordCapture(rec(3));
-  assert.equal(archiveWrites().length, 0);
+  assert.equal(historyFileWrites().length, 0);
   assert.equal(store.captureLog.length, 3);
   assert.equal(parseLogText(lastLogWrite().body).length, 3);
 });
 
-test('crossing the cap flushes the oldest half to an archive file', async () => {
+test('crossing the cap flushes the oldest half to a history file', async () => {
   // 100 stored + 1 new = 101, one over the cap, so the oldest 50 go.
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   await recordCapture(rec(100));
 
-  const archives = archiveWrites();
-  assert.equal(archives.length, 1);
-  const archived = parseLogText(archives[0].body);
-  assert.equal(archived.length, 50);
-  assert.equal(archived[0].screenshot.filename, 'shot-0.png');
-  assert.equal(archived[49].screenshot.filename, 'shot-49.png');
+  const historyFiles = historyFileWrites();
+  assert.equal(historyFiles.length, 1);
+  const movedOut = parseLogText(historyFiles[0].body);
+  assert.equal(movedOut.length, 50);
+  assert.equal(movedOut[0].screenshot.filename, 'shot-0.png');
+  assert.equal(movedOut[49].screenshot.filename, 'shot-49.png');
 
   // Storage keeps the rest, oldest-first, with the new record last.
   assert.equal(store.captureLog.length, 51);
@@ -136,7 +136,7 @@ test('crossing the cap flushes the oldest half to an archive file', async () => 
   assert.deepEqual(parseLogText(lastLogWrite().body), store.captureLog);
 });
 
-test('the archive is named for the newest record it holds', async () => {
+test('the history file is named for the newest record it holds', async () => {
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   await recordCapture(rec(100));
   // rec(49) is the last record in the batch. `compactTimestamp` is
@@ -149,22 +149,22 @@ test('the archive is named for the newest record it holds', async () => {
     `${prev.getFullYear()}${pad(prev.getMonth() + 1)}${pad(prev.getDate())}`
     + `-${pad(prev.getHours())}${pad(prev.getMinutes())}${pad(prev.getSeconds())}`
     + `-${pad(prev.getMilliseconds(), 3)}`;
-  assert.equal(archiveWrites()[0].filename, `SeeWhatISee/history-${stamp}.json`);
+  assert.equal(historyFileWrites()[0].filename, `SeeWhatISee/history-${stamp}.json`);
 });
 
 test('a log far over the cap drains in batches, oldest file first', async () => {
   // 200 stored + 1: 201 → 151 → 101 → 51, i.e. three flushes.
   const store = stubChrome(Array.from({ length: 200 }, (_, i) => rec(i)));
   await recordCapture(rec(200));
-  const archives = archiveWrites();
-  assert.equal(archives.length, 3);
-  assert.equal(parseLogText(archives[0].body)[0].screenshot.filename, 'shot-0.png');
-  assert.equal(parseLogText(archives[1].body)[0].screenshot.filename, 'shot-50.png');
-  assert.equal(parseLogText(archives[2].body)[0].screenshot.filename, 'shot-100.png');
+  const historyFiles = historyFileWrites();
+  assert.equal(historyFiles.length, 3);
+  assert.equal(parseLogText(historyFiles[0].body)[0].screenshot.filename, 'shot-0.png');
+  assert.equal(parseLogText(historyFiles[1].body)[0].screenshot.filename, 'shot-50.png');
+  assert.equal(parseLogText(historyFiles[2].body)[0].screenshot.filename, 'shot-100.png');
   assert.equal(store.captureLog.length, 51);
 });
 
-test('a failed archive write keeps every entry, including the new one', async () => {
+test('a failed history file write keeps every entry, including the new one', async () => {
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
   chrome.downloads.download = async (opts) => {
@@ -176,39 +176,39 @@ test('a failed archive write keeps every entry, including the new one', async ()
   // record on the floor.
   const logId = await recordCapture(rec(100));
   assert.ok(logId > 0);
-  assert.equal(archiveWrites().length, 0);
-  // Nothing archived means nothing trimmed — the log simply sits one
+  assert.equal(historyFileWrites().length, 0);
+  // Nothing moved out means nothing trimmed — the log simply sits one
   // over its cap until the next capture retries the flush.
   assert.equal(store.captureLog.length, 101);
   assert.equal(store.captureLog[100].screenshot.filename, 'shot-100.png');
   assert.deepEqual(parseLogText(lastLogWrite().body), store.captureLog);
 });
 
-test('a mid-drain failure keeps what it could not archive, and no more', async () => {
+test('a mid-drain failure keeps what it could not move out, and no more', async () => {
   // Three batches due; the second write fails. Batch 1 is on disk, so
   // its entries are gone from storage; batches 2-3 stay put. Nothing
   // may end up in both places.
   const store = stubChrome(Array.from({ length: 200 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
-  let archiveCalls = 0;
+  let historyFileCalls = 0;
   chrome.downloads.download = async (opts) => {
     if (opts.filename.includes('/history-')) {
-      archiveCalls += 1;
-      if (archiveCalls === 2) throw new Error('disk full');
+      historyFileCalls += 1;
+      if (historyFileCalls === 2) throw new Error('disk full');
     }
     return realDownload(opts);
   };
   await recordCapture(rec(200));
 
-  const archived = parseLogText(archiveWrites()[0].body);
-  assert.equal(archiveWrites().length, 1);
-  assert.equal(archived[0].screenshot.filename, 'shot-0.png');
+  const movedOut = parseLogText(historyFileWrites()[0].body);
+  assert.equal(historyFileWrites().length, 1);
+  assert.equal(movedOut[0].screenshot.filename, 'shot-0.png');
   // 201 total - the 50 that reached disk.
   assert.equal(store.captureLog.length, 151);
   assert.equal(store.captureLog[0].screenshot.filename, 'shot-50.png');
-  // No overlap between the archive file and what's still in storage.
+  // No overlap between the history file and what's still in storage.
   const inStorage = new Set(store.captureLog.map((r) => serializeLog([r])));
-  assert.ok(archived.every((r) => !inStorage.has(serializeLog([r]))));
+  assert.ok(movedOut.every((r) => !inStorage.has(serializeLog([r]))));
 });
 
 // Records that share a `timestamp` and differ only in their screenshot
@@ -229,15 +229,15 @@ function sameStampRecords(n) {
   }));
 }
 
-test('records sharing a timestamp all survive the archive round-trip', async () => {
+test('records sharing a timestamp all survive the history file round-trip', async () => {
   // 6 saves from one session, sitting at the head of an over-cap log.
   const session = sameStampRecords(6);
   stubChrome([...session, ...Array.from({ length: 94 }, (_, i) => rec(i))]);
   await recordCapture(rec(500));
 
-  const archived = parseLogText(archiveWrites()[0].body);
-  assert.equal(archived.length, 50);
-  const sessionRows = archived.filter((r) => r.screenshot.filename.startsWith('session'));
+  const movedOut = parseLogText(historyFileWrites()[0].body);
+  assert.equal(movedOut.length, 50);
+  const sessionRows = movedOut.filter((r) => r.screenshot.filename.startsWith('session'));
   assert.equal(sessionRows.length, 6);
   // In file order, so the page can show them the way they were taken.
   assert.deepEqual(sessionRows.map((r) => r.screenshot.filename),
@@ -248,7 +248,7 @@ test('records sharing a timestamp all survive the archive round-trip', async () 
   assert.equal(new Set(sessionRows.map((r) => serializeLog([r]))).size, 6);
 });
 
-test('two batches ending on one timestamp get distinct archive names', async () => {
+test('two batches ending on one timestamp get distinct history file names', async () => {
   // Contrived: 50 saves in one session so both batches end inside it.
   // `conflictAction: 'overwrite'` means a shared name would destroy
   // the first batch outright.
@@ -256,11 +256,11 @@ test('two batches ending on one timestamp get distinct archive names', async () 
   stubChrome([...session, ...Array.from({ length: 141 }, (_, i) => rec(i))]);
   await recordCapture(rec(500));
 
-  const names = archiveWrites().map((w) => w.filename);
+  const names = historyFileWrites().map((w) => w.filename);
   assert.equal(names.length, 3);
   assert.equal(new Set(names).size, 3);
   // Disambiguated by advancing the stamp, not by a suffix, so every
-  // archive name still matches the one pattern a reader can parse.
+  // history file name still matches the one pattern a reader can parse.
   for (const name of names) {
     assert.match(name, /\/history-\d{8}-\d{6}-\d{3}\.json$/);
   }
@@ -273,7 +273,7 @@ test('two batches ending on one timestamp get distinct archive names', async () 
 // loses real captures.
 
 test('dedupeRecords drops an exact repeat, keeping the first', async () => {
-  // A record the page loaded from an archive and from storage both.
+  // A record the page loaded from a history file and from storage both.
   const a = rec(1);
   const resent = JSON.parse(JSON.stringify(a));
   const out = dedupeRecords([a, rec(2), resent]);
@@ -300,7 +300,7 @@ test('dedupeRecords ignores key order from the storage round-trip', async () => 
   assert.equal(dedupeRecords([a, reordered]).length, 1);
 });
 
-test('dedupeRecords spans the storage/archive boundary', async () => {
+test('dedupeRecords spans the storage/history file boundary', async () => {
   // The two copies need not be adjacent — a restore can be separated
   // from the original by any number of captures, and by a flush.
   const dup = rec(7);
@@ -419,20 +419,20 @@ test('every save in a session lands on its own timestamp', async () => {
   assert.equal(new Set(store.captureLog.map((r) => r.timestamp)).size, 3);
 });
 
-test('a collision resolves against a record the same call is about to archive', async () => {
+test('a collision resolves against a record the same call is about to move out', async () => {
   // `uniqueTimestamp` reads the stored log *before* the flush trims it, so a
-  // predecessor on its way into an archive still forces the bump. Reading the
-  // trimmed list would hand out a timestamp the archive already holds.
+  // predecessor on its way into a history file still forces the bump. Reading the
+  // trimmed list would hand out a timestamp the history file already holds.
   const t = '2026-01-01T00:00:05.000Z';
   const store = stubChrome([
     recAt(t, 'oldest'),
     ...Array.from({ length: 100 }, (_, i) => rec(i)),
   ]);
   await recordCapture(recAt(t, 'newest'));
-  // The colliding predecessor went to the archive; the new record kept the
+  // The colliding predecessor went to the history file; the new record kept the
   // bump it forced, so the two never share a timestamp.
-  const archived = parseLogText(archiveWrites()[0].body);
-  assert.equal(archived[0].timestamp, t);
+  const movedOut = parseLogText(historyFileWrites()[0].body);
+  assert.equal(movedOut[0].timestamp, t);
   assert.equal(store.captureLog[store.captureLog.length - 1].timestamp,
     '2026-01-01T00:00:05.001Z');
 });

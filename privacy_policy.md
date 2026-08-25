@@ -21,7 +21,7 @@ The extension can
 - Capture selected text on the currently visible tab
 - Capture page URLs and titles
 - Write the captured data to your local `Downloads/SeeWhatISee` folder, along
-  with a sidecar file (`log.json`) that describes recent captures so
+  with a log file (`log.json`) that describes recent captures so
   a local agent can find them quickly.
 - Send the capture directly to a web chatbot of your choice (Claude, ChatGPT,
 Gemini, or Google Search), injecting images and text into the page's chat box.

@@ -14,7 +14,7 @@
 //      clicks Capture. We send the options back to background, which
 //      delegates per-artifact to its `ensure…Downloaded` helpers
 //      (which short-circuit on cached pre-downloads from the Copy
-//      buttons) and then writes the sidecar via
+//      buttons) and then writes the log record via
 //      `recordDetailedCapture`. The tab closes once the round-trip
 //      completes.
 //

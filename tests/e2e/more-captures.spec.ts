@@ -105,7 +105,7 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   // `probe-*.json` is the reconcile's throwaway directory probe (it
   // deletes itself); it fires here because a URL-only capture writes no
   // artifact to locate the capture directory from. Everything else must
-  // be the sidecar — a URL-only capture writes no capture files.
+  // be the log file — a URL-only capture writes no capture files.
   const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
   expect(written.length).toBeGreaterThan(0);
   expect(written.every((n) => n.endsWith('log.json'))).toBe(true);
@@ -233,7 +233,7 @@ test('captureUrlOnly: htmlError is ignored — URL-only record still lands', asy
   // `probe-*.json` is the reconcile's throwaway directory probe (it
   // deletes itself); it fires here because a URL-only capture writes no
   // artifact to locate the capture directory from. Everything else must
-  // be the sidecar — a URL-only capture writes no capture files.
+  // be the log file — a URL-only capture writes no capture files.
   const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
   expect(written.length).toBeGreaterThan(0);
   expect(written.every((n) => n.endsWith('log.json'))).toBe(true);

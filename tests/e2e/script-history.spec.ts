@@ -54,7 +54,7 @@ function parseAll(stdout: string): Record<string, any>[] {
 }
 
 /**
- * Two archives plus log.json. Archive names carry the compact stamp of
+ * Two history files plus log.json. History file names carry the compact stamp of
  * the newest record they hold, so their byte-wise order is the capture
  * order — the seeding here relies on that just like the script does.
  */
@@ -74,7 +74,7 @@ function seedHistory() {
 }
 
 test.describe('SeeWhatISee.py history listing', () => {
-  test('--all emits every record, archives first, in capture order', () => {
+  test('--all emits every record, history files first, in capture order', () => {
     seedHistory();
     const r = run(['--all', '--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -88,12 +88,12 @@ test.describe('SeeWhatISee.py history listing', () => {
       '2026-04-09T12:00:04.000Z',
       '2026-04-09T12:00:05.000Z',
     ]);
-    // Archived records get the same path rewrite as live ones.
+    // Records read from a history file get the same path rewrite as live ones.
     expect(records[0].screenshot.filename).toBe(`${tmpDir}/screenshot-20260400.png`);
   });
 
-  test('archives a millisecond apart still read in order', () => {
-    // Two flushes in one drain land a millisecond apart (`archiveFileName`
+  test('history files a millisecond apart still read in order', () => {
+    // Two flushes in one drain land a millisecond apart (`historyFileName`
     // advances the stamp rather than suffixing the name), so the names differ
     // only in their last digit. A plain sort has to get that right.
     writeFileOfRecords('history-20260409-120001-000.json', [rec(0)]);
@@ -110,7 +110,7 @@ test.describe('SeeWhatISee.py history listing', () => {
   });
 
   test('--limit stops reading once it has enough records', () => {
-    // Proven by making the oldest archive unreadable: a --limit that
+    // Proven by making the oldest history file unreadable: a --limit that
     // the newer files can satisfy must never open it, while --all and a
     // larger --limit must fail loudly rather than silently skip it.
     test.skip(process.getuid?.() === 0, 'root reads files regardless of mode');
@@ -134,7 +134,7 @@ test.describe('SeeWhatISee.py history listing', () => {
     }
   });
 
-  test('--all reads archives even with no log.json', () => {
+  test('--all reads history files even with no log.json', () => {
     writeFileOfRecords('history-20260409-120001-000.json', [rec(0), rec(1)]);
     const r = run(['--all', '--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
@@ -320,7 +320,7 @@ test.describe('SeeWhatISee.py history listing', () => {
     expect(r.stdout).not.toContain('\r');
   });
 
-  test('archived records honor --copy-to-dir and --print_selection', () => {
+  test('history-file records honor --copy-to-dir and --print_selection', () => {
     fs.writeFileSync(path.join(tmpDir, 'screenshot-20260400.png'), 'png');
     fs.writeFileSync(path.join(tmpDir, 'selection-0.txt'), 'selected words');
     writeFileOfRecords('history-20260409-120001-000.json', [
@@ -682,7 +682,7 @@ test.describe('SeeWhatISee.py --filter_time', () => {
   });
 
   test('--limit stops reading once it has enough matches', () => {
-    // The oldest archive is unreadable, so opening it would fail the
+    // The oldest history file is unreadable, so opening it would fail the
     // run — the span and limit must be satisfied before reaching it.
     seedHistory();
     const oldest = fs.readdirSync(tmpDir)

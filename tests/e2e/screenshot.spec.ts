@@ -3,7 +3,7 @@ import { waitForCaptureQuota } from '../fixtures/capture-quota';
 import { verifyCapture, type CaptureResult, resetCaptureState } from '../fixtures/files';
 
 // Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
-// no subdir prefix (the sidecar JSON resolves it against its own
+// no subdir prefix (the `log.json` resolves it against its own
 // directory). Compact local-time stamp with millisecond precision; see
 // compactTimestamp in src/capture.ts.
 const FILENAME_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
@@ -15,7 +15,7 @@ const PURPLE: [number, number, number] = [0x80, 0x00, 0x80];
 const GREEN: [number, number, number] = [0x00, 0xc0, 0x00];
 const ORANGE: [number, number, number] = [0xff, 0x88, 0x00];
 
-test('captures the visible tab and writes png + sidecar file', async ({
+test('captures the visible tab and writes png + log file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -47,7 +47,7 @@ test('captures the visible tab and writes png + sidecar file', async ({
   expect(result1.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   // ISO 8601 with milliseconds and trailing Z.
   expect(result1.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  expect(result1.sidecarDownloadIds.log).toBeGreaterThan(0);
+  expect(result1.logDownloadId).toBeGreaterThan(0);
 
   // Single helper covers: PNG exists, PNG pixel color matches PURPLE,
   // log.json's last line equals the record (and ends with a trailing

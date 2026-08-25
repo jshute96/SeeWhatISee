@@ -110,7 +110,7 @@ listeners. The substantive logic lives in `src/background/`:
   file is on disk and returns its absolute path. The SW caches
   these per-tab so a Copy-button pre-download and the eventual
   Capture share one file each.
-- `recordDetailedCapture` writes the sidecar log entry
+- `recordDetailedCapture` writes the log record
   referencing whichever artifacts the caller decided to keep.
   Splitting the download from the record lets the SW materialize
   files on demand (Copy clicks) without committing them to the
@@ -118,13 +118,13 @@ listeners. The substantive logic lives in `src/background/`:
 
 The `CaptureResult` returned by `captureVisible` and
 `savePageContents` includes the `chrome.downloads` ids of the
-content file and the JSON sidecar (`sidecarDownloadIds.log`):
+content file and the `log.json` (`logDownloadId`):
 
 - Production callers ignore them.
 - The e2e tests use them to look up each saved file's actual
   on-disk path via `chrome.downloads.search`.
 
-## Save directory + metadata sidecar
+## Save directory + capture log
 
 Captures are written via `chrome.downloads.download` into
 `~/Downloads/SeeWhatISee/`.
@@ -143,7 +143,7 @@ Captures are written via `chrome.downloads.download` into
   downloads folder.
 
 Alongside the content file, every capture also writes a JSON
-sidecar into the same directory. `log.json` is newline-delimited
+log file into the same directory. `log.json` is newline-delimited
 JSON (one record per line), grep-friendly history of recent
 captures. Scripts read the last line of `log.json` to get the latest record.
 
@@ -186,7 +186,7 @@ Every record has `timestamp` and `url`, plus optional fields:
 - `isEdited` (on `contents` / `selection`) — `true` iff the user
   saved an edit through the corresponding Edit dialog before
   capture. Omitted on the raw scrape. See
-  [`capture-page.md` → isEdited sidecar flag](capture-page.md#isedited-sidecar-flag).
+  [`capture-page.md` → isEdited log flag](capture-page.md#isedited-log-flag).
 - `imageUrl` — top-level field set by the image right-click flow
   (the URL of the right-clicked source image). Independent of
   `screenshot`, so it survives even when the user unchecks Save
@@ -239,7 +239,7 @@ Every record has `timestamp` and `url`, plus optional fields:
   - The history files are untouched either way, and the History page
     still offers them.
 - A capture only ever **adds** one record to what's on disk (plus the
-  rotation into history files, which moves older records into a
+  flush into history files, which moves older records into a
   `history-<timestamp>.json` beside `log.json`). It never rewrites or drops a
   record already there.
 - When the extension can't tell what is on disk, it **doesn't write**
@@ -272,8 +272,7 @@ Every record has `timestamp` and `url`, plus optional fields:
 - Entries aging out of the 100-entry buffer are **not** discarded.
   Once the log goes over the cap, the oldest 50 are written to a
   **history file** — `history-<timestamp>.json` beside `log.json` —
-  and dropped from storage. The code calls these archives
-  (`ARCHIVE_FILE_PREFIX`, `getArchiveFilePaths`).
+  and dropped from storage.
 - So the full capture history lives on disk while no single write
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.

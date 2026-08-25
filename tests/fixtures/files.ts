@@ -7,7 +7,7 @@
 // (a click → navigation that the browser treats as an attachment).
 // chrome.downloads.download calls made from the MV3 service worker
 // don't surface as page downloads, so the event never fires for
-// SeeWhatISee's PNG / sidecar saves.
+// SeeWhatISee's PNG / log file saves.
 //
 // chrome.downloads.search *does* see them, and the `filename` field it
 // returns is the real path: `tests/fixtures/extension.ts` points Chrome
@@ -119,7 +119,7 @@ export async function verifyHtmlCapture(
 ): Promise<CaptureRecord[]> {
   const [htmlPath, logPath] = await Promise.all([
     waitForDownloadPath(sw, result.downloadId),
-    waitForDownloadPath(sw, result.sidecarDownloadIds.log),
+    waitForDownloadPath(sw, result.logDownloadId),
   ]);
 
   // HTML file: on disk, non-empty, contains the expected content.
@@ -183,7 +183,7 @@ export async function verifyCapture(
 ): Promise<CaptureRecord[]> {
   const [pngPath, logPath] = await Promise.all([
     waitForDownloadPath(sw, result.downloadId),
-    waitForDownloadPath(sw, result.sidecarDownloadIds.log),
+    waitForDownloadPath(sw, result.logDownloadId),
   ]);
 
   // PNG: on disk, non-empty, shows the right color.
@@ -191,7 +191,7 @@ export async function verifyCapture(
   expect(fs.statSync(pngPath).size).toBeGreaterThan(0);
   expectColorClose(pixelColorAt(pngPath), expectedColor);
 
-  // The record we expect to find in the log sidecar. Built here in
+  // The record we expect to find in `log.json`. Built here in
   // canonical key order so toEqual diffs read sensibly when an
   // assertion fails.
   const expectedRecord: SerializedCaptureRecord = {

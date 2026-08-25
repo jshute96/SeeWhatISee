@@ -314,7 +314,7 @@ const ARTIFACT_KEYS = ['screenshot', 'contents', 'selection'] as const;
  * would replay the rest on every call.
  *
  * Returning null rather than [] is what lets callers tell "you're up to date"
- * from "that cursor isn't in the log" — the latter has aged into an archive,
+ * from "that cursor isn't in the log" — the latter has aged into a history file,
  * and they fall back to a chronological compare.
  */
 function recordsAfterCursor(
@@ -711,8 +711,8 @@ export function createServer(opts: ServerOpts): Server {
         // no-cursor call too: its baseline is the tail at the moment we
         // started waiting, which is a record like any other.
         //
-        // The fallback is chronological, for a cursor that has aged into an
-        // archive and for the empty log (baseline ''). ISO-8601 UTC timestamps
+        // The fallback is chronological, for a cursor that has aged into a
+        // history file and for the empty log (baseline ''). ISO-8601 UTC timestamps
         // are fixed-width, so `>` compares chronologically, and it drops no-op
         // changes (the baseline's own record is not `>` itself) and skips a
         // truncated log until real records return.
@@ -805,7 +805,7 @@ export function createServer(opts: ServerOpts): Server {
       // the matching record, since the log is in append order and a slow save
       // can carry an earlier timestamp than the record before it.
       //
-      // The fallback compare covers a cursor that has aged into an archive, and
+      // The fallback compare covers a cursor that has aged into a history file, and
       // the empty cursor (`?after=`) that a client bootstrapped on an empty log
       // uses — no record matches '', and every timestamp sorts after it, so the
       // whole log comes back. ISO-8601 UTC timestamps are fixed-width, so the

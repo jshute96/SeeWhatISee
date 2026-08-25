@@ -1,8 +1,8 @@
-// End-to-end test for capture-log archiving: once the in-storage log
+// End-to-end test for capture-log flushing: once the in-storage log
 // goes past its cap, the oldest half is flushed to a
 // `history-<timestamp>.json` file instead of being discarded.
 //
-// The unit tests (`tests/unit/log-archive.test.mjs`) already cover
+// The unit tests (`tests/unit/log-history-files.test.mjs`) already cover
 // which records land in which file against a stubbed `chrome`. What
 // only a real browser can show is that the flush actually reaches disk
 // through `chrome.downloads` as a second file alongside `log.json` —
@@ -19,13 +19,13 @@ import { test, expect } from '../fixtures/extension';
 import { waitForDownloadPath, type CaptureResult, seedCaptureLog } from '../fixtures/files';
 // Straight from the source, so lowering the cap changes what this test
 // seeds instead of failing it in a way that reads as a product bug.
-import { LOG_ARCHIVE_BATCH, LOG_MAX_ENTRIES } from '../../src/capture/log-store';
+import { LOG_HISTORY_BATCH, LOG_MAX_ENTRIES } from '../../src/capture/log-store';
 
 /**
  * Title prefix on the seeded records. Distinctive enough to pick our
- * archive out of whatever else the worker's profile has downloaded.
+ * history file out of whatever else the worker's profile has downloaded.
  */
-const SEED_TITLE = 'log-archive-seed';
+const SEED_TITLE = 'log-history-seed';
 
 /** Synthetic older captures, oldest first — the append order. */
 function seedRecords(count: number): { timestamp: string; title: string }[] {
@@ -40,7 +40,7 @@ function parseNdjson(text: string): { title?: string; timestamp?: string }[] {
   return text.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
 }
 
-test('a capture past the cap flushes the oldest entries to an archive file', async ({
+test('a capture past the cap flushes the oldest entries to a history file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -61,40 +61,40 @@ test('a capture past the cap flushes the oldest entries to an archive file', asy
   });
 
   // ---- log.json keeps the tail -------------------------------------
-  const logPath = await waitForDownloadPath(sw, result.sidecarDownloadIds.log);
+  const logPath = await waitForDownloadPath(sw, result.logDownloadId);
   const logRecords = parseNdjson(fs.readFileSync(logPath, 'utf8'));
-  expect(logRecords).toHaveLength(LOG_MAX_ENTRIES - LOG_ARCHIVE_BATCH + 1);
-  expect(logRecords[0].title).toBe(`${SEED_TITLE} ${LOG_ARCHIVE_BATCH}`);
+  expect(logRecords).toHaveLength(LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1);
+  expect(logRecords[0].title).toBe(`${SEED_TITLE} ${LOG_HISTORY_BATCH}`);
   // The capture that triggered the flush is still the last line.
   expect(logRecords[logRecords.length - 1].timestamp).toBe(result.timestamp);
 
-  // ---- a separate archive file holds the head ----------------------
+  // ---- a separate history file holds the head ----------------------
   // Every download this profile has made, minus the two files this
   // capture is known to have written. Exactly one of the rest should
-  // be the archive, identified by the seeded titles inside it.
+  // be the history file, identified by the seeded titles inside it.
   // Filtered by content rather than name so the assertion still says
-  // *which records* landed in an archive, not merely that a
+  // *which records* landed in a history file, not merely that a
   // `history-*.json` appeared. The profile is a fresh temp dir per
   // worker, so the unfiltered list stays short.
   const otherIds = (await sw.evaluate(() => chrome.downloads.search({})))
     .map((d) => d.id)
-    .filter((id) => id !== result.sidecarDownloadIds.log && id !== result.downloadId);
+    .filter((id) => id !== result.logDownloadId && id !== result.downloadId);
 
-  const archives: string[] = [];
+  const historyFiles: string[] = [];
   for (const id of otherIds) {
     const path = await waitForDownloadPath(sw, id);
     const text = fs.readFileSync(path, 'utf8');
-    if (text.includes(`${SEED_TITLE} 0`)) archives.push(text);
+    if (text.includes(`${SEED_TITLE} 0`)) historyFiles.push(text);
   }
-  expect(archives).toHaveLength(1);
+  expect(historyFiles).toHaveLength(1);
 
-  const archived = parseNdjson(archives[0]);
-  expect(archived).toHaveLength(LOG_ARCHIVE_BATCH);
-  expect(archived[0].title).toBe(`${SEED_TITLE} 0`);
-  expect(archived[LOG_ARCHIVE_BATCH - 1].title).toBe(`${SEED_TITLE} ${LOG_ARCHIVE_BATCH - 1}`);
+  const movedOut = parseNdjson(historyFiles[0]);
+  expect(movedOut).toHaveLength(LOG_HISTORY_BATCH);
+  expect(movedOut[0].title).toBe(`${SEED_TITLE} 0`);
+  expect(movedOut[LOG_HISTORY_BATCH - 1].title).toBe(`${SEED_TITLE} ${LOG_HISTORY_BATCH - 1}`);
   // Together the two files hold the whole history: no record is in
   // both, and none went missing.
-  expect(archived.length + logRecords.length).toBe(LOG_MAX_ENTRIES + 1);
+  expect(movedOut.length + logRecords.length).toBe(LOG_MAX_ENTRIES + 1);
 
   await page.close();
   // Leave a clean log behind: storage persists across tests in a worker.

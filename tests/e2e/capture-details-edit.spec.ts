@@ -383,7 +383,7 @@ test('details: edit-selection cancel leaves the captured selection untouched', a
 
   const sw = await getServiceWorker();
   const record = await readLatestRecord(sw);
-  // No edit actually landed, so the sidecar's selection object
+  // No edit actually landed, so the log record's selection object
   // must not carry the sticky `isEdited` flag.
   expect(record.selection?.isEdited).toBeUndefined();
 
@@ -459,7 +459,7 @@ test('details: edit-html save-with-no-changes is a no-op (no SW round-trip, no i
   await expect(capturePage.locator('#edit-html-dialog')).toHaveJSProperty('open', false);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
 
-  // Capture: still a cache hit, still no download; the sidecar must
+  // Capture: still a cache hit, still no download; the log file must
   // NOT carry `isEdited: true` since no real edit happened.
   await configureAndCapture(capturePage, { saveScreenshot: false, saveHtml: true });
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);

@@ -4,7 +4,7 @@ import { verifyHtmlCapture, type CaptureResult, resetCaptureState } from '../fix
 // Filename format: contents-YYYYMMDD-HHMMSS-mmm.html
 const FILENAME_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
 
-test('savePageContents captures HTML and writes sidecar file', async ({
+test('savePageContents captures HTML and writes the log file', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -28,7 +28,7 @@ test('savePageContents captures HTML and writes sidecar file', async ({
   expect(result.filename).toMatch(FILENAME_PATTERN);
   expect(result.url).toBe(`${fixtureServer.baseUrl}/purple.html`);
   expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  expect(result.sidecarDownloadIds.log).toBeGreaterThan(0);
+  expect(result.logDownloadId).toBeGreaterThan(0);
 
   // The saved HTML should contain the fixture page's background color
   // and title, proving we captured the right page.

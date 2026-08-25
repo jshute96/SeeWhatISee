@@ -19,8 +19,8 @@
 //
 // *Load older captures* with something to load is out of reach for the
 // same reason: with no capture, no `history-*.json` exists for
-// `getArchiveFilePaths()` to find. The archiving itself is covered by
-// `log-archive.spec.ts` and `tests/unit/log-archive.test.mjs`. Its
+// `getHistoryFilePaths()` to find. The flushing itself is covered by
+// `log-history-files.spec.ts` and `tests/unit/log-history-files.test.mjs`. Its
 // *absence* — the control hidden, and the plain empty-log notice — is
 // covered below.
 
@@ -302,12 +302,12 @@ test('the History page links out to Options and Help but not itself', async ({
   await page.close();
 });
 
-// The archives themselves are out of reach here (see the file
+// The history files themselves are out of reach here (see the file
 // header), so this covers the other half: with nothing to load, the
 // control must not be on screen at all. It used to be — `.older`'s
 // `display: flex` outranks the UA `[hidden]` rule, so the row showed
 // with an empty note beside a disabled button.
-test('Load older captures stays hidden when there are no archives', async ({
+test('Load older captures stays hidden when there are no history files', async ({
   extensionContext,
   extensionId,
   getServiceWorker,
@@ -321,11 +321,11 @@ test('Load older captures stays hidden when there are no archives', async ({
   // would leave every other assertion here passing.
   await expect(page.locator('.toolbar #older')).toHaveCount(1);
   await expect(page.locator('main #older')).toHaveCount(0);
-  // With no archives the plain empty-log notice is the right story;
-  // the archives-are-waiting one stays out of the way.
+  // With no history files the plain empty-log notice is the right story;
+  // the history-files-are-waiting one stays out of the way.
   await seedLog(sw, []);
   await expect(page.locator('#empty')).toBeVisible();
-  await expect(page.locator('#empty-archived')).toBeHidden();
+  await expect(page.locator('#empty-history-files')).toBeHidden();
   await page.close();
 });
 

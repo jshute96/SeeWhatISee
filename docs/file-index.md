@@ -240,7 +240,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again, probing for them, and waiting out Chrome's stale-`exists` re-check |
-| `src/capture/log-store.ts` | The capture log: the `log.json` sidecar, the browser copy behind it, and the `history-*.json` files older records move into |
+| `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
@@ -274,7 +274,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Cleans `dist/`, copies vendor scripts + theme, classic-wraps codejar, then runs `tsc` |
-| `scripts/_release-common.sh` | Sourced helpers for release scripts — preflight checks, notes composition, leftover-archive cleanup |
+| `scripts/_release-common.sh` | Sourced helpers for release scripts — preflight checks, notes composition, leftover source-archive cleanup |
 | `scripts/release-extension.sh` | Cuts a GitHub release for the Chrome extension (tag `extension-vX.Y.Z`); builds the zip and runs `gh release create` (draft by default) |
 | `scripts/release-mcp-server.sh` | Cuts an `@see-what-i-see/mcp-server` npm release (tag `mcp-server-vX.Y.Z`); drafts a matching GH release |
 | `scripts/zip_extension.sh` | Builds + zips `dist/` to `/tmp/SeeWhatISee.zip` (or `-extension-vVERSION.zip` with `--release VERSION`) |
@@ -290,7 +290,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/manual/mouse-wheel-zoom-lab.html` | Manual page for tuning wheel / pinch zoom on real hardware — logs raw wheel events, runs candidate heuristics side by side |
 | `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context (real temp download dir, so capture paths resolve), fixture HTTP server, `getServiceWorker()`, auto hooks |
 | `tests/fixtures/capture-quota.ts` | Smart pre-test wait + auto-retry for `chrome.tabs.captureVisibleTab`'s 2/sec quota; replaces the unconditional 600ms sleep |
-| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying capture sidecars, and seeding / resetting the capture log |
+| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying captures against `log.json`, and seeding / resetting the capture log |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/fixtures/pages/gradient.html` | Multi-stop linear-gradient page — used by the large-screenshot-recompress e2e to produce a capture where JPEG clearly beats PNG |
 | `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |
@@ -301,7 +301,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/fixtures/pages/red-pixel.webp` | 200x200 solid-red WEBP — used by tests that exercise the "non-PNG/JPG source bakes to PNG" branch |
 | `tests/fixtures/pages/corrupt.png` | Text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload-spec decode-validation test |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, deleted / wiped log recovery) |
-| `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
+| `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + log file verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the Capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
 | `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape-failure UX |
@@ -332,7 +332,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, how it's opened, and what it declines to load with file access off |
-| `tests/e2e/log-archive.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` file |
+| `tests/e2e/log-history-files.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` file |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
@@ -374,7 +374,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the stale-`exists` re-check, and the Retry / Overwrite flush |
-| `tests/unit/log-archive.test.mjs` | Unit tests for the rotation into `history-*.json` files — which records move, and reading them back |
+| `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
@@ -389,7 +389,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | File | Description |
 |------|-------------|
 | `file-index.md` | This file — one-line descriptions of every source file |
-| `architecture.md` | High-level architecture: components, storage model, sidecar JSON shape, handoff to coding agents |
+| `architecture.md` | High-level architecture: components, storage model, `log.json` shape, handoff to coding agents |
 | `capture-actions.md` | Action catalog (`CAPTURE_ACTIONS`), default-click dispatch, toolbar / image / keyboard menus, adding a new capture mode |
 | `capture-page.md` | Capture-page flow, image annotation, edit dialogs, copy-filename buttons, save and close, multi-capture filename strategy |
 | `chrome-extension.md` | Chrome MV3 hazards: SW lifecycle, permissions rationale, error surface, context-menu gotchas, image-fetch strategies |

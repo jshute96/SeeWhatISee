@@ -2,7 +2,7 @@
 
 A table view over the capture log — the same `captureLog`
 array in `chrome.storage.local` that backs the on-disk `log.json`
-sidecar (see [architecture.md](architecture.md) for the log itself).
+log file (see [architecture.md](architecture.md) for the log itself).
 
 - Read-only with respect to the log. The one action it offers is
   [Restore from a row](#restore-from-a-row).
@@ -105,7 +105,7 @@ Finding that tab is less obvious than it looks:
     next to the capture count, a second and smaller *file* count read
     as a contradiction.
   - It quotes no entry count: the live log holds anywhere from
-    `LOG_MAX_ENTRIES - LOG_ARCHIVE_BATCH + 1` to `LOG_MAX_ENTRIES`
+    `LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1` to `LOG_MAX_ENTRIES`
     depending on where the flush cycle is, so any single number would
     be wrong half the time.
   - The text next to it is failure-only ("Could not read the history
@@ -118,7 +118,7 @@ Finding that tab is less obvious than it looks:
   - One click loads *all* remaining files. A batch is 50 captures, so
     paging 50 at a time would be tedious; the search box is the tool
     for narrowing what's on screen.
-- `getArchiveFilePaths()` (`capture/downloads.ts`) finds the files
+- `getHistoryFilePaths()` (`capture/downloads.ts`) finds the files
   through `chrome.downloads`, because an extension has no directory
   listing — the download records are the only index of what we wrote.
   - Clearing download history therefore hides history files that are
@@ -126,9 +126,9 @@ Finding that tab is less obvious than it looks:
     - Files already read stay on screen. Losing the listing doesn't
       make the records wrong, and dropping those rows would make
       captures vanish for a reason unrelated to them. They sort after
-      the still-listed files (`archiveDisplayOrder`).
+      the still-listed files (`historyFileDisplayOrder`).
 - With the log empty but history files unread, a second empty-state
-  notice (`#empty-archived`) says so and points at the button.
+  notice (`#empty-history-files`) says so and points at the button.
   - The usual "No captures in the log yet" would be a lie, and saying
     nothing — what the page used to do, on the grounds that the button
     sat directly below — leaves a blank page now that the button is up
@@ -136,7 +136,7 @@ Finding that tab is less obvious than it looks:
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
 - Merging is a plain concatenation: the storage log, then each history
-  file's records, files in `getArchiveFilePaths()` order (newest first
+  file's records, files in `getHistoryFilePaths()` order (newest first
   by download start time). No sort; dedup only on exact record text.
   - **Not sorted by `timestamp`.** File order is *append* order, which
     isn't timestamp order: a Capture-page session pins its timestamp
@@ -160,7 +160,7 @@ Finding that tab is less obvious than it looks:
       session's six saves (`…-733.png`, `…-733-1.png`, …) collapsed to
       a single row and 102 records rendered as 96.
     - The log files themselves keep every save; this is display only.
-  - Files are keyed by path, not accumulated into one list, so an
+  - Files are keyed by path, not accumulated into one list, so a
     history file written *after* others are loaded lands ahead of them
     rather than at the end.
   - A line that won't parse is skipped (`parseLogText`) rather than
@@ -193,8 +193,8 @@ Finding that tab is less obvious than it looks:
     cleared rows straight back on screen.
 - Not covered by the e2e tests: the page's own tests seed the log
   directly and never run a capture, so no history file exists for
-  `getArchiveFilePaths()` to find. The write side is covered by
-  `log-archive.spec.ts`; the load side isn't.
+  `getHistoryFilePaths()` to find. The write side is covered by
+  `log-history-files.spec.ts`; the load side isn't.
 
 ## Layout
 
@@ -440,7 +440,7 @@ for two of the three:
   That is **not a JS exception** — no `try`/`catch`, `onerror`, or
   promise rejection sees it.
 - **`fetch('file://…')`** rejects, *and* logs the same *Not allowed to
-  load local resource*. Catching the rejection — which the archive
+  load local resource*. Catching the rejection — which the history file
   reads already did — does nothing about the console message.
 - **`chrome.tabs.create`** rejects with *Cannot navigate to a file URL
   without local file access*, and logs nothing of its own. This one a
@@ -461,7 +461,7 @@ So with the toggle off:
   is still `.catch()`-ed for the case where the toggle is flipped off
   after page load.
 - **Load older captures** doesn't `fetch` the `history-*.json` files.
-  `loadArchives()` reports them all as failed without reading, which is
+  `loadHistoryFiles()` reports them all as failed without reading, which is
   the outcome the reads produced anyway — so the toolbar message and
   the banner are unchanged, and nothing is marked read, so the button
   still works once the toggle is on.

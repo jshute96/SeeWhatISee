@@ -25,7 +25,7 @@ Both CLIs' `/see-what-i-see` and `/see-what-i-see-watch` use the
 same JSON record schema, share the same canonical "process each
 snapshot" block in their prompts, and honor the same `prompt`
 field on the record. See
-[Skill / command prompts](#skill--command-prompts) below.
+[Skill prompts](#skill-prompts) below.
 
 ## `/see-what-i-see` — describe the latest capture
 
@@ -88,7 +88,7 @@ field on the record. See
   - Where that doesn't hold — e.g. a hand-edited log — the cursor lands
     on the *last* record carrying the timestamp. Resuming after the first
     would replay the rest of the run on every call and never advance.
-  - A timestamp that isn't in `log.json` (typically aged out into an
+  - A timestamp that isn't in `log.json` (typically aged out into a
     history file) warns and falls through to plain watching.
 - **The poll loop carries the same cursor.** It wakes on an mtime
   change and emits every line past the last one it emitted.
@@ -233,8 +233,8 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
     - Its fixed-width fields run together, which is what tells it from
       the dashed forms: a leading digit run longer than four can only
       be this (`YYYYMM`, six digits, is the shortest).
-    - Filenames stamp local time (see [Save directory + metadata
-      sidecar](architecture.md#save-directory--metadata-sidecar)),
+    - Filenames stamp local time (see [Save directory + capture
+      log](architecture.md#save-directory--capture-log)),
       which is the default anyway; a trailing `z` still overrides.
   - A time alone means today: `14:30`, or `14:` for that whole hour. The
     colon is what marks it as a time — a bare `3` is rejected rather

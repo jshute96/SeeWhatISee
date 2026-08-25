@@ -28,9 +28,7 @@ distinction:
   the user's capture directory. These *are* the capture log.
   - A history file is named `history-<timestamp>.json` and holds a
     batch of older records that no longer fit in `log.json`. They
-    accumulate; nothing rewrites one once it's written. (The code
-    calls them *archives* — `ARCHIVE_FILE_PREFIX`,
-    `getArchiveFilePaths`, `LOG_ARCHIVE_BATCH`.)
+    accumulate; nothing rewrites one once it's written.
 - **The browser copy** — the same records cached in
   `chrome.storage.local`. It exists because a Chrome extension can't
   read its own files without a permission the user has to grant, and
@@ -488,9 +486,9 @@ here or it belongs fixed.
   unreferenced. Rare (the write is a tiny local `data:` download) and
   additive-only in effect.
 - **Duplicate records in a history file.** A service worker killed
-  after a rotation batch lands but before `log.json` is rewritten
+  after a flush batch lands but before `log.json` is rewritten
   leaves the batch both in the new history file and still in the log;
-  the retried rotation writes it again under a new name. Additive,
+  the retried flush writes it again under a new name. Additive,
   never lossy, and the History page's exact-match dedupe hides it.
 - **A stray probe file.** The existence probe's `log (1).json` is
   deleted immediately, but if that delete fails the file stays. It

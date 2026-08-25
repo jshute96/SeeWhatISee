@@ -32,7 +32,7 @@
 // way.
 
 import {
-  getArchiveFilePaths,
+  getHistoryFilePaths,
   getCaptureDirectory,
   getCaptureFileExistence,
   joinCapturePath,
@@ -60,7 +60,7 @@ const snapshotsDirWrap = document.getElementById('snapshots-dir-wrap') as HTMLEl
 const olderEl = document.getElementById('older') as HTMLElement;
 const loadOlderBtn = document.getElementById('load-older') as HTMLButtonElement;
 const olderNoteEl = document.getElementById('older-note') as HTMLElement;
-const emptyArchivedEl = document.getElementById('empty-archived') as HTMLElement;
+const emptyHistoryFilesEl = document.getElementById('empty-history-files') as HTMLElement;
 const scrollerEl = document.getElementById('scroller') as HTMLElement;
 
 // ───────────────────────── keyboard scrolling ────────────────────────
@@ -325,47 +325,47 @@ let captureDir: string | null = null;
 let fileExists = new Map<string, boolean>();
 
 /**
- * Absolute paths of the `history-*.json` archive files, newest first
- * (by download start time — see `getArchiveFilePaths`).
+ * Absolute paths of the `history-*.json` history files, newest first
+ * (by download start time — see `getHistoryFilePaths`).
  */
-let archivePaths: string[] = [];
+let historyFilePaths: string[] = [];
 /**
- * Records read out of each archive file we've loaded, keyed by path,
+ * Records read out of each history file we've loaded, keyed by path,
  * each newest-first within its file. Keyed by path rather than
- * accumulated into one list so the merge can walk `archivePaths` in
- * order — an archive written *after* some are already loaded belongs
+ * accumulated into one list so the merge can walk `historyFilePaths` in
+ * order — a history file written *after* some are already loaded belongs
  * ahead of them, not appended to the end.
  */
-const archiveFileRecords = new Map<string, CaptureRecord[]>();
-/** Message from a failed archive read, shown next to the button. */
-let archiveError = '';
+const historyFileRecords = new Map<string, CaptureRecord[]>();
+/** Message from a failed history file read, shown next to the button. */
+let historyFileError = '';
 /**
  * True while a read is in flight. Both entry points — the button and
- * the storage listener — go through `loadArchivesInteractively`, so
+ * the storage listener — go through `loadHistoryFilesInteractively`, so
  * this covers a click landing mid-capture as well as a double-click.
  */
-let archiveLoading = false;
+let historyFileLoading = false;
 
 /**
- * Bumped whenever the loaded archives are discarded wholesale (the
+ * Bumped whenever the loaded history files are discarded wholesale (the
  * capture log's storage key removed — `clearCaptureLog`, from tests or
  * the devtools console). A read started before that must not write its
  * results back afterwards — they'd reappear under the emptied log,
  * which is the state the discard exists to produce.
  */
-let archiveGeneration = 0;
+let historyFileGeneration = 0;
 
-/** Archive files we know about but haven't read yet. */
-function unloadedArchives(): string[] {
-  return archivePaths.filter((p) => !archiveFileRecords.has(p));
+/** History files we know about but haven't read yet. */
+function unloadedHistoryFiles(): string[] {
+  return historyFilePaths.filter((p) => !historyFileRecords.has(p));
 }
 
 /**
- * Loaded archives in display order: the current listing first, then
+ * Loaded history files in display order: the current listing first, then
  * any loaded file that has dropped off it.
  *
  * A path can vanish from the listing without its records becoming
- * wrong — clearing Chrome's download history hides archives that are
+ * wrong — clearing Chrome's download history hides history files that are
  * still on disk, and we've already read them. Dropping those rows
  * would make captures disappear from the page for a reason that has
  * nothing to do with them. The strays go last, which is where they
@@ -373,14 +373,14 @@ function unloadedArchives(): string[] {
  * *every* loaded file at once, and `Map` iterates in insertion order,
  * which is the newest-first order they were read in.
  */
-function archiveDisplayOrder(): string[] {
-  const listed = new Set(archivePaths);
-  const strays = [...archiveFileRecords.keys()].filter((p) => !listed.has(p));
-  return [...archivePaths, ...strays];
+function historyFileDisplayOrder(): string[] {
+  const listed = new Set(historyFilePaths);
+  const strays = [...historyFileRecords.keys()].filter((p) => !listed.has(p));
+  return [...historyFilePaths, ...strays];
 }
 
 /**
- * The rows to render: the in-storage log, then the loaded archives in
+ * The rows to render: the in-storage log, then the loaded history files in
  * newest-file-first order. Cached rather than rebuilt per render,
  * since `render()` runs on every keystroke in the search box.
  */
@@ -390,29 +390,29 @@ let mergedRecords: CaptureRecord[] = [];
  * Recompute `mergedRecords`: concatenate in file order, then drop
  * exact repeats.
  *
- * **No sort.** `archivePaths` is already newest-first by download
+ * **No sort.** `historyFilePaths` is already newest-first by download
  * start time, which is true write order, and each file's records are
  * reversed out of append order. Sorting by `timestamp` would only
  * reshuffle things: a record appended later can carry an earlier
  * timestamp than one before it, and a session's repeat saves are
  * ordered by a millisecond the log invented for uniqueness
  * (`uniqueTimestamp`) rather than by when the user saved. The live log
- * has always been shown in append order; archives match it.
+ * has always been shown in append order; history files match it.
  *
  * **Dedup is exact-match only**, via `dedupeRecords`. Every save gets
  * its own timestamp, so what it's left catching is one record arriving
- * from both sources merged here — a batch that reached an archive
+ * from both sources merged here — a batch that reached a history file
  * while the service worker died before the matching storage write.
  * Anything looser — keying on `timestamp` — merges the distinct
  * records of a single editing session and drops real captures; that
  * shipped once already.
- * The two copies land on opposite sides of the storage/archive
+ * The two copies land on opposite sides of the storage/history file
  * boundary, so the pass is global rather than adjacent-only.
  */
 function rebuildMerged(): void {
   const all = [...records];
-  for (const path of archiveDisplayOrder()) {
-    const loaded = archiveFileRecords.get(path);
+  for (const path of historyFileDisplayOrder()) {
+    const loaded = historyFileRecords.get(path);
     if (loaded?.length) all.push(...loaded);
   }
   mergedRecords = dedupeRecords(all);
@@ -840,22 +840,22 @@ function matches(r: CaptureRecord, terms: string[]): boolean {
  * The "Load older captures" control, next to the capture count in the
  * toolbar.
  *
- * Hidden entirely when there's nothing more to offer — no archive
+ * Hidden entirely when there's nothing more to offer — no history
  * files, or every one already read — so a user who never fills the
  * 100-entry buffer never sees it, and it disappears once every
- * archive has been read. A read failure leaves its file unread, so the
+ * history file has been read. A read failure leaves its file unread, so the
  * control stays up — carrying the message, with the button available
  * to retry.
  */
 function renderOlder(): void {
-  const remaining = unloadedArchives().length;
+  const remaining = unloadedHistoryFiles().length;
   // A failed read leaves its file unread, so `remaining` alone already
-  // keeps this on screen after a failure; the `archiveError` term is
+  // keeps this on screen after a failure; the `historyFileError` term is
   // belt-and-braces against a future failure mode that consumes the
   // file anyway.
-  olderEl.hidden = remaining === 0 && !archiveError;
-  loadOlderBtn.disabled = archiveLoading || remaining === 0;
-  loadOlderBtn.textContent = archiveLoading ? 'Loading…' : 'Load older captures';
+  olderEl.hidden = remaining === 0 && !historyFileError;
+  loadOlderBtn.disabled = historyFileLoading || remaining === 0;
+  loadOlderBtn.textContent = historyFileLoading ? 'Loading…' : 'Load older captures';
   // The count lives in the tooltip rather than beside the button: it's
   // a file count, not a capture count, so on the toolbar row next to
   // "88 captures" it read as a contradiction.
@@ -867,7 +867,7 @@ function renderOlder(): void {
     : '';
   // The note is for failures only — everything else this control has
   // to say is in the tooltip.
-  olderNoteEl.textContent = archiveError;
+  olderNoteEl.textContent = historyFileError;
 }
 
 function render(): void {
@@ -880,18 +880,18 @@ function render(): void {
 
   const hasAny = all.length > 0;
   // "No captures in the log yet. Capture something…" is the wrong
-  // story when archived captures are sitting right there unread — the
+  // story when history-file captures are sitting right there unread — the
   // usual way to get here is deleting `log.json` on an account with
-  // archives. The second notice points at the button instead of
+  // history files. The second notice points at the button instead of
   // denying they exist.
   //
   // The notice used to be suppressed outright in that case, on the
   // grounds that the "Load older captures" row sat right underneath
   // it. It doesn't any more — it's up in the toolbar — so saying
   // nothing would leave a blank page with no explanation at all.
-  const archivesWaiting = unloadedArchives().length > 0;
-  emptyEl.hidden = hasAny || archivesWaiting;
-  emptyArchivedEl.hidden = hasAny || !archivesWaiting;
+  const historyFilesWaiting = unloadedHistoryFiles().length > 0;
+  emptyEl.hidden = hasAny || historyFilesWaiting;
+  emptyHistoryFilesEl.hidden = hasAny || !historyFilesWaiting;
   noMatchesEl.hidden = !hasAny || shown.length > 0;
   tableEl.hidden = shown.length === 0;
   // Only mention the filtered count when a filter is actually active —
@@ -918,12 +918,12 @@ function render(): void {
   // blink in and out as the user types in the search box would read as
   // a glitch.
   //
-  // Unread archive files count as a reason too: reading one is a
+  // Unread history files count as a reason too: reading one is a
   // `file://` fetch, so the toggle is exactly what stands between the
   // user and the older half of their history.
   fileAccessHintEl.hidden = !fileAccessBlocked
-    || (captureDir === null && archivePaths.length === 0)
-    || !(unloadedArchives().length > 0
+    || (captureDir === null && historyFilePaths.length === 0)
+    || !(unloadedHistoryFiles().length > 0
       || all.some((r) => r.screenshot || r.contents || r.selection));
 }
 
@@ -975,25 +975,25 @@ async function loadFileExistence(): Promise<void> {
   }
 }
 
-async function loadArchiveList(): Promise<void> {
+async function loadHistoryFileList(): Promise<void> {
   try {
-    archivePaths = await getArchiveFilePaths();
+    historyFilePaths = await getHistoryFilePaths();
   } catch {
     // No download records to search, or the API refused — same
-    // outcome as having no archives: the page shows the in-storage log
+    // outcome as having no history files: the page shows the in-storage log
     // and doesn't offer more.
-    archivePaths = [];
+    historyFilePaths = [];
   }
   // The merge walks this list, so the rows go stale the moment it
-  // changes — a newly-written archive has to take its place among the
+  // changes — a newly-written history file has to take its place among the
   // loaded ones now, not whenever some later load happens to rebuild.
   // Records already read are kept even if their path dropped off; see
-  // `archiveDisplayOrder`.
+  // `historyFileDisplayOrder`.
   rebuildMerged();
 }
 
 /**
- * Read every archive file we haven't read yet and merge its records
+ * Read every history file we haven't read yet and merge its records
  * in, newest first.
  *
  * All of them in one pass rather than a file at a time: a batch is 50
@@ -1009,15 +1009,15 @@ async function loadArchiveList(): Promise<void> {
  * **Per-file outcomes.** A file that reads is merged and marked read
  * even if others failed, and the count of failures is returned. One
  * dead file (deleted outside the browser, so the download record's
- * stale `exists` still says it's there) must not veto the archives
+ * stale `exists` still says it's there) must not veto the history files
  * that *are* readable — and it wouldn't heal on retry, so all-or-
  * nothing would lock the rest of the history out for the session.
  * The transient case still retries in full: with the file-URL toggle
  * off nothing is read at all (see below), so nothing is marked and the
  * button retries the whole set once the toggle is on.
  */
-async function loadArchives(): Promise<number> {
-  const pending = unloadedArchives();
+async function loadHistoryFiles(): Promise<number> {
+  const pending = unloadedHistoryFiles();
   if (pending.length === 0) return 0;
   // With the toggle off every one of these reads is refused, and while
   // the rejection *is* caught below, Chrome still logs "Not allowed to
@@ -1028,22 +1028,22 @@ async function loadArchives(): Promise<number> {
   // nothing is marked read, so the button still retries the whole set
   // once the toggle is on.
   if (fileAccessBlocked) return pending.length;
-  const generation = archiveGeneration;
+  const generation = historyFileGeneration;
   const results = await Promise.allSettled(pending.map(async (path) => {
     // A `file://` read that Chrome refuses (toggle off) rejects, but a
     // missing file can resolve non-ok — and that would otherwise look
-    // like a successful read of an empty archive, silently dropping 50
+    // like a successful read of an empty history file, silently dropping 50
     // captures off the page. `fetchImageInSW` checks `ok` on this same
     // scheme for the same reason.
     const res = await fetch(pathToFileUrl(path));
-    if (!res.ok) throw new Error(`archive read failed: ${res.status}`);
+    if (!res.ok) throw new Error(`history file read failed: ${res.status}`);
     return await res.text();
   }));
 
   // The log emptying while these reads were in flight discards the
-  // loaded archives; merging in anyway would put the cleared rows
+  // loaded history files; merging in anyway would put the cleared rows
   // straight back on screen.
-  if (generation !== archiveGeneration) return 0;
+  if (generation !== historyFileGeneration) return 0;
 
   let failed = 0;
   results.forEach((result, i) => {
@@ -1053,25 +1053,25 @@ async function loadArchives(): Promise<number> {
     }
     // Reversed to match the page's newest-first order, the same way
     // `loadRecords` reverses the append-ordered storage log.
-    archiveFileRecords.set(pending[i], parseLogText(result.value).reverse());
+    historyFileRecords.set(pending[i], parseLogText(result.value).reverse());
   });
   rebuildMerged();
   return failed;
 }
 
 /**
- * Read the pending archives and fold the outcome into the page state.
+ * Read the pending history files and fold the outcome into the page state.
  * Shared by the button and the storage listener so both show the
  * loading state and report failures the same way — and so neither can
  * start a second read while one is in flight.
  */
-async function loadArchivesInteractively(): Promise<void> {
-  if (archiveLoading) return;
-  archiveLoading = true;
-  archiveError = '';
+async function loadHistoryFilesInteractively(): Promise<void> {
+  if (historyFileLoading) return;
+  historyFileLoading = true;
+  historyFileError = '';
   renderOlder();
   try {
-    const failed = await loadArchives();
+    const failed = await loadHistoryFiles();
     // The newly-loaded rows reference files we haven't asked about
     // yet, so refresh the "(deleted)" map alongside them.
     await loadFileExistence();
@@ -1084,16 +1084,16 @@ async function loadArchivesInteractively(): Promise<void> {
       // toolbar, which is above the banner, and was under the table,
       // which was below it.
       const files = `${failed} history ${failed === 1 ? 'file' : 'files'}`;
-      archiveError = fileAccessBlocked
+      historyFileError = fileAccessBlocked
         ? `Could not read ${files} — see the file-access banner.`
         : `Could not read ${files}.`;
     }
   } catch {
-    // `loadArchives` reports per-file failures through its return
+    // `loadHistoryFiles` reports per-file failures through its return
     // value, so reaching here means the read itself broke.
-    archiveError = 'Could not read the history files.';
+    historyFileError = 'Could not read the history files.';
   }
-  archiveLoading = false;
+  historyFileLoading = false;
   render();
 }
 
@@ -1103,7 +1103,7 @@ loadOlderBtn.addEventListener('click', () => {
   // names the banner, but it's small and easy to miss next to a button
   // that just did nothing.
   if (fileAccessBlocked) flashFileAccessHint();
-  void loadArchivesInteractively();
+  void loadHistoryFilesInteractively();
 });
 
 async function loadRecords(): Promise<void> {
@@ -1125,15 +1125,15 @@ searchInput.addEventListener('input', render);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !(LOG_STORAGE_KEY in changes)) return;
   // Something wiped the key entirely — `clearCaptureLog`, from tests
-  // or the devtools console. Drop the archived rows loaded into this
+  // or the devtools console. Drop the history-file rows loaded into this
   // tab along with it, so the page reflects that instead of leaving
-  // hundreds of rows under an empty log. The archive files stay on
+  // hundreds of rows under an empty log. The history files stay on
   // disk, so the button simply offers them again.
   if (changes[LOG_STORAGE_KEY].newValue === undefined) {
-    archiveFileRecords.clear();
-    archiveError = '';
-    // Disown any read still in flight — see `archiveGeneration`.
-    archiveGeneration += 1;
+    historyFileRecords.clear();
+    historyFileError = '';
+    // Disown any read still in flight — see `historyFileGeneration`.
+    historyFileGeneration += 1;
   }
   void (async () => {
     await loadRecords();
@@ -1143,12 +1143,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     // The new capture's own files won't be in the existence map yet.
     await loadFileExistence();
     // A capture can also push the log over its cap and write a new
-    // archive file. Pick that up so the button's count stays right —
+    // history file. Pick that up so the button's count stays right —
     // and read it straight away if the user has already opted in, so
     // records don't appear to vanish as they age out of storage.
-    await loadArchiveList();
-    if (archiveFileRecords.size > 0) {
-      await loadArchivesInteractively();
+    await loadHistoryFileList();
+    if (historyFileRecords.size > 0) {
+      await loadHistoryFilesInteractively();
       return; // it renders
     }
     render();
@@ -1251,7 +1251,7 @@ void (async () => {
     loadRecords(),
     loadCaptureDir(),
     loadFileExistence(),
-    loadArchiveList(),
+    loadHistoryFileList(),
   ]);
   firstRenderDone = true;
   render();

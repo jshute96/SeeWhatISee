@@ -120,12 +120,12 @@
     enabled for the extension; the page says so, with a link to the
     settings page carrying the toggle.
   * **Load older captures**, next to the capture count, pulls in
-    captures older than the most recent 100, which are archived to
+    captures older than the most recent 100, which move into
     `history-<timestamp>.json` files next to `log.json` instead of
     being discarded. Needs the same file-access permission. It only
-    appears while there are unread archives, and its tooltip says how
-    many.
-    * Deleting `log.json` doesn't delete those archive files, so the
+    appears while there are unread history files, and its tooltip says
+    how many.
+    * Deleting `log.json` doesn't delete those history files, so the
       History page can still load them afterwards.
   * A **Snapshots directory** button at the right end of the search
     row opens the on-disk capture folder in a new tab. It replaces the

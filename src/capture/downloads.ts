@@ -21,7 +21,7 @@ import { unpackText } from './packed-text.js';
 export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
 /**
- * Filename prefix for the capture-log archive files —
+ * Filename prefix for the capture-log history files —
  * `history-<compactTimestamp>.json`, holding the older entries that
  * no longer fit in `log.json` (see `log-store.ts`).
  *
@@ -30,10 +30,10 @@ export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
  * agree on it, and this module owns everything about where capture
  * files land.
  */
-export const ARCHIVE_FILE_PREFIX = 'history-';
+export const HISTORY_FILE_PREFIX = 'history-';
 
 /**
- * Name of the capture-log sidecar. Every capture rewrites it, and it
+ * Name of the capture log file. Every capture rewrites it, and it
  * is the one deliberately-reused filename in the capture directory —
  * hence the reconcile machinery in `log-reconcile.ts` that checks what
  * is on disk before overwriting.
@@ -281,7 +281,7 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
 }
 
 /**
- * Absolute paths of the `history-*.json` archive files we've written,
+ * Absolute paths of the `history-*.json` history files we've written,
  * newest first — the on-disk tail of the capture log that no longer
  * fits in `chrome.storage.local` (see `log-store.ts`).
  *
@@ -290,22 +290,22 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
  * download records are the only index of what we wrote. Consequences
  * worth knowing:
  *
- * - Clearing download history hides archives that are still on disk.
+ * - Clearing download history hides history files that are still on disk.
  *   They come back into view on their own only if re-downloaded, so
  *   the History page's "load older" offer simply shrinks — it never
  *   claims records are gone.
  * - `DownloadQuery.limit` defaults to 1000 records, and every capture
- *   file (not just archives) counts toward it. A history long enough
- *   to hit that loses its *oldest* archives from the listing first,
+ *   file (not just history files) counts toward it. A history long enough
+ *   to hit that loses its *oldest* history files from the listing first,
  *   which are the ones a reader is least likely to want.
  *
  * Records for files Chrome knows are deleted are skipped — fetching
  * them would just fail — as are duplicates from a re-written name,
  * keeping the newest record per path.
  */
-export async function getArchiveFilePaths(): Promise<string[]> {
+export async function getHistoryFilePaths(): Promise<string[]> {
   const items = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${ARCHIVE_FILE_PREFIX}[^/\\\\]*\\.json$`,
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${HISTORY_FILE_PREFIX}[^/\\\\]*\\.json$`,
     orderBy: ['-startTime'],
   });
   const paths: string[] = [];
@@ -348,13 +348,13 @@ export function pathToFileUrl(path: string): string {
  * The newest **completed** `log.json` download record written by this
  * extension, or `null` when there is none.
  *
- * This record is our only memory of the sidecar that survives
+ * This record is our only memory of the log file that survives
  * `chrome.storage.local` being wiped, so the reconcile in
  * `log-reconcile.ts` leans on it for both "is the file still there"
  * (`exists`) and "how big was it when we wrote it" (`logRecordSize`).
  *
  * Records from a *different* extension id are skipped, same as
- * everywhere else here. That hides the sidecar written by a previous
+ * everywhere else here. That hides the log file written by a previous
  * unpacked load of this extension (whose id changes on every reload)
  * — those fall through to the existence probe instead, which is the
  * conservative answer.
@@ -579,7 +579,7 @@ async function discardDownload(downloadId: number): Promise<void> {
  * inferring anything from a record we don't have.
  *
  * Deliberately *not* a zero-byte `log.json`: writing that when no file
- * existed would leave an empty sidecar behind, and an empty file we
+ * existed would leave an empty log file behind, and an empty file we
  * wrote is exactly what the reconcile reads as "this log was cleared,
  * start over" — the probe would manufacture the state it is trying to
  * observe. A unique throwaway name can't collide with anything, so it

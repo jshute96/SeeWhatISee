@@ -168,7 +168,7 @@ referenced from this doc live in
   the action when `withSelection.html === true` /
   `withoutSelection.html === true` for the active branch);
   otherwise the action records what it can and leaves the broken
-  artifact off the sidecar. `selectionError` is never re-thrown —
+  artifact off the log record. `selectionError` is never re-thrown —
   `data.selections` is unset on a selection-scrape failure, so
   `useWithSelection` collapses to false and the user's
   with-selection defaults don't apply.
@@ -486,7 +486,7 @@ as the prompt textarea:
 
 Fills the remaining flex slot beside the tool palette and shrinks
 vertically via JS-managed `max-height` so the page never scrolls.
-See [Image fit-to-viewport](#image-fit-to-viewport).
+See [Image fit-to-viewport + Zoom](#image-fit-to-viewport--zoom).
 
 ## Image annotation pane
 
@@ -1611,7 +1611,7 @@ If the user has any edits *and* is saving the screenshot:
   download; on a cache hit (the page already pre-downloaded at
   this `editVersion`) it's dropped because the on-disk file
   already matches. `recordDetailedCapture` then writes the
-  sidecar with the screenshot artifact carrying whichever of
+  log file with the screenshot artifact carrying whichever of
   `hasHighlights: true` / `hasRedactions: true` /
   `isCropped: true` are set for this save.
 - The see-what-i-see skills read
@@ -1642,7 +1642,7 @@ If the user has any edits *and* is saving the screenshot:
     cached file stays the truth for the on-disk bytes, so the
     filename keeps the post-bake extension.
 
-## `isEdited` sidecar flag
+## `isEdited` log flag
 
 - Emitted inside `contents` / `selection` artifact objects in
   `log.json` whenever the user saved an edit through the
@@ -1779,8 +1779,8 @@ If the user has any edits *and* is saving the screenshot:
   Copy clicks — so a file pre-downloaded by Copy (at the same
   `editVersion` for screenshots) is *not* re-written, and the
   on-disk file from the Copy step is what the log entry
-  references. Then `recordDetailedCapture` writes the sidecar.
-  The saved sidecar record can include any of `screenshot`,
+  references. Then `recordDetailedCapture` writes the log record.
+  The saved record can include any of `screenshot`,
   `contents`, `selection`, and `prompt`, on top of the
   always-present `timestamp` and `url`. Each artifact object can
   carry per-kind flags: `screenshot.hasHighlights`,

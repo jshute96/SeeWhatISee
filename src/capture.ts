@@ -7,7 +7,7 @@
 // Sibling modules under `src/capture/`:
 //   - `recompress.ts` — PNG→JPEG recompress for oversized screenshots
 //   - `downloads.ts`  — `chrome.downloads` plumbing (PNG/HTML/sel + log)
-//   - `log-store.ts`  — `chrome.storage.local` log + `log.json` mirror
+//   - `log-store.ts`  — the `log.json` log + its chrome.storage.local cache
 //   - `image-source.ts` — image right-click / bare-image-tab paths
 //
 // Each capture writes two files into the download directory:
@@ -19,17 +19,16 @@
 //                                    upload image flows) can promote it to
 //                                    `.jpg`.
 //   - log.json                     — newline-delimited JSON (one record per
-//                                    line), regenerated each time from
-//                                    chrome.storage.local
+//                                    line), rewritten whole on every capture
 //
-// We can't truly append to log.json from a Chrome extension (the downloads
-// API only writes whole files; the SW has no filesystem access), so the
-// authoritative log lives in chrome.storage.local and log.json is a
-// snapshot of it written on every capture. If a user manually deletes
-// log.json, the next capture will recreate it from storage.
+// **log.json on disk is the authoritative log**; chrome.storage.local
+// only caches it (the downloads API can't append, so every capture
+// rewrites the file after reconciling against what's there — see
+// `capture/log-reconcile.ts` and `docs/log-consistency.md`). Deleting
+// log.json starts a new log rather than being undone.
 //
 // Entries that age out of that buffer are flushed to
-// `history-<timestamp>.json` archive files, so `log.json` stays a
+// `history-<timestamp>.json` history files, so `log.json` stays a
 // bounded recent-captures window while the full history survives on
 // disk. Every path here records through `recordCapture`, which owns
 // both writes — see `capture/log-store.ts`.
@@ -205,9 +204,9 @@ export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
   // shouldn't be written if the content itself failed to save.
   const downloadId = await downloadArtifact(filename, htmlDataUrl(html));
 
-  const sidecarDownloadIds = { log: await recordCapture(record) };
+  const logDownloadId = await recordCapture(record);
 
-  return { downloadId, sidecarDownloadIds, filename, ...record };
+  return { downloadId, logDownloadId, filename, ...record };
 }
 
 /**
@@ -345,7 +344,7 @@ export async function captureSelection(
     selections: bodies,
     selectionFilenames: filenames,
   };
-  // Save the selection file first. The sidecar is downstream and
+  // Save the selection file first. The log record is downstream and
   // shouldn't be written if the content itself failed to save.
   await downloadSelection(asCapture, format);
 
@@ -361,7 +360,7 @@ export async function captureSelection(
  * decides which artifacts to keep. The page can also pre-download
  * individual artifacts via the SW's `ensure…Downloaded` helpers
  * (Copy-filename buttons); `recordDetailedCapture` then writes the
- * sidecar referencing whichever artifacts were materialized.
+ * log record referencing whichever artifacts were materialized.
  *
  * The active-tab query happens once and both the screenshot and the
  * HTML scrape target that tab, so the two artifacts are guaranteed
@@ -633,7 +632,7 @@ export async function saveCapture(
   // the record's ISO timestamp from it, so the two can never drift.
   const now = new Date();
   // `filename` in the record is the bare basename so it resolves against
-  // whichever directory the sidecar is read from. The downloads API needs
+  // whichever directory the log file is read from. The downloads API needs
   // the full subdir-qualified path, which we build separately. `ext`
   // defaults to `png` for the tab-screenshot path; the image-context
   // save path passes the MIME-derived extension of the source image and
@@ -659,7 +658,7 @@ export async function saveCapture(
   // returning. Overkill for v1.
   const downloadId = await downloadArtifact(filename, dataUrl);
 
-  const sidecarDownloadIds = { log: await recordCapture(record) };
+  const logDownloadId = await recordCapture(record);
 
-  return { downloadId, sidecarDownloadIds, filename, ...record };
+  return { downloadId, logDownloadId, filename, ...record };
 }

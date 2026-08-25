@@ -90,7 +90,7 @@ async function canReadFiles(): Promise<boolean> {
  *
  * A missing file resolves non-ok rather than rejecting, which would
  * otherwise read as a successful load of an empty log and quietly
- * discard the user's history — the same trap `loadArchives` guards
+ * discard the user's history — the same trap `loadHistoryFiles` guards
  * against on the History page.
  */
 async function readLogFile(directory: string): Promise<string | null> {

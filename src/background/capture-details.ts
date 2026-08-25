@@ -493,7 +493,7 @@ export interface DetailsSession {
    * Sticky per-artifact "was edited" flags. Set by the
    * `updateArtifact` handler when the user saves in the
    * corresponding dialog, and forwarded to `recordDetailedCapture`
-   * at save time so the sidecar record's `contents` / `selection`
+   * at save time so the log record's `contents` / `selection`
    * artifact object carries `isEdited: true`. Never cleared within
    * a session — once the body is the user's edit, it stays the
    * user's edit for any later save.
@@ -1472,7 +1472,7 @@ export async function ensureScreenshotDownloaded(
  * of the artifact's sticky "edited" flag so the predicate can
  * refuse to commit when an Edit-dialog save landed while our
  * download was in flight — if it committed blindly, the on-disk
- * file would hold pre-edit bytes but the eventual sidecar's
+ * file would hold pre-edit bytes but the eventual log record's
  * `isEdited: true` would claim otherwise.
  *
  * The `readEdited` callback lets callers point at either the flat
@@ -2083,7 +2083,7 @@ export function installDetailsMessageHandlers(): void {
             isCropped: msg.isCropped,
             htmlEdited: postEnsure.htmlEdited,
             // Only the chosen selection format's edit flag matters
-            // for the sidecar — edits to other formats stay on
+            // for the log record — edits to other formats stay on
             // disk but never land in `log.json` because they
             // weren't picked for save.
             selectionEdited:

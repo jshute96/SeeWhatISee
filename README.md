@@ -303,7 +303,7 @@ See [Developing skills](#developing-skills) below for more details.
 
 Everything the extension writes lands under
 `~/Downloads/SeeWhatISee/`. A capture produces one or more capture
-files plus an updated `log.json` sidecar.
+files plus an updated `log.json`.
 
 ### Capture files
 

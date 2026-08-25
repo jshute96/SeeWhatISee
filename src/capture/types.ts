@@ -159,7 +159,7 @@ export interface CaptureRecord {
    * (`--after` in `skills/SeeWhatISee.py`, the MCP `watch` tool). Not
    * an identifier beyond that: the bump can put a record a millisecond
    * past the compact stamp in its own filenames, and uniqueness is
-   * maintained within `log.json` rather than across the archives.
+   * maintained within `log.json` rather than across the history files.
    *
    * Dedupe on the whole record — keying on this alone has already cost
    * real captures on the History page.
@@ -248,14 +248,12 @@ export interface CaptureResult extends CaptureRecord {
   /** Download id of the content file (PNG or HTML). */
   downloadId: number;
   /**
-   * Download id of the JSON sidecar (log.json) written alongside the
-   * content file. Production callers (toolbar / context menu) ignore
-   * this; it's primarily there so e2e tests can resolve the sidecar
-   * to its on-disk path via chrome.downloads.search.
+   * Download id of the `log.json` write this capture performed.
+   * Production callers (toolbar / context menu) ignore it; it's
+   * primarily there so e2e tests can resolve the log to its on-disk
+   * path via `chrome.downloads.search`.
    */
-  sidecarDownloadIds: {
-    log: number;
-  };
+  logDownloadId: number;
 }
 
 /**
@@ -472,7 +470,7 @@ export interface SaveDetailedOptions {
   /**
    * Optional user-entered prompt. Trimmed by the caller; an empty
    * string is treated the same as omitting the field. Stored on the
-   * sidecar record under `prompt` when non-empty.
+   * log record under `prompt` when non-empty.
    */
   prompt?: string;
   /**
