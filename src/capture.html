@@ -287,9 +287,11 @@
     background: rgba(0, 0, 0, 0.35);
   }
   /* Out-of-sync log prompt. Narrower than the edit dialogs — it's a
-   * few lines of explanation and a row of buttons, not an editor. */
+   * few lines of explanation and a short numbered list of fixes, not
+   * an editor. Wide enough that the longest reason line (the
+   * size-mismatch one) doesn't wrap. */
   dialog.log-sync-dialog {
-    width: min(560px, 90vw);
+    width: min(640px, 90vw);
     padding: 16px;
     border: 1px solid #555;
     border-radius: 6px;
@@ -309,29 +311,49 @@
   .log-sync-dialog p {
     margin: 0 0 12px 0;
   }
-  /* The remedy text names the full path to log.json, and a long path
-   * that overflows would push the button row out of reach. Targets the
-   * paragraph itself: the text is set with `textContent`, so there is
-   * no <code> element inside it to hang this on. */
-  #log-sync-remedy {
+  /* Paths and filenames render in the mono face. `anywhere` because
+   * the full path can be long and an overflow would widen the dialog
+   * past its cap. */
+  .log-sync-dialog code {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
     overflow-wrap: anywhere;
   }
-  /* Buttons trail to the right, primary action last — the same
-   * reading order the edit dialogs' action row uses. */
-  .log-sync-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 16px;
+  /* Options lettered, the steps inside option A numbered — "choose
+   * one of (A)/(B)/(C); (A) is done as 1, 2". The `::marker` content
+   * wraps the letter in parens; `upper-alpha` stays as the fallback
+   * semantics behind it. */
+  .log-sync-options {
+    margin: 0;
+    padding-left: 28px;
+    list-style: upper-alpha;
+  }
+  .log-sync-options > li::marker {
+    content: "(" counter(list-item, upper-alpha) ") ";
+  }
+  .log-sync-options > li {
+    margin: 0 0 12px 0;
+  }
+  .log-sync-options > li:last-child {
+    margin-bottom: 0;
+  }
+  .log-sync-steps {
+    margin: 4px 0 0 0;
+    padding-left: 22px;
+    list-style: decimal;
+  }
+  .log-sync-steps > li {
+    margin: 4px 0 0 0;
   }
   /* Sizing/border per call site, like every other button here; `.btn`
-   * only supplies the raised/pressed feedback layer. The settings
-   * entry is an <a> so hover and copy-link work on its real href, so
-   * it needs the text-decoration reset too. */
-  .log-sync-actions .btn {
+   * only supplies the raised/pressed feedback layer. Inline in the
+   * option text, so padded a little tighter than a row button. The
+   * settings entry is an <a> so hover and copy-link work on its real
+   * href, so it needs the text-decoration reset too. */
+  .log-sync-options .btn {
     display: inline-flex;
     align-items: center;
-    padding: 4px 12px;
+    padding: 2px 10px;
     font-size: 13px;
     border: 1px solid #555;
     border-radius: 4px;
@@ -339,12 +361,6 @@
     color: #000;
     text-decoration: none;
     cursor: pointer;
-  }
-  .log-sync-actions .primary {
-    font-weight: 600;
-  }
-  .log-sync-error {
-    color: #b3261e;
   }
   .edit-dialog h2 {
     margin: 0;
@@ -1426,28 +1442,72 @@
   <!-- Shown when a capture saved its files but couldn't update
        `log.json` because we can't tell what's on disk. Asks what to do
        with that one capture, right then: Retry re-runs the write,
-       Overwrite forces it, Cancel abandons the record. Wired by
-       `capture-page/log-sync.ts`; the body text is per-reason and set
-       there. -->
+       Overwrite forces it, Cancel abandons the record. The structure
+       is fixed here; `capture-page/log-sync.ts` fills the path and the
+       reason line, and swaps option A's intro and first step for the
+       corrupt-file reason (where file reads are already on, so
+       "enable them" would be the wrong advice). -->
   <dialog id="log-sync-dialog" class="log-sync-dialog"
           aria-labelledby="log-sync-title">
     <h2 id="log-sync-title">Capture log is out of sync</h2>
-    <p id="log-sync-reason"></p>
-    <p id="log-sync-remedy"></p>
-    <p id="log-sync-error" class="log-sync-error" hidden></p>
-    <div class="log-sync-actions">
-      <!-- Real `href` so hover / copy-link work, but the click is
-           intercepted: Chrome blocks page-initiated `chrome://`
-           navigation, so log-sync.ts opens it via `chrome.tabs.create`. -->
-      <a id="log-sync-settings" class="btn" href="chrome://extensions/">
-        Extension settings
-      </a>
-      <button type="button" id="log-sync-cancel" class="btn">Cancel</button>
-      <button type="button" id="log-sync-retry" class="btn">Retry</button>
-      <button type="button" id="log-sync-overwrite" class="btn primary">
-        Overwrite log.json
-      </button>
-    </div>
+    <p>Capture records are written in <code id="log-sync-path"></code>.</p>
+    <!-- One span per reason; log-sync.ts unhides the one that
+         applies. Markup rather than set text so the filename can
+         render in the code font. -->
+    <p>
+      <span id="log-sync-reason-unknown-file" hidden><code>log.json</code>
+        already exists, but this browser has no record of writing
+        it.</span>
+      <span id="log-sync-reason-size-mismatch" hidden><code>log.json</code>
+        was modified outside SeeWhatISee. Writing now will overwrite
+        external edits.</span>
+      <span id="log-sync-reason-unreadable" hidden><code>log.json</code>
+        exists but couldn&rsquo;t be read.</span>
+      <span id="log-sync-reason-corrupt-file" hidden><code>log.json</code>
+        was modified outside SeeWhatISee and now has lines that
+        aren&rsquo;t valid capture records.</span>
+    </p>
+    <p><b>Options:</b></p>
+    <ol class="log-sync-options">
+      <li>
+        <span id="log-sync-fix-access">
+          <b>Enable local file reads</b> <i>(Recommended)</i><br>
+          Then SeeWhatISee can append to the log without overwriting it.
+        </span>
+        <span id="log-sync-fix-file" hidden>
+          <b>Fix the file</b> <i>(Recommended)</i>
+        </span>
+        <!-- Step 2 is shared; only step 1 swaps with the variant. -->
+        <ol class="log-sync-steps">
+          <li id="log-sync-step-access">
+            Turn on <b>Allow access to file URLs</b> in
+            <!-- Real `href` so hover / copy-link work, but the click
+                 is intercepted: Chrome blocks page-initiated
+                 `chrome://` navigation, so log-sync.ts opens it via
+                 `chrome.tabs.create`. -->
+            <a id="log-sync-settings" class="btn" href="chrome://extensions/">Extension
+              settings</a>
+          </li>
+          <li id="log-sync-step-file" hidden>
+            Repair or delete the file
+          </li>
+          <li>
+            <button type="button" id="log-sync-retry" class="btn">Retry</button>
+          </li>
+        </ol>
+      </li>
+      <li>
+        <!-- `&nbsp;`, not a plain space: the button is inline-flex,
+             and flex layout drops whitespace-only text between the
+             word and the <code> child. -->
+        <button type="button" id="log-sync-overwrite"
+                class="btn">Overwrite&nbsp;<code>log.json</code></button>
+        External edits will be lost.
+      </li>
+      <li>
+        <button type="button" id="log-sync-cancel" class="btn">Cancel</button>
+      </li>
+    </ol>
   </dialog>
 
   <!-- Cloned once per editable artifact kind by `createEditDialog`, which

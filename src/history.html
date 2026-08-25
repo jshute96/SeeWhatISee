@@ -413,9 +413,10 @@
        would be wrong. Two authored paragraphs rather than one whose
        text gets swapped, so the copy stays in the markup. -->
   <p class="notice" id="empty-archived" hidden>
-    Nothing in the current log, but older captures are stored in
-    history files on disk — use <b>Load older captures</b> at the top
-    to read them.
+    <!-- `<br>` so that when this wraps, it breaks between the
+         sentences rather than mid-sentence. -->
+    Current capture log is empty, but older history logs exist.<br>
+    Click <b>Load older captures</b> to load them.
   </p>
   <p class="notice" id="no-matches" hidden>
     No captures match your search.

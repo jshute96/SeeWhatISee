@@ -347,35 +347,38 @@ failure like any other.
 ### The answers offered
 
 The dialog names the file (path in a code font), says in one line
-what's wrong with it, and lists the fixes as numbered options under
-**Choose how to fix**:
+what's wrong with it, and lists the fixes as lettered options —
+"(A)", "(B)", "(C)" — under **Options:**
 
-1. **Enable local file reads** *(Recommended)* — then the file can be
-   read and appended to without overwriting it. The instructions
-   (turn on "Allow access to file URLs" via the inline **Extension
-   settings** button, opened in a background tab since Chrome won't
-   link straight to the toggle) and the **Retry** button sit inline in
-   this option. Retry runs the same append again from the top:
-   reconcile, then write — so it also lands after any other fix, such
-   as deleting `log.json` (with the file gone there's nothing left to
-   preserve, so a fresh log starts from this capture). With nothing
-   changed it lands back on the same prompt.
-   - For the `corrupt-file` reason, file reads are already on, so this
-     option reads **Fix the file** instead: repair or delete it, then
-     Retry.
-2. **Overwrite log.json** — the same append with the reconcile
-   skipped: the file is replaced with the browser's copy of the log
-   plus this capture; external edits are lost. The one place anything
-   on disk is knowingly discarded, so it takes an explicit click.
-   Usually the right call when the cause is a cleared download
-   history, where the file and the browser copy actually agree.
-3. **Cancel** (the button, Esc, or just closing the page) — abandon
-   the record. The capture's files stay on disk, but it is not in the
-   log.
+- **(A) Enable local file reads** *(Recommended)*, so the file can be
+  read and appended to without overwriting it. Done as two numbered
+  steps inline in the option: 1. turn on "Allow access to file URLs"
+  via the **Extension settings** button (opened in a background tab,
+  since Chrome won't link straight to the toggle); 2. click **Retry**.
+  Retry runs the same append again from the top (reconcile, then
+  write), so it also lands after any other fix, such as deleting
+  `log.json` — with the file gone there's nothing left to preserve, so
+  a fresh log starts from this capture. With nothing changed it lands
+  back on the same prompt.
+  - For the `corrupt-file` reason, file reads are already on, so the
+    option reads **Fix the file** instead and step 1 becomes "Repair
+    or delete the file."
+- **(B) Overwrite log.json.** The same append with the reconcile
+  skipped: the file is replaced with the browser's copy of the log
+  plus this capture, and external edits are lost (the option says so).
+  The one place anything on disk is knowingly discarded, so it takes
+  an explicit click. Usually the right call when the cause is a
+  cleared download history, where the file and the browser copy
+  actually agree.
+- **(C) Cancel** (the button, Esc, or just closing the page). Abandons
+  the record: the capture's files stay on disk, but it is not in the
+  log.
 
 ### Where it's asked
 
-The wording lives in one place (`capture/log-sync-client.ts`), so the
+The dialog is one piece of markup in `capture.html` (wired by
+`capture-page/log-sync.ts`, with the round-trip and path text in the
+shared `capture/log-sync-client.ts`), so the
 two surfaces can't drift apart.
 
 - **Capture page** — the save fails and the dialog opens over the page
@@ -389,7 +392,9 @@ two surfaces can't drift apart.
   failed" state — with the record carried in a `?logsync=` URL param
   and the same dialog on top. Retry / Overwrite send the record to
   the service worker to write (`logSyncWrite`); success closes the
-  tab, and closing the tab is the Cancel gesture.
+  tab, and closing the tab is the Cancel gesture. A still-blocked
+  write reopens the dialog; any other failure reports in the error
+  page's own message slot, not in the dialog.
 
 Reusing the failure surface is deliberate. The files did get written,
 but the capture the user asked for isn't in their log, which is the

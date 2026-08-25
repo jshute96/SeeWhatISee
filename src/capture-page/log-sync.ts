@@ -17,12 +17,12 @@
 //     worker to write. Closing the tab is the Cancel gesture.
 
 import { type CaptureRecord } from '../capture/types.js';
+import { type LogSyncBlockedReason } from '../capture/log-reconcile.js';
 import {
   type LogSyncPrompt,
   fileAccessUrl,
   isLogSyncReason,
-  logSyncReasonText,
-  logSyncRemedyText,
+  logSyncPathText,
   openFileAccessSettings,
   requestLogSyncWrite,
 } from '../capture/log-sync-client.js';
@@ -34,9 +34,13 @@ export interface LogSyncHandlers {
 }
 
 let dialog: HTMLDialogElement;
-let reasonEl: HTMLElement;
-let remedyEl: HTMLElement;
-let errorEl: HTMLElement;
+let pathEl: HTMLElement;
+/** One hidden <span> per reason; `show` unhides the one that applies. */
+let reasonEls: Record<LogSyncBlockedReason, HTMLElement>;
+let fixAccessEl: HTMLElement;
+let fixFileEl: HTMLElement;
+let stepAccessEl: HTMLElement;
+let stepFileEl: HTMLElement;
 let retryBtn: HTMLButtonElement;
 let overwriteBtn: HTMLButtonElement;
 let handlers: LogSyncHandlers | null = null;
@@ -55,10 +59,19 @@ const SHOW_RETRY_LIMIT = 100; // ~10s at 100ms
  */
 export function showLogSyncDialog(prompt: LogSyncPrompt, h: LogSyncHandlers, attempt = 0): void {
   handlers = h;
-  reasonEl.textContent = logSyncReasonText(prompt.reason);
-  remedyEl.textContent = logSyncRemedyText(prompt.directory, prompt.reason);
-  errorEl.hidden = true;
-  setLogSyncBusy(false);
+  pathEl.textContent = logSyncPathText(prompt.directory);
+  for (const [reason, el] of Object.entries(reasonEls)) {
+    el.hidden = reason !== prompt.reason;
+  }
+  // Option A is "enable file reads" — except for the corrupt-file
+  // reason, which is only reachable with them already on; there its
+  // intro and first step become "fix the file". The rest of the list
+  // is static markup.
+  const corrupt = prompt.reason === 'corrupt-file';
+  fixAccessEl.hidden = corrupt;
+  stepAccessEl.hidden = corrupt;
+  fixFileEl.hidden = !corrupt;
+  stepFileEl.hidden = !corrupt;
   if (dialog.open) return;
   // The page starts `visibility: hidden` until `loadData` finishes.
   // A modal opened before that is invisible but still traps clicks
@@ -74,27 +87,23 @@ export function showLogSyncDialog(prompt: LogSyncPrompt, h: LogSyncHandlers, att
   dialog.showModal();
 }
 
-/** Disable the action buttons while a Retry / Overwrite is in flight. */
-export function setLogSyncBusy(busy: boolean): void {
-  retryBtn.disabled = busy;
-  overwriteBtn.disabled = busy;
-}
-
-/** Show `message` on the dialog's error line (a failed round-trip). */
-export function showLogSyncError(message: string): void {
-  errorEl.textContent = message;
-  errorEl.hidden = false;
-}
-
 export function closeLogSyncDialog(): void {
   if (dialog.open) dialog.close();
 }
 
 export function initLogSync(): void {
   dialog = document.getElementById('log-sync-dialog') as HTMLDialogElement;
-  reasonEl = document.getElementById('log-sync-reason') as HTMLElement;
-  remedyEl = document.getElementById('log-sync-remedy') as HTMLElement;
-  errorEl = document.getElementById('log-sync-error') as HTMLElement;
+  pathEl = document.getElementById('log-sync-path') as HTMLElement;
+  reasonEls = {
+    'unknown-file': document.getElementById('log-sync-reason-unknown-file') as HTMLElement,
+    'size-mismatch': document.getElementById('log-sync-reason-size-mismatch') as HTMLElement,
+    'unreadable': document.getElementById('log-sync-reason-unreadable') as HTMLElement,
+    'corrupt-file': document.getElementById('log-sync-reason-corrupt-file') as HTMLElement,
+  };
+  fixAccessEl = document.getElementById('log-sync-fix-access') as HTMLElement;
+  fixFileEl = document.getElementById('log-sync-fix-file') as HTMLElement;
+  stepAccessEl = document.getElementById('log-sync-step-access') as HTMLElement;
+  stepFileEl = document.getElementById('log-sync-step-file') as HTMLElement;
   retryBtn = document.getElementById('log-sync-retry') as HTMLButtonElement;
   overwriteBtn = document.getElementById('log-sync-overwrite') as HTMLButtonElement;
   const settingsLink = document.getElementById('log-sync-settings') as HTMLAnchorElement;
@@ -145,36 +154,45 @@ function initFromErrorUrl(): void {
   };
 
   const write = async (force: boolean): Promise<void> => {
-    setLogSyncBusy(true);
+    // Close right away: the click's visible feedback is the dialog
+    // going down, and it comes back up only if the write is still
+    // blocked. Everything else reports through the error page's own
+    // message slot, the same place any capture failure shows.
+    closeLogSyncDialog();
     const result = await requestLogSyncWrite(record, force);
     if (result.kind === 'resolved') {
       // The capture is fully logged now, so a page saying "Capture
-      // failed" has nothing left to say. Close the tab if we can.
-      closeLogSyncDialog();
+      // failed" has nothing left to say. Close the tab if we can;
+      // when Chrome refuses (tab drag in progress, invalidated
+      // context), say what happened where the user is looking.
       try {
         const tab = await chrome.tabs.getCurrent();
         if (tab?.id !== undefined) await chrome.tabs.remove(tab.id);
       } catch {
-        // Tab close denied. The dialog has to come back up saying it
-        // worked, and the buttons have to be re-enabled — otherwise
-        // the user is left staring at "Capture log is out of sync"
-        // with Retry and Overwrite permanently greyed out, which
-        // reads as a hang rather than the success it is.
-        showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
-        showLogSyncError('Logged. You can close this tab.');
+        setErrorPaneMessage('Capture log updated. You can close this tab.');
       }
       return;
     }
     if (result.kind === 'blocked') {
-      // Usually Retry before anything actually changed. Re-render
-      // (the directory may have been learned) and stay up.
+      // Usually Retry before anything actually changed. Reopen,
+      // re-rendered — the path or reason may have been learned.
       showLogSyncDialog(result.prompt, dialogHandlers);
-      showLogSyncError('Still out of sync.');
       return;
     }
-    setLogSyncBusy(false);
-    showLogSyncError(result.message);
+    // The round-trip itself failed. The record is abandoned with the
+    // dialog; the user can read why here and capture again.
+    setErrorPaneMessage(result.message);
   };
 
   showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
+}
+
+/**
+ * Replace the "Capture failed" pane's message — the error page's usual
+ * failure slot. Used only on the `?error=` page, which is the only
+ * place `initFromErrorUrl` runs.
+ */
+function setErrorPaneMessage(text: string): void {
+  const el = document.getElementById('capture-failed-message');
+  if (el) el.textContent = text;
 }

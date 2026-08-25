@@ -1,12 +1,11 @@
-// Page side of the out-of-sync log prompt: the wording, and the
-// service-worker round-trip behind the error page's buttons.
+// Page side of the out-of-sync log prompt: the per-state wording, and
+// the service-worker round-trip behind the error page's buttons.
 //
-// The prompt appears in two places — the Capture page's save flow and
-// the `?error=` page a blocked context-menu / hotkey capture opens —
-// and both render the same situation, so the wording lives here.
-//
-// The wording is deliberately plain strings, not markup: each surface
-// builds its own DOM.
+// The prompt appears in two flows — the Capture page's save and the
+// `?error=` page a blocked context-menu / hotkey capture opens — and
+// both render the same situation. The dialog's wording — including the
+// per-reason line — lives in capture.html as toggled markup; only the
+// path string comes from here.
 
 import { type LogSyncBlockedReason } from './log-reconcile.js';
 import { type CaptureRecord } from './types.js';
@@ -72,33 +71,21 @@ export function fileAccessUrl(): string {
   return `chrome://extensions/?id=${chrome.runtime.id}`;
 }
 
-/** What we found, in one sentence. */
-export function logSyncReasonText(reason: LogSyncBlockedReason): string {
-  switch (reason) {
-    case 'unknown-file':
-      return `A ${LOG_FILE_NAME} already exists in the capture directory, but this
-        browser has no record of writing it — so its contents can't be read and
-        overwriting it could destroy capture history.`.replace(/\s+/g, ' ');
-    case 'size-mismatch':
-      return `The ${LOG_FILE_NAME} on disk is a different size than the log this
-        extension last wrote, so it may hold captures the browser doesn't
-        know about.`.replace(/\s+/g, ' ');
-    case 'unreadable':
-      return `The ${LOG_FILE_NAME} on disk couldn't be read, so there's no way to
-        tell what overwriting it would discard.`.replace(/\s+/g, ' ');
-    case 'corrupt-file':
-      return `The ${LOG_FILE_NAME} on disk has lines that aren't valid capture
-        records. Appending to it means rewriting the whole file, which would
-        drop those lines for good.`.replace(/\s+/g, ' ');
-  }
+/**
+ * The path shown in the dialog's first line ("Capture records are
+ * written in …"), rendered in a code font by the dialog. Falls back to
+ * the bare filename when the capture directory isn't known.
+ */
+export function logSyncPathText(directory?: string): string {
+  return directory ? `${directory}/${LOG_FILE_NAME}` : LOG_FILE_NAME;
 }
 
 /**
  * Whether a value off the wire is a reason we know how to render.
  *
  * The prompt's state can arrive through a `?logsync=` URL parameter,
- * which is user-editable. Without this check an unknown reason falls
- * off the end of `logSyncReasonText`'s switch and the dialog renders an
+ * which is user-editable. Without this check an unknown reason would
+ * match none of the dialog's per-reason spans and it would render an
  * empty explanation above live Retry / Overwrite buttons.
  */
 export function isLogSyncReason(value: unknown): value is LogSyncBlockedReason {
@@ -108,23 +95,3 @@ export function isLogSyncReason(value: unknown): value is LogSyncBlockedReason {
     || value === 'corrupt-file';
 }
 
-/**
- * What the user can do about it. Names the file's directory when we
- * know it — "delete log.json" is only actionable if they can find it.
- *
- * The file-access remedy is dropped for `corrupt-file`, which is the
- * one reason only reachable with that permission already on: telling
- * the user to turn on something they've turned on is worse than saying
- * nothing.
- */
-export function logSyncRemedyText(directory?: string, reason?: LogSyncBlockedReason): string {
-  const path = directory ? `${directory}/${LOG_FILE_NAME}` : LOG_FILE_NAME;
-  const enableAccess = reason === 'corrupt-file'
-    ? ''
-    : `turn on "Allow access to file URLs" in extension settings and choose Retry,
-       so the existing log can be read and appended to; or `;
-  return `This capture's files are saved, but it won't be in the capture log
-    until this is resolved. To resolve it: ${enableAccess}fix or delete ${path}
-    yourself and choose Retry; or choose Overwrite to replace it with the log the
-    browser is holding. Cancel skips logging this capture.`.replace(/\s+/g, ' ');
-}

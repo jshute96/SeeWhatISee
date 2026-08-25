@@ -861,9 +861,9 @@ function renderOlder(): void {
   // "88 captures" it read as a contradiction.
   loadOlderBtn.title = remaining > 0
     ? 'Recent captures from log.json are shown by default.\n'
-      + 'Older captures are stored in history files, history-*.json '
+      + 'Older captures are stored in history*.json '
       + `(${remaining} ${remaining === 1 ? 'file' : 'files'}).\n`
-      + 'Click to load them.'
+      + 'Click to load the history.'
     : '';
   // The note is for failures only — everything else this control has
   // to say is in the tooltip.

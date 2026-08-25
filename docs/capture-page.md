@@ -2760,10 +2760,16 @@ open/close, so it wires the nav itself).
   nothing is stored behind it. Cancel (the button or Esc) abandons the
   record — the capture's files stay on disk but it isn't logged, and a
   later capture that hits the same condition asks again.
-- Buttons: **Extension settings** (opens `chrome://extensions` in a
-  background tab so this page stays put while the user turns on
-  "Allow access to file URLs"), **Cancel**, **Retry**, and
-  **Overwrite log.json** as the primary.
+- Layout: one line naming the log file (path in a code font), one line
+  saying what's wrong with it, then lettered options under
+  **Options:** with the buttons inline:
+  - (A) **Enable local file reads** *(Recommended)*, as two numbered
+    steps: turn on the toggle via **Extension settings** (opens
+    `chrome://extensions` in a background tab so this page stays put),
+    then click **Retry**. Swapped for **Fix the file** on the
+    `corrupt-file` reason, where file reads are already on.
+  - (B) **Overwrite log.json**. External edits will be lost.
+  - (C) **Cancel** (button only, no explainer).
 - On this page, Retry / Overwrite re-run the whole save — idempotent,
   since artifact files re-hit their download caches or rewrite the
   same pinned names — with Overwrite passing `forceLog` to skip the
@@ -2772,6 +2778,12 @@ open/close, so it wires the nav itself).
   capture opens: the unwritten record rides in the `?logsync=` URL
   param, and Retry / Overwrite send it to the service worker
   (`logSyncWrite`). Success closes the tab; closing the tab is Cancel.
-- Wired by `capture-page/log-sync.ts`; the wording and the
-  service-worker round-trip come from the shared
+- The dialog itself carries no status line. A click closes it; a
+  still-blocked write reopens it (the blink is the feedback), and any
+  other outcome reports through the page's existing message slot —
+  the "Capture failed" pane's text on the `?error=` page, the status
+  slot on a live Capture page.
+- Wired by `capture-page/log-sync.ts`; the wording is static markup in
+  `capture.html` (per-reason spans toggled by the wiring), with the
+  service-worker round-trip and the path text in the shared
   `capture/log-sync-client.ts`.

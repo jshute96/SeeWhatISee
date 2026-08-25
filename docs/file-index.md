@@ -242,7 +242,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again, probing for them, and waiting out Chrome's stale-`exists` re-check |
 | `src/capture/log-store.ts` | The capture log: the `log.json` sidecar, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
-| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — wording, the `logSyncWrite` round-trip, settings link |
+| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 
 ### Capture-page modules (`src/capture-page/`)
