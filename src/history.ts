@@ -33,7 +33,7 @@
 
 import {
   getHistoryFilePaths,
-  getCaptureDirectory,
+  peekCaptureDirectory,
   getCaptureFileExistence,
   joinCapturePath,
   pathToFileUrl,
@@ -940,11 +940,14 @@ let fileAccessBlocked = false;
 
 async function loadCaptureDir(): Promise<void> {
   try {
-    captureDir = await getCaptureDirectory();
-  } catch {
-    // "No captures yet" — expected on a fresh install, and the empty
-    // state already says so. Rows (if any exist without a resolvable
+    // Peek, not get: the cache / download-history lookup is free, but
+    // `getCaptureDirectory`'s probe-download fallback writes a file,
+    // which merely opening this page shouldn't do. `null` — nothing
+    // captured yet — is expected on a fresh install, and the empty
+    // state already says so; rows (if any exist without a resolvable
     // directory) simply render without links.
+    captureDir = await peekCaptureDirectory();
+  } catch {
     captureDir = null;
   }
   // Nothing to browse until the directory is known, so the button

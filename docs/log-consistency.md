@@ -325,8 +325,8 @@ unknown.
 - Collision is detected by comparing the resulting name to `log.json`,
   not by looking for a ` (1)` suffix — that renaming pattern isn't a
   documented format.
-- Either way, the completed write's path names the capture directory,
-  which the prompt's remedy text uses.
+- Either way, the completed write's path names the capture directory
+  (refreshing the cached one), which the prompt's remedy text uses.
 - Never used for the history files, whose timestamped names are
   unique by construction.
 
@@ -403,17 +403,27 @@ carries the detail.
 
 ## Supporting changes
 
-- **`getCaptureDirectory`** (`src/capture/downloads.ts`) matches any of
-  our records under `SeeWhatISee/` rather than pinning to `log.json`.
-  The match is structural — our extension's download, landing directly
-  inside a directory named `SeeWhatISee/` — which every
-  code-initiated write satisfies (`downloadArtifact` hardcodes that
-  relative path); `byExtensionId` is the real guard against a stray
-  `/tmp/SeeWhatISee/`. The directory is therefore known right after the
-  first artifact of the first capture, which keeps the directory probe
-  a rare fallback. A Save-as-dialog write lands wherever the user
-  chose and so doesn't match, unless they picked a folder literally
-  named `SeeWhatISee`.
+- **Capture-directory discovery** (`src/capture/downloads.ts`) is
+  cache-first:
+  - `peekCaptureDirectory()` checks the `chrome.storage.local` cache
+    (key `captureDirectory`), then download history; it never writes a
+    file, and returns `null` when neither knows. Used by the History
+    page load and by the reconcile — where the answer names the
+    directory `log.json` is *read* from, as well as feeding
+    blocked-write error reporting.
+  - `getCaptureDirectory()` adds a throwaway probe download as a last
+    resort, so it can answer — and create the directory — even after
+    download history is cleared. It throws only when that probe fails.
+  - The download-history match is structural: our extension's download
+    (`byExtensionId` guards against a stray `/tmp/SeeWhatISee/`),
+    landing directly inside a directory named `SeeWhatISee/`. Any
+    artifact matches, not just `log.json`. A Save-as-dialog write
+    lands wherever the user chose and so doesn't match, unless they
+    picked a folder literally named `SeeWhatISee`.
+  - Writes awaited through `waitForDownloadComplete` — log writes,
+    history-file flushes, the probes — refresh the cache when they
+    land inside `SeeWhatISee/`, so the cache tracks a download root
+    the user has since moved.
 - **`refreshLogFileExistence`** (`src/background/log-sync.ts`) runs a
   `downloads.search` for `log.json` on every service-worker load, which
   gets Chrome re-checking early rather than leaving it to the first

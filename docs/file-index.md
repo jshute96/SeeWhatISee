@@ -373,6 +373,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
+| `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback, probe last resort |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the stale-`exists` re-check, and the Retry / Overwrite flush |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |

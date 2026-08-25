@@ -96,8 +96,9 @@ function stubChrome({
           const filename = created.get(query.id);
           return filename ? [{ id: query.id, state: 'complete', filename }] : [];
         }
-        // `getLogFileRecord` pins its regex to log.json;
-        // `getCaptureDirectory` matches any file we wrote.
+        // `getLogFileRecord` pins its regex to log.json; the
+        // directory search behind `peekCaptureDirectory` matches any
+        // file we wrote.
         const forLog = String(query.filenameRegex).endsWith('log\\.json$');
         if (forLog && record && existsAfterRecheck !== null) {
           // The real API behaves exactly this way: `search()` triggers

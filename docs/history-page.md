@@ -368,9 +368,11 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
 
 - Saved files live under `<downloads>/SeeWhatISee/`, so the only way
   to reference them from a page is a `file://` URL.
-- The directory is resolved with the shared `getCaptureDirectory()`
-  helper in `capture/downloads.ts`, which derives it from the
-  `log.json` download record.
+- The directory is resolved with the shared `peekCaptureDirectory()`
+  helper in `capture/downloads.ts`: the cached directory in
+  `chrome.storage.local`, else derived from our download records.
+  Peek rather than `getCaptureDirectory()` because the latter can fall
+  back to a probe download, and opening a page shouldn't write a file.
 - Thumbnails are plain `<img src="file://…">`. The browser loads the
   PNG itself; nothing reads the bytes into the extension, so there is
   no size limit to worry about and `loading="lazy"` keeps offscreen
@@ -561,9 +563,10 @@ each one flashes the file-access banner (`flashFileAccessHint()`,
 - A button, not an `<a href>` like the row file links — the
   destination isn't known until the downloads search resolves, and an
   anchor has no disabled state to hold until then.
-- Disabled until `getCaptureDirectory()` resolves, and stays disabled
-  when it can't — the directory is derived from the `log.json`
-  download record, so it doesn't exist before the first capture.
+- Disabled until `peekCaptureDirectory()` resolves, and stays disabled
+  when it can't — no cached directory and no download record: nothing
+  captured yet, or a pre-cache profile whose download history was
+  cleared.
   - That replaces the menu entry's error path, which threw and
     surfaced on the toolbar icon/tooltip. A greyed button says the
     same thing on the surface the user is already looking at, and its

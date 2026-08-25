@@ -14,9 +14,10 @@ import { unpackText } from './packed-text.js';
 
 /**
  * Subdirectory under the user's download root where every capture
- * file lands. Also the string `getCaptureDirectory` below builds its
- * `log.json` filter regex from, so the write path and the
- * where-did-it-land lookup can't disagree.
+ * file lands. Also the string the directory-discovery helpers below
+ * (`searchCaptureDirectory`, the `waitForDownloadComplete` cache
+ * refresh) match against, so the write path and the where-did-it-land
+ * lookup can't disagree.
  */
 export const DOWNLOAD_SUBDIR = 'SeeWhatISee';
 
@@ -39,6 +40,30 @@ export const HISTORY_FILE_PREFIX = 'history-';
  * is on disk before overwriting.
  */
 export const LOG_FILE_NAME = 'log.json';
+
+/**
+ * `chrome.storage.local` key holding the last known capture directory
+ * (absolute OS-native path). Storage rather than a module variable so
+ * every context (service worker, History page) sees the same answer
+ * and it survives service-worker restarts — including after the user
+ * clears Chrome's download history, which used to be the only index.
+ */
+export const CAPTURE_DIR_STORAGE_KEY = 'captureDirectory';
+
+/**
+ * Persist `dir` as the capture directory for `peekCaptureDirectory`.
+ * Fire-and-forget: a lost write only costs a re-derivation later, and
+ * no caller wants to fail its own work over a cache update.
+ */
+function rememberCaptureDirectory(dir: string): void {
+  void (async () => {
+    try {
+      await chrome.storage.local.set({ [CAPTURE_DIR_STORAGE_KEY]: dir });
+    } catch (err) {
+      console.info('[SeeWhatISee] could not cache the capture directory:', err);
+    }
+  })();
+}
 
 /**
  * Low-level download primitive. Used by every other write site
@@ -161,7 +186,20 @@ export async function waitForDownloadComplete(
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const [item] = await chrome.downloads.search({ id: downloadId });
-    if (item?.state === 'complete' && item.filename) return item.filename;
+    if (item?.state === 'complete' && item.filename) {
+      // A completed write that landed directly inside a `SeeWhatISee/`
+      // directory refreshes the cached capture directory — the same
+      // structural rule as `searchCaptureDirectory`'s regex, including
+      // requiring a separator before the segment so a (never expected)
+      // relative path can't cache a bare `SeeWhatISee`. Save-as writes
+      // into unrelated folders don't match, so they can't poison the
+      // cache. This covers the writes awaited here — log writes,
+      // history-file flushes, the probes — which is what keeps the
+      // cache tracking a download root the user has since moved.
+      const dir = parentDirectory(item.filename);
+      if (new RegExp(`[/\\\\]${DOWNLOAD_SUBDIR}$`).test(dir)) rememberCaptureDirectory(dir);
+      return item.filename;
+    }
     if (item?.state === 'interrupted') {
       throw new Error(`Download ${downloadId} interrupted: ${item.error ?? 'unknown'}`);
     }
@@ -171,12 +209,10 @@ export async function waitForDownloadComplete(
 }
 
 /**
- * Resolve the absolute on-disk directory where this extension writes
- * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
- * is OS- and config-dependent and not exposed by any Chrome API, so we
- * derive it by searching `chrome.downloads.search` for the most recent
- * file *we* wrote under a `SeeWhatISee/` directory — even on a fresh
- * SW load where in-memory state is empty.
+ * Derive the capture directory from download history: the most recent
+ * file *we* wrote directly inside a `SeeWhatISee/` directory. `null`
+ * when there is no such record (nothing captured yet, or the user
+ * cleared Chrome's download history).
  *
  * - `byExtensionId` (checked client-side, since `DownloadQuery`
  *   doesn't accept it as a filter — it's a result-only field) is what
@@ -185,8 +221,7 @@ export async function waitForDownloadComplete(
  * - Any artifact answers, not just `log.json`: a capture writes its
  *   screenshot / HTML *before* `recordCapture` runs, so matching them
  *   too means the directory is known by the time the log is written on
- *   the very first capture. That is what keeps the directory probe in
- *   `log-reconcile.ts` a rare fallback rather than a routine cost.
+ *   the very first capture.
  * - That includes a `probe-*.json` whose cleanup failed, and
  *   deliberately so: the probe is written into this very directory, so
  *   a leftover record still points at the right answer.
@@ -197,33 +232,69 @@ export async function waitForDownloadComplete(
  *   Save-as buttons) lands wherever the user chose and so normally
  *   doesn't — unless they picked a folder literally named
  *   `SeeWhatISee`, the one way an unrelated directory can be adopted.
- *
- * Throws when no capture has happened yet so the caller can surface
- * a "capture once first" message on whatever surface it owns (the
- * icon/tooltip error channel for the More-submenu entries, an inline
- * banner on the History page).
- *
- * Lives here rather than next to its menu call sites because both the
- * service worker (`background/context-menu.ts`) and the History page
- * (`history.ts`) need it, and `downloads.ts` is the module that owns
- * everything about where capture files land.
  */
-export async function getCaptureDirectory(): Promise<string> {
+async function searchCaptureDirectory(): Promise<string | null> {
   const candidates = await chrome.downloads.search({
     filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\][^/\\\\]+$`,
     orderBy: ['-startTime'],
   });
   const ours = candidates.find((it) => it.byExtensionId === chrome.runtime.id && it.filename);
-  const fullPath = ours?.filename;
-  if (!fullPath) {
-    throw new Error(
-      `No captures yet — capture something first to create the ${DOWNLOAD_SUBDIR} directory.`,
-    );
-  }
   // Strip the basename. `chrome.downloads.search().filename` is
   // documented to be the absolute path to a file (never ends in a
   // separator), so this always trims one segment.
-  return fullPath.replace(/[/\\][^/\\]+$/, '');
+  return ours?.filename ? parentDirectory(ours.filename) : null;
+}
+
+/**
+ * The capture directory, if it can be known without writing anything:
+ * the `chrome.storage.local` cache first, then download history (whose
+ * answer is cached for next time). `null` when neither knows.
+ *
+ * For callers that must not write to the disk (the History page load,
+ * and the reconcile — which reads `log.json` from the answer and
+ * chooses its own probing). Use `getCaptureDirectory` when a
+ * throwaway probe write is an acceptable last resort.
+ */
+export async function peekCaptureDirectory(): Promise<string | null> {
+  const data = await chrome.storage.local.get(CAPTURE_DIR_STORAGE_KEY);
+  const stored = data[CAPTURE_DIR_STORAGE_KEY];
+  if (typeof stored === 'string' && stored) return stored;
+  const found = await searchCaptureDirectory();
+  if (found) rememberCaptureDirectory(found);
+  return found;
+}
+
+/**
+ * Resolve the absolute on-disk directory where this extension writes
+ * its captures (`<downloads>/SeeWhatISee/`). The user's downloads root
+ * is OS- and config-dependent and not exposed by any Chrome API, so
+ * this falls through `peekCaptureDirectory` (storage cache, then
+ * download history) and, when neither knows, learns the answer with a
+ * throwaway probe download — which also creates the directory when
+ * none existed yet.
+ *
+ * Throws only when the probe itself fails (downloads blocked or
+ * erroring), so the caller can surface that on whatever surface it
+ * owns (e.g. the icon/tooltip error channel for the More-submenu
+ * entries).
+ *
+ * Lives here rather than next to its menu call sites because
+ * directory discovery is shared — the service worker
+ * (`background/context-menu.ts`) uses this, the History page and the
+ * reconcile use `peekCaptureDirectory` — and `downloads.ts` is the
+ * module that owns everything about where capture files land.
+ */
+export async function getCaptureDirectory(): Promise<string> {
+  const known = await peekCaptureDirectory();
+  if (known) return known;
+  // The probe's completed write refreshes the cache on its way through
+  // `waitForDownloadComplete`, so this happens at most once per
+  // profile in practice.
+  const probed = await probeCaptureDirectory();
+  if (probed) return probed;
+  throw new Error(
+    `Could not locate the ${DOWNLOAD_SUBDIR} directory — writing a file there failed.`,
+  );
 }
 
 /**
@@ -573,10 +644,11 @@ async function discardDownload(downloadId: number): Promise<void> {
 
 /**
  * **Directory probe.** Write a throwaway file to learn where our
- * captures land, then delete it. Used when we can read files but have
- * no download record to derive the directory from — knowing the
- * directory upgrades us to reading the real `log.json`, which beats
- * inferring anything from a record we don't have.
+ * captures land, then delete it. The last resort when nothing else
+ * knows the directory — no cached answer, no usable download record.
+ * Used by `getCaptureDirectory` and by the reconcile in
+ * `log-reconcile.ts`, where knowing the directory upgrades us to
+ * reading the real `log.json`.
  *
  * Deliberately *not* a zero-byte `log.json`: writing that when no file
  * existed would leave an empty log file behind, and an empty file we

@@ -328,9 +328,9 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   file (HTML / text / markdown), so a single entry covers all
   three cases.
   - Path is built by
-    `joinCapturePath(getCaptureDirectory(), filename)` — same
-    directory-resolution helper that powers the History page's
-    **Snapshots directory** button. The separator (`/` vs `\`)
+    `joinCapturePath(getCaptureDirectory(), filename)` — the shared
+    directory-resolution helper (cache-first, probe-download last
+    resort; see `log-consistency.md`). The separator (`/` vs `\`)
     reuses whatever `getCaptureDirectory` returned so the result
     is OS-native and paste-ready in a shell or file manager.
   - Each entry is greyed out (`enabled: false`) when the most

@@ -10,7 +10,8 @@
 //
 // Not covered here: anything that needs real files on disk. These
 // tests seed the log directly and never run a capture, so there is no
-// download record for `getCaptureDirectory()` to resolve against —
+// cached directory or download record for `peekCaptureDirectory()` to
+// resolve against —
 // every file-backed cell renders its no-directory fallback (bare
 // filename / unlinked label), which is what these tests assert. For
 // the same reason `chrome.downloads` knows nothing about the seeded
@@ -463,8 +464,8 @@ test('the Snapshots directory tooltip explains the disabled state', async ({
 // harness can't produce even from a real capture: Playwright rewrites
 // every download into its own artifacts directory, so the `log.json`
 // record's path doesn't end in `SeeWhatISee/log.json` and
-// `getCaptureDirectory()`'s `filenameRegex` never matches it (see the
-// file header). So this covers the button's presence, its place at the
+// `peekCaptureDirectory()`'s directory search never matches it (see
+// the file header). So this covers the button's presence, its place at the
 // end of the toolbar row, and the no-directory state.
 test('the Snapshots directory button sits at the end of the toolbar', async ({
   extensionContext,

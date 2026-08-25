@@ -26,12 +26,12 @@ import { type CaptureRecord } from './types.js';
 import {
   type LogFileRecordLookup,
   LOG_FILE_NAME,
-  getCaptureDirectory,
   getLogFileRecord,
   joinCapturePath,
   logRecordSize,
   parentDirectory,
   pathToFileUrl,
+  peekCaptureDirectory,
   probeCaptureDirectory,
   probeLogFile,
 } from './downloads.js';
@@ -157,9 +157,11 @@ async function decideLogFileState(
   lookup: LogFileRecordLookup,
 ): Promise<LogFileState> {
   const record = lookup.record;
+  // Swallow lookup failures: an unknown directory degrades to the
+  // record-only / probe paths below, and must never fail the capture.
   let directory = record?.filename
     ? parentDirectory(record.filename)
-    : await currentCaptureDirectory();
+    : await peekCaptureDirectory().catch(() => null);
 
   if (await canReadFiles()) {
     // Reading is possible but we don't know where — worth one
@@ -219,15 +221,6 @@ async function decideLogFileState(
   if (size === 0) return { kind: 'fresh' };
   if (size === utf8Length(opts.expectedText)) return { kind: 'insync' };
   return { kind: 'blocked', reason: 'size-mismatch', directory: directory ?? undefined };
-}
-
-/** `getCaptureDirectory`, as `null` rather than a throw. */
-async function currentCaptureDirectory(): Promise<string | null> {
-  try {
-    return await getCaptureDirectory();
-  } catch {
-    return null;
-  }
 }
 
 /**
