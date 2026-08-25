@@ -352,26 +352,87 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
 }
 
 /**
- * Absolute paths of the `history-*.json` history files we've written,
- * newest first — the on-disk tail of the capture log that no longer
- * fits in `chrome.storage.local` (see `log-store.ts`).
+ * Absolute paths of the `history-*.json` history files, newest first,
+ * found by reading the capture directory itself over `file://`. Needs
+ * "Allow access to file URLs" — the same toggle reading the files
+ * takes, so the caller (the History page) gates the whole
+ * history-loading feature on it and only calls this when reads work.
  *
- * Found through `chrome.downloads` rather than by listing the
- * directory, because an extension has no directory listing: the
- * download records are the only index of what we wrote. Consequences
- * worth knowing:
+ * Fetching a directory URL returns the HTML listing Chrome generates
+ * for `file://` directories. Its markup is a browser internal, so the
+ * parse is deliberately loose — collect every `history-….json` token
+ * anywhere in the page rather than parsing its rows:
  *
- * - Clearing download history hides history files that are still on disk.
- *   They come back into view on their own only if re-downloaded, so
- *   the History page's "load older" offer simply shrinks — it never
- *   claims records are gone.
+ * - A `Set` collapses each row's two appearances of the name (display
+ *   text and href, identical for these all-ASCII names).
+ * - The names embed `compactTimestamp` (see `log-store.ts`), so a
+ *   lexicographic sort *is* chronological; descending = newest first,
+ *   true write order. (The stamps are local time, so a DST fall-back
+ *   hour can sort out of order — accepted, it matches the filenames
+ *   the user sees.)
+ * - `res.ok` is deliberately NOT checked: Chrome hands the generated
+ *   listing back with `status: 0`, so `ok` is false even on success.
+ *   A directory that can't be read (missing, or the toggle off)
+ *   rejects the fetch instead, which the caller treats as "nothing to
+ *   offer".
+ *
+ * Unlike the `chrome.downloads`-based `getHistoryFilePaths` below,
+ * this sees every file actually present *in the given directory*:
+ * files whose download records were cleared, and files past
+ * `DownloadQuery`'s 1000-record default limit. And a deleted file
+ * simply isn't listed, so the stale `DownloadItem.exists` flag never
+ * misleads it. The trade: it can only look where the caller points
+ * it, so files stranded in an old downloads location are out of view
+ * (download records knew their absolute paths). Matching every
+ * `history-*.json` in the directory — not just ones we wrote — is the
+ * same rule the skills' Python backend uses (`skills/SeeWhatISee.py`),
+ * so the page and the scripts agree on what the history is.
+ */
+export async function listHistoryFiles(directory: string): Promise<string[]> {
+  const res = await fetch(pathToFileUrl(directory));
+  const html = await res.text();
+  const names = new Set(html.match(HISTORY_FILE_TOKEN) ?? []);
+  return [...names].sort().reverse().map((name) => joinCapturePath(directory, name));
+}
+
+/**
+ * Loose token pattern for history-file names in the listing. The
+ * lookahead rejects names that merely *start* with one —
+ * `….json.crdownload` (an interrupted download Chrome left behind),
+ * `….json.bak` — which would otherwise list a file that isn't really
+ * there and report a read failure that never heals.
+ */
+const HISTORY_FILE_TOKEN = new RegExp(
+  `${HISTORY_FILE_PREFIX}[\\w-]*\\.json(?![\\w.])`,
+  'g',
+);
+
+/**
+ * Absolute paths of the `history-*.json` files according to
+ * `chrome.downloads` records, newest first.
+ *
+ * Two callers, both cases where the directory listing above is
+ * unavailable because it needs file-read access:
+ *
+ * - The flush's filename-collision guard (`log-store.ts`), which runs
+ *   during a capture with or without file reads and is best-effort
+ *   anyway: the names it protects are millisecond timestamps, so the
+ *   gaps below are acceptable there.
+ * - The History page with the file-access toggle off, where this is
+ *   the only index — enough to keep the Load-older button on screen
+ *   as a pointer at the feature, even though the reads themselves
+ *   will wait for the toggle.
+ *
+ * With file reads available, the History page uses `listHistoryFiles`
+ * instead, which doesn't depend on download history surviving.
+ *
+ * - Clearing download history hides files that are still on disk.
  * - `DownloadQuery.limit` defaults to 1000 records, and every capture
- *   file (not just history files) counts toward it. A history long enough
- *   to hit that loses its *oldest* history files from the listing first,
- *   which are the ones a reader is least likely to want.
+ *   file (not just history files) counts toward it; overflow drops
+ *   the *oldest* records first.
  *
- * Records for files Chrome knows are deleted are skipped — fetching
- * them would just fail — as are duplicates from a re-written name,
+ * Records for files Chrome knows are deleted are skipped — nothing on
+ * disk to collide with — as are duplicates from a re-written name,
  * keeping the newest record per path.
  */
 export async function getHistoryFilePaths(): Promise<string[]> {

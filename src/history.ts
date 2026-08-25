@@ -17,10 +17,14 @@
 //
 // **Older captures.** `chrome.storage.local` only buffers the most
 // recent captures; older ones are flushed to `history-*.json` files
-// beside `log.json` (see `capture/log-store.ts`). Those are read back
-// on demand, appended after the in-storage records — reading them is a
-// `file://` fetch, so it's opt-in per visit rather than something the
-// page does on load.
+// beside `log.json` (see `capture/log-store.ts`). They are found by
+// listing the capture directory over `file://` (`listHistoryFiles`)
+// and read back on demand, appended after the in-storage records —
+// the reads are opt-in per visit rather than something the page does
+// on load. With "Allow access to file URLs" off, neither the listing
+// nor the reads work; discovery falls back to download records so the
+// Load-older button can still appear as a pointer at the feature, and
+// clicking it flashes the file-access banner.
 //
 // **File access.** The saved screenshots / HTML / selection files live
 // on disk under `<downloads>/SeeWhatISee/`. The only way to reference
@@ -32,9 +36,10 @@
 // way.
 
 import {
-  getHistoryFilePaths,
+  listHistoryFiles,
   peekCaptureDirectory,
   getCaptureFileExistence,
+  getHistoryFilePaths,
   joinCapturePath,
   pathToFileUrl,
 } from './capture/downloads.js';
@@ -326,7 +331,10 @@ let fileExists = new Map<string, boolean>();
 
 /**
  * Absolute paths of the `history-*.json` history files, newest first
- * (by download start time — see `getHistoryFilePaths`).
+ * (by the timestamp in each filename — see `listHistoryFiles`). With
+ * the file-access toggle off they come from download records instead
+ * (`getHistoryFilePaths`), which can undercount but keeps the button
+ * on screen; see `loadHistoryFileList`.
  */
 let historyFilePaths: string[] = [];
 /**
@@ -365,13 +373,11 @@ function unloadedHistoryFiles(): string[] {
  * any loaded file that has dropped off it.
  *
  * A path can vanish from the listing without its records becoming
- * wrong — clearing Chrome's download history hides history files that are
- * still on disk, and we've already read them. Dropping those rows
- * would make captures disappear from the page for a reason that has
- * nothing to do with them. The strays go last, which is where they
- * belong in the common case: a cleared download history strands
- * *every* loaded file at once, and `Map` iterates in insertion order,
- * which is the newest-first order they were read in.
+ * wrong — the file was deleted on disk after we read it, or a later
+ * directory listing failed outright. Dropping those rows would make
+ * captures disappear from the page for a reason that has nothing to
+ * do with them. The strays go last; `Map` iterates in insertion
+ * order, which is the newest-first order they were read in.
  */
 function historyFileDisplayOrder(): string[] {
   const listed = new Set(historyFilePaths);
@@ -390,9 +396,9 @@ let mergedRecords: CaptureRecord[] = [];
  * Recompute `mergedRecords`: concatenate in file order, then drop
  * exact repeats.
  *
- * **No sort.** `historyFilePaths` is already newest-first by download
- * start time, which is true write order, and each file's records are
- * reversed out of append order. Sorting by `timestamp` would only
+ * **No sort.** `historyFilePaths` is already newest-first by the
+ * timestamp in each filename, which is true write order, and each
+ * file's records are reversed out of append order. Sorting by `timestamp` would only
  * reshuffle things: a record appended later can carry an earlier
  * timestamp than one before it, and a session's repeat saves are
  * ordered by a millisecond the log invented for uniqueness
@@ -920,7 +926,10 @@ function render(): void {
   //
   // Unread history files count as a reason too: reading one is a
   // `file://` fetch, so the toggle is exactly what stands between the
-  // user and the older half of their history.
+  // user and the older half of their history. (With the toggle off
+  // they're known only through download records —
+  // `loadHistoryFileList`'s fallback — so this term can miss files
+  // whose records were cleared.)
   fileAccessHintEl.hidden = !fileAccessBlocked
     || (captureDir === null && historyFilePaths.length === 0)
     || !(unloadedHistoryFiles().length > 0
@@ -980,11 +989,21 @@ async function loadFileExistence(): Promise<void> {
 
 async function loadHistoryFileList(): Promise<void> {
   try {
-    historyFilePaths = await getHistoryFilePaths();
+    // Listing reads the capture directory over `file://`, so it needs
+    // the same file-access toggle as reading the files. With the
+    // toggle off, fall back to the download-history index — the reads
+    // would fail anyway, but knowing the files exist keeps the button
+    // on screen as a pointer at the feature (clicking it flashes the
+    // file-access banner).
+    historyFilePaths = fileAccessBlocked
+      ? await getHistoryFilePaths()
+      : captureDir !== null
+        ? await listHistoryFiles(captureDir)
+        : [];
   } catch {
-    // No download records to search, or the API refused — same
-    // outcome as having no history files: the page shows the in-storage log
-    // and doesn't offer more.
+    // Unreadable or missing directory — same outcome as having no
+    // history files: the page shows the in-storage log and doesn't
+    // offer more.
     historyFilePaths = [];
   }
   // The merge walks this list, so the rows go stale the moment it
@@ -1011,13 +1030,13 @@ async function loadHistoryFileList(): Promise<void> {
  *
  * **Per-file outcomes.** A file that reads is merged and marked read
  * even if others failed, and the count of failures is returned. One
- * dead file (deleted outside the browser, so the download record's
- * stale `exists` still says it's there) must not veto the history files
- * that *are* readable — and it wouldn't heal on retry, so all-or-
- * nothing would lock the rest of the history out for the session.
- * The transient case still retries in full: with the file-URL toggle
- * off nothing is read at all (see below), so nothing is marked and the
- * button retries the whole set once the toggle is on.
+ * dead file (deleted between the listing and the read) must not veto
+ * the history files that *are* readable — and it wouldn't heal on
+ * retry, so all-or-nothing would lock the rest of the history out for
+ * the session. The transient case still retries in full: with the
+ * file-URL toggle off nothing is read at all (see below), so nothing
+ * is marked and the button retries the whole set once the toggle is
+ * on.
  */
 async function loadHistoryFiles(): Promise<number> {
   const pending = unloadedHistoryFiles();
@@ -1084,8 +1103,7 @@ async function loadHistoryFilesInteractively(): Promise<void> {
       // The toggle being off fails *every* file, and the file-access
       // banner is guaranteed visible in that case, so point at it.
       // Named, not placed ("above"/"below"): this text renders in the
-      // toolbar, which is above the banner, and was under the table,
-      // which was below it.
+      // toolbar, which is above the banner.
       const files = `${failed} history ${failed === 1 ? 'file' : 'files'}`;
       historyFileError = fileAccessBlocked
         ? `Could not read ${files} — see the file-access banner.`
@@ -1252,9 +1270,11 @@ void (async () => {
   fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
   await Promise.all([
     loadRecords(),
-    loadCaptureDir(),
     loadFileExistence(),
-    loadHistoryFileList(),
+    // Chained, not parallel: the history-file listing reads the
+    // directory `loadCaptureDir` resolves. Inside the batch so the
+    // rows' first paint doesn't wait on it.
+    loadCaptureDir().then(loadHistoryFileList),
   ]);
   firstRenderDone = true;
   render();

@@ -19,8 +19,10 @@
 // banner stays hidden.
 //
 // *Load older captures* with something to load is out of reach for the
-// same reason: with no capture, no `history-*.json` exists for
-// `getHistoryFilePaths()` to find. The flushing itself is covered by
+// same reason: with no capture there is no directory for
+// `listHistoryFiles()` to read and no download record for the
+// `getHistoryFilePaths()` fallback, so both discovery routes come up
+// empty. The flushing itself is covered by
 // `log-history-files.spec.ts` and `tests/unit/log-history-files.test.mjs`. Its
 // *absence* — the control hidden, and the plain empty-log notice — is
 // covered below.

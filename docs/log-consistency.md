@@ -474,11 +474,13 @@ here or it belongs fixed.
   the read permission does. Deleting the file *is* honored, which is
   why that's the documented way to clear the log.
 - **History files Chrome has forgotten.** A new history file takes a
-  name no history file on disk is using — but we can only see the ones
-  Chrome still has download records for. If the user cleared their
-  download history *and* the new batch happens to end at the same
-  record as an existing history file, that file is overwritten. Needs
-  both halves to line up.
+  name no history file on disk is using — but the flush's collision
+  guard can only see the ones Chrome still has download records for.
+  If the user cleared their download history *and* the new batch
+  happens to end at the same record as an existing history file, that
+  file is overwritten. Needs both halves to line up. (With file reads
+  on, the History page doesn't share this blind spot: it finds history
+  files by listing the directory itself — see `docs/history-page.md`.)
 - **A capture directory that isn't ours.** Everything is keyed on the
   download records, so pointing Chrome's download directory somewhere
   that already contains a `SeeWhatISee/log.json` written by another

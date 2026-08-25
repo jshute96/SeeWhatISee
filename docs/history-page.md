@@ -118,15 +118,29 @@ Finding that tab is less obvious than it looks:
   - One click loads *all* remaining files. A batch is 50 captures, so
     paging 50 at a time would be tedious; the search box is the tool
     for narrowing what's on screen.
-- `getHistoryFilePaths()` (`capture/downloads.ts`) finds the files
-  through `chrome.downloads`, because an extension has no directory
-  listing — the download records are the only index of what we wrote.
-  - Clearing download history therefore hides history files that are
-    still on disk. The offer shrinks; nothing claims those records are gone.
-    - Files already read stay on screen. Losing the listing doesn't
-      make the records wrong, and dropping those rows would make
-      captures vanish for a reason unrelated to them. They sort after
-      the still-listed files (`historyFileDisplayOrder`).
+- `listHistoryFiles()` (`capture/downloads.ts`) finds the files by
+  fetching the capture directory's `file://` URL and scanning Chrome's
+  generated listing page for `history-….json` names.
+  - Needs the file-access toggle, same as reading the files. With it
+    off, discovery falls back to `getHistoryFilePaths()` (download
+    records) so the button still appears and points at the feature —
+    clicking it flashes the file-access banner. That index can
+    undercount (cleared download history, the 1000-record limit), but
+    an undercounted offer beats hiding the feature.
+  - Sees every file actually present in the capture directory:
+    unaffected by cleared download history and by `DownloadQuery`'s
+    1000-record default limit, both of which used to silently shrink
+    the offer.
+    - The trade: it only looks where `peekCaptureDirectory()` points,
+      so files stranded in an old downloads location are out of view
+      (the download records knew their absolute paths).
+  - The listing markup is a browser internal, so the parse is a loose
+    token scan rather than a row parser (see the source comment).
+  - A file that drops off the listing after being read (deleted on
+    disk) stays on screen. Losing the listing doesn't make the
+    records wrong, and dropping those rows would make captures vanish
+    for a reason unrelated to them. They sort after the still-listed
+    files (`historyFileDisplayOrder`).
 - With the log empty but history files unread, a second empty-state
   notice (`#empty-history-files`) says so and points at the button.
   - The usual "No captures in the log yet" would be a lie, and saying
@@ -135,9 +149,14 @@ Finding that tab is less obvious than it looks:
     in the toolbar.
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
+  - With the toggle off this rides on the download-record fallback, so
+    it can miss files whose records were cleared — the plain notice
+    shows then. Accepted: without a read, that state can't be told
+    apart from a genuinely empty history.
 - Merging is a plain concatenation: the storage log, then each history
-  file's records, files in `getHistoryFilePaths()` order (newest first
-  by download start time). No sort; dedup only on exact record text.
+  file's records, files in `listHistoryFiles()` order (newest first
+  by the timestamp in each filename). No sort; dedup only on exact
+  record text.
   - **Not sorted by `timestamp`.** File order is *append* order, which
     isn't timestamp order: a Capture-page session pins its timestamp
     when it opens, so a record saved later can carry an earlier stamp
@@ -170,14 +189,17 @@ Finding that tab is less obvious than it looks:
   storage listener re-reads the history-file list, and re-reads the files
   too if the user already opted in — otherwise records would appear to
   vanish as they aged out of storage.
+  - The re-list is one directory-listing fetch per capture while the
+    tab sits open — accepted: it's small next to the capture's own
+    file writes, and only an open History tab pays it.
 - Failures are **per file**: whatever read is merged and marked read,
   and the note reports how many didn't.
-  - All-or-nothing would let one dead file — deleted outside the
-    browser, so the download record's stale `exists` still lists it —
-    veto every other history file, permanently, since retrying wouldn't
-    heal it.
+  - All-or-nothing would let one dead file — deleted between the
+    listing and the read — veto every other history file, permanently,
+    since retrying wouldn't heal it.
   - The transient case still retries in full: with the file-URL toggle
-    off *every* read fails, so nothing is marked read.
+    off *every* read fails without being attempted, so nothing is
+    marked read and the toggle coming on retries the whole set.
   - `res.ok` is checked. A missing file can resolve non-ok, which would
     otherwise pass as a successful read of an empty history file and drop 50
     captures off the page with no error.
@@ -192,9 +214,11 @@ Finding that tab is less obvious than it looks:
     generation counter — merging its results afterwards would put the
     cleared rows straight back on screen.
 - Not covered by the e2e tests: the page's own tests seed the log
-  directly and never run a capture, so no history file exists for
-  `getHistoryFilePaths()` to find. The write side is covered by
-  `log-history-files.spec.ts`; the load side isn't.
+  directly and never run a capture, so there is no capture directory
+  to list — and the harness has file access off, which hides the
+  control anyway. The write side is covered by
+  `log-history-files.spec.ts`; the load side is covered by the
+  listing-parser unit tests (`list-history-files.test.mjs`), not e2e.
 
 ## Layout
 
@@ -463,10 +487,12 @@ So with the toggle off:
   is still `.catch()`-ed for the case where the toggle is flipped off
   after page load.
 - **Load older captures** doesn't `fetch` the `history-*.json` files.
-  `loadHistoryFiles()` reports them all as failed without reading, which is
-  the outcome the reads produced anyway — so the toolbar message and
-  the banner are unchanged, and nothing is marked read, so the button
-  still works once the toggle is on.
+  `loadHistoryFiles()` reports them all as failed without reading —
+  the outcome the reads would produce anyway, minus the per-file
+  renderer errors — so the toolbar message points at the banner, and
+  nothing is marked read, so the button still works once the toggle is
+  on. (Discovery runs on download records in this state; the directory
+  listing is itself a `file://` read.)
 
 The `href` is deliberately left in place: hover still shows the
 destination and right-click → Copy link address still works. Only the
