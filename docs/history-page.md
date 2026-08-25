@@ -76,25 +76,27 @@ Finding that tab is less obvious than it looks:
 - Records come out oldest-first (append order) and are reversed for
   display — newest at the top.
 - A `chrome.storage.onChanged` listener re-reads the log, so a capture
-  taken (or a *Clear log history*) while the tab sits open updates it
-  in place.
+  taken while the tab sits open updates it in place. (A deleted
+  `log.json` shows up the same way, one capture later — that capture's
+  reconcile starts the log over and rewrites the key.)
 - The in-storage log is capped at 100 entries by `log-store.ts`, so the
   live view never has to paginate. Older captures are loaded on demand
   — see below.
 
 ### Older captures
 
-- Captures that age out of storage are archived to
-  `history-*.json` files on disk (see [architecture.md → Archived
-  logs](architecture.md#archived-logs)). The page reads them back so
-  the table can cover the whole history, not just the buffer.
+- Captures that age out of storage move into **history files** —
+  `history-<timestamp>.json`, beside `log.json` (see
+  [architecture.md → History files](architecture.md#history-files)).
+  The page reads them back so the table can cover the whole history,
+  not just the recent window.
 - **Load older captures** sits in the toolbar, right of the capture
   count, and only while there is something left to load.
   - It was under the table until users kept missing it: reaching it
     meant scrolling the whole history, and the capture count at the
     top read as surprisingly low with no visible explanation.
-  - It disappears again once every archive has been read. A partial
-    failure leaves its file unread, so the control stays up.
+  - It disappears again once every history file has been read. A
+    partial failure leaves its file unread, so the control stays up.
     - `.older[hidden] { display: none }` is load-bearing: the
       `display: flex` on `.older` outranks the UA `[hidden]` rule, so
       without it the control showed even with nothing to load.
@@ -106,8 +108,8 @@ Finding that tab is less obvious than it looks:
     `LOG_MAX_ENTRIES - LOG_ARCHIVE_BATCH + 1` to `LOG_MAX_ENTRIES`
     depending on where the flush cycle is, so any single number would
     be wrong half the time.
-  - The text next to it is failure-only ("Could not read 2 archived
-    logs"), in error red and `role="status"` so it doesn't read as
+  - The text next to it is failure-only ("Could not read the history
+    files."), in error red and `role="status"` so it doesn't read as
     more grey metadata next to the capture count.
   - Opt-in rather than automatic: reading them is a `file://` fetch,
     which is gated by the same **Allow access to file URLs** toggle as
@@ -119,13 +121,14 @@ Finding that tab is less obvious than it looks:
 - `getArchiveFilePaths()` (`capture/downloads.ts`) finds the files
   through `chrome.downloads`, because an extension has no directory
   listing — the download records are the only index of what we wrote.
-  - Clearing download history therefore hides archives that are still
-    on disk. The offer shrinks; nothing claims those records are gone.
+  - Clearing download history therefore hides history files that are
+    still on disk. The offer shrinks; nothing claims those records are gone.
     - Files already read stay on screen. Losing the listing doesn't
       make the records wrong, and dropping those rows would make
       captures vanish for a reason unrelated to them. They sort after
       the still-listed files (`archiveDisplayOrder`).
-- With the log empty but archives unread, a second empty-state notice
+- With the log empty but history files unread, a second empty-state
+  notice
   (`#empty-archived`) says so and points at the button.
   - The usual "No captures in the log yet" would be a lie, and saying
     nothing — what the page used to do, on the grounds that the button
@@ -133,24 +136,24 @@ Finding that tab is less obvious than it looks:
     in the toolbar.
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
-- Merging is a plain concatenation: the storage log, then each archive
+- Merging is a plain concatenation: the storage log, then each history
   file's records, files in `getArchiveFilePaths()` order (newest first
   by download start time). No sort; dedup only on exact record text.
   - **Not sorted by `timestamp`.** File order is *append* order, which
     isn't timestamp order: a Capture-page session pins its timestamp
     when it opens, so a record saved later can carry an earlier stamp
     than one appended before it. The live log has always been shown in
-    append order (`[...log].reverse()`), so archives match it — sorting
+    append order (`[...log].reverse()`), so history files match it — sorting
     would reorder rows the page has always shown as-written.
   - **Deduped on exact record text only** (`dedupeRecords`), keeping
     the first occurrence.
     - `uniqueTimestamp` gives every save its own timestamp, so no two
       records the log *writes* can collide here. What's left is one
-      record reaching the page twice: a batch that reached an archive
+      record reaching the page twice: a batch that reached a history file
       while the service worker died before the matching storage write
       sits in both sources the page merges.
     - Global, not adjacent-only: the copies land on opposite sides of
-      the storage/archive boundary.
+      the storage / history-file boundary.
     - `serializeRecord` supplies the key, not `JSON.stringify` —
       `chrome.storage.local` doesn't preserve key order, so only a
       canonical field order compares equal.
@@ -159,40 +162,40 @@ Finding that tab is less obvious than it looks:
       a single row and 102 records rendered as 96.
     - The log files themselves keep every save; this is display only.
   - Files are keyed by path, not accumulated into one list, so an
-    archive written *after* others are loaded lands ahead of them
+    history file written *after* others are loaded lands ahead of them
     rather than at the end.
   - A line that won't parse is skipped (`parseLogText`) rather than
     failing the file: these sit in the user's Downloads folder where
     they can be edited or truncated.
 - A capture taken while the tab is open can itself trigger a flush. The
-  storage listener re-reads the archive list, and re-reads the files
+  storage listener re-reads the history-file list, and re-reads the files
   too if the user already opted in — otherwise records would appear to
   vanish as they aged out of storage.
 - Failures are **per file**: whatever read is merged and marked read,
   and the note reports how many didn't.
   - All-or-nothing would let one dead file — deleted outside the
     browser, so the download record's stale `exists` still lists it —
-    veto every other archive, permanently, since retrying wouldn't
+    veto every other history file, permanently, since retrying wouldn't
     heal it.
   - The transient case still retries in full: with the file-URL toggle
     off *every* read fails, so nothing is marked read.
   - `res.ok` is checked. A missing file can resolve non-ok, which would
-    otherwise pass as a successful read of an empty archive and drop 50
+    otherwise pass as a successful read of an empty history file and drop 50
     captures off the page with no error.
 - The "No captures in the log yet" notice is suppressed while unread
-  archives exist — after a *Clear log history* on a long-running
+  history files exist — after `log.json` is deleted on a long-running
   install it would sit directly above an offer to load 40 files.
-- A *Clear log history* also drops the archived rows already loaded
-  into the tab, so the page reflects the clear instead of leaving
-  hundreds of rows under an emptied log. The files are untouched, so
-  the button just offers them again.
+- Emptying the log also drops the history-file rows already loaded into the
+  tab, so the page reflects that instead of leaving hundreds of rows
+  under an emptied log. The history files are untouched, so the button
+  just offers them again.
   - A read still in flight when that happens is disowned via a
     generation counter — merging its results afterwards would put the
     cleared rows straight back on screen.
-- Not covered by the e2e tests: Playwright rewrites every download into
-  its own artifacts directory under a UUID, so a real capture's archive
-  never matches the path `getArchiveFilePaths()` searches for. The
-  archiving side is tested; the load side isn't.
+- Not covered by the e2e tests: the page's own tests seed the log
+  directly and never run a capture, so no history file exists for
+  `getArchiveFilePaths()` to find. The write side is covered by
+  `log-archive.spec.ts`; the load side isn't.
 
 ## Layout
 
@@ -316,9 +319,9 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
 - Keying on anything looser is not an option — it would light the
   button on the wrong row among a session's several saves. Same
   reasoning as `dedupeRecords`; see [Older captures](#older-captures).
-- Archived rows are matched too. The key is computed per rendered
+- Rows from history files are matched too. The key is computed per rendered
   record, so a restorable capture that has aged out of storage still
-  gets its button once the archives are loaded.
+  gets its button once the history files are loaded.
 
 ### Plumbing
 
@@ -373,10 +376,11 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   PNG itself; nothing reads the bytes into the extension, so there is
   no size limit to worry about and `loading="lazy"` keeps offscreen
   rows free.
-- Chrome blocks `file://` subresources unless the user enables **Allow
-  access to file URLs** for the extension. The page renders the
-  thumbnails/links regardless — the rest of each row is useful either
-  way.
+- Chrome blocks `file://` loads unless the user enables **Allow access
+  to file URLs** for the extension. The page still renders every row —
+  the rest of each row is useful either way — but with the toggle off
+  it never *starts* a load it knows will be refused. See
+  [Not starting blocked loads](#not-starting-blocked-loads).
 
 ### The file-access banner
 
@@ -411,14 +415,90 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   - Directory unresolvable (no capture has been written yet): no
     `file://` URL exists, so both columns show a greyed, unlinked
     label (filename / "HTML" / "Selection (md)").
-  - Thumbnail fails to load anyway — the toggle is off, or the
-    download records don't know the file (deletion is caught earlier,
-    see below). The `<img>` is swapped for the filename **inside the
-    surviving `<a>`**, so there's no unexplained broken-image icon.
+  - Thumbnail fails to load anyway — the download records don't know
+    the file, or it won't decode (deletion is caught earlier, see
+    below; the toggle is caught before the `<img>` is built at all).
+    The `<img>` is swapped for the filename **inside the surviving
+    `<a>`**, so there's no unexplained broken-image icon.
   - The `<a>` stays because its href is the last useful thing on the
     row: right-click → Copy link address still works. Files-column
     links stay links for the same reason — and they have no load event
     to react to anyway.
+
+### Not starting blocked loads
+
+With **Allow access to file URLs** off, every `file://` open from this
+page fails — and each one lands on the extension's
+`chrome://extensions` **Errors** list, where it reads as a broken
+extension. Same concern as the `console.warn`/`error` rule in
+`CLAUDE.md`, and the same remedy: don't emit it.
+
+The failures look different, and **catching the error is not enough**
+for two of the three:
+
+- **A page-initiated load** (an `<img src>`, a link navigation) is
+  refused by the renderer with *Not allowed to load local resource*.
+  That is **not a JS exception** — no `try`/`catch`, `onerror`, or
+  promise rejection sees it.
+- **`fetch('file://…')`** rejects, *and* logs the same *Not allowed to
+  load local resource*. Catching the rejection — which the archive
+  reads already did — does nothing about the console message.
+- **`chrome.tabs.create`** rejects with *Cannot navigate to a file URL
+  without local file access*, and logs nothing of its own. This one a
+  `.catch()` really does handle; an uncaught rejection in an extension
+  page reaches the Errors list just the same.
+
+So for the first two the only remedy is not to start the load.
+
+So with the toggle off:
+
+- **Thumbnails** skip `img.src` entirely and go straight to the
+  filename fallback. This is the bulk of the noise — one refusal per
+  screenshot row, needing no user action.
+- **Row file links** (both columns) keep their `href` but intercept
+  `click` and `auxclick` (`captureFileLink` in `history.ts`), the same
+  shape as the banner's *extension settings* link.
+- **Snapshots directory** doesn't call `tabs.create` at all. The call
+  is still `.catch()`-ed for the case where the toggle is flipped off
+  after page load.
+- **Load older captures** doesn't `fetch` the `history-*.json` files.
+  `loadArchives()` reports them all as failed without reading, which is
+  the outcome the reads produced anyway — so the toolbar message and
+  the banner are unchanged, and nothing is marked read, so the button
+  still works once the toggle is on.
+
+The `href` is deliberately left in place: hover still shows the
+destination and right-click → Copy link address still works. Only the
+navigation is suppressed.
+
+With the toggle **on**, none of this applies — links navigate,
+thumbnails load, and the button opens the directory as before.
+
+#### Flashing the banner
+
+A suppressed click that does nothing visible reads as a broken page, so
+each one flashes the file-access banner (`flashFileAccessHint()`,
+`.banner.flash` in `history.html`).
+
+- **Not** a scroll-into-view: the banner is pinned above the scrolling
+  `<main>` and is already on screen whenever this can happen, so
+  scrolling would be a no-op. It has to be a visual change.
+- Two pulses of deeper amber plus a ring. The ring is a `box-shadow`,
+  not a `border`, so the banner doesn't change size and shove the table
+  down mid-flash.
+- Removed on a timer, not `animationend` — under
+  `prefers-reduced-motion` the animation is replaced by a static
+  highlight and that event never fires.
+- The class is removed and re-added around a reflow read, so clicking a
+  second link restarts the flash instead of being swallowed as a
+  no-change class add.
+- **Snapshots directory stays enabled** with the toggle off, even
+  though its open won't happen: the click is what triggers the flash,
+  and a disabled button swallows clicks. Its tooltip says what's
+  needed and still names the path.
+- **Load older captures** flashes too. Its own failure message lands in
+  the toolbar, but that's small next to a button that visibly did
+  nothing.
 
 ### Deleted files
 
@@ -496,3 +576,4 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   - The storage listener retries `loadCaptureDir()` while the
     directory is still unresolved, so the first capture taken with the
     page open enables the button without a reload.
+

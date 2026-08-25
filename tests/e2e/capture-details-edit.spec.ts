@@ -61,6 +61,16 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
   await capturePage.locator('#copy-html-name').click();
   await waitForClipboardWrites(capturePage, 1);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+  // Read the bytes *now*: the pinned filename is overwritten in place
+  // by the post-edit copy below, so afterwards there is no copy of the
+  // original left to check.
+  const beforeEdit = await findAllCapturedDownloads(sw, 'contents-');
+  expect(beforeEdit).toHaveLength(1);
+  const originalBytes = fs.readFileSync(
+    await waitForDownloadPath(sw, beforeEdit[0].id),
+    'utf8',
+  );
+  expect(originalBytes).toContain('background: #800080');
 
   // Step 2: Open the edit dialog and replace the body. The textarea
   // is seeded with the original capture — the fixture's purple
@@ -88,9 +98,8 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
 
   // Step 3: Copy again *after* editing. The edit invalidated the
   // cache, so the SW re-downloads — count goes to 2. The two
-  // downloads must request the *same* pinned basename (production
-  // overwrites in place via conflictAction: 'overwrite'), even
-  // though the Playwright harness rewrites each temp path.
+  // downloads must request the *same* pinned basename, and overwrite
+  // in place via conflictAction: 'overwrite'.
   await capturePage.locator('#copy-html-name').click();
   await waitForClipboardWrites(capturePage, 2);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(2);
@@ -99,12 +108,12 @@ test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-o
   expect(htmlDownloads).toHaveLength(2);
   expect(htmlDownloads[0].name).toBe(htmlDownloads[1].name);
 
-  // The second download carries the edited bytes; the first
-  // download's file still holds the original scrape since the
-  // Playwright fixture gives each write its own UUID path.
+  // Both downloads resolve to the same path, and it holds the edited
+  // bytes: the second write overwrote the first in place, which is
+  // what `conflictAction: 'overwrite'` on a pinned filename means.
   const firstPath = await waitForDownloadPath(sw, htmlDownloads[0].id);
   const secondPath = await waitForDownloadPath(sw, htmlDownloads[1].id);
-  expect(fs.readFileSync(firstPath, 'utf8')).toContain('background: #800080');
+  expect(firstPath).toBe(secondPath);
   const editedBytes = fs.readFileSync(secondPath, 'utf8');
   expect(editedBytes).toContain('edited by test 42');
   expect(editedBytes).not.toContain('background: #800080');
@@ -269,6 +278,15 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   await capturePage.locator('#copy-selection-html-name').click();
   await waitForClipboardWrites(capturePage, 1);
   expect(await countDownloadsBySuffix(sw, '.html')).toBe(1);
+  // Same as the HTML test: check the pre-edit bytes before the
+  // post-edit copy overwrites the pinned filename.
+  const beforeEdit = await findAllCapturedDownloads(sw, 'selection-');
+  expect(beforeEdit).toHaveLength(1);
+  const originalBytes = fs.readFileSync(
+    await waitForDownloadPath(sw, beforeEdit[0].id),
+    'utf8',
+  );
+  expect(originalBytes).toContain('hello selection world');
 
   // Step 2: Open the dialog and replace the selection body. The
   // textarea is seeded with what the SW scraped, which contains
@@ -303,9 +321,10 @@ test('details: edit-selection dialog — copy, edit, copy-overwrites, capture is
   expect(selDownloads).toHaveLength(2);
   expect(selDownloads[0].name).toBe(selDownloads[1].name);
 
+  // Same path both times — the re-download overwrites in place.
   const firstPath = await waitForDownloadPath(sw, selDownloads[0].id);
   const secondPath = await waitForDownloadPath(sw, selDownloads[1].id);
-  expect(fs.readFileSync(firstPath, 'utf8')).toContain('hello selection world');
+  expect(firstPath).toBe(secondPath);
   const editedBytes = fs.readFileSync(secondPath, 'utf8');
   expect(editedBytes).toContain('selection edited by test 99');
   expect(editedBytes).not.toContain('hello selection world');

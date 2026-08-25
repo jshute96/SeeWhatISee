@@ -44,10 +44,10 @@ test('details: copy buttons download files and put real paths on the clipboard',
   await waitForClipboardWrites(capturePage, 2);
   const writes = await readClipboardSpy(capturePage);
 
-  // Each write is an absolute on-disk path to a real, non-empty
-  // file. In the Playwright fixture the SeeWhatISee/<filename> is
-  // rewritten to a UUID basename under a temp dir, so we don't pin
-  // the basename shape — but the file is on disk and non-empty.
+  // Each write is an absolute on-disk path to a real, non-empty file
+  // under the harness's temp download directory. The basename shape
+  // isn't pinned here — `capture-details-edit.spec.ts` covers the
+  // pinned-filename behavior.
   expect(writes).toHaveLength(2);
   expect(writes[0]).toMatch(/^[/\\]/);
   expect(writes[1]).toMatch(/^[/\\]/);

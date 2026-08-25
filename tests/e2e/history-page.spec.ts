@@ -8,22 +8,21 @@
 // missing URL/title, long prompt — without orchestrating one capture
 // per case.
 //
-// Not covered here: anything that needs real files on disk. The
-// harness never runs a real capture, so there's no `log.json` download
-// record for `getCaptureDirectory()` to resolve against — every
-// file-backed cell renders its no-directory fallback (bare filename /
-// unlinked label), which is what these tests assert. For the same
-// reason `chrome.downloads` knows nothing about the seeded filenames,
-// so the `(deleted)` markers never fire and the file-access banner
-// stays hidden.
+// Not covered here: anything that needs real files on disk. These
+// tests seed the log directly and never run a capture, so there is no
+// download record for `getCaptureDirectory()` to resolve against —
+// every file-backed cell renders its no-directory fallback (bare
+// filename / unlinked label), which is what these tests assert. For
+// the same reason `chrome.downloads` knows nothing about the seeded
+// filenames, so the `(deleted)` markers never fire and the file-access
+// banner stays hidden.
 //
-// *Load older captures* with something to load is out of reach for a
-// second reason: Playwright rewrites every download into its own
-// artifacts directory under a UUID, so the `history-*.json` archives a
-// real capture writes never match the path `getArchiveFilePaths()`
-// looks for. The archiving itself is covered by `log-archive.spec.ts`
-// and `tests/unit/log-archive.test.mjs`. Its *absence* — the control
-// hidden, and the plain empty-log notice — is covered below.
+// *Load older captures* with something to load is out of reach for the
+// same reason: with no capture, no `history-*.json` exists for
+// `getArchiveFilePaths()` to find. The archiving itself is covered by
+// `log-archive.spec.ts` and `tests/unit/log-archive.test.mjs`. Its
+// *absence* — the control hidden, and the plain empty-log notice — is
+// covered below.
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -637,3 +636,4 @@ test('the Restore button lands on the restorable row, not the newest', async ({
   await historyPage.close();
   await openerPage.close();
 });
+

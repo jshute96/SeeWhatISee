@@ -195,6 +195,34 @@ fileAccessLink.addEventListener('auxclick', (e) => {
   openFileAccessPage(e, false);
 });
 
+/**
+ * Draw attention to the file-access banner after a click we
+ * deliberately turned into a no-op.
+ *
+ * The banner is pinned above the scrolling `<main>` and so is already
+ * on screen — scrolling to it would change nothing, and a click that
+ * visibly does nothing reads as a broken page. So it flashes instead
+ * (`.banner.flash` in `history.html`).
+ *
+ * Removed on a timer rather than `animationend`, because the
+ * reduced-motion rule replaces the animation with a static highlight
+ * and that event never fires. The class is dropped first so a second
+ * click restarts the animation instead of being swallowed as a
+ * no-change class add; the reflow read between the two is what makes
+ * the restart take.
+ */
+let flashTimer: number | undefined;
+function flashFileAccessHint(): void {
+  if (fileAccessHintEl.hidden) return;
+  window.clearTimeout(flashTimer);
+  fileAccessHintEl.classList.remove('flash');
+  void fileAccessHintEl.offsetWidth;
+  fileAccessHintEl.classList.add('flash');
+  flashTimer = window.setTimeout(() => {
+    fileAccessHintEl.classList.remove('flash');
+  }, 1300);
+}
+
 // Browse the on-disk capture directory — the same new-tab `file://`
 // open the More → Snapshots directory menu entry used to do, moved
 // here so it sits with the rest of the file-browsing affordances.
@@ -205,7 +233,23 @@ fileAccessLink.addEventListener('auxclick', (e) => {
 // no disabled state to hold in the meantime.
 snapshotsDirBtn.addEventListener('click', () => {
   if (captureDir === null) return;
-  void chrome.tabs.create({ url: pathToFileUrl(captureDir) });
+  // With the toggle off `tabs.create` *rejects* — "Cannot navigate to
+  // a file URL without local file access" — and an uncaught rejection
+  // in an extension page lands on the chrome://extensions Errors list.
+  // Unlike the renderer's refusal of a page-initiated `file://` load,
+  // this one is a real promise we could catch; not making the call at
+  // all is better still, and gives the user the banner instead of a
+  // tab that can't load.
+  if (fileAccessBlocked) {
+    flashFileAccessHint();
+    return;
+  }
+  // Still caught: the directory could have gone away, or the toggle
+  // could have been flipped off since load. Nothing to tell the user
+  // that the flash doesn't already say.
+  chrome.tabs.create({ url: pathToFileUrl(captureDir) }).catch(() => {
+    flashFileAccessHint();
+  });
 });
 
 optionsBtn.addEventListener('click', () => {
@@ -303,10 +347,11 @@ let archiveError = '';
 let archiveLoading = false;
 
 /**
- * Bumped whenever the loaded archives are discarded wholesale (a
- * *Clear log history*). A read started before that must not write its
+ * Bumped whenever the loaded archives are discarded wholesale (the
+ * capture log's storage key removed — `clearCaptureLog`, from tests or
+ * the devtools console). A read started before that must not write its
  * results back afterwards — they'd reappear under the emptied log,
- * which is the state the clear exists to avoid.
+ * which is the state the discard exists to produce.
  */
 let archiveGeneration = 0;
 
@@ -553,6 +598,49 @@ function unlinkedFile(filename: string, label = filename): HTMLElement {
 }
 
 /**
+ * An `<a>` pointing at one of our capture files, shared by the
+ * Screenshot and Files columns so the two can't disagree about how a
+ * file link behaves.
+ *
+ * With "Allow access to file URLs" off, the click is intercepted
+ * rather than left to navigate. Chrome refuses a page-initiated
+ * `file://` load and logs *Not allowed to load local resource* — and
+ * because this is an extension page, that lands on the extension's
+ * `chrome://extensions` Errors list, where it reads as a broken
+ * extension. It is a renderer-level refusal, not a JS exception, so
+ * nothing can catch it after the fact; the only fix is not to start
+ * the load. Same reasoning as the logging-level rule in CLAUDE.md.
+ *
+ * The `href` stays regardless: it shows in the status bar on hover and
+ * right-click → Copy link address is the way to open the file another
+ * way. Only the navigation is suppressed, and the file-access banner
+ * (already on screen whenever this applies) says what to turn on.
+ */
+function captureFileLink(url: string, filename: string): HTMLAnchorElement {
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noreferrer noopener';
+  a.title = filename;
+  if (fileAccessBlocked) {
+    // `click` covers plain, ctrl/⌘ and keyboard activation;
+    // middle-click arrives as `auxclick` instead and would otherwise
+    // fall through to the blocked href. Mirrors `fileAccessLink`.
+    const block = (e: MouseEvent): void => {
+      e.preventDefault();
+      // The banner is the remedy, so flash it rather than letting the
+      // click do nothing visible.
+      flashFileAccessHint();
+    };
+    a.addEventListener('click', block);
+    a.addEventListener('auxclick', (e) => {
+      if (e.button === 1) block(e);
+    });
+  }
+  return a;
+}
+
+/**
  * Screenshot column — the saved PNG scaled down by the browser, linked
  * to the full-size file. Falls back to "N/A" when the record has no
  * screenshot (the user unchecked Save screenshot, or the capture was
@@ -575,12 +663,19 @@ function screenshotCell(r: CaptureRecord): HTMLElement {
     td.append(unlinkedFile(r.screenshot.filename));
     return td;
   }
-  const link = document.createElement('a');
+  const link = captureFileLink(url, r.screenshot.filename);
   link.className = 'thumb-link';
-  link.href = url;
-  link.target = '_blank';
-  link.rel = 'noreferrer noopener';
-  link.title = r.screenshot.filename;
+  if (fileAccessBlocked) {
+    // Pointing an <img> at a file:// URL Chrome won't serve logs *Not
+    // allowed to load local resource* once per thumbnail — the bulk of
+    // what shows up on the Errors page, since it needs no click. Go
+    // straight to the same fallback the load-error path uses instead
+    // of loading it just to watch it fail, exactly as the deleted case
+    // above does.
+    link.append(document.createTextNode(r.screenshot.filename));
+    td.append(link);
+    return td;
+  }
   const img = document.createElement('img');
   img.className = 'thumb';
   img.src = url;
@@ -588,9 +683,9 @@ function screenshotCell(r: CaptureRecord): HTMLElement {
   img.loading = 'lazy';
   // A thumbnail that can't load would otherwise render as a
   // broken-image icon with no explanation. Deletion is caught upstream
-  // by `isDeleted`, so what reaches here is the file-URL toggle being
-  // off, a file the download records don't know about, or a decode
-  // failure. Swap just the <img> for the filename and keep the
+  // by `isDeleted` and the file-URL toggle by the branch above, so what
+  // reaches here is a file the download records don't know about, or a
+  // decode failure. Swap just the <img> for the filename and keep the
   // surrounding <a>: the link's href is still the one useful thing
   // left on the row, so the user can right-click → Copy link address
   // and open the file another way. The Files column behaves the same
@@ -627,12 +722,8 @@ function filesCell(r: CaptureRecord): HTMLElement {
   const add = (label: string, artifact: { filename: string }): void => {
     const url = fileUrlFor(artifact.filename);
     if (url && !isDeleted(artifact.filename)) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.target = '_blank';
-      a.rel = 'noreferrer noopener';
+      const a = captureFileLink(url, artifact.filename);
       a.textContent = label;
-      a.title = artifact.filename;
       td.append(a);
     } else {
       td.append(unlinkedFile(artifact.filename, label));
@@ -770,7 +861,7 @@ function renderOlder(): void {
   // "88 captures" it read as a contradiction.
   loadOlderBtn.title = remaining > 0
     ? 'Recent captures from log.json are shown by default.\n'
-      + 'Older capture logs are stored in history*.json '
+      + 'Older captures are stored in history files, history-*.json '
       + `(${remaining} ${remaining === 1 ? 'file' : 'files'}).\n`
       + 'Click to load them.'
     : '';
@@ -790,7 +881,7 @@ function render(): void {
   const hasAny = all.length > 0;
   // "No captures in the log yet. Capture something…" is the wrong
   // story when archived captures are sitting right there unread — the
-  // usual way to get here is a *Clear log history* on an account with
+  // usual way to get here is deleting `log.json` on an account with
   // archives. The second notice points at the button instead of
   // denying they exist.
   //
@@ -860,10 +951,18 @@ async function loadCaptureDir(): Promise<void> {
   // stays disabled (its markup state) until this resolves. The tooltip
   // — on the wrapper, since Chrome shows no tooltip for a disabled
   // control — carries the reason, and the resolved path once enabled.
+  //
+  // Left *enabled* with the toggle off, even though the open won't
+  // happen: the click is what flashes the banner, and a disabled
+  // button swallows clicks. The tooltip says so, and still names the
+  // path — which is the thing worth copying when the button can't
+  // open it for you.
   snapshotsDirBtn.disabled = captureDir === null;
   snapshotsDirWrap.title = captureDir === null
     ? 'No captures saved to disk yet, so there is no directory to open'
-    : `Open the directory where capture files are stored:\n${captureDir}`;
+    : fileAccessBlocked
+      ? `Opening this needs "Allow access to file URLs" — see the banner.\n${captureDir}`
+      : `Open the directory where capture files are stored:\n${captureDir}`;
 }
 
 async function loadFileExistence(): Promise<void> {
@@ -914,12 +1013,21 @@ async function loadArchiveList(): Promise<void> {
  * that *are* readable — and it wouldn't heal on retry, so all-or-
  * nothing would lock the rest of the history out for the session.
  * The transient case still retries in full: with the file-URL toggle
- * off every read fails, so nothing is marked and the button retries
- * the whole set.
+ * off nothing is read at all (see below), so nothing is marked and the
+ * button retries the whole set once the toggle is on.
  */
 async function loadArchives(): Promise<number> {
   const pending = unloadedArchives();
   if (pending.length === 0) return 0;
+  // With the toggle off every one of these reads is refused, and while
+  // the rejection *is* caught below, Chrome still logs "Not allowed to
+  // load local resource" per file — a renderer-level refusal no
+  // `catch` can suppress, landing on the chrome://extensions Errors
+  // page. Report them all as failed without asking: the caller's
+  // message and the file-access banner already say what to do, and
+  // nothing is marked read, so the button still retries the whole set
+  // once the toggle is on.
+  if (fileAccessBlocked) return pending.length;
   const generation = archiveGeneration;
   const results = await Promise.allSettled(pending.map(async (path) => {
     // A `file://` read that Chrome refuses (toggle off) rejects, but a
@@ -932,9 +1040,9 @@ async function loadArchives(): Promise<number> {
     return await res.text();
   }));
 
-  // A *Clear log history* landing while these reads were in flight
-  // discards the loaded archives; merging in anyway would put the
-  // cleared rows straight back on screen.
+  // The log emptying while these reads were in flight discards the
+  // loaded archives; merging in anyway would put the cleared rows
+  // straight back on screen.
   if (generation !== archiveGeneration) return 0;
 
   let failed = 0;
@@ -982,13 +1090,18 @@ async function loadArchivesInteractively(): Promise<void> {
   } catch {
     // `loadArchives` reports per-file failures through its return
     // value, so reaching here means the read itself broke.
-    archiveError = 'Could not read the archived logs.';
+    archiveError = 'Could not read the history files.';
   }
   archiveLoading = false;
   render();
 }
 
 loadOlderBtn.addEventListener('click', () => {
+  // Same treatment as the row file links: the click can't do what it
+  // says, so point at the reason. The toolbar message below the button
+  // names the banner, but it's small and easy to miss next to a button
+  // that just did nothing.
+  if (fileAccessBlocked) flashFileAccessHint();
   void loadArchivesInteractively();
 });
 
@@ -1003,15 +1116,18 @@ async function loadRecords(): Promise<void> {
 
 searchInput.addEventListener('input', render);
 
-// Keep the page live: a capture taken (or a Clear log history) while
-// the History tab sits open rewrites `captureLog`, and re-reading is
-// cheap enough to just do it wholesale.
+// Keep the page live: a capture taken while the History tab sits open
+// rewrites `captureLog`, and re-reading is cheap enough to just do it
+// wholesale. (A deleted `log.json` shows up here too, one capture
+// later — that capture's reconcile starts the log over and rewrites
+// the key.)
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !(LOG_STORAGE_KEY in changes)) return;
-  // A *Clear log history* wipes the key entirely. Drop the archived
-  // rows loaded into this tab along with it, so the page reflects the
-  // clear instead of leaving hundreds of rows under an empty log. The
-  // files stay on disk, so the button simply offers them again.
+  // Something wiped the key entirely — `clearCaptureLog`, from tests
+  // or the devtools console. Drop the archived rows loaded into this
+  // tab along with it, so the page reflects that instead of leaving
+  // hundreds of rows under an empty log. The archive files stay on
+  // disk, so the button simply offers them again.
   if (changes[LOG_STORAGE_KEY].newValue === undefined) {
     archiveFileRecords.clear();
     archiveError = '';

@@ -223,42 +223,63 @@ Every record has `timestamp` and `url`, plus optional fields:
 
 ### Storage model
 
-- The Chrome downloads API can only write whole files, so the
-  authoritative log lives in `chrome.storage.local`; `log.json`
-  is a snapshot rewritten on every capture.
-- Deleting `log.json` on disk is harmless — the next capture
-  recreates it from storage. `watch.sh` is also resilient to the
-  whole `~/Downloads/SeeWhatISee/` directory not existing yet
-  (it `mkdir -p`s on startup and polls for `log.json` to appear),
-  so `/see-what-i-see-watch` can be launched before any capture.
+- **`log.json` on disk is authoritative; `chrome.storage.local` is a
+  cache.** The downloads API can only write whole files, so every
+  capture still rewrites the file — but it reconciles against what is
+  there first. See [log-consistency.md](log-consistency.md) for the
+  full state table.
+- Deleting `log.json` starts a new log. The next capture notices (via
+  the download record's `exists`, or a failed read) and drops the
+  buffer instead of putting the old records back.
+  - Deleting or editing individual rows sticks too — but only when
+    the extension can read the file. Without the "Allow access to file
+    URLs" permission nothing reveals a change to a file's contents, so
+    an edit is overwritten by the next capture; deletion of the whole
+    file is honored either way.
+  - The history files are untouched either way, and the History page
+    still offers them.
+- A capture only ever **adds** one record to what's on disk (plus the
+  rotation into history files, which moves older records into a
+  `history-<timestamp>.json` beside `log.json`). It never rewrites or drops a
+  record already there.
+- When the extension can't tell what is on disk, it **doesn't write**
+  — the capture fails right there and the user is asked: a dialog over
+  the Capture page, or (for a context-menu / hotkey capture, which has
+  no page of its own) the ordinary "Capture failed" page with the same
+  dialog on top. Retry runs the append again, Overwrite forces it,
+  Cancel drops the record (its files stay on disk). Nothing about the
+  failure is stored — the next capture re-detects the condition on its
+  own if it still holds.
+- `watch.sh` is resilient to the whole `~/Downloads/SeeWhatISee/`
+  directory not existing yet (it `mkdir -p`s on startup and polls for
+  `log.json` to appear), so `/see-what-i-see-watch` can be launched
+  before any capture.
 - To browse the log, use the top-level **History** context-menu
   entry — a table view over the same `captureLog` array. See
   [history-page.md](history-page.md).
-- To clear history, use the **More → Clear log history**
-  context-menu entry on the toolbar icon (or call
-  `SeeWhatISee.clearCaptureLog()` from the service-worker
-  devtools console). Both wipe the `captureLog` key from
-  `chrome.storage.local` *and* overwrite the on-disk `log.json`
-  with an empty file so downstream consumers see the cleared
-  state immediately. `get-latest.sh` treats an empty `log.json`
-  the same as "no captures yet"; `watch.sh` swallows the clear's
-  mtime bump without emitting a spurious empty record.
+- There is no "clear history" menu entry. Clearing the cache alone
+  would be undone by the next reconcile, and deleting the user's
+  files is a separate feature that hasn't been built yet; deleting
+  `log.json` by hand is the supported gesture in the meantime.
+  `SeeWhatISee.clearCaptureLog()` from the service-worker devtools
+  console empties the buffer only, and exists for tests.
 - The in-storage log is capped at 100 entries; without a cap,
   rewriting the whole file on every capture would be quadratic in
   capture count.
 
-### Archived logs
+### History files
 
 - Entries aging out of the 100-entry buffer are **not** discarded.
-  Once the log goes over the cap, the oldest 50 are written to
-  `history-<timestamp>.json` beside `log.json` and dropped from
-  storage.
+  Once the log goes over the cap, the oldest 50 are written to a
+  **history file** — `history-<timestamp>.json` beside `log.json` —
+  and dropped from storage. The code calls these archives
+  (`ARCHIVE_FILE_PREFIX`, `getArchiveFilePaths`).
 - So the full capture history lives on disk while no single write
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.
 - `<timestamp>` is the `compactTimestamp` of the newest record in
-  the file, so archives sort chronologically and the name normally
-  matches that capture's own files — normally, because a repeat
+  the file, so history files sort chronologically and the name
+  normally matches that capture's own files — normally, because a repeat
   save's record can sit a millisecond past the stamp its files
   carry.
 - Consequence for readers: once the log has filled, `log.json`
@@ -266,8 +287,8 @@ Every record has `timestamp` and `url`, plus optional fields:
   it is, not always 100.
   - `get-latest.sh` / `watch.sh` only ever want the tail, so they
     are unaffected.
-  - `SeeWhatISee.py --all` / `--limit N` read the archives too, so
-    they see the whole history rather than that window. Archives
+  - `SeeWhatISee.py --all` / `--limit N` read the history files too,
+    so they see the whole history rather than that window. They
     are globbed from the download dir and read in name order
     (= chronological), then `log.json` last; `--limit` walks that
     list from the newest end and stops once it has enough.
@@ -275,17 +296,19 @@ Every record has `timestamp` and `url`, plus optional fields:
     its catch-up window shrinks to as few as 51 records right
     after a flush. An older timestamp falls back to plain watching
     (with a warning), same as it always did.
-- An entry leaves storage only after its archive file is written,
-  one batch at a time, so nothing is trimmed out from under a write
-  that didn't happen.
-  - A failed archive write is **not** a failed capture: the flush is
-    abandoned, everything un-archived stays in storage (the new
+- An entry leaves storage only after the history file holding it is
+  written, one batch at a time, so nothing is trimmed out from under a
+  write that didn't happen.
+  - A failed history-file write is **not** a failed capture: the move
+    is abandoned, everything not yet moved stays in storage (the new
     record included), and the next capture retries. Rejecting would
     orphan the screenshot already on disk and lose the record.
-- **Clear log history does not touch the archives.** It clears
-  storage and empties `log.json`; the `history-*.json` files stay
-  on disk (deleting user files isn't something the extension does)
-  and the History page can still load them.
+  - A new history file never takes a name one on disk already uses —
+    see [log-consistency.md](log-consistency.md).
+- **Nothing in the extension deletes the history files.** A `log.json`
+  the user deletes takes the browser copy with it, but the history
+  files stay on disk (deleting user files isn't something the
+  extension does) and the History page can still load them.
 
 ## Permissions
 

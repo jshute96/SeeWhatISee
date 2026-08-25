@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '../fixtures/extension';
+import { resetCaptureState } from '../fixtures/files';
 import { dragRect, findCapturedDownload, readLatestRecord } from './details-helpers';
 import type { CaptureRecord } from '../fixtures/files';
 
@@ -34,8 +35,10 @@ test.beforeEach(async ({ getServiceWorker }) => {
   // `findCapturedDownload` / `readLatestRecord`. The other flow
   // tests get this spy via `openDetailsFlow` / `openImageDetailsFlow`;
   // upload doesn't go through either, so we install it directly.
+  // A storage wipe alone is no longer a clean slate — see
+  // `resetCaptureState`.
+  await resetCaptureState(sw);
   await sw.evaluate(async () => {
-    await chrome.storage.local.clear();
     interface SpyState {
       __seeDl?: { id: number; name: string }[];
       __seeDlOrig?: typeof chrome.downloads.download;

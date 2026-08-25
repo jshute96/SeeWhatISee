@@ -8,6 +8,7 @@
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installCaptureQuotaTracker, waitForCaptureQuota } from './capture-quota';
@@ -123,7 +124,31 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   extensionContext: [
     async ({}, use) => {
-      const ctx = await chromium.launchPersistentContext('', {
+      // Downloads have to land under their *real* requested names in a
+      // real directory, because the extension navigates its own files
+      // by path: it finds the capture directory, re-reads `log.json`,
+      // and checks whether files still exist, all through
+      // `chrome.downloads.search`. Playwright's default download
+      // handling renames everything to a UUID under its artifacts dir,
+      // which makes every one of those lookups miss.
+      //
+      // Two steps are needed. Seeding `download.default_directory` in
+      // the profile's Preferences (written before launch — Chrome reads
+      // it on startup) points Chrome at a temp directory, and telling
+      // it `behavior: 'default'` over CDP after launch undoes
+      // Playwright's own interception. Neither alone is enough: without
+      // the pref, `default` would write into the developer's real
+      // ~/Downloads.
+      const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-profile-'));
+      const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swis-downloads-'));
+      fs.mkdirSync(path.join(userDataDir, 'Default'), { recursive: true });
+      fs.writeFileSync(
+        path.join(userDataDir, 'Default', 'Preferences'),
+        JSON.stringify({
+          download: { default_directory: downloadsDir, prompt_for_download: false },
+        }),
+      );
+      const ctx = await chromium.launchPersistentContext(userDataDir, {
         // Extensions require Chrome's new headless mode (--headless=new,
         // available since Chrome 112). We set headless: false so Playwright
         // doesn't inject its own --headless flag, then pass --headless=new
@@ -150,8 +175,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       };
       ctx.serviceWorkers().forEach(onSw);
       ctx.on('serviceworker', onSw);
+      // Needs a page to hang the CDP session off; the Browser domain
+      // command it sends is browser-wide, not page-scoped.
+      const cdpPage = await ctx.newPage();
+      const cdp = await ctx.newCDPSession(cdpPage);
+      await cdp.send('Browser.setDownloadBehavior' as never, { behavior: 'default' } as never);
+      await cdpPage.close();
       await use(ctx);
       await ctx.close();
+      // Both directories are per-worker temporaries; leaving them
+      // behind would grow /tmp by a profile and a pile of screenshots
+      // on every run.
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+      fs.rmSync(downloadsDir, { recursive: true, force: true });
     },
     { scope: 'worker' },
   ],

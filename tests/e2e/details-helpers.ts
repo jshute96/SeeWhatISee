@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import type { BrowserContext, Locator, Page, Worker } from '@playwright/test';
-import { type CaptureRecord, waitForDownloadPath } from '../fixtures/files';
+import { type CaptureRecord, waitForDownloadPath, resetCaptureState } from '../fixtures/files';
 
 // ─── Edit-dialog editor helpers ───────────────────────────────────
 //
@@ -102,7 +102,7 @@ export async function openDetailsFlow(
   // Clean log so stale entries from an earlier test in the same
   // worker can't satisfy our assertions.
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
   if (seedStorage) {
     await sw0.evaluate(async (data) => {
       await chrome.storage.local.set(data);
@@ -536,7 +536,7 @@ export async function openImageDetailsFlow(
   imageSelector = '#target',
 ): Promise<{ openerPage: Page; capturePage: Page; imageUrl: string }> {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
   if (seedStorage) {
     await sw0.evaluate(async (data) => {
       await chrome.storage.local.set(data);

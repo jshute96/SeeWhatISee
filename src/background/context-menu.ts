@@ -2,7 +2,7 @@
 // keeps every row's title in sync with the current defaults + bound
 // hotkeys (`refreshMenusAndTooltip`, `refreshMenusIfHotkeysChanged`),
 // and hosts the More-submenu utilities (Copy-last-filename via an
-// offscreen clipboard doc, Clear log). Menu-item ids are exported so
+// offscreen clipboard doc). Menu-item ids are exported so
 // `background.ts`'s `onClicked` dispatch can route each click to the
 // right action.
 
@@ -49,8 +49,6 @@ export const MORE_PARENT_ID = 'more-parent';
 // `-shortcut`, so the strip is unambiguous.
 export const SHORTCUT_SUFFIX = '-shortcut';
 
-// Id used by the "Clear log history" entry under the More submenu.
-export const CLEAR_LOG_MENU_ID = 'clear-log';
 // Id used by the top-level "History" entry (directly above the More
 // submenu) — opens `history.html`, the table view over the capture log.
 export const HISTORY_MENU_ID = 'history-page';
@@ -520,7 +518,7 @@ async function copyToClipboard(text: string): Promise<void> {
 // The `if (!r) ...` / `if (!r.screenshot) ...` branches below are
 // defensive — under normal use the menu items are greyed out (so the
 // click can't fire), but the user can still hit a small race window
-// if they Clear log history (or it gets cleared) between the
+// if the log is cleared between the
 // `refreshCopyMenuState` storage callback firing and Chrome rendering
 // the new enabled state. Splitting the two messages keeps the
 // "ERROR: …" tooltip line legible in either case.
@@ -637,8 +635,6 @@ function assertTopLevelBudget(): void {
 //       ─────────
 //       • Upload image to Capture...
 //       • Restore last capture            (greyed unless a closed Capture page state is saved)
-//       ─────────
-//       • Clear log history
 //   Set this tab as Ask button target  (greyed unless current tab is a provider;
 //                                        flips to "Unset…" when the tab is
 //                                        already the pin)
@@ -864,7 +860,7 @@ export async function installContextMenu(): Promise<void> {
   // The Copy-last-… entries are created `enabled: false` and flipped
   // on by `refreshCopyMenuState()` once we've checked the latest
   // record. That avoids a brief flash of "enabled but does nothing"
-  // on the first install / after a Clear log history.
+  // on the first install, or whenever the log is empty.
   chrome.contextMenus.create({
     id: COPY_LAST_SCREENSHOT_MENU_ID,
     parentId: MORE_PARENT_ID,
@@ -902,13 +898,6 @@ export async function installContextMenu(): Promise<void> {
     parentId: MORE_PARENT_ID,
     title: 'Restore last capture',
     enabled: false,
-    contexts: ['action'],
-  });
-  createSeparator(`${MORE_PARENT_ID}-sep-restore`, MORE_PARENT_ID);
-  chrome.contextMenus.create({
-    id: CLEAR_LOG_MENU_ID,
-    parentId: MORE_PARENT_ID,
-    title: 'Clear log history',
     contexts: ['action'],
   });
 
@@ -966,7 +955,7 @@ export async function installContextMenu(): Promise<void> {
   // `chrome.runtime.lastError` on the offending call and, since we
   // pass no callback, nothing reads it — the entry just isn't there.
   // That has bitten this menu before (a 7th entry silently dropped
-  // "Clear log history"), and the top level is now *exactly* at the
+  // the last More-submenu row), and the top level is now *exactly* at the
   // cap, so assert rather than trust a future edit to count
   // correctly. The tally comes from `createTopLevelMenu`, which every
   // top-level row goes through — no hand-maintained number to fall

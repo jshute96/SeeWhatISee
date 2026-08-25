@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
 import { waitForCaptureQuota } from '../fixtures/capture-quota';
-import { waitForDownloadPath, type CaptureResult } from '../fixtures/files';
+import { waitForDownloadPath, type CaptureResult, resetCaptureState } from '../fixtures/files';
 
 // Capture-time recompress: when captureVisibleTab returns a PNG
 // larger than the threshold, we re-encode as JPEG and use the JPEG
@@ -35,7 +35,7 @@ test.describe('capture-time PNG → JPEG recompress', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gradient.html`);
@@ -68,7 +68,7 @@ test.describe('capture-time PNG → JPEG recompress', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -103,7 +103,7 @@ test.describe('capture-time PNG → JPEG recompress', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gradient.html`);

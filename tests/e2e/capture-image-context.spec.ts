@@ -36,7 +36,7 @@ import {
   seedSelection,
   SCREENSHOT_PATTERN,
 } from './details-helpers';
-import { waitForDownloadPath } from '../fixtures/files';
+import { waitForDownloadPath, resetCaptureState } from '../fixtures/files';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RED_PIXEL_PATH = path.resolve(__dirname, '../fixtures/pages/red-pixel.png');
@@ -49,7 +49,7 @@ test('image flow: save screenshot writes image bytes + record with imageUrl', as
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -254,7 +254,7 @@ test('image flow: save screenshot does NOT scrape the page (no executeScript cal
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -334,7 +334,7 @@ test('image flow: data: URL with JPEG MIME saves under `.jpg`', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -408,7 +408,7 @@ test('image flow: fetch failure on a 404 image URL throws + writes no record', a
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -470,7 +470,7 @@ test('image flow: canvas fallback rescues a fetch failure on a painted <img>', a
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -569,7 +569,7 @@ test('image flow: canvas fallback on a JPEG <img> keeps JPEG output', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);
@@ -666,7 +666,7 @@ test('image flow: server with empty Content-Type produces canonical data:image/j
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const openerPage = await extensionContext.newPage();
   await openerPage.goto(`${fixtureServer.baseUrl}/red-image.html`);

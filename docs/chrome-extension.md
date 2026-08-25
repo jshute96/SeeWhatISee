@@ -42,7 +42,7 @@ The background script is an MV3 service worker. That means:
   - Entries past the cap aren't dropped: they're flushed to
     `history-<timestamp>.json` files beside `log.json`, which is
     how the full history survives the whole-file constraint. See
-    [architecture.md → Archived logs](architecture.md#archived-logs).
+    [architecture.md → History files](architecture.md#history-files).
 - **Unhandled rejections get promoted to `chrome://extensions` →
   Errors.** Any promise that rejects without a `.catch` lands on
   the extension's Errors page, which makes the extension look
@@ -475,8 +475,8 @@ the Chrome-platform mechanics of building it.
     `lastError` and the failure is invisible until someone
     notices the menu entry is gone. This has already bitten us
     once: commit 8e100d1 added "Capture with details..." as a
-    7th entry, which silently dropped "Clear log history" off
-    the menu until the regression was spotted later. Keep the
+    7th entry, which silently dropped the last More-submenu row
+    off the menu until the regression was spotted later. Keep the
     top level at 6 or below, or move entries into a submenu.
 
 ## Image right-click context menu

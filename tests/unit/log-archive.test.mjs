@@ -8,6 +8,12 @@
 // which is what the assertions inspect: the point of these tests is
 // *which* records land in *which* file, not the plumbing that gets
 // them there.
+//
+// The `downloads.search` stub reports a `log.json` whose size always
+// matches what we last wrote, which is what puts `recordCapture` on
+// its ordinary append path. The reconcile's other branches — deleted,
+// emptied, mismatched, unreadable — are covered in
+// `log-reconcile.test.mjs`.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,12 +44,33 @@ function stubChrome(existing = []) {
         remove: async (key) => { delete store[key]; },
       },
     },
+    // File reads off: these tests are about archiving, and the
+    // record-only path is the one that appends without needing a
+    // `fetch` stub as well.
+    extension: { isAllowedFileSchemeAccess: async () => false },
     downloads: {
       download: async ({ filename, url }) => {
         // Undo the `data:` wrapper `writeJsonFile` puts around the text.
         const body = decodeURIComponent(url.slice(url.indexOf(',') + 1));
         writes.push({ filename, body });
         return nextId++;
+      },
+      search: async () => {
+        // Whatever we last wrote *is* what's on disk, so the log and
+        // the file agree and the append proceeds. Before the first
+        // write, the seeded storage is what the file would hold.
+        const last = lastLogWrite();
+        const body = last ? last.body : serializeLog(store.captureLog ?? []);
+        const size = new TextEncoder().encode(body).length;
+        return [{
+          id: 0,
+          filename: `SeeWhatISee/log.json`,
+          byExtensionId: EXT_ID,
+          state: 'complete',
+          exists: true,
+          fileSize: size,
+          bytesReceived: size,
+        }];
       },
     },
   };

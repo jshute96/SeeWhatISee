@@ -175,7 +175,11 @@ Chrome truncates the coordinates the DevTools protocol hands it, so
   switch windows.
 - The SW devtools console is also the fastest way to exercise:
   - `savePageContents()` — grab the current tab's HTML.
-  - `clearCaptureLog()` — wipe the storage log.
+  - `clearCaptureLog()` — empty the storage buffer. Note it does
+    *not* clear the log: `log.json` is authoritative, so the next
+    capture reconciles against the file and puts the records back.
+    Delete the file to clear the log (see
+    [log-consistency.md](log-consistency.md)).
   - `reportCaptureError(new Error("…"))` — test the error
     surface without having to trigger a real failure (opens a
     `capture.html?error=…` tab next to the active tab).

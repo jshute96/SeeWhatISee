@@ -221,7 +221,7 @@ delivery channel — the lossless path is a **cursored read**:
   carrying that timestamp, not a `>` compare. The log is in append
   order, and a slow save can carry an earlier timestamp than the record
   before it — comparing would skip those permanently.
-- The fallback compare covers a cursor that has aged into an archive,
+- The fallback compare covers a cursor that has aged into a history file,
   and the empty cursor (`?after=`) a client bootstrapped on an empty log
   uses: no record matches `''` and every timestamp sorts after it, so
   the whole log comes back.
@@ -336,7 +336,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Inline selection     | `--print_selection`                       | small selections inline by default; otherwise `return_inline`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |
-| History listing      | `--all` / `--limit N`, narrowed by `--search` / `--filter_site` / `--filter_time`; reads the `history-*.json` archives as well as `log.json` | no equivalent yet — the server only ever reads the tail of `log.json` |
+| History listing      | `--all` / `--limit N`, narrowed by `--search` / `--filter_site` / `--filter_time`; reads the `history-*.json` files as well as `log.json` | no equivalent yet — the server only ever reads the tail of `log.json` |
 
 ## Decisions
 

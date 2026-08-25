@@ -282,8 +282,8 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   `CAPTURE_ACTIONS`. The set of promoted actions lives in
   `TOP_LEVEL_SHORTCUT_ACTION_IDS`.
 - **More ▸** — submenu home for every action plus the
-  infrequent utilities (Copy-last filenames, Clear log
-  history). See below.
+  infrequent utilities (Copy-last filenames, Upload image,
+  Restore last capture). See below.
 - **☐  Set this tab as Ask button target** — pin/unpin the active
   tab as the Ask destination. Greyed unless the active tab is on
   an enabled provider; flips between Set and Unset. Sits last in
@@ -337,7 +337,7 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
     recent record in `chrome.storage.local` doesn't carry the
     matching field. A storage `onChanged` listener on
     `LOG_STORAGE_KEY` keeps the enable state in sync after every
-    capture and after Clear log history (no plumbing from
+    capture and whenever the log empties (no plumbing from
     `capture.ts` to `background.ts`).
   - Clipboard write goes through an offscreen document
     (`offscreen.html` + `offscreen.ts`) because MV3 service
@@ -375,15 +375,16 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
     `replaceState` and falls into the normal `loadData` happy-path.
   - See [capture-page.md → Upload mode](capture-page.md#upload-mode)
     for the page-side wiring.
-- **Clear log history** — `clearCaptureLog()` erases the
-  in-storage capture log *and* overwrites `log.json` on disk with
-  an empty file so `/see-what-i-see` et al. see the cleared state
-  immediately. Still exposed on `SeeWhatISee.clearCaptureLog()`
-  for the devtools console.
-  - The `history-*.json` archives of older captures are left
-    alone — deleting the user's files isn't something this does.
-    The History page can still load them; removing them means
-    deleting the files.
+
+This submenu used to end with a **Clear log history** entry. It was
+removed when `log.json` on disk became the authoritative capture log:
+clearing the browser's cached copy would simply be undone by the next
+capture, and deleting the user's files isn't something the extension
+does. Deleting `log.json` is what clears the log for now, and a real
+delete-the-files feature is still to come.
+`SeeWhatISee.clearCaptureLog()` remains on the devtools console
+object, and now empties the cached copy only. See
+[log-consistency.md](log-consistency.md).
 
 ### Top-level item cap
 

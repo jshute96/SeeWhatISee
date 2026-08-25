@@ -268,7 +268,7 @@
   .older[hidden] {
     display: none;
   }
-  /* Only ever carries a read failure now; the archive-file count it
+  /* Only ever carries a read failure now; the history-file count it
      used to show lives in the button's tooltip instead. Error red so
      it doesn't read as more grey metadata beside "88 captures". */
   .older-note {
@@ -313,6 +313,34 @@
   .banner a {
     color: #1a5fb4;
     white-space: nowrap;
+  }
+  /* Clicking a file link or the Snapshots-directory button while
+     "Allow access to file URLs" is off does nothing — we suppress the
+     navigation rather than let Chrome refuse it (see history.ts). A
+     silent no-op reads as a broken page, so the banner that explains
+     why flashes instead. It's already pinned above the scroller, so
+     scrolling it into view would be a no-op; this has to be a visual
+     change to be noticed at all.
+
+     Deeper amber plus a ring, and the ring is on `box-shadow` rather
+     than `border` so the banner doesn't change size and shove the
+     table down mid-flash. Two pulses, because a single one is easy to
+     miss if the eye is on the row that was clicked. */
+  @keyframes banner-flash {
+    0%, 100% { background: #fff8e1; box-shadow: none; }
+    25%, 75% { background: #ffe9a8; box-shadow: 0 0 0 3px #ffca28; }
+  }
+  .banner.flash {
+    animation: banner-flash 0.6s ease-in-out 2;
+  }
+  /* Respect the OS "reduce motion" setting: keep the emphasis, drop
+     the pulsing. The class is still added and removed the same way. */
+  @media (prefers-reduced-motion: reduce) {
+    .banner.flash {
+      animation: none;
+      background: #ffe9a8;
+      box-shadow: 0 0 0 3px #ffca28;
+    }
   }
 </style>
 </head>
@@ -380,13 +408,14 @@
   <p class="notice" id="empty" hidden>
     No captures in the log yet. Capture something and it will show up here.
   </p>
-  <!-- Same situation, different story: the log is empty but archived
+  <!-- Same situation, different story: the log is empty but history-file
        captures are sitting on disk unread, so "capture something"
        would be wrong. Two authored paragraphs rather than one whose
        text gets swapped, so the copy stays in the markup. -->
   <p class="notice" id="empty-archived" hidden>
-    Nothing in the current log, but older captures are archived on
-    disk — use <b>Load older captures</b> at the top to read them.
+    Nothing in the current log, but older captures are stored in
+    history files on disk — use <b>Load older captures</b> at the top
+    to read them.
   </p>
   <p class="notice" id="no-matches" hidden>
     No captures match your search.

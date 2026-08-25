@@ -9,11 +9,13 @@
 // don't surface as page downloads, so the event never fires for
 // SeeWhatISee's PNG / sidecar saves.
 //
-// chrome.downloads.search *does* see them, but the `filename` field
-// it returns is the actual on-disk path Playwright uses for its
-// download interception storage — typically a UUID under a temp dir,
-// not the path the extension requested. That's still useful: we want
-// the bytes, not the name. Tests should not assert on basenames here.
+// chrome.downloads.search *does* see them, and the `filename` field it
+// returns is the real path: `tests/fixtures/extension.ts` points Chrome
+// at a per-worker temp download directory and turns off Playwright's
+// download interception, precisely so the extension's own path-based
+// lookups (capture directory, `log.json` re-read, file-existence
+// checks) work. So `SeeWhatISee/<filename>` is what lands, and a
+// re-written file really does overwrite the previous one.
 
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
@@ -217,4 +219,75 @@ export async function verifyCapture(
   }
 
   return logRecords;
+}
+
+/**
+ * Put the extension back to a genuine clean slate: no capture files on
+ * disk, no download records of them, and no capture log in storage.
+ *
+ * Clearing `chrome.storage.local` alone is *not* a clean slate any
+ * more. The log on disk is authoritative, so the next capture would
+ * find a `log.json` that disagrees with an empty buffer, decline to
+ * overwrite it, and ask the user what to do (see
+ * `docs/log-consistency.md`) — the download record outlives the
+ * storage wipe and is exactly what the reconcile consults.
+ *
+ * Erasing the records as well as the files also keeps this
+ * deterministic: `DownloadItem.exists` only refreshes on a delayed
+ * re-check, so a test that deleted the file but left the record would
+ * race that round-trip. No record at all has no such lag.
+ *
+ * Worker-scoped state, so this matters between tests in one file as
+ * much as between files.
+ */
+export async function resetCaptureState(sw: Worker): Promise<void> {
+  await sw.evaluate(async () => {
+    const items = await chrome.downloads.search({
+      filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]',
+    });
+    for (const item of items) {
+      if (item.byExtensionId !== chrome.runtime.id) continue;
+      // Both calls reject for a file that's already gone or a record
+      // Chrome has forgotten. Either way the end state is the one we
+      // want, so neither is worth failing a test over.
+      try {
+        await chrome.downloads.removeFile(item.id);
+      } catch { /* already deleted */ }
+      try {
+        await chrome.downloads.erase({ id: item.id });
+      } catch { /* already erased */ }
+    }
+    await chrome.storage.local.clear();
+  });
+}
+
+/**
+ * Seed a capture log that the extension will actually believe: both
+ * the `chrome.storage.local` buffer *and* `log.json` on disk.
+ *
+ * Storage alone isn't enough any more. The file is authoritative, so a
+ * capture on top of a storage-only seed reads an absent `log.json`,
+ * concludes the log was deleted, and starts over — discarding the
+ * seed. See `docs/log-consistency.md`.
+ *
+ * The records are serialized here the same way `serializeLog` does it
+ * (one JSON object per line, trailing newline, keys in the order
+ * given), so the reconcile sees a file that matches the buffer.
+ */
+export async function seedCaptureLog(
+  sw: Worker,
+  records: Record<string, unknown>[],
+): Promise<void> {
+  const id = await sw.evaluate(async (recs) => {
+    await chrome.storage.local.set({ captureLog: recs });
+    const text = recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    return await chrome.downloads.download({
+      url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
+      filename: 'SeeWhatISee/log.json',
+      conflictAction: 'overwrite',
+    });
+  }, records);
+  // The reconcile only trusts a *completed* record, so let the write
+  // land before the test captures on top of it.
+  await waitForDownloadPath(sw, id);
 }

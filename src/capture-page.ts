@@ -48,6 +48,12 @@ import { createMenuPopover } from './capture-page/menu-popover.js';
 import { isKeyboardClick } from './capture-page/menu-keys.js';
 import { initUndoScope } from './capture-page/undo-scope.js';
 import {
+  closeLogSyncDialog,
+  initLogSync,
+  showLogSyncDialog,
+} from './capture-page/log-sync.js';
+import { type LogSyncPrompt } from './capture/log-sync-client.js';
+import {
   initDrawing,
   imgRect,
   visibleImageRect,
@@ -1471,54 +1477,82 @@ captureBtn.addEventListener('click', (e) => {
       : { hasHighlights: false, hasRedactions: false, isCropped: false };
 
     setStatusMessage('Saving…', 'info');
-    void (async () => {
-      // Flush any pending debounced last-capture push and wait for
-      // the SW to merge it in. This is what guarantees the close-
-      // path promote sees the freshest prompt / drawing state — a
-      // bare fire-and-forget push would otherwise race the
-      // saveDetails handler's promote step.
-      await pushUiStateNow();
-      let response: { ok?: boolean; error?: string } | undefined;
-      try {
-        response = (await chrome.runtime.sendMessage({
-          action: 'saveDetails',
-          screenshot: screenshotBox.checked,
-          html: htmlBox.checked,
-          selectionFormat: selectedSelectionFormat(),
-          prompt: promptInput.value.trim(),
-          highlights: flags.hasHighlights,
-          hasRedactions: flags.hasRedactions,
-          isCropped: flags.isCropped,
-          editVersion: getEditVersion(),
-          screenshotOverride,
-          closeAfter,
-        })) as { ok?: boolean; error?: string } | undefined;
-      } catch (err) {
-        // Channel-disconnect on a closeAfter=true save is normal
-        // (the SW closes the tab and the response can race the
-        // teardown). Surface the error only when we expected to
-        // stay open — otherwise it's the expected "tab gone"
-        // signal and the page is on its way out anyway.
-        if (!closeAfter) {
-          setStatusMessage(
-            `Capture failed: ${err instanceof Error ? err.message : String(err)}`,
-            'error',
-          );
+    // Named so the out-of-sync log dialog's Retry / Overwrite can
+    // re-run the same save: the flow is idempotent (artifact files
+    // re-hit their download caches or rewrite the same pinned names),
+    // so re-entering from the top *is* the retry.
+    const submitSave = (forceLog: boolean): void => {
+      void (async () => {
+        // Flush any pending debounced last-capture push and wait for
+        // the SW to merge it in. This is what guarantees the close-
+        // path promote sees the freshest prompt / drawing state — a
+        // bare fire-and-forget push would otherwise race the
+        // saveDetails handler's promote step.
+        await pushUiStateNow();
+        let response:
+          | { ok?: boolean; error?: string; logBlocked?: LogSyncPrompt }
+          | undefined;
+        try {
+          response = (await chrome.runtime.sendMessage({
+            action: 'saveDetails',
+            screenshot: screenshotBox.checked,
+            html: htmlBox.checked,
+            selectionFormat: selectedSelectionFormat(),
+            prompt: promptInput.value.trim(),
+            highlights: flags.hasHighlights,
+            hasRedactions: flags.hasRedactions,
+            isCropped: flags.isCropped,
+            editVersion: getEditVersion(),
+            screenshotOverride,
+            closeAfter,
+            forceLog,
+          })) as { ok?: boolean; error?: string; logBlocked?: LogSyncPrompt } | undefined;
+        } catch (err) {
+          // Channel-disconnect on a closeAfter=true save is normal
+          // (the SW closes the tab and the response can race the
+          // teardown). Surface the error only when we expected to
+          // stay open — otherwise it's the expected "tab gone"
+          // signal and the page is on its way out anyway.
+          if (!closeAfter) {
+            setStatusMessage(
+              `Capture failed: ${err instanceof Error ? err.message : String(err)}`,
+              'error',
+            );
+            captureBtn.disabled = false;
+          }
+          return;
+        }
+        if (response?.ok) {
+          // closeAfter=true → SW will close us in a moment. Showing
+          // "Saved." briefly is fine; the message disappears with
+          // the tab. closeAfter=false leaves the user reading it.
+          setStatusMessage('Saved.', 'ok');
+          if (!closeAfter) captureBtn.disabled = false;
+        } else if (response?.logBlocked) {
+          // The files saved but `log.json` couldn't be written — ask,
+          // right now, about this one capture. Retry re-runs this
+          // save; Overwrite re-runs it with the reconcile skipped;
+          // Cancel leaves it a failed save (the record just isn't
+          // logged). Nothing is remembered past this dialog.
+          setStatusMessage(response.error ?? 'Capture failed.', 'error');
+          captureBtn.disabled = false;
+          const rerun = (force: boolean): void => {
+            closeLogSyncDialog();
+            captureBtn.disabled = true;
+            setStatusMessage('Saving…', 'info');
+            submitSave(force);
+          };
+          showLogSyncDialog(response.logBlocked, {
+            onRetry: () => rerun(false),
+            onOverwrite: () => rerun(true),
+          });
+        } else {
+          setStatusMessage(response?.error ?? 'Capture failed.', 'error');
           captureBtn.disabled = false;
         }
-        return;
-      }
-      if (response?.ok) {
-        // closeAfter=true → SW will close us in a moment. Showing
-        // "Saved." briefly is fine; the message disappears with
-        // the tab. closeAfter=false leaves the user reading it.
-        setStatusMessage('Saved.', 'ok');
-        if (!closeAfter) captureBtn.disabled = false;
-      } else {
-        setStatusMessage(response?.error ?? 'Capture failed.', 'error');
-        captureBtn.disabled = false;
-      }
-    })();
+      })();
+    };
+    submitSave(false);
   } catch (err) {
     // Synchronous failure (e.g. renderHighlightedImage / toDataURL
     // throwing). Re-enable so the user can retry, surface the
@@ -1655,6 +1689,10 @@ initSaveAs({
   setStatusMessage,
   formatClipboardError,
 });
+
+// Wires the out-of-sync log dialog and, on an `?error=` page carrying
+// a `?logsync=` payload, opens it for the stranded capture.
+initLogSync();
 
 initUndoScope({
   imagePanel,

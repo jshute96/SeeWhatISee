@@ -1,4 +1,5 @@
 import { noSelectionContentMessage } from '../capture/types.js';
+import { LogWriteBlockedError } from '../capture/log-reconcile.js';
 import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
 // User-visible error reporting for failed captures.
@@ -113,7 +114,15 @@ export async function reportCaptureError(
   // someone debugging will look for. `console.info` because the
   // failure is already handled via the error page.
   console.info('[SeeWhatISee] capture failed:', err);
-  const url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
+  let url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
+  // A blocked log write carries its capture record along in the URL,
+  // so the error page can offer Retry / Overwrite for it. The record
+  // lives nowhere else — closing the tab abandons it, which is the
+  // Cancel gesture.
+  if (err instanceof LogWriteBlockedError) {
+    const payload = { reason: err.reason, directory: err.directory, record: err.record };
+    url += `&logsync=${encodeURIComponent(JSON.stringify(payload))}`;
+  }
   try {
     await createTabWithPlacement({ url, ...(await tabPlacement(opener)) });
   } catch (e) {
@@ -126,10 +135,25 @@ export async function reportCaptureError(
 }
 
 /**
+ * The tab the user was on, for placing the error tab beside it. A
+ * failure here just means Chrome picks the position.
+ */
+async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Run a capture-like action with unified error reporting. A
- * successful run is a no-op (nothing to clean up — there's no
- * persistent error icon or tooltip anymore); a failure opens an
- * error Capture page anchored next to the active source tab.
+ * successful run is a no-op; a failure opens an error Capture page
+ * anchored next to the active source tab. That includes a capture
+ * whose files were saved but whose `log.json` write was blocked
+ * (`LogWriteBlockedError`) — the same page, with the out-of-sync
+ * dialog on top of it.
  *
  * Used by every user-initiated capture path (toolbar click,
  * hotkey, context-menu entries). Paths that have their own
@@ -141,15 +165,7 @@ export async function runWithErrorReporting(fn: () => Promise<unknown>): Promise
   try {
     await fn();
   } catch (err) {
-    // Best-effort active-tab lookup for tab placement. A failure
-    // here just means the error tab opens in the default position.
-    let opener: chrome.tabs.Tab | undefined;
-    try {
-      [opener] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    } catch {
-      // Ignored — `opener` stays undefined.
-    }
-    await reportCaptureError(err, opener);
+    await reportCaptureError(err, await activeTab());
   }
 }
 

@@ -15,6 +15,7 @@ import {
   waitForDownloadComplete,
 } from '../capture/downloads.js';
 import { compactTimestamp, serializeRecord } from '../capture/log-store.js';
+import { LogWriteBlockedError } from '../capture/log-reconcile.js';
 import {
   type MaybePackedText,
   isBlankText,
@@ -1057,6 +1058,12 @@ interface SaveDetailsMessage {
    * user keeps the preview they're already looking at.
    */
   closeAfter?: boolean;
+  /**
+   * True only when the save is a re-run from the out-of-sync log
+   * dialog's **Overwrite** button: skip the `log.json` reconcile and
+   * replace the file with the browser's copy of the log.
+   */
+  forceLog?: boolean;
 }
 interface CloseCapturePageMessage {
   /**
@@ -2083,6 +2090,7 @@ export function installDetailsMessageHandlers(): void {
               msg.selectionFormat !== null
                 ? postEnsure.selectionEdited?.[msg.selectionFormat] === true
                 : undefined,
+            forceLog: msg.forceLog === true,
           });
           // Lock each saved artifact: snapshot the bumpIndex +
           // revision the file was written under, so the next save
@@ -2145,6 +2153,19 @@ export function installDetailsMessageHandlers(): void {
           // `saved` snapshots above ensure subsequent saves don't
           // trample the on-disk file we just locked.
         } catch (err) {
+          // A blocked `log.json` write is reported distinctly: the
+          // page opens the out-of-sync dialog, whose Retry /
+          // Overwrite buttons re-run this whole save (it's
+          // idempotent — the artifact files re-hit their caches or
+          // rewrite the same pinned names).
+          if (err instanceof LogWriteBlockedError) {
+            sendResponse({
+              ok: false,
+              error: err.message,
+              logBlocked: { reason: err.reason, directory: err.directory },
+            });
+            return;
+          }
           sendResponse({
             ok: false,
             error: err instanceof Error ? err.message : String(err),

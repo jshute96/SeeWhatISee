@@ -286,6 +286,64 @@
   dialog.edit-dialog::backdrop {
     background: rgba(0, 0, 0, 0.35);
   }
+  /* Out-of-sync log prompt. Narrower than the edit dialogs — it's a
+   * few lines of explanation and a row of buttons, not an editor. */
+  dialog.log-sync-dialog {
+    width: min(560px, 90vw);
+    padding: 16px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #fff;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #333;
+  }
+  dialog.log-sync-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .log-sync-dialog h2 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .log-sync-dialog p {
+    margin: 0 0 12px 0;
+  }
+  .log-sync-dialog code {
+    /* Long paths are the common case here, and a path that overflows
+     * would push the button row out of reach. */
+    overflow-wrap: anywhere;
+  }
+  /* Buttons trail to the right, primary action last — the same
+   * reading order the edit dialogs' action row uses. */
+  .log-sync-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  /* Sizing/border per call site, like every other button here; `.btn`
+   * only supplies the raised/pressed feedback layer. The settings
+   * entry is an <a> so hover and copy-link work on its real href, so
+   * it needs the text-decoration reset too. */
+  .log-sync-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    font-size: 13px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    color: #000;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .log-sync-actions .primary {
+    font-weight: 600;
+  }
+  .log-sync-error {
+    color: #b3261e;
+  }
   .edit-dialog h2 {
     margin: 0;
     font-size: 16px;
@@ -1362,6 +1420,33 @@
     </div>
     <svg id="viewport-edges" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
+
+  <!-- Shown when a capture saved its files but couldn't update
+       `log.json` because we can't tell what's on disk. Asks what to do
+       with that one capture, right then: Retry re-runs the write,
+       Overwrite forces it, Cancel abandons the record. Wired by
+       `capture-page/log-sync.ts`; the body text is per-reason and set
+       there. -->
+  <dialog id="log-sync-dialog" class="log-sync-dialog"
+          aria-labelledby="log-sync-title">
+    <h2 id="log-sync-title">Capture log is out of sync</h2>
+    <p id="log-sync-reason"></p>
+    <p id="log-sync-remedy"></p>
+    <p id="log-sync-error" class="log-sync-error" hidden></p>
+    <div class="log-sync-actions">
+      <!-- Real `href` so hover / copy-link work, but the click is
+           intercepted: Chrome blocks page-initiated `chrome://`
+           navigation, so log-sync.ts opens it via `chrome.tabs.create`. -->
+      <a id="log-sync-settings" class="btn" href="chrome://extensions/">
+        Extension settings
+      </a>
+      <button type="button" id="log-sync-cancel" class="btn">Cancel</button>
+      <button type="button" id="log-sync-retry" class="btn">Retry</button>
+      <button type="button" id="log-sync-overwrite" class="btn primary">
+        Overwrite log.json
+      </button>
+    </div>
+  </dialog>
 
   <!-- Cloned once per editable artifact kind by `createEditDialog`, which
        fills in the per-kind ids (`edit-${kind}-${role}`), title and aria

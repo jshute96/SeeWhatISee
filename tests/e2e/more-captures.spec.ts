@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import type { Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { type CaptureRecord, waitForDownloadPath } from '../fixtures/files';
+import { type CaptureRecord, waitForDownloadPath, resetCaptureState } from '../fixtures/files';
 
 const SCREENSHOT_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 const CONTENTS_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
@@ -80,7 +80,7 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -102,7 +102,13 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
     interface SpyState { __seeDl?: { id: number; name: string }[] }
     return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
   });
-  expect(names.every((n) => n.endsWith('log.json'))).toBe(true);
+  // `probe-*.json` is the reconcile's throwaway directory probe (it
+  // deletes itself); it fires here because a URL-only capture writes no
+  // artifact to locate the capture directory from. Everything else must
+  // be the sidecar — a URL-only capture writes no capture files.
+  const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
+  expect(written.length).toBeGreaterThan(0);
+  expect(written.every((n) => n.endsWith('log.json'))).toBe(true);
 
   await page.close();
 });
@@ -113,7 +119,7 @@ test('captureAll writes PNG + HTML + log record referencing both', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/green.html`);
@@ -201,7 +207,7 @@ test('captureUrlOnly: htmlError is ignored — URL-only record still lands', asy
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -224,7 +230,13 @@ test('captureUrlOnly: htmlError is ignored — URL-only record still lands', asy
     interface SpyState { __seeDl?: { id: number; name: string }[] }
     return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
   });
-  expect(names.every((n) => n.endsWith('log.json'))).toBe(true);
+  // `probe-*.json` is the reconcile's throwaway directory probe (it
+  // deletes itself); it fires here because a URL-only capture writes no
+  // artifact to locate the capture directory from. Everything else must
+  // be the sidecar — a URL-only capture writes no capture files.
+  const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
+  expect(written.length).toBeGreaterThan(0);
+  expect(written.every((n) => n.endsWith('log.json'))).toBe(true);
 
   await page.close();
 });
@@ -235,7 +247,7 @@ test('captureAll: htmlError is re-thrown so the toolbar error channel surfaces i
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/green.html`);

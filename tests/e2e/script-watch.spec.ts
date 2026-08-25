@@ -687,13 +687,13 @@ test.describe('SeeWhatISee.py --watch', () => {
   });
 
   test('once mode: clearing the log (empty log.json) does not emit or exit; next capture does', async () => {
-    // "Clear log history" overwrites log.json with a zero-byte file.
+    // A user who truncates log.json leaves a zero-byte file behind.
     // The mtime bump must NOT produce a blank emission or exit the
     // once-mode watcher — the cleared state isn't a new capture.
     const watch = startWatch(['--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 1200));
 
-    // Truncate to empty — simulates the "Clear log history" click.
+    // Truncate to empty — simulates the user clearing the file.
     fs.writeFileSync(path.join(tmpDir, 'log.json'), '');
     await new Promise((r) => setTimeout(r, 1500));
 

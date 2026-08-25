@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures/extension';
-import { verifyHtmlCapture, type CaptureResult } from '../fixtures/files';
+import { verifyHtmlCapture, type CaptureResult, resetCaptureState } from '../fixtures/files';
 
 // Filename format: contents-YYYYMMDD-HHMMSS-mmm.html
 const FILENAME_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
@@ -10,7 +10,7 @@ test('savePageContents captures HTML and writes sidecar file', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);

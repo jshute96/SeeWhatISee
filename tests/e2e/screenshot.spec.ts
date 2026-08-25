@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
 import { waitForCaptureQuota } from '../fixtures/capture-quota';
-import { verifyCapture, waitForDownloadPath, type CaptureResult } from '../fixtures/files';
+import { verifyCapture, type CaptureResult, resetCaptureState } from '../fixtures/files';
 
 // Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
 // no subdir prefix (the sidecar JSON resolves it against its own
@@ -27,7 +26,7 @@ test('captures the visible tab and writes png + sidecar file', async ({
   // from storage on every capture, so leftover entries from earlier
   // tests would inflate the count.
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -174,16 +173,16 @@ test('delayed capture records the new URL after a same-tab navigation', async ({
   await page.close();
 });
 
-test('clearCaptureLog empties storage so the next capture starts a fresh log', async ({
+test('deleting log.json starts a fresh log instead of resurrecting the buffer', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // Start from a clean slate so the log-length assertions below are
-  // about the behavior under test, not leftover state from an earlier
-  // test in the same worker.
+  // The headline behavior of disk authority: the file on disk decides
+  // what the log is. Deleting it is a supported gesture, and the next
+  // capture must not put the old records back from storage.
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -200,10 +199,9 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   const log1 = await verifyCapture(sw1, result1, PURPLE, []);
   expect(log1).toHaveLength(1);
 
-  // Capture #2 (orange): log grows to two records. This is the state
-  // we want to prove `clearCaptureLog` actually collapses — if it only
-  // ever drops the single most recent entry, a test that starts from
-  // one record can't tell the difference.
+  // Capture #2 (orange): two records. Two rather than one so the
+  // assertion below can tell "started over" from "dropped the last
+  // entry".
   await page.goto(`${fixtureServer.baseUrl}/orange.html`);
   await page.bringToFront();
   const sw2 = await getServiceWorker();
@@ -216,31 +214,27 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
   });
   const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
   expect(log2).toHaveLength(2);
-
-  // Clear the in-storage log and verify both halves of the effect:
-  //   1. `chrome.storage.local.captureLog` is gone.
-  //   2. The on-disk `log.json` is overwritten with a 0-byte file so
-  //      downstream consumers (get-latest.sh, watch.sh, the skills)
-  //      immediately see the cleared state instead of the stale
-  //      previous snapshot. clearCaptureLog returns the download id
-  //      for exactly this assertion.
+  // Storage still holds both — that's the buffer we're proving does
+  // *not* come back.
   const sw3 = await getServiceWorker();
-  const clearLogDownloadId = await sw3.evaluate(async () => {
-    const api = (self as unknown as {
-      SeeWhatISee: { clearCaptureLog: () => Promise<number> };
-    }).SeeWhatISee;
-    return api.clearCaptureLog();
-  });
-  const afterClear = await sw3.evaluate(
-    async () => (await chrome.storage.local.get('captureLog')).captureLog,
+  const buffered = await sw3.evaluate(
+    async () => ((await chrome.storage.local.get('captureLog')).captureLog as unknown[]).length,
   );
-  expect(afterClear).toBeUndefined();
+  expect(buffered).toBe(2);
 
-  const clearedLogPath = await waitForDownloadPath(sw3, clearLogDownloadId);
-  expect(fs.statSync(clearedLogPath).size).toBe(0);
+  // Delete log.json the way a user would, via the download record.
+  // `chrome.downloads.removeFile` is Chrome deleting its own file, so
+  // the record's `exists` flips immediately — no waiting on the
+  // delayed re-check a deletion outside the browser would need.
+  await sw3.evaluate(async () => {
+    const [item] = await chrome.downloads.search({
+      filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]log\\.json$',
+      orderBy: ['-startTime'],
+    });
+    await chrome.downloads.removeFile(item.id);
+  });
 
-  // Capture #3 (green): the next capture after the clear should produce
-  // a log.json containing exactly one record — the new one — not three.
+  // Capture #3 (green): exactly one record — the new one.
   await page.goto(`${fixtureServer.baseUrl}/green.html`);
   await page.bringToFront();
   const sw4 = await getServiceWorker();
@@ -252,12 +246,73 @@ test('clearCaptureLog empties storage so the next capture starts a fresh log', a
     return api.captureVisible();
   });
 
-  // Passing `[]` as the baseline makes verifyCapture assert the log is
-  // exactly length 1 — i.e. the previous two entries are gone, only
-  // the post-clear green capture remains.
+  // `[]` as the baseline asserts length 1: the two pre-deletion
+  // entries are gone from the file *and* from storage.
   const log3 = await verifyCapture(sw4, result3, GREEN, []);
   expect(log3).toHaveLength(1);
   expect(log3[0].screenshot?.filename).toBe(result3.filename);
+
+  await page.close();
+});
+
+test('a storage wipe is healed from log.json rather than truncating it', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The other side of disk authority: when the buffer loses its
+  // contents (an extension reinstall, or cleared site data) the file
+  // is what puts them back — the next capture must not truncate
+  // log.json to the one record storage still knows about.
+  //
+  // This exercises the read path, which is the branch this harness can
+  // reach: Chrome grants file access to a `--load-extension` build, so
+  // `log.json` is readable. The no-read branches — where a size
+  // mismatch blocks the write and the user is prompted — are covered
+  // in tests/unit/log-reconcile.test.mjs.
+  const sw0 = await getServiceWorker();
+  await resetCaptureState(sw0);
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  const sw1 = await getServiceWorker();
+  const result1 = await sw1.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+  const log1 = await verifyCapture(sw1, result1, PURPLE, []);
+
+  // Wipe only the buffer, leaving log.json and its download record.
+  const sw2 = await getServiceWorker();
+  await sw2.evaluate(() => chrome.storage.local.remove('captureLog'));
+
+  await page.goto(`${fixtureServer.baseUrl}/orange.html`);
+  await page.bringToFront();
+  await waitForCaptureQuota(sw2);
+  const result2 = await sw2.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+
+  // Both records are in the file: the purple one came back from disk,
+  // not from storage, which had forgotten it.
+  const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
+  expect(log2).toHaveLength(2);
+  expect(log2[0].screenshot?.filename).toBe(result1.filename);
+
+  // And the buffer is repopulated from the file, so the History page
+  // and the Copy-last-… entries see the whole log again.
+  const sw3 = await getServiceWorker();
+  const buffered = await sw3.evaluate(
+    async () => ((await chrome.storage.local.get('captureLog')).captureLog as unknown[]).length,
+  );
+  expect(buffered).toBe(2);
 
   await page.close();
 });

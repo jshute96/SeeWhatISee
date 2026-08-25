@@ -10,11 +10,11 @@ All actions a skill can take collapse to flags on this one script:
 Multiple actions combine and run in that order.
 
 History spans more than log.json: the extension keeps only the most
-recent captures there and flushes older ones to `history-*.json`
-archive files beside it (see src/capture/log-store.ts). --all reads the
-archives oldest-first and then log.json. --limit N instead walks from
-log.json backwards through the archives and stops as soon as it has N
-records, so it opens only the files it needs. Either way the emitted
+recent captures there and moves older ones into `history-*.json` files
+beside it (see src/capture/log-store.ts). --all reads those history
+files oldest-first and then log.json. --limit N instead walks from
+log.json backwards through them and stops as soon as it has N records,
+so it opens only the files it needs. Either way the emitted
 stream is in capture order, oldest first. --search / --filter_site /
 --filter_time narrow it. They narrow only the records listed from
 history; records that arrive later under --watch are emitted
@@ -480,18 +480,19 @@ def read_last_line(path):
 def history_files(source_dir, log_path):
     """The files holding the capture history, oldest first.
 
-    Each archive is named for the *newest* record it holds, using the
-    same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture filenames,
-    so the names are fixed-width and sorting them is chronological.
+    Each history file is named for the *newest* record it holds, using
+    the same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture
+    filenames, so the names are fixed-width and sorting them is
+    chronological.
     """
     try:
         names = os.listdir(source_dir)
     except OSError:
         names = []
-    archives = [name for name in names
-                if name.startswith("history-") and name.endswith(".json")]
-    archives.sort()
-    files = [os.path.join(source_dir, name) for name in archives]
+    older = [name for name in names
+             if name.startswith("history-") and name.endswith(".json")]
+    older.sort()
+    files = [os.path.join(source_dir, name) for name in older]
     if os.path.isfile(log_path):
         files.append(log_path)
     return files
@@ -877,7 +878,7 @@ def catch_up(opts, emitter, log_path, lines):
 
     If the timestamp isn't in the log, warn and fall through to the
     normal poll — the record has most likely aged out of log.json into
-    an archive, and watching from now on is still useful.
+    a history file, and watching from now on is still useful.
     """
     if not os.path.isfile(log_path):
         print("Warning: %s not found; ignoring --after and watching as usual"
@@ -929,7 +930,7 @@ def lines_after(lines, cursor):
     timestamps were unique) still advances instead of replaying.
 
     A cursor that isn't in the log resumes from the newest record. It
-    can't have aged out into an archive from under a live watcher —
+    can't have aged out into a history file from under a live watcher —
     log.json holds at least 50 records — so this is a log that was
     rewritten from somewhere else entirely.
     """
@@ -975,10 +976,9 @@ def watch(opts, emitter, source_dir, log_path, pidfile):
             # log.json is rewritten whole each time, so a poll may first
             # see a file that already grew by more than one record.
             lines = read_lines(log_path)
-            # An empty log.json (user just cleared history via More →
-            # Clear log history) bumps mtime without producing a new
-            # record. Forget the cursor with it: whatever refills the
-            # file is all new.
+            # An empty log.json (the user emptied it by hand) bumps
+            # mtime without producing a new record. Forget the cursor
+            # with it: whatever refills the file is all new.
             if not lines:
                 cursor = None
             for line in lines_after(lines, cursor):

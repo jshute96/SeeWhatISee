@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '../fixtures/extension';
+import { resetCaptureState } from '../fixtures/files';
 import {
   findCapturedDownload,
   readLatestRecord,
@@ -60,7 +61,7 @@ test('image tab: captureVisible saves the source PNG bytes, not a screenshot', a
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const imageUrl = `${fixtureServer.baseUrl}/red-pixel.png`;
   const tab = await extensionContext.newPage();
@@ -102,7 +103,7 @@ test('image tab: captureVisible on a JPEG image saves under `.jpg`', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const imageUrl = `${fixtureServer.baseUrl}/red-pixel.jpg`;
   const tab = await extensionContext.newPage();
@@ -145,7 +146,7 @@ test('image tab: captureAll on a PNG saves the image and skips HTML', async ({
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const imageUrl = `${fixtureServer.baseUrl}/red-pixel.png`;
   const tab = await extensionContext.newPage();
@@ -187,7 +188,7 @@ test('image tab: saveDefaults skips HTML even when withoutSelection.html=true', 
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
   // Seed defaults so the user's pref *would* save HTML on a normal
   // page. The image-tab path should suppress it via `htmlUnavailable`.
   await sw0.evaluate(async () => {
@@ -240,7 +241,7 @@ test('image tab: Capture page save of a JPEG keeps it as .jpg (no bake)', async 
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const imageUrl = `${fixtureServer.baseUrl}/red-pixel.jpg`;
   const tab = await extensionContext.newPage();
@@ -291,7 +292,7 @@ test('image tab: startCaptureWithDetails opens Capture page with image-flow shap
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
-  await sw0.evaluate(() => chrome.storage.local.clear());
+  await resetCaptureState(sw0);
 
   const imageUrl = `${fixtureServer.baseUrl}/red-pixel.png`;
   const tab = await extensionContext.newPage();

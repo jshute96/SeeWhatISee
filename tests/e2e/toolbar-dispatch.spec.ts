@@ -20,6 +20,7 @@
 
 import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
+import { resetCaptureState } from '../fixtures/files';
 import {
   SCREENSHOT_PATTERN,
   installButtonClickSpy,
@@ -117,8 +118,10 @@ test('default click action set to save-screenshot: handleActionClick takes a dir
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
+  // A storage wipe alone is no longer a clean slate — see
+  // `resetCaptureState`.
+  await resetCaptureState(sw0);
   await sw0.evaluate(async () => {
-    await chrome.storage.local.clear();
     await (
       self as unknown as {
         SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
@@ -171,8 +174,10 @@ test('default click action set to capture: handleActionClick opens the Capture p
   getServiceWorker,
 }) => {
   const sw0 = await getServiceWorker();
+  // A storage wipe alone is no longer a clean slate — see
+  // `resetCaptureState`.
+  await resetCaptureState(sw0);
   await sw0.evaluate(async () => {
-    await chrome.storage.local.clear();
     await (
       self as unknown as {
         SeeWhatISee: { setDefaultWithoutSelectionId: (id: string) => Promise<void> };
@@ -326,8 +331,11 @@ interface PinDefaults {
 }
 
 async function pinClickDefaults(sw: Worker, opts: PinDefaults): Promise<void> {
+  // Callers go on to capture, so the capture files have to go too —
+  // clearing storage alone would leave a `log.json` the next capture
+  // refuses to overwrite. See `resetCaptureState`.
+  await resetCaptureState(sw);
   await sw.evaluate(async (o: PinDefaults) => {
-    await chrome.storage.local.clear();
     const api = (self as unknown as { SeeWhatISee: ClickApi }).SeeWhatISee;
     await api.setDefaultWithSelectionId(o.clickWith);
     await api.setDefaultWithoutSelectionId(o.clickWithout);

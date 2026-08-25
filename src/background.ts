@@ -46,7 +46,6 @@ import {
   setDefaultWithoutSelectionId,
 } from './background/default-action.js';
 import {
-  CLEAR_LOG_MENU_ID,
   COMMAND_PREFIX_PATTERN,
   COPY_LAST_HTML_MENU_ID,
   COPY_LAST_SCREENSHOT_MENU_ID,
@@ -89,6 +88,10 @@ import {
 } from './background/history-page.js';
 import { installOptionsMessageHandlers } from './background/options.js';
 import {
+  installLogSyncMessageHandler,
+  refreshLogFileExistence,
+} from './background/log-sync.js';
+import {
   findProviderForTab,
   getAskPin,
   installAskMessageHandler,
@@ -107,6 +110,10 @@ installDetailsMessageHandlers();
 installOptionsMessageHandlers();
 installHistoryMessageHandler();
 installAskMessageHandler();
+installLogSyncMessageHandler();
+// Also on every service-worker wake, not just `onStartup`: `exists` is
+// only re-checked when something asks. Cheap — one `downloads.search`.
+void refreshLogFileExistence();
 installWidgetStoreCleanup();
 
 chrome.action.onClicked.addListener(() => {
@@ -186,12 +193,17 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   void refreshActionTooltip();
   void refreshCopyMenuState();
+  // `log.json` may have been deleted while the browser was closed.
+  // Asking now means the next capture's reconcile sees a fresh
+  // `exists` instead of a stale "still there".
+  void refreshLogFileExistence();
 });
 
 // React to capture-log changes so the Copy-last-… menu entries
 // flip enabled state without explicit plumbing from capture.ts.
 // Covers every code path that mutates the log: each capture's
-// `recordCapture`, and `clearCaptureLog` (which removes the key).
+// `recordCapture`, and `clearCaptureLog` (which
+// removes the key).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[LOG_STORAGE_KEY]) {
     void refreshCopyMenuState();
@@ -302,15 +314,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const action = findCaptureAction(id);
   if (action) {
     await runWithErrorReporting(() => action.run());
-    return;
-  }
-
-  // Clear history. Routed through runWithErrorReporting for
-  // consistency with the capture paths: on success the error
-  // state is cleared, and on failure the same icon/tooltip
-  // channels tell the user something went wrong.
-  if (id === CLEAR_LOG_MENU_ID) {
-    await runWithErrorReporting(() => clearCaptureLog());
     return;
   }
 

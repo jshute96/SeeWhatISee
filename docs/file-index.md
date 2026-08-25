@@ -193,8 +193,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/url-helpers.ts` | Pure URL helpers (no DOM) — `firstUrlSegment` with 20-char truncation, `excludedSuffix` for the Ask menu's disabled-tab annotation |
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
-| `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus archived |
-| `src/history.ts` | Controller for `history.html`: reads `captureLog` + the on-disk archives, renders rows, search filter, row and toolbar actions |
+| `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus older history files |
+| `src/history.ts` | Controller for `history.html`: reads `captureLog` + the on-disk history files, renders rows, search filter, row and toolbar actions |
 | `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
@@ -216,6 +216,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, and the restorable-capture push |
+| `src/background/log-sync.ts` | SW side of the out-of-sync log prompt — the `logSyncWrite` (Retry / Overwrite) handler and the `log.json` existence re-check |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
@@ -238,8 +239,10 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again |
-| `src/capture/log-store.ts` | The capture log: the in-storage buffer, the `log.json` sidecar, and the `history-*.json` archives it flushes to |
+| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again and probing for them |
+| `src/capture/log-store.ts` | The capture log: the `log.json` sidecar, the browser copy behind it, and the `history-*.json` files older records move into |
+| `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
+| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — wording, the `logSyncWrite` round-trip, settings link |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 
 ### Capture-page modules (`src/capture-page/`)
@@ -254,6 +257,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour plus slide-up-to-fit placement (re-run on resize) for the Capture column's Zoom and More… popovers |
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
+| `src/capture-page/log-sync.ts` | The Capture page's out-of-sync log dialog — `showLogSyncDialog` for failed saves, plus the error page's `?logsync=` wiring |
 | `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` / `Ctrl+Y` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
 | `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
@@ -284,9 +288,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 |------|-------------|
 | `tests/demo.html` | Demo page for screenshot-based interaction |
 | `tests/manual/mouse-wheel-zoom-lab.html` | Manual page for tuning wheel / pinch zoom on real hardware — logs raw wheel events, runs candidate heuristics side by side |
-| `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context with the extension loaded, fixture HTTP server, `getServiceWorker()`, and per-test auto hooks |
+| `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context (real temp download dir, so capture paths resolve), fixture HTTP server, `getServiceWorker()`, auto hooks |
 | `tests/fixtures/capture-quota.ts` | Smart pre-test wait + auto-retry for `chrome.tabs.captureVisibleTab`'s 2/sec quota; replaces the unconditional 600ms sleep |
-| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, and verifying capture sidecars |
+| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying capture sidecars, and seeding / resetting the capture log |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/fixtures/pages/gradient.html` | Multi-stop linear-gradient page — used by the large-screenshot-recompress e2e to produce a capture where JPEG clearly beats PNG |
 | `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |
@@ -296,7 +300,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/fixtures/pages/red-pixel.jpg` | 200x200 solid-red JPEG counterpart for tests that exercise the JPEG sticky bake-in path |
 | `tests/fixtures/pages/red-pixel.webp` | 200x200 solid-red WEBP — used by tests that exercise the "non-PNG/JPG source bakes to PNG" branch |
 | `tests/fixtures/pages/corrupt.png` | Text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload-spec decode-validation test |
-| `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, clear log) |
+| `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, deleted / wiped log recovery) |
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + sidecar verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the Capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
@@ -328,12 +332,12 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, and how it's opened |
-| `tests/e2e/log-archive.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` archive |
+| `tests/e2e/log-archive.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` file |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
-| `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + archives, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
+| `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + history files, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
 | `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
@@ -369,7 +373,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
-| `tests/unit/log-archive.test.mjs` | Unit tests for capture-log archiving — what gets flushed to `history-*.json`, and reading it back |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions and the Retry / Overwrite flush |
+| `tests/unit/log-archive.test.mjs` | Unit tests for the rotation into `history-*.json` files — which records move, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
@@ -391,6 +396,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `testing.md` | Playwright + devtools-console patterns for testing the extension |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `history-page.md` | History page — data source, columns, `file://` link degradations, search |
+| `log-consistency.md` | Disk-authoritative capture log — reconcile states, uniquify probes, out-of-sync prompt |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |

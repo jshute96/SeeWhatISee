@@ -17,7 +17,7 @@ Unlike `see-what-i-see`, this doesn't need the user to have just clicked the ext
 - Pass at least one flag: a count, filters, or both.
 - A run that matches nothing exits 0 with no output. That's an answer, not an error.
 
-The script reads the **whole capture history** — the recent captures in `log.json` plus the older `history-*.json` archives beside it — and prints **JSONL: one capture record per line, oldest first**.
+The script reads the **whole capture history** — the recent captures in `log.json` plus the older `history-*.json` files beside it — and prints **JSONL: one capture record per line, oldest first**.
 
 ## How many to show
 

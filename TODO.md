@@ -88,6 +88,27 @@
   * Gemini's `run_shell_command` allowlist in README needs
     `skills/see-what-i-see-history/scripts/history.sh`.
 
+* **Capture log on disk is authoritative** — `log.json` decides what
+  the log is, and Chrome extension storage is only a cache.
+  * README's `log.json` section still says the opposite ("the
+    authoritative log lives in Chrome extension storage… if deleted,
+    it's restored from extension storage on the next capture") and
+    needs rewriting on release.
+  * `privacy_policy.md` needs the same rewrite: it describes storage as
+    the authoritative log, points at the removed **More ▸ Clear log
+    history** entry, and says the log is capped at 100 captures with
+    older entries dropped (they go to `history-*.json` files instead —
+    already stale before this change).
+  * Deleting `log.json` starts a new log instead of having the old
+    records restored; deleting individual rows sticks.
+  * The **More ▸ Clear log history** menu entry is gone. Deleting the
+    file is the way to clear the log until a delete-the-files feature
+    exists.
+  * If the extension can't tell what's on disk, `log.json` isn't
+    rewritten: the capture's files are saved, and a prompt (on the
+    Capture page, or on an error page for context-menu / hotkey
+    captures) offers Retry / Overwrite / Cancel for that capture.
+
 * **History page** — a searchable table of recent captures: date,
   screenshot thumbnail, links to the saved HTML / selection files,
   page URL + title, and the prompt.
@@ -104,7 +125,7 @@
     being discarded. Needs the same file-access permission. It only
     appears while there are unread archives, and its tooltip says how
     many.
-    * *Clear log history* doesn't delete those archive files, so the
+    * Deleting `log.json` doesn't delete those archive files, so the
       History page can still load them afterwards.
   * A **Snapshots directory** button at the right end of the search
     row opens the on-disk capture folder in a new tab. It replaces the

@@ -137,7 +137,7 @@ test.describe('SeeWhatISee.py --get-latest', () => {
   });
 
   test('errors when log.json is empty (cleared history)', () => {
-    // "Clear log history" overwrites log.json with a zero-byte file.
+    // A user who truncates log.json leaves a zero-byte file behind.
     // get-latest should treat that the same as "no captures yet"
     // rather than silently emitting empty output.
     fs.writeFileSync(path.join(tmpDir, 'log.json'), '');

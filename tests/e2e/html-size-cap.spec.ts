@@ -33,6 +33,7 @@
 import fs from 'node:fs';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
+import { resetCaptureState } from '../fixtures/files';
 
 type SizeCapApi = {
   startCaptureWithDetails: () => Promise<void>;
@@ -180,7 +181,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     const { openerPage, capturePage } = await openCapturePageForTest(
@@ -227,7 +228,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // Cap left at production default — `purple.html` (small solid
@@ -254,7 +255,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     const { openerPage, capturePage } = await openCapturePageForTest(
@@ -304,7 +305,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     let rawLength = 0;
@@ -376,7 +377,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // Compressible, so packing wins and the packed form is what gets
@@ -409,7 +410,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // Raw cap at 50 KB, stored cap left at the production 4 MiB. The
@@ -445,7 +446,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     const { openerPage, capturePage } = await openCapturePageForTest(
@@ -494,7 +495,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     const { openerPage, capturePage } = await openCapturePageForTest(
@@ -554,7 +555,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     const { openerPage, capturePage } = await openCapturePageForTest(
@@ -596,7 +597,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // Selection cap at 1 KB, HTML cap left at production. Both
@@ -641,7 +642,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // The raw gate rejects before compression is attempted, and its
@@ -690,7 +691,7 @@ test.describe('html-size-cap', () => {
     getServiceWorker,
   }) => {
     const sw0 = await getServiceWorker();
-    await sw0.evaluate(() => chrome.storage.local.clear());
+    await resetCaptureState(sw0);
 
     const sw = await getServiceWorker();
     // Distinct caps → distinct messages → both icons. The page used

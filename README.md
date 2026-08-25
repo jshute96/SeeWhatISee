@@ -452,7 +452,7 @@ scripts/SeeWhatISee.py --stop                   # stop a watcher running with --
 ```
 
 The capture history — `log.json` plus the older `history-*.json`
-archives — can be listed and filtered too:
+files — can be listed and filtered too:
 
 ```bash
 scripts/SeeWhatISee.py --limit 5                # the 5 most recent captures

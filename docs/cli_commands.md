@@ -89,7 +89,7 @@ field on the record. See
     on the *last* record carrying the timestamp. Resuming after the first
     would replay the rest of the run on every call and never advance.
   - A timestamp that isn't in `log.json` (typically aged out into an
-    archive) warns and falls through to plain watching.
+    history file) warns and falls through to plain watching.
 - **The poll loop carries the same cursor.** It wakes on an mtime
   change and emits every line past the last one it emitted.
   - Shift-clicking Capture writes several records well inside one
@@ -99,7 +99,7 @@ field on the record. See
     one. A line read mid-rewrite is still handed over, but by the next
     poll it is complete and no longer matches itself.
   - A cursor that isn't in the log resumes from the newest record. It
-    can't have aged into an archive — `log.json` holds at least 50
+    can't have aged into a history file — `log.json` holds at least 50
     records — so it means the log was rewritten from elsewhere.
   - Once mode (no `--loop`) emits the *oldest* unseen record and exits,
     leaving the rest for the next invocation — which picks them up
@@ -148,25 +148,25 @@ The backend actions for anything beyond the latest capture. The
 
 - **What they read.** The whole history, not just `log.json`: the
   extension keeps recent captures there and flushes older batches to
-  `history-<timestamp>.json` archives beside it (see
+  `history-<timestamp>.json` history files beside it (see
   [History page](history-page.md)).
-- **Order.** Archives oldest first, then `log.json` — one JSONL record
+- **Order.** History files oldest first, then `log.json` — one JSONL record
   per line, capture order, same path rewriting (and `--copy-to-dir` /
   `--print_selection` handling) as `--get-latest`.
-  - Archives sort by name because each is named for the newest record
+  - History files sort by name because each is named for the newest record
     it holds, using the zero-padded stamp capture filenames use. The
     stamp is fixed-width, so every name is `history-<stamp>.json` and a
     plain sort is chronological.
 - **Reading only what's needed.** `--limit N` walks the files from the
   newest end and stops as soon as it has N matches, so it never opens
-  archives it wouldn't emit from. `--all` reads everything, by
+  history files it wouldn't emit from. `--all` reads everything, by
   definition.
 - **Actions.**
   - `--all` — every record.
   - `--limit N` — the N most recent records, still emitted oldest
     first. `--limit 1` is `--get-latest`, except when `log.json` holds
     no records — then `--get-latest` errors while `--limit 1` falls
-    back to the newest archived record.
+    back to the newest record in a history file.
   - The two are mutually exclusive, and neither combines with
     `--get-latest` — that would emit the newest record twice, under two
     different empty-history rules.
@@ -197,7 +197,7 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   would otherwise get a clean exit that reads as "no captures".
 - None of them dedupe, where the History page renders through
   `dedupeRecords()`. Every save has its own timestamp, so the only
-  duplicate either side can see is a record that landed in an archive
+  duplicate either side can see is a record that landed in a history file
   while the matching `log.json` write was lost — here it appears
   twice, and costs `--limit N` a slot.
 - They scope the listing only. Combined with `--watch`, every record

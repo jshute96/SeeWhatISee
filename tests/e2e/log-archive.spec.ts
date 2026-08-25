@@ -9,17 +9,14 @@
 // so this seeds a full log, runs one genuine capture, and reads both
 // files back off the filesystem.
 //
-// **The archive is found by its contents, not its name.** Playwright
-// intercepts every download and rewrites it into its artifacts
-// directory under a UUID, so `DownloadItem.filename` in this harness
-// is never the `SeeWhatISee/history-*.json` path the extension asked
-// for. That also means the History page's "load older captures" flow
-// can't be exercised here: `getArchiveFilePaths()` finds archives by
-// matching that path, and finds nothing under the rewritten names.
+// The seeded log is written to **both** `chrome.storage.local` and
+// `log.json` on disk (`seedCaptureLog`). Storage alone would be
+// discarded: the file is authoritative, so a capture on top of a
+// storage-only seed reads an absent `log.json` and starts a new log.
 
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
-import { waitForDownloadPath, type CaptureResult } from '../fixtures/files';
+import { waitForDownloadPath, type CaptureResult, seedCaptureLog } from '../fixtures/files';
 // Straight from the source, so lowering the cap changes what this test
 // seeds instead of failing it in a way that reads as a product bug.
 import { LOG_ARCHIVE_BATCH, LOG_MAX_ENTRIES } from '../../src/capture/log-store';
@@ -50,10 +47,7 @@ test('a capture past the cap flushes the oldest entries to an archive file', asy
 }) => {
   const sw = await getServiceWorker();
   // A full log, so the capture below is the one that tips it over.
-  await sw.evaluate(
-    (recs) => chrome.storage.local.set({ captureLog: recs }),
-    seedRecords(LOG_MAX_ENTRIES),
-  );
+  await seedCaptureLog(sw, seedRecords(LOG_MAX_ENTRIES));
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
@@ -78,11 +72,10 @@ test('a capture past the cap flushes the oldest entries to an archive file', asy
   // Every download this profile has made, minus the two files this
   // capture is known to have written. Exactly one of the rest should
   // be the archive, identified by the seeded titles inside it.
-  // Every download, unfiltered: Playwright rewrites each one to a bare
-  // UUID with no extension, so there is nothing in the path to filter
-  // on — not the `history-` prefix, not even `.json`. (Tried; it
-  // matches zero records.) The profile is a fresh temp dir per worker,
-  // so the list stays short.
+  // Filtered by content rather than name so the assertion still says
+  // *which records* landed in an archive, not merely that a
+  // `history-*.json` appeared. The profile is a fresh temp dir per
+  // worker, so the unfiltered list stays short.
   const otherIds = (await sw.evaluate(() => chrome.downloads.search({})))
     .map((d) => d.id)
     .filter((id) => id !== result.sidecarDownloadIds.log && id !== result.downloadId);

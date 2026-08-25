@@ -1,12 +1,16 @@
-// Capture log: the chrome.storage.local-backed queue of captures
-// and the `log.json` sidecar that mirrors it on disk.
+// Capture log: the `log.json` file on disk, and the
+// chrome.storage.local buffer that backs it.
 //
 // We can't truly append to log.json from a Chrome extension (the
 // downloads API only writes whole files; the SW has no filesystem
-// access), so the authoritative log lives in chrome.storage.local
-// and log.json is a snapshot of it written on every capture. If a
-// user manually deletes log.json, the next capture will recreate
-// it from storage.
+// access), so every capture rewrites the whole file. But **the file
+// is authoritative and storage is a cache**: each capture reconciles
+// against disk first (`log-reconcile.ts`) and only ever *adds* its own
+// record to what it finds there. Deleting log.json starts a new log
+// rather than being undone by the next capture, and hand-edited rows
+// survive wherever we can read the file. When we can't tell what is on
+// disk, the capture fails with `LogWriteBlockedError` and the user is
+// asked — see `docs/log-consistency.md`.
 //
 // Entries that age out of that buffer aren't lost: they're flushed
 // in batches to `history-<timestamp>.json` archive files beside
@@ -18,7 +22,14 @@
 // is the canonical record of when each capture happened.
 
 import { type CaptureRecord } from './types.js';
-import { ARCHIVE_FILE_PREFIX, downloadArtifact } from './downloads.js';
+import {
+  ARCHIVE_FILE_PREFIX,
+  LOG_FILE_NAME,
+  downloadArtifact,
+  getArchiveFilePaths,
+  waitForDownloadComplete,
+} from './downloads.js';
+import { LogWriteBlockedError, inspectLogFile } from './log-reconcile.js';
 
 export const LOG_STORAGE_KEY = 'captureLog';
 /**
@@ -59,10 +70,17 @@ export const LOG_ARCHIVE_BATCH = 50;
  * Falls back to `fallback` for a record whose timestamp won't parse (a
  * hand-edited log).
  *
- * **Never returns a name already in `used`** — the names handed out
- * during *this* drain — advancing the stamp a millisecond at a time
- * until it's free. Every write uses `conflictAction: 'overwrite'`, so
- * a collision would silently destroy the batch that landed first.
+ * **Never returns a name already in `used`** — the archive files
+ * already on disk, plus the names handed out during *this* drain —
+ * advancing the stamp a millisecond at a time until it's free. Every
+ * write uses `conflictAction: 'overwrite'`, so a collision would
+ * silently destroy the batch that landed first, and archives on disk
+ * are exactly what a capture must never damage.
+ *
+ * A same-name clash with an existing archive isn't hypothetical: a
+ * user who deletes rows out of a `log.json` that later refills past
+ * the cap produces a different batch of 50 ending at the same record,
+ * and so the same name.
  *
  * Bumping the stamp rather than appending a `-1`, `-2`, … suffix keeps
  * every archive name matching one pattern, so anything reading the
@@ -102,8 +120,14 @@ function archiveFileName(
  *
  * Every write of either file goes through here so the two formats
  * can't drift; `parseLogText` is the matching reader.
+ *
+ * An empty list renders as the empty string, not a bare newline: the
+ * reconcile compares this against the byte size of the file we last
+ * wrote, and a phantom byte would make an empty log look like a file
+ * that had been tampered with.
  */
 export function serializeLog(records: CaptureRecord[]): string {
+  if (records.length === 0) return '';
   return records.map((r) => serializeRecord(r)).join('\n') + '\n';
 }
 
@@ -165,27 +189,25 @@ export function dedupeRecords(records: CaptureRecord[]): CaptureRecord[] {
 }
 
 /**
- * Empty the capture log in chrome.storage.local AND truncate the
- * on-disk log.json to zero bytes. Used by the Options page "Clear
- * log" button and by tests between runs.
+ * Drop the capture-log buffer in chrome.storage.local. Used by tests
+ * between runs, and available from the service-worker console.
  *
- * Wraps the storage delete + downloads.download in `serializeWrite`
- * so it can't interleave with a concurrent `recordCapture()` that's
- * in the middle of its read-modify-write of the same storage key or
- * its own rewrite of `log.json`.
+ * **Storage-only, and deliberately not a user-facing feature.** Under
+ * disk authority, storage is a cache: the next capture reconciles
+ * against `log.json` and puts back whatever the file holds, so
+ * "clearing" it wouldn't clear anything a user could see. Deleting
+ * capture history means deleting files, which will come back as its
+ * own feature.
  *
- * Leaves the `history-*.json` archives alone: they're the user's
- * files, and clearing the log doesn't mean deleting what's already
- * been written to disk. The History page can still load them.
+ * Wrapped in `serializeWrite` so it can't interleave with a
+ * concurrent `recordCapture()` mid read-modify-write.
  *
- * Returns the `chrome.downloads` id of the empty `log.json` write so
- * tests can resolve it to an on-disk path and assert the file is
- * actually zero bytes. Production callers ignore the return.
+ * Leaves `log.json` and the `history-*.json` archives alone: they're
+ * the user's files.
  */
-export async function clearCaptureLog(): Promise<number> {
-  return await serializeWrite(async () => {
+export async function clearCaptureLog(): Promise<void> {
+  await serializeWrite(async () => {
     await chrome.storage.local.remove(LOG_STORAGE_KEY);
-    return await writeJsonFile('log.json', '');
   });
 }
 
@@ -225,15 +247,61 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
 }
 
 /**
- * Append a record to the capture log: archive whatever that pushes
- * past the cap, save the trimmed log to storage, and re-render
- * `log.json` from it. Returns the `chrome.downloads` id of the
- * `log.json` write, which the tab-capture paths hand back to the
- * Capture page (and tests resolve to an on-disk path).
+ * Append a record to the capture log: reconcile against the file on
+ * disk, archive whatever the append pushes past the cap, write
+ * `log.json`, then save the result to storage. Returns the
+ * `chrome.downloads` id of the `log.json` write, which the tab-capture
+ * paths hand back to the Capture page (and tests resolve to an on-disk
+ * path).
  *
  * The single write path for every capture — screenshot, HTML,
- * selection, URL-only — so the archiving rules can't apply on some
- * paths and not others.
+ * selection, URL-only — so the reconcile and archiving rules can't
+ * apply on some paths and not others.
+ *
+ * ## Reconcile
+ *
+ * `inspectLogFile` decides what we're appending *to*, which is not
+ * necessarily what's in storage:
+ *
+ * - **contents** — we read the file, so it replaces the buffer.
+ *   Rows the user deleted by hand stay deleted, and edits survive.
+ * - **fresh** — the file is gone or empty, so the log starts over at
+ *   this capture and the buffer is discarded. This is what stops a
+ *   deleted log from being resurrected.
+ * - **insync** — the file still matches what we last wrote; append to
+ *   the buffer as usual. The steady-state case.
+ * - **written** — there was no file and no record of one, so the
+ *   existence probe already wrote a one-record log. Nothing left to do
+ *   but record it.
+ * - **blocked** — see below.
+ *
+ * ## Out of sync
+ *
+ * A blocked reconcile **throws `LogWriteBlockedError`** before
+ * anything is written: no archive files, no `log.json`, no storage
+ * change. The capture's screenshot / HTML are already on disk, and the
+ * record rides on the error so the prompt that catches it can offer
+ * Retry (call this again) or Overwrite (call this again with `force`).
+ * Nothing about the failure is stored — dismissing the prompt drops
+ * the record, and a later capture re-detects the same condition on its
+ * own if it still holds. Overwriting on a guess is the one thing we
+ * won't do — the file may hold history that exists nowhere else.
+ *
+ * ## Force
+ *
+ * `opts.force` — the prompt's **Overwrite** button — skips the
+ * reconcile entirely and appends to the storage buffer, replacing
+ * whatever file we couldn't account for with the browser's copy of the
+ * log. The only path that clobbers a file we couldn't read, and only
+ * ever on an explicit click.
+ *
+ * ## Ordering
+ *
+ * Archives, then `log.json`, then storage. Every step depends on the
+ * one before it having landed, and biasing the crash window toward
+ * *the file being ahead of storage* is what makes it recoverable: the
+ * next reconcile reads the file and heals. The reverse order loses a
+ * record whose artifacts are already written.
  *
  * ## Archiving
  *
@@ -265,14 +333,40 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * **Edits `record.timestamp`** on the way in, via `uniqueTimestamp` —
  * a visible side effect on the caller's object, and deliberately so.
  */
-export async function recordCapture(record: CaptureRecord): Promise<number> {
+export async function recordCapture(
+  record: CaptureRecord,
+  opts?: { force?: boolean },
+): Promise<number> {
   return await serializeWrite(async () => {
     const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
     const stored: CaptureRecord[] = data[LOG_STORAGE_KEY] ?? [];
-    uniqueTimestamp(record, stored);
+    // Force appends to the buffer as though the file still matched it
+    // — that is what "replace the file with the browser's copy" means.
+    const state = opts?.force
+      ? { kind: 'insync' as const }
+      : await inspectLogFile({
+          expectedText: serializeLog(stored),
+          freshPayload: serializeLog([record]),
+        });
+    // Nothing written, nothing stored — see "Out of sync" above.
+    if (state.kind === 'blocked') {
+      throw new LogWriteBlockedError(state.reason, record, state.directory);
+    }
+    // The probe already wrote the file it was probing, so the log is
+    // exactly what we handed it and there is nothing to archive.
+    if (state.kind === 'written') {
+      await chrome.storage.local.set({ [LOG_STORAGE_KEY]: [record] });
+      return state.downloadId;
+    }
+    // What we're appending to. `stored` only wins in the steady state;
+    // otherwise the file (or the absence of one) decides.
+    const base = state.kind === 'contents'
+      ? parseLogText(state.text)
+      : state.kind === 'fresh' ? [] : stored;
+    uniqueTimestamp(record, base);
     // Never mutated in place: `kept` is reassigned per successful
     // batch, so an abandoned flush leaves a coherent list either way.
-    let kept = [...stored, record];
+    let kept = [...base, record];
     // `LOG_ARCHIVE_BATCH` is a tunable now that it's exported, and a
     // zero would make the loop below spin forever on an empty batch.
     const batchSize = Math.max(1, LOG_ARCHIVE_BATCH);
@@ -280,6 +374,17 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
     let flushed = 0;
     const usedNames = new Set<string>();
     try {
+      // Seeded with the archives already on disk, so a flush can't
+      // land on top of one. Only paid when a flush is actually about
+      // to happen — once per 50 captures, not once per capture.
+      // Archives Chrome has lost track of (download history cleared)
+      // are invisible here, which is the residual case noted in
+      // `docs/log-consistency.md`.
+      if (kept.length > LOG_MAX_ENTRIES) {
+        for (const path of await getArchiveFilePaths()) {
+          usedNames.add(path.replace(/^.*[/\\]/, ''));
+        }
+      }
       while (kept.length > LOG_MAX_ENTRIES) {
         const batch = kept.slice(0, batchSize);
         // The fallback advances a millisecond per batch so a drain of
@@ -297,8 +402,22 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
       // Errors page.
       console.info('[SeeWhatISee] log archive write failed; retrying next capture:', err);
     }
+    // File first, storage second — see "Ordering" above. Awaited to
+    // completion, not just to the download *starting*, so the ordering
+    // is real: `chrome.downloads.download` resolves the moment the
+    // write begins, which would leave storage able to land first after
+    // all.
+    const downloadId = await writeJsonFile(LOG_FILE_NAME, serializeLog(kept));
+    try {
+      await waitForDownloadComplete(downloadId);
+    } catch (err) {
+      // The record still belongs in storage: its artifacts are on
+      // disk, and the next capture reconciles against whatever the
+      // file turned out to be.
+      console.info('[SeeWhatISee] log.json write did not complete:', err);
+    }
     await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
-    return await writeJsonFile('log.json', serializeLog(kept));
+    return downloadId;
   });
 }
 

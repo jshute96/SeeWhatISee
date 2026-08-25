@@ -617,7 +617,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     record.prompt = opts.prompt;
   }
 
-  await recordCapture(record);
+  await recordCapture(record, { force: opts.forceLog });
 
   return record;
 }

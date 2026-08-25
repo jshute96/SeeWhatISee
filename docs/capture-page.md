@@ -2030,7 +2030,7 @@ and responds once persisted, so the page's `await` is meaningful.
 ### Restore (menu click)
 
 - Menu entry **Restore last capture** lives under the More
-  submenu, near Upload (and the Clear log item).
+  submenu, after Upload — it is the last row there.
 - A second entry point, same action: the **Restore** button the
   History page puts on the row the slot describes. See
   [history-page.md → Restore from a row](history-page.md#restore-from-a-row)
@@ -2748,3 +2748,30 @@ open/close, so it wires the nav itself).
     inject markup.
   - Same pane chrome (`.early-state-pane` class) so the visual
     hierarchy matches the upload-landing and stale-page panes.
+
+## Out-of-sync log dialog
+
+- A modal shown when a save's `log.json` write was blocked because the
+  extension can't tell what the file on disk holds
+  (`LogWriteBlockedError`). See
+  [log-consistency.md](log-consistency.md) for the states that lead
+  here.
+- Point-in-time: the dialog holds everything about the failure, and
+  nothing is stored behind it. Cancel (the button or Esc) abandons the
+  record — the capture's files stay on disk but it isn't logged, and a
+  later capture that hits the same condition asks again.
+- Buttons: **Extension settings** (opens `chrome://extensions` in a
+  background tab so this page stays put while the user turns on
+  "Allow access to file URLs"), **Cancel**, **Retry**, and
+  **Overwrite log.json** as the primary.
+- On this page, Retry / Overwrite re-run the whole save — idempotent,
+  since artifact files re-hit their download caches or rewrite the
+  same pinned names — with Overwrite passing `forceLog` to skip the
+  reconcile. Success flows through the page's normal saved path.
+- Also opens on the `?error=` page a blocked context-menu or hotkey
+  capture opens: the unwritten record rides in the `?logsync=` URL
+  param, and Retry / Overwrite send it to the service worker
+  (`logSyncWrite`). Success closes the tab; closing the tab is Cancel.
+- Wired by `capture-page/log-sync.ts`; the wording and the
+  service-worker round-trip come from the shared
+  `capture/log-sync-client.ts`.
