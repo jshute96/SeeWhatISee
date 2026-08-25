@@ -141,19 +141,41 @@ export function serializeLog(records: CaptureRecord[]): string {
  * row beats losing the rest of the history.
  */
 export function parseLogText(text: string): CaptureRecord[] {
-  const out: CaptureRecord[] = [];
+  return parseLogLines(text).records;
+}
+
+/**
+ * `parseLogText`, plus a count of the lines it had to throw away.
+ *
+ * **Skipping a line is only safe for a reader.** The History page
+ * displays what parsed and the lost row is merely absent; the
+ * reconcile re-serializes what it parsed and writes it back over
+ * `log.json`, which would delete the bad lines from the user's file
+ * for good. So the reconcile checks this count and refuses to write
+ * instead — principle 4 in `docs/log-consistency.md`: when we can't
+ * account for what's in the file, we don't write it.
+ */
+export function parseLogLines(
+  text: string,
+): { records: CaptureRecord[]; skipped: number } {
+  const records: CaptureRecord[] = [];
+  let skipped = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
       const parsed: unknown = JSON.parse(line);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        out.push(parsed as CaptureRecord);
+        records.push(parsed as CaptureRecord);
+      } else {
+        // Valid JSON, but not a record object — a bare string or an
+        // array. Still a line we can't round-trip.
+        skipped += 1;
       }
     } catch {
-      // Unparseable line — skip it and keep reading.
+      skipped += 1;
     }
   }
-  return out;
+  return { records, skipped };
 }
 
 /**
@@ -360,9 +382,22 @@ export async function recordCapture(
     }
     // What we're appending to. `stored` only wins in the steady state;
     // otherwise the file (or the absence of one) decides.
-    const base = state.kind === 'contents'
-      ? parseLogText(state.text)
-      : state.kind === 'fresh' ? [] : stored;
+    let base: CaptureRecord[];
+    if (state.kind === 'contents') {
+      // Adopting the file means re-serializing it back over itself, so
+      // a line we can't parse would be *deleted* from the user's file
+      // rather than merely skipped the way a reader skips it. Refuse
+      // instead — principle 4: when we can't account for what's in the
+      // file, we don't write it. Overwrite is still offered for a user
+      // who doesn't want the unreadable lines kept.
+      const parsed = parseLogLines(state.text);
+      if (parsed.skipped > 0) {
+        throw new LogWriteBlockedError('corrupt-file', record, state.directory);
+      }
+      base = parsed.records;
+    } else {
+      base = state.kind === 'fresh' ? [] : stored;
+    }
     uniqueTimestamp(record, base);
     // Never mutated in place: `kept` is reassigned per successful
     // batch, so an abandoned flush leaves a coherent list either way.
@@ -373,18 +408,28 @@ export async function recordCapture(
     const now = Date.now();
     let flushed = 0;
     const usedNames = new Set<string>();
-    try {
-      // Seeded with the archives already on disk, so a flush can't
-      // land on top of one. Only paid when a flush is actually about
-      // to happen — once per 50 captures, not once per capture.
-      // Archives Chrome has lost track of (download history cleared)
-      // are invisible here, which is the residual case noted in
-      // `docs/log-consistency.md`.
-      if (kept.length > LOG_MAX_ENTRIES) {
+    // Seeded with the archives already on disk, so a flush can't land
+    // on top of one. Only paid when a flush is actually about to
+    // happen — once per 50 captures, not once per capture. Archives
+    // Chrome has lost track of (download history cleared) are
+    // invisible here, which is the residual case noted in
+    // `docs/log-consistency.md`.
+    //
+    // Its own try/catch, *outside* the write loop's: this listing is
+    // only a collision guard, so failing it must not skip the drain.
+    // Sharing the loop's catch would leave the log permanently over
+    // its cap, with every later capture repeating the same failure and
+    // `log.json` growing without bound.
+    if (kept.length > LOG_MAX_ENTRIES) {
+      try {
         for (const path of await getArchiveFilePaths()) {
           usedNames.add(path.replace(/^.*[/\\]/, ''));
         }
+      } catch (err) {
+        console.info('[SeeWhatISee] could not list existing archives; names unseeded:', err);
       }
+    }
+    try {
       while (kept.length > LOG_MAX_ENTRIES) {
         const batch = kept.slice(0, batchSize);
         // The fallback advances a millisecond per batch so a drain of
@@ -393,13 +438,24 @@ export async function recordCapture(
         // guarantees no two batches share a filename.
         const fallback = new Date(now + flushed);
         flushed += 1;
-        await writeJsonFile(archiveFileName(batch, fallback, usedNames), serializeLog(batch));
+        // **Awaited to completion, not just to the download starting.**
+        // A record must not leave `log.json` before the history file
+        // carrying it is on disk: `log.json` is written below and is
+        // authoritative, so a service worker killed in between would
+        // drop the whole batch. `chrome.downloads.download` resolves
+        // the moment the write begins, so without this the ordering
+        // would be nominal only — the same reason `log.json` waits.
+        await writeJsonFileComplete(
+          archiveFileName(batch, fallback, usedNames),
+          serializeLog(batch),
+        );
         kept = kept.slice(batchSize);
       }
     } catch (err) {
       // Expected-and-handled: the entries stay put and the next
       // capture retries, so this must not reach the chrome://extensions
-      // Errors page.
+      // Errors page. `kept` is reassigned only after a batch lands, so
+      // an abandoned drain leaves a coherent list either way.
       console.info('[SeeWhatISee] log archive write failed; retrying next capture:', err);
     }
     // File first, storage second — see "Ordering" above. Awaited to
@@ -432,6 +488,26 @@ export async function writeJsonFile(name: string, text: string): Promise<number>
     name,
     `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
   );
+}
+
+/**
+ * `writeJsonFile`, but resolving only once the bytes are on disk —
+ * and throwing if they never get there.
+ *
+ * `chrome.downloads.download` resolves when the download *starts*, so
+ * anything that depends on the file actually existing has to wait for
+ * the completion event too. Used by the history-file writes, where the
+ * next step (rewriting `log.json` without those records) must not
+ * happen until the file carrying them has landed.
+ *
+ * `log.json`'s own write doesn't use this: it needs the download id
+ * even when the wait fails, because the record still belongs in
+ * storage. See `recordCapture`.
+ */
+async function writeJsonFileComplete(name: string, text: string): Promise<number> {
+  const downloadId = await writeJsonFile(name, text);
+  await waitForDownloadComplete(downloadId);
+  return downloadId;
 }
 
 /**

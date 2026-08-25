@@ -239,7 +239,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again and probing for them |
+| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again, probing for them, and waiting out Chrome's stale-`exists` re-check |
 | `src/capture/log-store.ts` | The capture log: the `log.json` sidecar, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — wording, the `logSyncWrite` round-trip, settings link |
@@ -331,7 +331,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, and how it's opened |
+| `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, how it's opened, and what it declines to load with file access off |
 | `tests/e2e/log-archive.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` file |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
@@ -373,7 +373,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
-| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions and the Retry / Overwrite flush |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the stale-`exists` re-check, and the Retry / Overwrite flush |
 | `tests/unit/log-archive.test.mjs` | Unit tests for the rotation into `history-*.json` files — which records move, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |

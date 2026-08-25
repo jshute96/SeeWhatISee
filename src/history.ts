@@ -1083,9 +1083,10 @@ async function loadArchivesInteractively(): Promise<void> {
       // Named, not placed ("above"/"below"): this text renders in the
       // toolbar, which is above the banner, and was under the table,
       // which was below it.
+      const files = `${failed} history ${failed === 1 ? 'file' : 'files'}`;
       archiveError = fileAccessBlocked
-        ? `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'} — see the file-access banner.`
-        : `Could not read ${failed} archived ${failed === 1 ? 'log' : 'logs'}.`;
+        ? `Could not read ${files} — see the file-access banner.`
+        : `Could not read ${files}.`;
     }
   } catch {
     // `loadArchives` reports per-file failures through its return

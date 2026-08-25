@@ -179,15 +179,26 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // command it sends is browser-wide, not page-scoped.
       const cdpPage = await ctx.newPage();
       const cdp = await ctx.newCDPSession(cdpPage);
-      await cdp.send('Browser.setDownloadBehavior' as never, { behavior: 'default' } as never);
+      // Playwright types `send` against the page-scoped protocol map,
+      // which doesn't list browser-wide commands. Widen the signature
+      // once here rather than casting both arguments at the call site.
+      const sendCdp = cdp.send as unknown as (
+        method: string,
+        params?: Record<string, unknown>,
+      ) => Promise<unknown>;
+      await sendCdp.call(cdp, 'Browser.setDownloadBehavior', { behavior: 'default' });
       await cdpPage.close();
-      await use(ctx);
-      await ctx.close();
-      // Both directories are per-worker temporaries; leaving them
-      // behind would grow /tmp by a profile and a pile of screenshots
-      // on every run.
-      fs.rmSync(userDataDir, { recursive: true, force: true });
-      fs.rmSync(downloadsDir, { recursive: true, force: true });
+      try {
+        await use(ctx);
+      } finally {
+        await ctx.close();
+        // Both directories are per-worker temporaries; leaving them
+        // behind would grow /tmp by a profile and a pile of screenshots
+        // on every run. In a `finally` so a failing test cleans up too
+        // — only a killed process can still leak them.
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+        fs.rmSync(downloadsDir, { recursive: true, force: true });
+      }
     },
     { scope: 'worker' },
   ],

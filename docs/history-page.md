@@ -128,8 +128,7 @@ Finding that tab is less obvious than it looks:
       captures vanish for a reason unrelated to them. They sort after
       the still-listed files (`archiveDisplayOrder`).
 - With the log empty but history files unread, a second empty-state
-  notice
-  (`#empty-archived`) says so and points at the button.
+  notice (`#empty-archived`) says so and points at the button.
   - The usual "No captures in the log yet" would be a lie, and saying
     nothing — what the page used to do, on the grounds that the button
     sat directly below — leaves a blank page now that the button is up
@@ -576,4 +575,3 @@ each one flashes the file-access banner (`flashFileAccessHint()`,
   - The storage listener retries `loadCaptureDir()` while the
     directory is still unresolved, so the first capture taken with the
     page open enables the button without a reload.
-

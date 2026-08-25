@@ -86,19 +86,45 @@ export function logSyncReasonText(reason: LogSyncBlockedReason): string {
     case 'unreadable':
       return `The ${LOG_FILE_NAME} on disk couldn't be read, so there's no way to
         tell what overwriting it would discard.`.replace(/\s+/g, ' ');
+    case 'corrupt-file':
+      return `The ${LOG_FILE_NAME} on disk has lines that aren't valid capture
+        records. Appending to it means rewriting the whole file, which would
+        drop those lines for good.`.replace(/\s+/g, ' ');
   }
+}
+
+/**
+ * Whether a value off the wire is a reason we know how to render.
+ *
+ * The prompt's state can arrive through a `?logsync=` URL parameter,
+ * which is user-editable. Without this check an unknown reason falls
+ * off the end of `logSyncReasonText`'s switch and the dialog renders an
+ * empty explanation above live Retry / Overwrite buttons.
+ */
+export function isLogSyncReason(value: unknown): value is LogSyncBlockedReason {
+  return value === 'unknown-file'
+    || value === 'size-mismatch'
+    || value === 'unreadable'
+    || value === 'corrupt-file';
 }
 
 /**
  * What the user can do about it. Names the file's directory when we
  * know it — "delete log.json" is only actionable if they can find it.
+ *
+ * The file-access remedy is dropped for `corrupt-file`, which is the
+ * one reason only reachable with that permission already on: telling
+ * the user to turn on something they've turned on is worse than saying
+ * nothing.
  */
-export function logSyncRemedyText(directory?: string): string {
+export function logSyncRemedyText(directory?: string, reason?: LogSyncBlockedReason): string {
   const path = directory ? `${directory}/${LOG_FILE_NAME}` : LOG_FILE_NAME;
+  const enableAccess = reason === 'corrupt-file'
+    ? ''
+    : `turn on "Allow access to file URLs" in extension settings and choose Retry,
+       so the existing log can be read and appended to; or `;
   return `This capture's files are saved, but it won't be in the capture log
-    until this is resolved. To resolve it: turn on "Allow access to file URLs"
-    in extension settings and choose Retry, so the existing log can be read and
-    appended to; or delete ${path} yourself and choose Retry; or choose
-    Overwrite to replace it with the log the browser is holding. Cancel skips
-    logging this capture.`.replace(/\s+/g, ' ');
+    until this is resolved. To resolve it: ${enableAccess}fix or delete ${path}
+    yourself and choose Retry; or choose Overwrite to replace it with the log the
+    browser is holding. Cancel skips logging this capture.`.replace(/\s+/g, ' ');
 }

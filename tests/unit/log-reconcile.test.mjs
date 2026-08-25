@@ -34,6 +34,11 @@ let erased = [];
  * - `inFlightText`: a `log.json` write that has started but not
  *   finished, holding this text once it lands. It shadows `record`,
  *   which stands for the write before it.
+ * - `existsAfterRecheck`: what Chrome's existence re-check reports for
+ *   the log record, delivered as a `downloads.onChanged` delta the way
+ *   the real API does. `null` means no delta — the re-check agreed with
+ *   the record, which is the healthy case. `false` is a file deleted
+ *   this session, where `record.exists` is still a stale `true`.
  */
 function stubChrome({
   record = null,
@@ -42,12 +47,14 @@ function stubChrome({
   otherRecord = null,
   probeCollides = false,
   inFlightText = null,
+  existsAfterRecheck = null,
 } = {}) {
   writes = [];
   removed = [];
   erased = [];
   const store = {};
   let nextId = 1;
+  const changeListeners = [];
   // Flipped by the first `search({id})`, i.e. by the poll inside
   // `waitForDownloadComplete` — so the wait resolves on its first tick
   // rather than the test paying real time for it.
@@ -92,6 +99,16 @@ function stubChrome({
         // `getLogFileRecord` pins its regex to log.json;
         // `getCaptureDirectory` matches any file we wrote.
         const forLog = String(query.filenameRegex).endsWith('log\\.json$');
+        if (forLog && record && existsAfterRecheck !== null) {
+          // The real API behaves exactly this way: `search()` triggers
+          // the existence re-check and returns the *old* value, and the
+          // refreshed one arrives afterwards as an event.
+          queueMicrotask(() => {
+            for (const fn of changeListeners) {
+              fn({ id: record.id, exists: { current: existsAfterRecheck } });
+            }
+          });
+        }
         // Newest first, so an in-flight write shadows the record of the
         // write before it.
         if (forLog) return [inFlight, record].filter(Boolean);
@@ -99,6 +116,13 @@ function stubChrome({
       },
       removeFile: async (id) => { removed.push(id); },
       erase: async ({ id }) => { erased.push(id); },
+      onChanged: {
+        addListener: (fn) => { changeListeners.push(fn); },
+        removeListener: (fn) => {
+          const i = changeListeners.indexOf(fn);
+          if (i >= 0) changeListeners.splice(i, 1);
+        },
+      },
     },
   };
   globalThis.fetch = async () => {
@@ -125,8 +149,14 @@ function logRecord(text, state = 'complete') {
 stubChrome();
 const { inspectLogFile, LogWriteBlockedError } =
   await import('../../dist/capture/log-reconcile.js');
-const { recordCapture, serializeLog, LOG_STORAGE_KEY } =
+const { recordCapture, serializeLog, parseLogLines, LOG_STORAGE_KEY } =
   await import('../../dist/capture/log-store.js');
+const { _setExistsRecheckTimeoutForTest } =
+  await import('../../dist/capture/downloads.js');
+// The healthy case never fires a delta, so every reconcile pays this
+// timeout in full. Keep it short enough that 40-odd tests don't spend
+// seconds waiting for an event that isn't coming.
+_setExistsRecheckTimeoutForTest(5);
 
 /** A record whose timestamp encodes `n`, so order is checkable. */
 function rec(n) {
@@ -348,4 +378,102 @@ test('Retry after the user deletes log.json starts a fresh log', async () => {
   await recordCapture(rec(3));
   assert.equal(writes.at(-1).body, serializeLog([rec(3)]));
   assert.deepEqual(store[LOG_STORAGE_KEY], [rec(3)]);
+});
+
+// ── stale `DownloadItem.exists` ──────────────────────────────────────
+//
+// Chrome doesn't watch the filesystem: `search()` *triggers* the
+// existence re-check and returns the value from before it, with the
+// refreshed one arriving as a `downloads.onChanged` delta. Taking the
+// search result at face value resurrects a log the user just deleted —
+// and because the rewrite puts the file back, no later capture can
+// tell anything went wrong.
+
+test('a log.json deleted this session is not resurrected', async () => {
+  // The record still says `exists: true` and its size still matches the
+  // buffer, so every field the reconcile can read says "in sync". Only
+  // the re-check knows better.
+  const stored = [rec(1), rec(2)];
+  const store = stubChrome({
+    record: logRecord(serializeLog(stored)),
+    existsAfterRecheck: false,
+  });
+  store[LOG_STORAGE_KEY] = stored;
+
+  await recordCapture(rec(3));
+  // Fresh, not append: the deleted log stays deleted and the new one
+  // holds only the capture that just happened.
+  assert.equal(writes.at(-1).body, serializeLog([rec(3)]));
+  assert.deepEqual(store[LOG_STORAGE_KEY], [rec(3)]);
+});
+
+test('no re-check delta leaves the record trusted', async () => {
+  // The healthy path: the file is there, Chrome reports no change, and
+  // the capture appends as usual.
+  const stored = [rec(1)];
+  const store = stubChrome({ record: logRecord(serializeLog(stored)) });
+  store[LOG_STORAGE_KEY] = stored;
+
+  await recordCapture(rec(2));
+  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
+});
+
+test('a re-check confirming the file leaves it in sync', async () => {
+  const stored = [rec(1)];
+  const store = stubChrome({
+    record: logRecord(serializeLog(stored)),
+    existsAfterRecheck: true,
+  });
+  store[LOG_STORAGE_KEY] = stored;
+
+  await recordCapture(rec(2));
+  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
+});
+
+// ── a file we can read but can't rewrite ─────────────────────────────
+
+test('parseLogLines counts what it had to drop', () => {
+  const good = serializeLog([rec(1)]);
+  assert.deepEqual(parseLogLines(good).skipped, 0);
+  assert.equal(parseLogLines(good).records.length, 1);
+  // Unparseable, and valid-JSON-but-not-a-record. Both are lines a
+  // rewrite would destroy.
+  assert.equal(parseLogLines(`${good}{"broken"\n`).skipped, 1);
+  assert.equal(parseLogLines(`${good}"a string"\n`).skipped, 1);
+  assert.equal(parseLogLines(`${good}[1,2]\n`).skipped, 1);
+});
+
+test('a log.json with unparseable lines blocks instead of dropping them', async () => {
+  // Reading works, so the file would normally be adopted wholesale —
+  // but adopting it means re-serializing it back over itself, which
+  // would delete the line we couldn't parse.
+  const onDisk = `${serializeLog([rec(1)])}{"truncated"\n`;
+  const store = stubChrome({
+    fileAccess: true,
+    record: logRecord(onDisk),
+    fileText: onDisk,
+  });
+  store[LOG_STORAGE_KEY] = [rec(1)];
+
+  await assert.rejects(recordCapture(rec(2)), (err) => {
+    assert.ok(err instanceof LogWriteBlockedError);
+    assert.equal(err.reason, 'corrupt-file');
+    return true;
+  });
+  // Nothing written and nothing stored — the bad line is still there.
+  assert.equal(writes.length, 0);
+  assert.deepEqual(store[LOG_STORAGE_KEY], [rec(1)]);
+});
+
+test('Overwrite past a corrupt file replaces it with the browser copy', async () => {
+  const onDisk = `${serializeLog([rec(1)])}{"truncated"\n`;
+  const store = stubChrome({
+    fileAccess: true,
+    record: logRecord(onDisk),
+    fileText: onDisk,
+  });
+  store[LOG_STORAGE_KEY] = [rec(1)];
+
+  await recordCapture(rec(2), { force: true });
+  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
 });

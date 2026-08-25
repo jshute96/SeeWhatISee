@@ -637,3 +637,80 @@ test('the Restore button lands on the restorable row, not the newest', async ({
   await openerPage.close();
 });
 
+
+// ─────────────── "Allow access to file URLs" turned off ───────────────
+//
+// Chrome refuses every `file://` open from this page when that toggle
+// is off, and each refusal lands on the extension's Errors page. The
+// page's job is therefore to not *start* those loads — see
+// `docs/history-page.md`, "Not starting blocked loads".
+//
+// The toggle itself can't be flipped from a test (it lives in
+// `chrome://extensions` and changing it reloads the extension), and the
+// harness runs with it on. So `isAllowedFileSchemeAccess` is overridden
+// before `history.ts` reads it. That covers our branch — which is what
+// regressed — rather than Chrome's refusal, which is the browser's.
+async function blockFileAccess(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(chrome.extension, 'isAllowedFileSchemeAccess', {
+      configurable: true,
+      value: async () => false,
+    });
+  });
+}
+
+test('with file access off, nothing on the page starts a file:// load', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // A real capture, so the capture directory resolves and the rows
+  // render actual links rather than the no-directory fallback.
+  const { capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'blocked file access',
+  });
+
+  const historyPage = await extensionContext.newPage();
+  await blockFileAccess(historyPage);
+  await openHistory(historyPage, extensionId);
+  await expect(historyPage.locator('#rows tr')).toHaveCount(1);
+
+  // The banner explains the whole situation, so it must be up.
+  const banner = historyPage.locator('#file-access-hint');
+  await expect(banner).toBeVisible();
+
+  // No <img> at all — not a broken one. Pointing it at a URL Chrome
+  // won't serve is the single biggest source of console noise, since
+  // it needs no user action.
+  await expect(historyPage.locator('#rows img.thumb')).toHaveCount(0);
+  // The filename shows in its place, inside the surviving link.
+  const thumbLink = historyPage.locator('#rows .thumb-link');
+  await expect(thumbLink).toHaveCount(1);
+  await expect(thumbLink).toContainText('.png');
+
+  // The href stays: right-click → Copy link address is the way out.
+  const htmlLink = historyPage.locator('#rows .files-cell a', { hasText: 'HTML' });
+  await expect(htmlLink).toHaveAttribute('href', /^file:\/\/.*\.html$/);
+
+  // Clicking navigates nowhere and flashes the banner instead.
+  const pagesBefore = extensionContext.pages().length;
+  await htmlLink.click();
+  await expect(banner).toHaveClass(/flash/);
+  expect(extensionContext.pages()).toHaveLength(pagesBefore);
+  expect(historyPage.url()).toContain('history.html');
+
+  // Same for the Snapshots directory button, which stays enabled
+  // precisely so the click can land and flash.
+  const snapshotsBtn = historyPage.locator('#snapshots-dir');
+  await expect(snapshotsBtn).toBeEnabled();
+  await expect(historyPage.locator('#snapshots-dir-wrap'))
+    .toHaveAttribute('title', /Allow access to file URLs/);
+});

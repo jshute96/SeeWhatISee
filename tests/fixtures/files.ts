@@ -280,7 +280,14 @@ export async function seedCaptureLog(
 ): Promise<void> {
   const id = await sw.evaluate(async (recs) => {
     await chrome.storage.local.set({ captureLog: recs });
-    const text = recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    // Matches `serializeLog`, empty list included: it renders as the
+    // empty string, not a bare newline. Seeding `'\n'` for `[]` would
+    // put a phantom byte in the file, and the reconcile — which
+    // compares the file's recorded size against the buffer — would
+    // read that as tampering and block the next capture.
+    const text = recs.length === 0
+      ? ''
+      : recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
     return await chrome.downloads.download({
       url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
       filename: 'SeeWhatISee/log.json',

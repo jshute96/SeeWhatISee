@@ -309,9 +309,11 @@
   .log-sync-dialog p {
     margin: 0 0 12px 0;
   }
-  .log-sync-dialog code {
-    /* Long paths are the common case here, and a path that overflows
-     * would push the button row out of reach. */
+  /* The remedy text names the full path to log.json, and a long path
+   * that overflows would push the button row out of reach. Targets the
+   * paragraph itself: the text is set with `textContent`, so there is
+   * no <code> element inside it to hang this on. */
+  #log-sync-remedy {
     overflow-wrap: anywhere;
   }
   /* Buttons trail to the right, primary action last — the same

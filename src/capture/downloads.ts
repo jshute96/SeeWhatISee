@@ -359,7 +359,74 @@ export function pathToFileUrl(path: string): string {
  * — those fall through to the existence probe instead, which is the
  * conservative answer.
  */
-export async function getLogFileRecord(): Promise<chrome.downloads.DownloadItem | null> {
+export async function getLogFileRecord(): Promise<LogFileRecordLookup> {
+  // Started *before* the search, because the search is what triggers
+  // the existence re-check and the answer comes back as an event —
+  // registering afterwards can miss it. See `startExistsWatch`.
+  const watch = startExistsWatch();
+  let record: chrome.downloads.DownloadItem | null;
+  try {
+    record = await readLogFileRecord();
+  } catch (err) {
+    watch.stop();
+    throw err;
+  }
+  return {
+    record,
+    async confirmExists() {
+      if (!record) return false;
+      if (record.exists === false) return false;
+      // No delta means Chrome's re-check agreed with the record, which
+      // at this point has already said the file is there.
+      const fresh = await watch.settle(record.id, existsRecheckTimeoutMs);
+      return fresh ?? true;
+    },
+    release: () => watch.stop(),
+  };
+}
+
+/**
+ * A `log.json` record plus the means to find out whether its file is
+ * *really* still there.
+ *
+ * Split in two because the answer is expensive and usually irrelevant.
+ * `exists` only decides anything on the paths that can't read the file
+ * — so a capture that reads `log.json` successfully (the permission is
+ * on, which is also how the e2e harness runs) never pays for the
+ * re-check at all. Call `release()` when done; `confirmExists()` is
+ * meaningless afterwards.
+ */
+export interface LogFileRecordLookup {
+  record: chrome.downloads.DownloadItem | null;
+  /**
+   * Whether the file is still on disk, waiting out Chrome's re-check
+   * rather than trusting the record's stale `exists`. `false` when
+   * there is no record at all.
+   */
+  confirmExists(): Promise<boolean>;
+  /** Drop the `onChanged` listener. Safe to call more than once. */
+  release(): void;
+}
+
+/**
+ * How long to wait for Chrome's existence re-check to report back
+ * before taking the record's own `exists` at face value.
+ *
+ * The check is a file stat in the browser process, so the answer lands
+ * in milliseconds when it lands at all — and when the file is still
+ * there it never lands, because `onChanged` only fires on a *change*.
+ * So a `confirmExists()` on a live file waits this out in full, which
+ * is why the reconcile only calls it where the answer changes what it
+ * does. See `startExistsWatch`.
+ */
+let existsRecheckTimeoutMs = 300;
+
+/** Test seam — lets the unit tests drive this without real waiting. */
+export function _setExistsRecheckTimeoutForTest(ms: number): void {
+  existsRecheckTimeoutMs = ms;
+}
+
+async function readLogFileRecord(): Promise<chrome.downloads.DownloadItem | null> {
   let ours = await ourLogRecords();
   // **A write still in flight has to be waited out, not skipped.**
   // `chrome.downloads.download` resolves when the download *starts*,
@@ -381,6 +448,77 @@ export async function getLogFileRecord(): Promise<chrome.downloads.DownloadItem 
     ours = await ourLogRecords();
   }
   return ours.find((item) => item.state === 'complete') ?? null;
+}
+
+/**
+ * Watches for `exists` transitions while Chrome re-checks downloads.
+ *
+ * **`DownloadItem.exists` is stale on read.** Chrome does not watch the
+ * filesystem; `search()` *triggers* an existence re-check, but the
+ * search that triggered it still returns the old value — the refreshed
+ * one arrives afterwards as a `downloads.onChanged` delta.
+ *
+ * Reading `exists` straight off a search result therefore reports a
+ * `log.json` the user deleted this session as still present. The
+ * capture then reads `insync`, rewrites the file from the browser copy,
+ * and the deletion is undone — and because the file is back, the *next*
+ * capture sees nothing wrong either. The damage is self-concealing,
+ * which is why this waits rather than leaving it to the next capture.
+ *
+ * Start the watch before the triggering `search()`, then `settle()` on
+ * the id you care about.
+ */
+interface ExistsWatch {
+  /**
+   * Resolve once Chrome reports an `exists` transition for `id`, or
+   * after `timeoutMs`. `undefined` means nothing was reported — the
+   * re-check agreed with what the record already said.
+   */
+  settle(id: number, timeoutMs: number): Promise<boolean | undefined>;
+  stop(): void;
+}
+
+function startExistsWatch(): ExistsWatch {
+  const seen = new Map<number, boolean>();
+  const waiters = new Map<number, (value: boolean | undefined) => void>();
+  const onChanged = (delta: chrome.downloads.DownloadDelta): void => {
+    if (!delta.exists) return;
+    const current = delta.exists.current === true;
+    seen.set(delta.id, current);
+    // A delta that lands before anyone asks is kept in `seen`, so the
+    // order of arrival vs. `settle()` doesn't matter.
+    waiters.get(delta.id)?.(current);
+  };
+  chrome.downloads.onChanged.addListener(onChanged);
+  return {
+    settle(id, timeoutMs) {
+      const already = seen.get(id);
+      if (already !== undefined) return Promise.resolve(already);
+      return new Promise<boolean | undefined>((resolve) => {
+        const timer = setTimeout(() => {
+          waiters.delete(id);
+          resolve(undefined);
+        }, timeoutMs);
+        waiters.set(id, (value) => {
+          clearTimeout(timer);
+          waiters.delete(id);
+          resolve(value);
+        });
+      });
+    },
+    stop() {
+      chrome.downloads.onChanged.removeListener(onChanged);
+      for (const [id, resolve] of waiters) {
+        // Nothing more is coming; unblock anyone still waiting rather
+        // than leaving a promise pending for its full timeout.
+        // `undefined`, not `false` — "Chrome told us nothing", which
+        // keeps the record's own value. Reporting `false` here would
+        // read as a deletion and start a new log over a live one.
+        waiters.delete(id);
+        resolve(undefined);
+      }
+    },
+  };
 }
 
 /** Our own `log.json` download records, newest first. */

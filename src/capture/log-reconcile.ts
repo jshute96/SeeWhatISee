@@ -24,6 +24,7 @@
 
 import { type CaptureRecord } from './types.js';
 import {
+  type LogFileRecordLookup,
   LOG_FILE_NAME,
   getCaptureDirectory,
   getLogFileRecord,
@@ -42,7 +43,9 @@ export type LogSyncBlockedReason =
   /** The file is a different size than the log we last wrote. */
   | 'size-mismatch'
   /** The record says the file is there, but reading it failed. */
-  | 'unreadable';
+  | 'unreadable'
+  /** We read it, but some of its lines aren't records we can rewrite. */
+  | 'corrupt-file';
 
 /**
  * Thrown by `recordCapture` when the reconcile can't account for what
@@ -105,7 +108,7 @@ async function readLogFile(directory: string): Promise<string | null> {
 /** What the reconcile decided about the file on disk. */
 export type LogFileState =
   /** We read it. Its contents replace the in-storage log. */
-  | { kind: 'contents'; text: string }
+  | { kind: 'contents'; text: string; directory: string }
   /** No file (or an empty one). Start a new log from this capture. */
   | { kind: 'fresh' }
   /** The file matches the log we last wrote. Append to storage as usual. */
@@ -140,7 +143,20 @@ export async function inspectLogFile(opts: {
   expectedText: string;
   freshPayload: string;
 }): Promise<LogFileState> {
-  const record = await getLogFileRecord();
+  const lookup = await getLogFileRecord();
+  try {
+    return await decideLogFileState(opts, lookup);
+  } finally {
+    // Drops the `onChanged` listener whichever branch we left by.
+    lookup.release();
+  }
+}
+
+async function decideLogFileState(
+  opts: { expectedText: string; freshPayload: string },
+  lookup: LogFileRecordLookup,
+): Promise<LogFileState> {
+  const record = lookup.record;
   let directory = record?.filename
     ? parentDirectory(record.filename)
     : await currentCaptureDirectory();
@@ -152,11 +168,16 @@ export async function inspectLogFile(opts: {
     if (!directory) directory = await probeCaptureDirectory();
     if (directory) {
       const text = await readLogFile(directory);
-      if (text !== null) return { kind: 'contents', text };
-      // The read failed. If the record agrees the file is gone (or
-      // there is no record), that *is* the answer: start fresh.
-      // Otherwise something we can't explain is in the way.
-      if (!record || record.exists === false) return { kind: 'fresh' };
+      // Whether its lines are all round-trippable is checked by the
+      // caller, which already parses this text — keeping the parser
+      // dependency pointing log-store → log-reconcile, not both ways.
+      if (text !== null) return { kind: 'contents', text, directory };
+      // The read failed. If the file is really gone (or there is no
+      // record), that *is* the answer: start fresh. Otherwise something
+      // we can't explain is in the way. Worth confirming rather than
+      // trusting the record here — prompting a user who simply deleted
+      // their log would be a poor answer.
+      if (!await lookup.confirmExists()) return { kind: 'fresh' };
       return { kind: 'blocked', reason: 'unreadable', directory };
     }
   }
@@ -178,7 +199,10 @@ export async function inspectLogFile(opts: {
     }
   }
 
-  if (record.exists === false) return { kind: 'fresh' };
+  // The record-only route: `exists` is the *only* thing here that can
+  // reveal a deletion, so this is where waiting out Chrome's re-check
+  // earns its cost. See `docs/log-consistency.md`.
+  if (!await lookup.confirmExists()) return { kind: 'fresh' };
   const size = logRecordSize(record);
   // **Both sides of the comparison below are ours.** `size` is what we
   // wrote and Chrome never re-measures it; `expectedText` is what the

@@ -72,6 +72,11 @@ function stubChrome(existing = []) {
           bytesReceived: size,
         }];
       },
+      // The reconcile waits briefly for Chrome's existence re-check
+      // before trusting `exists` (see `startExistsWatch`). These tests
+      // never delete anything, so no delta is ever fired — the listener
+      // just has to exist to be registered and removed.
+      onChanged: { addListener: () => {}, removeListener: () => {} },
     },
   };
   return store;
@@ -80,6 +85,11 @@ function stubChrome(existing = []) {
 stubChrome();
 const { recordCapture, parseLogText, serializeLog, dedupeRecords } =
   await import('../../dist/capture/log-store.js');
+const { _setExistsRecheckTimeoutForTest } =
+  await import('../../dist/capture/downloads.js');
+// No delta is ever fired here, so each reconcile would otherwise wait
+// out the full existence-recheck timeout.
+_setExistsRecheckTimeoutForTest(5);
 
 /** A record whose timestamp encodes `n`, so order is checkable. */
 function rec(n) {

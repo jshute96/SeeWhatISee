@@ -123,12 +123,18 @@ landed.
   the ordering avoids (the interrupted-write case under
   [Where the principles bend](#where-the-principles-bend) is the
   residue).
-- The `log.json` write is awaited to *completion*, not merely to the
-  download starting. `chrome.downloads.download` resolves the moment
-  the write begins, so without the wait the browser copy could still
-  be updated first and the ordering would be nominal only.
-- History files go first for the same reason: a record must not leave
-  `log.json` before the history file carrying it exists.
+- **Every write is awaited to *completion*, not merely to the download
+  starting.** `chrome.downloads.download` resolves the moment the write
+  begins, so without the wait the ordering would be nominal only.
+  `writeJsonFileComplete` in `log-store.ts` is the shared shape.
+- History files go first, and are waited out the same way: a record
+  must not leave `log.json` before the history file carrying it exists.
+  A worker killed in that window would otherwise drop the whole batch
+  from the file that is authoritative.
+- `log.json`'s own write is the one that doesn't abort on a failed
+  wait — the record still belongs in the browser copy, since its
+  artifacts are on disk and the next capture reconciles against
+  whatever the file turned out to be.
 
 ## Working out what's in the file
 
@@ -154,6 +160,48 @@ flight is waited out, not skipped** (`getLogFileRecord`).
   report a size that no longer matches, i.e. a spurious block.
 - Worse with file reads: the `fetch` could catch a half-written file
   and adopt it.
+
+### Waiting for the existence re-check
+
+**`DownloadItem.exists` is stale on read**, and taking it at face value
+is how a deleted log came back.
+
+- Chrome doesn't watch the filesystem. `search()` *triggers* an
+  existence re-check, and the refreshed value arrives afterwards as a
+  `downloads.onChanged` delta — the search that triggered it still
+  returns the old one.
+- So a `log.json` deleted this session reads as present. The capture
+  concludes `insync`, rewrites the file from the browser copy, and the
+  deletion is undone.
+- **The damage hides itself.** The rewrite puts the file back, so the
+  next capture sees a real file matching storage and finds nothing
+  wrong. Leaving this to "the next capture will notice" doesn't work —
+  by then there is nothing left to notice.
+
+`startExistsWatch` (`capture/downloads.ts`) closes it: the listener is
+registered *before* the search that triggers the re-check, and
+`confirmExists()` waits briefly for a delta on our record instead of
+trusting `exists`.
+
+- Registering after the search would race the event.
+- **`onChanged` fires only on a *change*, so a file that is still there
+  produces no event and waits out the timeout in full.** There is no
+  positive confirmation to wait for; that cost is unavoidable.
+- So `getLogFileRecord` hands back the record and `confirmExists()`
+  *separately*, and the reconcile calls it only where `exists` decides
+  something:
+  - the record-only route, where it's the sole way to see a deletion;
+  - a failed read, where the alternative is prompting someone who
+    simply deleted their log.
+  - **Not** on a successful read, which is the common case with the
+    permission on — the file's contents have already answered
+    everything.
+- Skipping it there isn't just an optimization: paying it on every
+  capture put a 200ms-delay capture over the 500ms bound in
+  `html-snapshot.spec.ts`.
+- A record already saying `exists: false` short-circuits — nothing to
+  re-confirm.
+- `_setExistsRecheckTimeoutForTest` keeps the unit tests off the clock.
 
 ### With file reads — the file's contents decide
 
@@ -185,13 +233,28 @@ Then the read decides everything:
 
 | Reading the file | What it means | Action |
 |---|---|---|
-| Succeeds | This is the log | Take its records, add this capture, write |
+| Succeeds, every line parses | This is the log | Take its records, add this capture, write |
+| Succeeds, some line doesn't parse | We can read it but can't rewrite it | **Don't write — prompt** |
 | Fails, and the download record says the file is gone (or there is no record) | The user deleted it | Start a new log from this capture |
 | Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — prompt** |
 
 Taking the file's contents wholesale — rather than merging them with
 the browser copy — is the whole point: a row the user deleted from
 `log.json` stays deleted, and an edited row stays edited.
+
+**A line we can't parse blocks the write** (`corrupt-file`), because
+adopting the file means re-serializing it back over itself.
+
+- A *reader* can skip a bad line and lose nothing — the History page
+  does exactly that, and the row is merely absent from the table.
+- The reconcile is a writer. Skipping the line and writing the rest
+  deletes it from the user's file for good, which principle 4 forbids:
+  we couldn't account for it, so we don't write.
+- Reachable only with the read permission on, since it takes reading
+  the file to notice. `parseLogLines` is the counting variant behind
+  it; `parseLogText` stays lenient for the display paths.
+- Overwrite is still offered, for a user who doesn't want the
+  unparseable lines kept.
 
 ### Without file reads — the download record decides
 
@@ -203,9 +266,9 @@ for `log.json` carries three useful fields:
 - **`state`** — `in_progress` while the write is still happening,
   `complete` once the bytes are on disk, `interrupted` if it failed.
   Only a `complete` record describes a file that exists.
-- **`exists`** — whether the file is *still* there. Chrome re-checks
-  this on demand and reports the answer as an event, so it is how a
-  deletion becomes visible to us at all.
+- **`exists`** — whether the file is *still* there. It is how a
+  deletion becomes visible to us at all, and it is **stale on read**;
+  see [Waiting for the existence re-check](#waiting-for-the-existence-re-check).
 - **`fileSize`** — how many bytes were written. **At write time**: it
   is never re-measured, so it says what *we* last wrote, not what the
   file holds now.
@@ -283,25 +346,32 @@ failure like any other.
 
 ### The answers offered
 
-Two meaningful ways forward, plus giving up:
+The dialog names the file (path in a code font), says in one line
+what's wrong with it, and lists the fixes as numbered options under
+**Choose how to fix**:
 
-- **Retry** — run the same append again from the top: reconcile, then
-  write. Used after fixing something — turning on file reads, or
-  deleting `log.json` (with the file gone there's nothing left to
-  preserve, so a fresh log starts from this capture). With nothing
-  changed it lands back on the same prompt.
-- **Overwrite** (primary) — the same append with the reconcile
-  skipped: the file is replaced with the browser's copy of the log
-  plus this capture. The one place anything on disk is knowingly
-  discarded, so it takes an explicit click. Usually the right call,
-  because the usual cause is a cleared download history, where the
-  file and the browser copy actually agree.
-- **Extension settings** — opens the extension's own page in a
-  background tab, where "Allow access to file URLs" can be turned on.
-  Chrome won't link straight to the toggle, so the text has to name
-  it. Then **Retry**.
-- **Cancel** (the button, Esc, or just closing the page) — abandon the
-  record. The capture's files stay on disk, but it is not in the log.
+1. **Enable local file reads** *(Recommended)* — then the file can be
+   read and appended to without overwriting it. The instructions
+   (turn on "Allow access to file URLs" via the inline **Extension
+   settings** button, opened in a background tab since Chrome won't
+   link straight to the toggle) and the **Retry** button sit inline in
+   this option. Retry runs the same append again from the top:
+   reconcile, then write — so it also lands after any other fix, such
+   as deleting `log.json` (with the file gone there's nothing left to
+   preserve, so a fresh log starts from this capture). With nothing
+   changed it lands back on the same prompt.
+   - For the `corrupt-file` reason, file reads are already on, so this
+     option reads **Fix the file** instead: repair or delete it, then
+     Retry.
+2. **Overwrite log.json** — the same append with the reconcile
+   skipped: the file is replaced with the browser's copy of the log
+   plus this capture; external edits are lost. The one place anything
+   on disk is knowingly discarded, so it takes an explicit click.
+   Usually the right call when the cause is a cleared download
+   history, where the file and the browser copy actually agree.
+3. **Cancel** (the button, Esc, or just closing the page) — abandon
+   the record. The capture's files stay on disk, but it is not in the
+   log.
 
 ### Where it's asked
 
@@ -342,12 +412,10 @@ carries the detail.
   chose and so doesn't match, unless they picked a folder literally
   named `SeeWhatISee`.
 - **`refreshLogFileExistence`** (`src/background/log-sync.ts`) runs a
-  `downloads.search` for `log.json` on every service-worker load.
-  `exists` is stale on read — the `search()` is what prompts Chrome's
-  re-check — so this is what lets the next capture's reconcile see a
-  deletion made while the browser was closed, instead of a stale
-  "still there". A deletion made mid-session is noticed the same way,
-  at the next capture; nothing watches for it live.
+  `downloads.search` for `log.json` on every service-worker load, which
+  gets Chrome re-checking early rather than leaving it to the first
+  capture. The reconcile no longer depends on it having finished; see
+  [Waiting for the existence re-check](#waiting-for-the-existence-re-check).
 - **The toolbar's More submenu used to carry a *Clear log history*
   entry**, which wiped the browser copy and truncated `log.json` to
   zero bytes. It was removed with this change: under principle 1 that
@@ -422,6 +490,18 @@ here or it belongs fixed.
 - **A stray probe file.** The existence probe's `log (1).json` is
   deleted immediately, but if that delete fails the file stays. It
   matches nothing any reader looks for.
+- **A probe that starts but doesn't settle can leave a file behind.**
+  If the uniquify write begins and then times out, we report `blocked`
+  and touch nothing — but the fresh payload may still land as
+  `log.json`. The following Retry then sees a record whose size
+  disagrees with the browser copy and blocks again, and Overwrite
+  discards the record that just landed. Rare, and never lossy beyond
+  that one capture.
+- **A capture whose reconcile waits out the re-check timeout.** Paid
+  only on the routes that consult `exists` (see
+  [Waiting for the existence re-check](#waiting-for-the-existence-re-check)),
+  which is the no-permission default. Latency, not correctness, and
+  captures are user-initiated.
 
 ## Resulting behaviors worth knowing
 
@@ -458,6 +538,12 @@ Without file reads:
   `chrome.downloads.search` / `fetch` / probe write. This is where the
   no-read branches are covered, since the e2e harness always has file
   access.
+  - Its stub reproduces the **stale `exists`** contract: a `search()`
+    returns the old value and fires the `onChanged` delta afterwards.
+    That's what makes "a log deleted this session is not resurrected"
+    a real test rather than a restatement of the code.
+  - The `corrupt-file` block and `parseLogLines`' skip count are
+    covered here too.
 - `tests/e2e/screenshot.spec.ts` covers the two headline behaviors
   end-to-end: deleting `log.json` starts a fresh log instead of
   bringing the old records back, and a browser copy that has lost its
@@ -475,3 +561,7 @@ Without file reads:
   wipe alone is no longer a clean slate, because the download record
   outlives it and the next capture reconciles against the file it
   names.
+- **Not covered:** the prompt surfaces themselves. Reaching them
+  end-to-end means engineering a state the reconcile can't account
+  for, which the harness's real download directory makes awkward. The
+  decisions behind them are unit-tested; the dialogs are not.

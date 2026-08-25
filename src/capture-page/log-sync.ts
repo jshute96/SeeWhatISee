@@ -20,6 +20,7 @@ import { type CaptureRecord } from '../capture/types.js';
 import {
   type LogSyncPrompt,
   fileAccessUrl,
+  isLogSyncReason,
   logSyncReasonText,
   logSyncRemedyText,
   openFileAccessSettings,
@@ -55,7 +56,7 @@ const SHOW_RETRY_LIMIT = 100; // ~10s at 100ms
 export function showLogSyncDialog(prompt: LogSyncPrompt, h: LogSyncHandlers, attempt = 0): void {
   handlers = h;
   reasonEl.textContent = logSyncReasonText(prompt.reason);
-  remedyEl.textContent = logSyncRemedyText(prompt.directory);
+  remedyEl.textContent = logSyncRemedyText(prompt.directory, prompt.reason);
   errorEl.hidden = true;
   setLogSyncBusy(false);
   if (dialog.open) return;
@@ -129,29 +130,45 @@ function initFromErrorUrl(): void {
     return;
   }
   const record = payload.record;
-  if (!payload.reason || !record) return;
+  // The param is user-editable, so the reason is checked against the
+  // known set rather than merely for being present: an unrecognized one
+  // renders an empty explanation above live Retry / Overwrite buttons.
+  if (!isLogSyncReason(payload.reason) || !record) return;
+  const reason = payload.reason;
+
+  // Declared up front so `write` can pass them to `showLogSyncDialog`
+  // on the re-render instead of reaching back for the module-level
+  // `handlers` through a non-null assertion.
+  const dialogHandlers = {
+    onRetry: () => void write(false),
+    onOverwrite: () => void write(true),
+  };
 
   const write = async (force: boolean): Promise<void> => {
     setLogSyncBusy(true);
     const result = await requestLogSyncWrite(record, force);
     if (result.kind === 'resolved') {
       // The capture is fully logged now, so a page saying "Capture
-      // failed" has nothing left to say. Close it; if we can't,
-      // leave the dialog up saying it worked.
+      // failed" has nothing left to say. Close the tab if we can.
       closeLogSyncDialog();
       try {
         const tab = await chrome.tabs.getCurrent();
         if (tab?.id !== undefined) await chrome.tabs.remove(tab.id);
       } catch {
-        // Tab close denied — nothing else to do; the pane below
-        // still shows the stale failure text, which is harmless.
+        // Tab close denied. The dialog has to come back up saying it
+        // worked, and the buttons have to be re-enabled — otherwise
+        // the user is left staring at "Capture log is out of sync"
+        // with Retry and Overwrite permanently greyed out, which
+        // reads as a hang rather than the success it is.
+        showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
+        showLogSyncError('Logged. You can close this tab.');
       }
       return;
     }
     if (result.kind === 'blocked') {
       // Usually Retry before anything actually changed. Re-render
       // (the directory may have been learned) and stay up.
-      showLogSyncDialog(result.prompt, handlers!);
+      showLogSyncDialog(result.prompt, dialogHandlers);
       showLogSyncError('Still out of sync.');
       return;
     }
@@ -159,8 +176,5 @@ function initFromErrorUrl(): void {
     showLogSyncError(result.message);
   };
 
-  showLogSyncDialog(
-    { reason: payload.reason, directory: payload.directory },
-    { onRetry: () => void write(false), onOverwrite: () => void write(true) },
-  );
+  showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
 }
