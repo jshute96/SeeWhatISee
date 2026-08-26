@@ -352,6 +352,27 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
 }
 
 /**
+ * Read `log.json` from `directory`, or `null` if we can't.
+ *
+ * A missing file resolves non-ok rather than rejecting, which would
+ * otherwise read as a successful load of an empty log and quietly
+ * discard the user's history. `null` folds together denied (toggle
+ * off), missing, and failed — callers that care disambiguate
+ * themselves before concluding the file is gone: the reconcile
+ * consults the download record, the History page fetches the
+ * directory.
+ */
+export async function readLogText(directory: string): Promise<string | null> {
+  try {
+    const res = await fetch(pathToFileUrl(joinCapturePath(directory, LOG_FILE_NAME)));
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Absolute paths of the `history-*.json` history files, newest first,
  * found by reading the capture directory itself over `file://`. Needs
  * "Allow access to file URLs" — the same toggle reading the files

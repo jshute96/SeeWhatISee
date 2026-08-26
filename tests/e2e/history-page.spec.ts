@@ -1,9 +1,11 @@
 // Tests for the History page (`history.html` / `history.ts`) — the
-// table view over the `captureLog` array in `chrome.storage.local`.
+// table view over the capture log.
 //
-// The page reads storage directly (no SW round-trip), so the tests
-// seed synthetic records through the service worker rather than
-// running real captures. That keeps them fast and lets us cover the
+// The page opens from `log.json` when it can, but with no capture
+// directory to resolve (see the reset below) it falls back to reading
+// the `captureLog` cache in `chrome.storage.local` directly (no SW
+// round-trip) — so the tests seed synthetic records through the
+// service worker rather than running real captures. That keeps them fast and lets us cover the
 // mixed shapes a real log holds — screenshot-only, HTML+selection,
 // missing URL/title, long prompt — without orchestrating one capture
 // per case.
@@ -12,7 +14,9 @@
 // tests seed the log directly and never run a capture, so there is no
 // cached directory or download record for `peekCaptureDirectory()` to
 // resolve against —
-// every file-backed cell renders its no-directory fallback (bare
+// the page falls back from reading `log.json` to the seeded storage
+// cache (the disk-first open is covered by `log-history-files.spec.ts`),
+// and every file-backed cell renders its no-directory fallback (bare
 // filename / unlinked label), which is what these tests assert. For
 // the same reason `chrome.downloads` knows nothing about the seeded
 // filenames, so the `(deleted)` markers never fire and the file-access
@@ -29,6 +33,7 @@
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
+import { resetCaptureState } from '../fixtures/files';
 import { configureAndCapture, openDetailsFlow } from './details-helpers';
 
 interface SeededRecord {
@@ -80,6 +85,16 @@ async function openHistory(page: Page, extensionId: string): Promise<void> {
   // count line, which is written on every render.
   await expect(page.locator('#count')).not.toBeEmpty();
 }
+
+// A full reset, not just the log key: the worker's profile is shared
+// across spec files, and leftover downloads from one that captures
+// for real (`log-history-files.spec.ts`) would give
+// `peekCaptureDirectory()` a directory to resolve — flipping these
+// tests from the seeded cache they assert against to whatever
+// `log.json` is (or isn't) on disk.
+test.beforeEach(async ({ getServiceWorker }) => {
+  await resetCaptureState(await getServiceWorker());
+});
 
 test.afterEach(async ({ getServiceWorker }) => {
   const sw = await getServiceWorker();

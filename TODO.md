@@ -108,6 +108,9 @@
     rewritten: the capture's files are saved, and a prompt (on the
     Capture page, or on an error page for context-menu / hotkey
     captures) offers Retry / Overwrite / Cancel for that capture.
+  * With file reads on, the History page opens from `log.json`
+    itself, so a deleted, emptied, or hand-edited file shows as it is
+    on disk without waiting for the next capture.
 
 * **History page** — a searchable table of recent captures: date,
   screenshot thumbnail, links to the saved HTML / selection files,

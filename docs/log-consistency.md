@@ -528,7 +528,9 @@ In either mode:
 - Deleting `log.json` starts a clean log. The history files stay on
   disk and the History page still reads them, so the older history is
   still there — deleting the whole directory is what
-  clears everything.
+  clears everything. (With reads on, the History page shows the
+  deletion immediately: it opens from the file itself, not the
+  browser copy — see `docs/history-page.md` → Data source.)
 - Deleting `log.json` also drops whatever the browser copy still held
   that the file had. Correct: those records were in the file the user
   deleted. Captures that never made it into any file are the exception

@@ -194,7 +194,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
 | `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus older history files |
-| `src/history.ts` | Controller for `history.html`: reads `captureLog` + the on-disk history files, renders rows, search filter, row and toolbar actions |
+| `src/history.ts` | Controller for `history.html`: reads the on-disk log and history files (cache fallback), renders rows, search, row and toolbar actions |
 | `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
@@ -332,7 +332,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, how it's opened, and what it declines to load with file access off |
-| `tests/e2e/log-history-files.spec.ts` | E2E that a capture past the log cap writes a `history-*.json` file, and the History page loads it back |
+| `tests/e2e/log-history-files.spec.ts` | E2E for the flush to `history-*.json` and the History page reading the flushed file and `log.json` from disk |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |

@@ -255,7 +255,8 @@ Every record has `timestamp` and `url`, plus optional fields:
   `log.json` to appear), so `/see-what-i-see-watch` can be launched
   before any capture.
 - To browse the log, use the top-level **History** context-menu
-  entry — a table view over the same `captureLog` array. See
+  entry — a table view that opens from `log.json` itself when file
+  reads allow, with the `captureLog` cache as fallback. See
   [history-page.md](history-page.md).
 - There is no "clear history" menu entry. Clearing the cache alone
   would be undone by the next reconcile, and deleting the user's

@@ -1,8 +1,9 @@
 # History page
 
-A table view over the capture log — the same `captureLog`
-array in `chrome.storage.local` that backs the on-disk `log.json`
-log file (see [architecture.md](architecture.md) for the log itself).
+A table view over the capture log. Opens from `log.json` itself when
+file reads allow — the file is the authoritative log — falling back to
+the `captureLog` cache in `chrome.storage.local` (see
+[architecture.md](architecture.md) for the log itself).
 
 - Read-only with respect to the log. The one action it offers is
   [Restore from a row](#restore-from-a-row).
@@ -61,10 +62,31 @@ Finding that tab is less obvious than it looks:
 
 ## Data source
 
-- Renders entirely from `chrome.storage.local` plus
-  `chrome.downloads.search`. Both are available to any extension page,
-  so no service-worker round-trip is needed to draw the table. (The SW
-  is involved only in *opening* the page — see above.)
+- Renders from `log.json` (a `file://` fetch), `chrome.storage.local`,
+  and `chrome.downloads.search`. All are available to any extension
+  page, so no service-worker round-trip is needed to draw the table.
+  (The SW is involved only in *opening* the page — see above.)
+- **On open, the file wins.** With file reads on and a known capture
+  directory, the page reads `log.json` itself (`loadRecordsFromLog`):
+  - The cache can be behind the file — storage wiped by a reinstall or
+    cleared site data, the file edited or restored by hand — until the
+    next capture's reconcile repairs it. Opening the page is exactly
+    when fresh state is worth having.
+  - A read that fails usually means the file isn't there; that *is*
+    the log's state, so the page shows an empty log rather than ghost
+    rows for a log the user deleted.
+  - "Usually", so the failure is disambiguated with a `file://` fetch
+    of the *directory*: readable directory, unreadable `log.json` →
+    the file is gone; unreadable directory (stale cached directory,
+    passing failure) → the reads are what's broken, and the page falls
+    back to the cache instead of hiding real records.
+  - History files are discovered independently, so a deleted or
+    emptied `log.json` still offers **Load older captures**.
+  - The page never writes the repaired truth back to storage —
+    repairing the cache stays with the capture path's reconcile, so
+    there is no second writer to race it.
+- With file reads off, or no known directory, the cache is the best
+  available view and the page uses it as before.
 - Loaded as a **module** script (unlike `options.ts`, a classic
   script) so it can import the storage key from `capture/log-store.js`
   and the directory / path helpers from `capture/downloads.js` instead
@@ -75,13 +97,23 @@ Finding that tab is less obvious than it looks:
   *N/A* under Page while still holding an `imageUrl`.
 - Records come out oldest-first (append order) and are reversed for
   display — newest at the top.
-- A `chrome.storage.onChanged` listener re-reads the log, so a capture
-  taken while the tab sits open updates it in place. (A deleted
-  `log.json` shows up the same way, one capture later — that capture's
-  reconcile starts the log over and rewrites the key.)
-- The in-storage log is capped at 100 entries by `log-store.ts`, so the
-  live view never has to paginate. Older captures are loaded on demand
-  — see below.
+- A `chrome.storage.onChanged` listener re-reads the log **from
+  storage**, so a capture taken while the tab sits open updates it in
+  place.
+  - Storage is exact there, not a shortcut: the capture awaited its
+    `log.json` write to completion *before* setting the key
+    (`recordCapture`'s file-first ordering), so cache and file are
+    equal at that moment — re-reading the file would only race the
+    next capture. (Exception: an interrupted write still sets the key;
+    the next capture's reconcile rebuilds from the file.)
+  - An event also disowns any page-open disk read still in flight
+    (`recordsGeneration`) — the event's cache is the fresher state.
+  - With reads off, a deleted `log.json` still shows up this way one
+    capture later, when the reconcile starts the log over.
+- The log `log-store.ts` writes is capped at 100 entries, so the live
+  view never has to paginate (a hand-edited `log.json` can exceed the
+  cap; the page just renders it all). Older captures are loaded on
+  demand — see below.
 
 ### Older captures
 

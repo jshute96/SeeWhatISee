@@ -25,15 +25,13 @@
 import { type CaptureRecord } from './types.js';
 import {
   type LogFileRecordLookup,
-  LOG_FILE_NAME,
   getLogFileRecord,
-  joinCapturePath,
   logRecordSize,
   parentDirectory,
-  pathToFileUrl,
   peekCaptureDirectory,
   probeCaptureDirectory,
   probeLogFile,
+  readLogText,
 } from './downloads.js';
 
 /** Why we declined to write `log.json`. */
@@ -82,26 +80,6 @@ async function canReadFiles(): Promise<boolean> {
     return await chrome.extension.isAllowedFileSchemeAccess();
   } catch {
     return false;
-  }
-}
-
-/**
- * Read `log.json` from `directory`, or `null` if we can't.
- *
- * A missing file resolves non-ok rather than rejecting, which would
- * otherwise read as a successful load of an empty log and quietly
- * discard the user's history — the same trap `loadHistoryFiles` guards
- * against on the History page.
- */
-async function readLogFile(directory: string): Promise<string | null> {
-  try {
-    const res = await fetch(pathToFileUrl(joinCapturePath(directory, LOG_FILE_NAME)));
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    // Denied (toggle off) and missing are indistinguishable here; the
-    // caller disambiguates with the download record.
-    return null;
   }
 }
 
@@ -169,7 +147,7 @@ async function decideLogFileState(
     // read path for this capture and every one after it.
     if (!directory) directory = await probeCaptureDirectory();
     if (directory) {
-      const text = await readLogFile(directory);
+      const text = await readLogText(directory);
       // Whether its lines are all round-trippable is checked by the
       // caller, which already parses this text — keeping the parser
       // dependency pointing log-store → log-reconcile, not both ways.

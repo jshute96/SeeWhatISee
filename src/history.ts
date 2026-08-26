@@ -1,9 +1,11 @@
 // Controller for `src/history.html` — the Capture history page.
 //
-// A read-only table view over the same capture log that backs
-// `log.json`: the `captureLog` array in `chrome.storage.local`, newest
-// entry first. Nothing here writes to the log; the page is a way to
-// look back at what was captured and jump to the saved files.
+// A read-only table view over the capture log. On open it reads
+// `log.json` itself when file reads allow (the file is the
+// authoritative log — see `loadRecordsFromLog`), falling back to the
+// `captureLog` cache in `chrome.storage.local`; newest entry first.
+// Nothing here writes to the log; the page is a way to look back at
+// what was captured and jump to the saved files.
 //
 // The one action it offers is *Restore last capture*, on the single
 // row (if any) the restorable capture corresponds to — see
@@ -42,6 +44,7 @@ import {
   getHistoryFilePaths,
   joinCapturePath,
   pathToFileUrl,
+  readLogText,
 } from './capture/downloads.js';
 import {
   dedupeRecords,
@@ -1127,24 +1130,102 @@ loadOlderBtn.addEventListener('click', () => {
   void loadHistoryFilesInteractively();
 });
 
+/**
+ * Bumped by the `storage.onChanged` listener so the slower page-open
+ * disk read (`loadRecordsFromLog`) can tell a capture landed while it
+ * was in flight and discard its own result — the capture's cache is
+ * the fresher state (it equals the file the capture just wrote), and
+ * without the check the stale read would overwrite the new rows.
+ * Same idea as `historyFileGeneration` above.
+ */
+let recordsGeneration = 0;
+
+/** Install `list` (newest first) as the recent records and re-merge. */
+function setRecords(list: CaptureRecord[]): void {
+  records = list;
+  rebuildMerged();
+}
+
+/**
+ * Load the recent records from the `captureLog` storage cache.
+ *
+ * The live-update path: when `storage.onChanged` fires, the capture
+ * that fired it awaited its `log.json` write to completion *before*
+ * setting the key (see `recordCapture`'s "file first, storage second"
+ * ordering), so at that moment the cache equals the file and reading
+ * it is exact — re-reading the file would only race the next capture.
+ * (The one exception is an interrupted write, which still sets the
+ * key; the next capture's reconcile rebuilds from the file.)
+ * Also the page-open fallback when the file can't be consulted.
+ */
 async function loadRecords(): Promise<void> {
   const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
   const log = (data[LOG_STORAGE_KEY] as CaptureRecord[] | undefined) ?? [];
   // The stored log is oldest-first (append order); the page shows
   // newest at the top.
-  records = [...log].reverse();
-  rebuildMerged();
+  setRecords([...log].reverse());
+}
+
+/**
+ * Load the recent records the way the page *opens*: from `log.json`
+ * itself when it can be read. The file, not the storage cache, is the
+ * authoritative log — the cache can be behind it (storage wiped by a
+ * reinstall, the file edited or deleted by hand) until the next
+ * capture's reconcile repairs it, and opening this page is exactly
+ * when fresh state is worth having.
+ *
+ * With reads available and a known directory, whatever the read finds
+ * is the answer: text (even empty) renders as the log. A failed fetch
+ * *usually* means the file isn't there — which is the log's state, so
+ * it renders as empty rather than showing cached rows for a log the
+ * user deleted — but not always (a stale cached directory, a passing
+ * I/O failure). The same `file://` fetch against the *directory*
+ * disambiguates: a readable directory with an unreadable `log.json`
+ * means the file is gone, while an unreadable directory means our
+ * reads are what's broken, so fall back to the cache rather than hide
+ * real records. History files are discovered independently
+ * (`loadHistoryFileList`), so a deleted or emptied `log.json` still
+ * offers the older captures for loading.
+ *
+ * The page only displays — repairing the cache stays with the capture
+ * path's reconcile, so there is no writer here to race it.
+ */
+async function loadRecordsFromLog(): Promise<void> {
+  if (fileAccessBlocked || captureDir === null) return loadRecords();
+  const generation = recordsGeneration;
+  const text = await readLogText(captureDir);
+  if (text === null) {
+    try {
+      // Only the fetch's success matters here; the list is discarded
+      // (`loadHistoryFileList` builds the one the page uses).
+      await listHistoryFiles(captureDir);
+    } catch {
+      console.info(
+        '[SeeWhatISee] log.json and its directory are unreadable; showing the cached log',
+      );
+      return loadRecords();
+    }
+  }
+  // A capture landed while we were reading: its storage update is the
+  // fresher state, so keep that instead of this now-stale read.
+  if (generation !== recordsGeneration) return;
+  // Same append order as the stored log; newest at the top.
+  setRecords(text === null ? [] : parseLogText(text).reverse());
 }
 
 searchInput.addEventListener('input', render);
 
 // Keep the page live: a capture taken while the History tab sits open
 // rewrites `captureLog`, and re-reading is cheap enough to just do it
-// wholesale. (A deleted `log.json` shows up here too, one capture
-// later — that capture's reconcile starts the log over and rewrites
-// the key.)
+// wholesale. Storage, not the file, on purpose — see `loadRecords`.
+// (With reads off, a deleted `log.json` still shows up here one
+// capture later, when that capture's reconcile starts the log over
+// and rewrites the key.)
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !(LOG_STORAGE_KEY in changes)) return;
+  // Disown a page-open disk read still in flight — this event's cache
+  // is fresher. See `recordsGeneration`.
+  recordsGeneration += 1;
   // Something wiped the key entirely — `clearCaptureLog`, from tests
   // or the devtools console. Drop the history-file rows loaded into this
   // tab along with it, so the page reflects that instead of leaving
@@ -1269,12 +1350,11 @@ void (async () => {
 
   fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
   await Promise.all([
-    loadRecords(),
     loadFileExistence(),
-    // Chained, not parallel: the history-file listing reads the
-    // directory `loadCaptureDir` resolves. Inside the batch so the
-    // rows' first paint doesn't wait on it.
-    loadCaptureDir().then(loadHistoryFileList),
+    // Chained, not parallel: both the record load (reading `log.json`
+    // itself when it can) and the history-file listing need the
+    // directory `loadCaptureDir` resolves first.
+    loadCaptureDir().then(() => Promise.all([loadRecordsFromLog(), loadHistoryFileList()])),
   ]);
   firstRenderDone = true;
   render();
