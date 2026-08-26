@@ -108,8 +108,9 @@ Finding that tab is less obvious than it looks:
     `LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1` to `LOG_MAX_ENTRIES`
     depending on where the flush cycle is, so any single number would
     be wrong half the time.
-  - The text next to it is failure-only ("Could not read the history
-    files."), in error red and `role="status"` so it doesn't read as
+  - The text next to it is failure-only ("Could not read N history
+    files.", plus a pointer at the file-access banner when that's the
+    cause), in error red and `role="status"` so it doesn't read as
     more grey metadata next to the capture count.
   - Opt-in rather than automatic: reading them is a `file://` fetch,
     which is gated by the same **Allow access to file URLs** toggle as
@@ -213,12 +214,12 @@ Finding that tab is less obvious than it looks:
   - A read still in flight when that happens is disowned via a
     generation counter — merging its results afterwards would put the
     cleared rows straight back on screen.
-- Not covered by the e2e tests: the page's own tests seed the log
-  directly and never run a capture, so there is no capture directory
-  to list — and the harness has file access off, which hides the
-  control anyway. The write side is covered by
-  `log-history-files.spec.ts`; the load side is covered by the
-  listing-parser unit tests (`list-history-files.test.mjs`), not e2e.
+- Not covered by the page's own e2e tests: they seed the log directly
+  and never run a capture, so there is no capture directory to list
+  and no download records to fall back on — both discovery routes come
+  up empty. `log-history-files.spec.ts` (which does capture) covers
+  both sides for real: the flush writing the file, and the button
+  loading it back through the directory listing.
 
 ## Layout
 
@@ -473,9 +474,8 @@ for two of the three:
   `.catch()` really does handle; an uncaught rejection in an extension
   page reaches the Errors list just the same.
 
-So for the first two the only remedy is not to start the load.
-
-So with the toggle off:
+For the first two the only remedy is not to start the load. So with
+the toggle off:
 
 - **Thumbnails** skip `img.src` entirely and go straight to the
   filename fallback. This is the bulk of the noise — one refusal per

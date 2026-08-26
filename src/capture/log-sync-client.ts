@@ -9,7 +9,7 @@
 
 import { type LogSyncBlockedReason } from './log-reconcile.js';
 import { type CaptureRecord } from './types.js';
-import { LOG_FILE_NAME } from './downloads.js';
+import { LOG_FILE_NAME, joinCapturePath } from './downloads.js';
 
 /** The state the prompt renders from. */
 export interface LogSyncPrompt {
@@ -77,7 +77,7 @@ export function fileAccessUrl(): string {
  * the bare filename when the capture directory isn't known.
  */
 export function logSyncPathText(directory?: string): string {
-  return directory ? `${directory}/${LOG_FILE_NAME}` : LOG_FILE_NAME;
+  return directory ? joinCapturePath(directory, LOG_FILE_NAME) : LOG_FILE_NAME;
 }
 
 /**

@@ -239,7 +239,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again, probing for them, and waiting out Chrome's stale-`exists` re-check |
+| `src/capture/downloads.ts` | Every write that lands a capture file on disk, plus the helpers for finding those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
@@ -332,7 +332,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, how it's opened, and what it declines to load with file access off |
-| `tests/e2e/log-history-files.spec.ts` | E2E that a capture past the log cap writes the older half to a `history-*.json` file |
+| `tests/e2e/log-history-files.spec.ts` | E2E that a capture past the log cap writes a `history-*.json` file, and the History page loads it back |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
 | `tests/e2e/image-size-pill.spec.ts` | E2E for the Capture-page Image-size pill (`#image-size-badge`) — text vs. saved dims/bytes, sticky / flipped format labels, live crop-drag dims, stability across a View-cropped swap |
@@ -374,6 +374,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback, probe last resort |
+| `tests/unit/history-file-paths.test.mjs` | Unit tests for `getHistoryFilePaths` — the download-record index of `history-*.json` files |
 | `tests/unit/list-history-files.test.mjs` | Unit tests for `listHistoryFiles` — parsing Chrome's `file://` directory listing for `history-*.json` names |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the stale-`exists` re-check, and the Retry / Overwrite flush |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, and reading them back |

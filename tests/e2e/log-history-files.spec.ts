@@ -7,7 +7,9 @@
 // only a real browser can show is that the flush actually reaches disk
 // through `chrome.downloads` as a second file alongside `log.json` —
 // so this seeds a full log, runs one genuine capture, and reads both
-// files back off the filesystem.
+// files back off the filesystem. A second test closes the loop from
+// the other side: the History page's *Load older captures* finds and
+// reads the same file back through the `file://` directory listing.
 //
 // The seeded log is written to **both** `chrome.storage.local` and
 // `log.json` on disk (`seedCaptureLog`). Storage alone would be
@@ -16,7 +18,12 @@
 
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
-import { waitForDownloadPath, type CaptureResult, seedCaptureLog } from '../fixtures/files';
+import {
+  waitForDownloadPath,
+  type CaptureResult,
+  seedCaptureLog,
+  resetCaptureState,
+} from '../fixtures/files';
 // Straight from the source, so lowering the cap changes what this test
 // seeds instead of failing it in a way that reads as a product bug.
 import { LOG_HISTORY_BATCH, LOG_MAX_ENTRIES } from '../../src/capture/log-store';
@@ -98,5 +105,67 @@ test('a capture past the cap flushes the oldest entries to a history file', asyn
 
   await page.close();
   // Leave a clean log behind: storage persists across tests in a worker.
+  await sw.evaluate(() => chrome.storage.local.remove('captureLog'));
+});
+
+// The read side of the same story: the file the flush wrote comes back
+// through the History page. `listHistoryFiles` finds it by listing the
+// capture directory over `file://` (the harness grants file access to
+// a `--load-extension` build), so this is the one place *Load older
+// captures* is exercised with something real to load.
+test('the History page loads the flushed captures back from disk', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  // Clean slate: the test above leaves its own history file in this
+  // worker's profile, which would make the file count here — and the
+  // flush's collision-guarded filename — nondeterministic.
+  await resetCaptureState(sw);
+  await seedCaptureLog(sw, seedRecords(LOG_MAX_ENTRIES));
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+  const result = await sw.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+  // The flush is awaited to completion before `log.json` is written
+  // (a record must not leave the log before the history file carrying
+  // it is on disk), so the log landing means the history file is
+  // there for the directory listing to find.
+  await waitForDownloadPath(sw, result.logDownloadId);
+  await page.close();
+
+  const history = await extensionContext.newPage();
+  await history.goto(`chrome-extension://${extensionId}/history.html`);
+  await expect(history.locator('#count')).not.toBeEmpty();
+
+  // The log kept the tail; the button offers the flushed head, with
+  // the file count in its tooltip.
+  await expect(history.locator('#rows tr'))
+    .toHaveCount(LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1);
+  const loadOlder = history.locator('#load-older');
+  await expect(loadOlder).toBeVisible();
+  await expect(loadOlder).toBeEnabled();
+  await expect(loadOlder).toHaveAttribute('title', /\(1 file\)/);
+
+  await loadOlder.click();
+
+  // Every seeded capture is back on screen — read from the real file
+  // on disk, newest-first, with the oldest seed closing the table.
+  const rows = history.locator('#rows tr');
+  await expect(rows).toHaveCount(LOG_MAX_ENTRIES + 1);
+  await expect(rows.last()).toContainText(`${SEED_TITLE} 0`);
+  // Nothing left to offer and nothing failed, so the control leaves.
+  await expect(history.locator('#older')).toBeHidden();
+  await expect(history.locator('#older-note')).toBeEmpty();
+
+  await history.close();
   await sw.evaluate(() => chrome.storage.local.remove('captureLog'));
 });

@@ -483,14 +483,18 @@ def history_files(source_dir, log_path):
     Each history file is named for the *newest* record it holds, using
     the same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture
     filenames, so the names are fixed-width and sorting them is
-    chronological.
+    chronological. Only stamp-shaped names (digits and hyphens) count:
+    a word-y `history-notes.json` is someone else's file, and would
+    land at an arbitrary spot in the "chronological" order. The
+    extension's directory listing applies the same rule
+    (`HISTORY_FILE_TOKEN`); keep the two in step.
     """
     try:
         names = os.listdir(source_dir)
     except OSError:
         names = []
     older = [name for name in names
-             if name.startswith("history-") and name.endswith(".json")]
+             if re.fullmatch(r"history-[\d-]*\.json", name)]
     older.sort()
     files = [os.path.join(source_dir, name) for name in older]
     if os.path.isfile(log_path):

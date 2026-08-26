@@ -22,7 +22,9 @@ import { type CaptureRecord } from '../capture/types.js';
  */
 export async function refreshLogFileExistence(): Promise<void> {
   try {
-    await getLogFileRecord();
+    // Only the search's side effect is wanted here; release the
+    // lookup's `onChanged` watch instead of leaving it registered.
+    (await getLogFileRecord()).release();
   } catch (err) {
     console.info('[SeeWhatISee] log.json existence re-check failed:', err);
   }

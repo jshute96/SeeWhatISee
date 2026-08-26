@@ -60,12 +60,18 @@ test('finds history files, ignores everything else, sorts newest first', async (
   assert.equal(fetchedUrl, `file://${DIR}`);
 });
 
-test('ignores names that merely start with a history-file name', async () => {
+test('ignores names that merely contain a history-file name', async () => {
   stubFetch(listingHtml([
     // An interrupted download Chrome left behind: listing the .json
     // it embeds would report a phantom file that never reads.
     row('history-20260101-120000-000.json.crdownload'),
     row('history-20260201-000000-000.json.bak'),
+    // A user's stray rename — same phantom-file problem from the
+    // front.
+    row('old-history-20260215-000000-000.json'),
+    // Right prefix but not a machine-generated stamp: someone else's
+    // file. The Python backend skips all of these by the same rule.
+    row('history-notes.json'),
     row('history-20260302-080910-123.json'),
   ]));
   assert.deepEqual(await listHistoryFiles(DIR), [

@@ -22,10 +22,10 @@
 // same reason: with no capture there is no directory for
 // `listHistoryFiles()` to read and no download record for the
 // `getHistoryFilePaths()` fallback, so both discovery routes come up
-// empty. The flushing itself is covered by
-// `log-history-files.spec.ts` and `tests/unit/log-history-files.test.mjs`. Its
-// *absence* — the control hidden, and the plain empty-log notice — is
-// covered below.
+// empty. Both the flushing and loading the flushed file back are
+// covered by `log-history-files.spec.ts` (which does run a capture)
+// and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
+// control hidden, and the plain empty-log notice — is covered below.
 
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -716,4 +716,6 @@ test('with file access off, nothing on the page starts a file:// load', async ({
   await expect(snapshotsBtn).toBeEnabled();
   await expect(historyPage.locator('#snapshots-dir-wrap'))
     .toHaveAttribute('title', /Allow access to file URLs/);
+
+  await historyPage.close();
 });

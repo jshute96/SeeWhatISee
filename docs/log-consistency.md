@@ -282,12 +282,13 @@ we recorded should equal the size that copy would serialize to now:
 | complete, size differs | The **browser copy** drifted from what we wrote | **Don't write — prompt** |
 | no record at all | Chrome has forgotten, or never knew | Run the existence probe below |
 
-**Read that mismatch row carefully — both sides of it are ours.** The
-recorded size is what we wrote, and the browser copy is our own cache.
-Nothing here measures the file. So the mismatch means the *browser
-copy* changed unexpectedly — storage wiped by a reinstall or by
-clearing site data, or a write interrupted half-way — and never that
-the file changed.
+**Read that mismatch row carefully — both sides of it are ours.**
+
+- The recorded size is what we wrote, and the browser copy is our own
+  cache. Nothing here measures the file.
+- So the mismatch means the *browser copy* changed unexpectedly —
+  storage wiped by a reinstall or by clearing site data, or a write
+  interrupted half-way — and never that the file changed.
 
 Sizes are compared as UTF-8 bytes (`utf8Length`), because that's what
 lands on disk — a page title with an accent in it counts for more than
@@ -394,12 +395,14 @@ two surfaces can't drift apart.
   write reopens the dialog; any other failure reports in the error
   page's own message slot, not in the dialog.
 
-Reusing the failure surface is deliberate. The files did get written,
-but the capture the user asked for isn't in their log, which is the
-same outcome as a capture that failed outright — so it gets the same
-one place to look rather than a second one to learn. The error text is
-short (the `LogWriteBlockedError` message) because the dialog above it
-carries the detail.
+Reusing the failure surface is deliberate:
+
+- The files did get written, but the capture the user asked for isn't
+  in their log — the same outcome as a capture that failed outright,
+  so it gets the same one place to look rather than a second one to
+  learn.
+- The error text is short (the `LogWriteBlockedError` message) because
+  the dialog above it carries the detail.
 
 ## Supporting changes
 

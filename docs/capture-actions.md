@@ -376,15 +376,17 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
   - See [capture-page.md → Upload mode](capture-page.md#upload-mode)
     for the page-side wiring.
 
-This submenu used to end with a **Clear log history** entry. It was
-removed when `log.json` on disk became the authoritative capture log:
-clearing the browser's cached copy would simply be undone by the next
-capture, and deleting the user's files isn't something the extension
-does. Deleting `log.json` is what clears the log for now, and a real
-delete-the-files feature is still to come.
-`SeeWhatISee.clearCaptureLog()` remains on the devtools console
-object, and now empties the cached copy only. See
-[log-consistency.md](log-consistency.md).
+This submenu used to end with a **Clear log history** entry, removed
+when `log.json` on disk became the authoritative capture log:
+
+- Clearing the browser's cached copy would simply be undone by the
+  next capture, and deleting the user's files isn't something the
+  extension does.
+- Deleting `log.json` is what clears the log for now; a real
+  delete-the-files feature is still to come.
+- `SeeWhatISee.clearCaptureLog()` remains on the devtools console
+  object, and now empties the cached copy only. See
+  [log-consistency.md](log-consistency.md).
 
 ### Top-level item cap
 

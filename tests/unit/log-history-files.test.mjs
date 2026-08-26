@@ -26,9 +26,11 @@ let writes = [];
 /**
  * Stub the two APIs the log store touches, starting from a stored log
  * of `existing` records. Returns a handle for reading back what the
- * store did.
+ * store did. `historyFilesOnDisk` seeds absolute paths of
+ * `history-*.json` files that already have download records — what
+ * the flush's collision guard queries before naming a new one.
  */
-function stubChrome(existing = []) {
+function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   writes = [];
   const store = { captureLog: existing };
   let nextId = 1;
@@ -55,10 +57,25 @@ function stubChrome(existing = []) {
         writes.push({ filename, body });
         return nextId++;
       },
-      search: async () => {
-        // Whatever we last wrote *is* what's on disk, so the log and
-        // the file agree and the append proceeds. Before the first
-        // write, the seeded storage is what the file would hold.
+      search: async (query = {}) => {
+        // The history-file query (`getHistoryFilePaths`) gets the
+        // seeded on-disk files, run through the caller's own
+        // `filenameRegex` the way Chrome would apply it. The seeded
+        // paths are absolute, so the regex is exercised for real.
+        if (query.filenameRegex?.includes('history-')) {
+          const re = new RegExp(query.filenameRegex);
+          return historyFilesOnDisk.filter((f) => re.test(f)).map((filename, i) => ({
+            id: 100 + i,
+            filename,
+            byExtensionId: EXT_ID,
+            state: 'complete',
+            exists: true,
+          }));
+        }
+        // Every other query is the `log.json` lookup. Whatever we last
+        // wrote *is* what's on disk, so the log and the file agree and
+        // the append proceeds. Before the first write, the seeded
+        // storage is what the file would hold.
         const last = lastLogWrite();
         const body = last ? last.body : serializeLog(store.captureLog ?? []);
         const size = new TextEncoder().encode(body).length;
@@ -264,6 +281,26 @@ test('two batches ending on one timestamp get distinct history file names', asyn
   for (const name of names) {
     assert.match(name, /\/history-\d{8}-\d{6}-\d{3}\.json$/);
   }
+});
+
+test('a history file already on disk pushes the flush to a fresh name', async () => {
+  // First run, nothing on disk: learn the name this batch naturally
+  // flushes to. (Computed rather than hardcoded because the name is a
+  // *local-time* stamp of the batch's newest record.)
+  const seed = () => Array.from({ length: 100 }, (_, i) => rec(i + 1));
+  stubChrome(seed());
+  await recordCapture(rec(101));
+  const taken = historyFileWrites()[0].filename.replace(/^.*\//, '');
+
+  // Second run, same batch — but that name is already on disk from an
+  // earlier install/session. `conflictAction: 'overwrite'` means
+  // reusing it would destroy the old file, so the collision guard's
+  // `getHistoryFilePaths` seeding must steer the flush past it.
+  stubChrome(seed(), { historyFilesOnDisk: [`/d/SeeWhatISee/${taken}`] });
+  await recordCapture(rec(101));
+  const name = historyFileWrites()[0].filename.replace(/^.*\//, '');
+  assert.notEqual(name, taken);
+  assert.match(name, /^history-\d{8}-\d{6}-\d{3}\.json$/);
 });
 
 // `dedupeRecords` is display-side: it collapses one record that

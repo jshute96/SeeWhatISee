@@ -234,7 +234,7 @@ function flashFileAccessHint(): void {
 //
 // A button rather than an `<a href>` (which the row file links show
 // works fine for `file://` from this page) because the destination
-// isn't known until the downloads search resolves, and an anchor has
+// isn't known until the directory lookup resolves, and an anchor has
 // no disabled state to hold in the meantime.
 snapshotsDirBtn.addEventListener('click', () => {
   if (captureDir === null) return;
@@ -317,8 +317,8 @@ let sawRestorablePush = false;
 let restoreInFlight = false;
 /**
  * Absolute path of `<downloads>/SeeWhatISee/`, or `null` when it
- * couldn't be resolved (no capture has been written yet, so there is
- * no `log.json` download record to derive it from). With `null` we
+ * couldn't be resolved — nothing cached in storage and no download
+ * record of anything we wrote to derive it from. With `null` we
  * still render every row, just without thumbnails or file links.
  */
 let captureDir: string | null = null;
@@ -867,7 +867,7 @@ function renderOlder(): void {
   // "88 captures" it read as a contradiction.
   loadOlderBtn.title = remaining > 0
     ? 'Recent captures from log.json are shown by default.\n'
-      + 'Older captures are stored in history*.json '
+      + 'Older captures are stored in history-*.json '
       + `(${remaining} ${remaining === 1 ? 'file' : 'files'}).\n`
       + 'Click to load the history.'
     : '';

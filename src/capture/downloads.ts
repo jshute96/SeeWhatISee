@@ -396,14 +396,24 @@ export async function listHistoryFiles(directory: string): Promise<string[]> {
 }
 
 /**
- * Loose token pattern for history-file names in the listing. The
- * lookahead rejects names that merely *start* with one —
- * `….json.crdownload` (an interrupted download Chrome left behind),
- * `….json.bak` — which would otherwise list a file that isn't really
- * there and report a read failure that never heals.
+ * Token pattern for history-file names in the listing — loose about
+ * the surrounding markup, strict about the name itself:
+ *
+ * - The middle takes digits and hyphens only, the shape of the
+ *   machine-generated stamps we write. A word-y `history-notes.json`
+ *   is someone else's file — and the chronological-by-name sort below
+ *   only holds for fixed-width digit stamps anyway.
+ * - The lookbehind and lookahead reject names that merely *contain*
+ *   one — `old-history-….json` (a user's stray rename),
+ *   `….json.crdownload` (an interrupted download Chrome left behind)
+ *   — which would otherwise list a file that isn't really there and
+ *   report a read failure that never heals.
+ *
+ * `SeeWhatISee.py`'s `history_files()` applies the same name rule to
+ * the same directory; keep the two in step.
  */
 const HISTORY_FILE_TOKEN = new RegExp(
-  `${HISTORY_FILE_PREFIX}[\\w-]*\\.json(?![\\w.])`,
+  `(?<![\\w-])${HISTORY_FILE_PREFIX}[\\d-]*\\.json(?![\\w.])`,
   'g',
 );
 
@@ -411,8 +421,7 @@ const HISTORY_FILE_TOKEN = new RegExp(
  * Absolute paths of the `history-*.json` files according to
  * `chrome.downloads` records, newest first.
  *
- * Two callers, both cases where the directory listing above is
- * unavailable because it needs file-read access:
+ * Two callers, neither of which uses the directory listing above:
  *
  * - The flush's filename-collision guard (`log-store.ts`), which runs
  *   during a capture with or without file reads and is best-effort
