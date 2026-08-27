@@ -235,6 +235,7 @@ test('shows the empty state with no log, and picks up a later capture', async ({
 test('the Options page History button opens the History page, once', async ({
   extensionContext,
   extensionId,
+  getServiceWorker,
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
@@ -249,6 +250,22 @@ test('the Options page History button opens the History page, once', async ({
   });
   await page.locator('#history-btn').click();
   const historyPage = await opened;
+
+  // Reuse is keyed on the tab id the *page* registers with the SW on
+  // load (`historyPageReady`), so wait for that to land. The `page`
+  // event above only says the tab exists — clicking again before the
+  // registration arrives finds no stored id and legitimately opens a
+  // second tab, which is a race in the test rather than in the reuse
+  // path it means to check.
+  await historyPage.waitForLoadState('domcontentloaded');
+  const sw = await getServiceWorker();
+  await expect.poll(
+    () => sw.evaluate(async () => {
+      const stored = await chrome.storage.session.get('historyTabId');
+      return typeof stored.historyTabId === 'number';
+    }),
+    { timeout: 10000 },
+  ).toBe(true);
 
   // A second click focuses the tab that's already open rather than
   // stacking another one.

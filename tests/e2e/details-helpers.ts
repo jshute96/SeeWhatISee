@@ -160,10 +160,38 @@ export async function openDetailsFlow(
   await capturePage.waitForLoadState('domcontentloaded');
   // Wait for the screenshot data URL to load + the overlay to size
   // itself, so any subsequent highlight clicks land on a sized target.
-  await capturePage.waitForFunction(() => {
-    const img = document.getElementById('preview') as HTMLImageElement | null;
-    return !!(img && img.complete && img.naturalWidth > 0 && img.clientWidth > 0);
-  });
+  //
+  // The failure states are watched for too, because none of them can
+  // ever satisfy the ready condition: a capture that errored has an
+  // empty `src` (so `naturalWidth` stays 0) and its preview is hidden
+  // (so `clientWidth` does too). Waiting them out spends the whole
+  // test timeout and then reports "Target page has been closed" from
+  // teardown — the one message that says nothing about what went
+  // wrong. Naming them turns that into an immediate, readable
+  // failure.
+  const state = await capturePage
+    .waitForFunction(() => {
+      const failPane = document.getElementById('capture-failed-error');
+      if (failPane && !failPane.hidden) {
+        const msg = document.getElementById('capture-failed-message')?.textContent ?? '';
+        return `capture failed: ${msg.trim().slice(0, 200)}`;
+      }
+      const missing = document.getElementById('missing-session-error');
+      if (missing && !missing.hidden) return 'no session (the SW lost it)';
+      const row = document.getElementById('row-screenshot');
+      if (row?.classList.contains('has-error')) {
+        const why = document.getElementById('error-screenshot')?.getAttribute('title') ?? '';
+        return `screenshot error: ${why}`;
+      }
+      const img = document.getElementById('preview') as HTMLImageElement | null;
+      return img && img.complete && img.naturalWidth > 0 && img.clientWidth > 0
+        ? 'ready'
+        : null;
+    })
+    .then((handle) => handle.jsonValue());
+  if (state !== 'ready') {
+    throw new Error(`openDetailsFlow: the Capture page never showed an image — ${state}`);
+  }
 
   return { openerPage, capturePage };
 }

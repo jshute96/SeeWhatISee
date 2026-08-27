@@ -279,6 +279,35 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   extensionHooks: [
     async ({ getServiceWorker, extensionContext }, use) => {
       const sw = await getServiceWorker();
+      // Make sure the SW has a *current window* before the test runs.
+      //
+      // Several tests call `chrome.windows.getCurrent()` or
+      // `chrome.tabs.create()` with no window of their own — they
+      // rely on whatever the previous test left behind. Chrome
+      // resolves "current" to the last-focused window, and that can
+      // be gone (or never focused) after a spec closes its pages,
+      // which rejects with "No current window". The failure then
+      // lands in whichever spec happens to run next rather than the
+      // one that caused it.
+      //
+      // Repair rather than assert: focus a window that exists, or
+      // open one if none does. Logged so a run that needs it says so
+      // — silence here means the condition never arose.
+      const repaired = await sw.evaluate(async () => {
+        try {
+          await chrome.windows.getCurrent();
+          return null;
+        } catch {
+          const all = await chrome.windows.getAll({});
+          if (all.length > 0 && all[0].id !== undefined) {
+            await chrome.windows.update(all[0].id, { focused: true });
+            return `focused existing window (${all.length} open)`;
+          }
+          await chrome.windows.create({ url: 'about:blank' });
+          return 'created a window (none were open)';
+        }
+      });
+      if (repaired) console.log(`[window-guard] ${repaired}`);
       await installCaptureQuotaTracker(sw);
       await waitForCaptureQuota(sw);
 
