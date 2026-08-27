@@ -462,6 +462,14 @@ const RESTORE_TOOLTIP = 'Restore last capture — re-open this capture\'s page w
   + 'the prompt, drawings and checkbox state it was closed with';
 
 /**
+ * Reopen's tooltip. Says *another* capture, since that is the one
+ * thing a user could get wrong here — this adds a row rather than
+ * editing the one they clicked.
+ */
+const REOPEN_TOOLTIP =
+  'Reopen another capture, starting from this saved image, contents, and prompt.';
+
+/**
  * Send the restore click to the SW, which reads the `lastCapture` slot
  * and opens the Capture page (see `background/history-page.ts`).
  *
@@ -511,9 +519,9 @@ function restoreFromRow(btn: HTMLButtonElement): void {
  * carry a timestamp that `Date` can't parse; we fall back to showing
  * the raw string rather than rendering "Invalid Date".
  *
- * The Restore button (on the one restorable row) hangs below the
- * timestamp, on both the parsed and unparseable paths — the row is
- * restorable either way.
+ * The row's Restore / Reopen button hangs below the timestamp, on
+ * both the parsed and unparseable paths — the row is actionable
+ * either way.
  */
 function dateCell(r: CaptureRecord): HTMLElement {
   const td = document.createElement('td');
@@ -521,7 +529,7 @@ function dateCell(r: CaptureRecord): HTMLElement {
   const d = new Date(r.timestamp);
   if (Number.isNaN(d.getTime())) {
     td.textContent = r.timestamp;
-    appendRestoreButton(td, r);
+    appendRowAction(td, r);
     return td;
   }
   td.append(d.toLocaleDateString());
@@ -530,22 +538,82 @@ function dateCell(r: CaptureRecord): HTMLElement {
   time.className = 'time';
   time.textContent = d.toLocaleTimeString();
   td.append(time);
-  appendRestoreButton(td, r);
+  appendRowAction(td, r);
   return td;
 }
 
-/** Add the Restore button to `td` if `r` is the restorable row. */
-function appendRestoreButton(td: HTMLElement, r: CaptureRecord): void {
-  if (!isRestorable(r)) return;
+/**
+ * Send the reopen click to the SW, which reads this record's files
+ * back off disk and opens a Capture page seeded from them (see
+ * `background/capture-details.ts` → `reopenCapture`).
+ *
+ * Unlike Restore, this button stays on its row: reopening consumes
+ * nothing, and the same record can be reopened again. So the button
+ * comes back on both outcomes, and only a failure leaves a reason in
+ * the tooltip.
+ */
+function reopenFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
+  // Every artifact is read back over `file://`, so with the toggle off
+  // a reopen can only produce a Capture page with nothing in it — and
+  // it would navigate the user away from the banner that explains why.
+  // Same guard the Snapshots-directory button uses.
+  if (fileAccessBlocked) {
+    flashFileAccessHint();
+    return;
+  }
+  btn.disabled = true;
+  btn.title = REOPEN_TOOLTIP;
+  void (async () => {
+    try {
+      const resp = (await chrome.runtime.sendMessage({
+        action: 'reopenCaptureFromHistory',
+        record: r,
+      })) as { ok?: boolean; error?: string } | undefined;
+      if (!resp?.ok) throw new Error(resp?.error ?? 'The reopen did not go through.');
+    } catch (err) {
+      // Expected-and-handled: the reason goes in the tooltip. Not
+      // `console.error` — Chrome promotes that onto the Errors page.
+      console.info('[SeeWhatISee] history: reopen failed:', err);
+      btn.title = `Could not reopen this capture: ${
+        err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      btn.disabled = false;
+    }
+  })();
+}
+
+/**
+ * Add the row's button: Restore on the one restorable row, Reopen on
+ * every other.
+ *
+ * One button, not two. Restore is strictly the better of the pair
+ * where it applies — it brings back the live session, drawings still
+ * undoable — so offering both on that row would only ask the user to
+ * tell apart two things that do nearly the same thing. The Date column
+ * is 100px wide besides.
+ *
+ * A record with no artifacts left to read still gets the button: what
+ * it can't load, it degrades on (see `reopenCapture`), and the prompt
+ * and URL are often the point.
+ */
+function appendRowAction(td: HTMLElement, r: CaptureRecord): void {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'btn restore-btn';
-  btn.textContent = 'Restore';
-  // A re-render mid-restore rebuilds this element; carry the in-flight
-  // disable across it rather than handing back a live button.
-  btn.disabled = restoreInFlight;
-  btn.title = RESTORE_TOOLTIP;
-  btn.addEventListener('click', () => restoreFromRow(btn));
+  if (isRestorable(r)) {
+    btn.className = 'btn restore-btn';
+    btn.textContent = 'Restore';
+    // A re-render mid-restore rebuilds this element; carry the
+    // in-flight disable across it rather than handing back a live
+    // button.
+    btn.disabled = restoreInFlight;
+    btn.title = RESTORE_TOOLTIP;
+    btn.addEventListener('click', () => restoreFromRow(btn));
+  } else {
+    btn.className = 'btn reopen-btn';
+    btn.textContent = 'Reopen';
+    btn.title = REOPEN_TOOLTIP;
+    btn.addEventListener('click', () => reopenFromRow(btn, r));
+  }
   td.append(btn);
 }
 

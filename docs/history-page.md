@@ -5,8 +5,9 @@ file reads allow — the file is the authoritative log — falling back to
 the `captureLog` cache in `chrome.storage.local` (see
 [architecture.md](architecture.md) for the log itself).
 
-- Read-only with respect to the log. The one action it offers is
-  [Restore from a row](#restore-from-a-row).
+- Read-only with respect to the log. Its row actions —
+  [Restore](#restore-from-a-row) and [Reopen](#reopen-from-a-row) —
+  open a Capture page; neither edits a record.
 
 - Files: `src/history.html` + `src/history.ts`.
 
@@ -316,7 +317,7 @@ Finding that tab is less obvious than it looks:
 
 | Column | Contents |
 |--------|----------|
-| Date | Local date over local time, from the record's UTC `timestamp`; plus the Restore button on the one restorable row |
+| Date | Local date over local time, from the record's UTC `timestamp`; plus the row's Restore / Reopen button |
 | Screenshot | Browser-scaled thumbnail of the saved PNG, linked to the full-size file |
 | Files | One link per saved HTML / selection artifact; the selection link names its format |
 | Page | Captured tab's title over its URL (the URL links back to the live page) |
@@ -420,6 +421,124 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   `runWithErrorReporting` (the toolbar-icon error surface the menu
   entry uses). The user is looking at the History page; that is where
   the answer belongs.
+
+## Reopen from a row
+
+**Reopen** sits where Restore sits, on every row that isn't the
+restorable one. It starts a new capture from what the old one left on
+disk. `reopenCapture` in `background/capture-details.ts` owns it.
+
+### How it differs from Restore
+
+- Restore replays a live session — its undo stack, its unbaked edits,
+  its unsaved prompt. Reopen has no session to replay: all that
+  survives is what the capture *saved*.
+- So the screenshot arrives with its highlights, redactions and crop
+  already part of the pixels. The page can draw more on top; it can't
+  take those apart.
+- Undo therefore starts disabled, and **Reset returns to the loaded
+  image**, not to a blank one. Both fall out of the existing code —
+  the edit stack starts empty, and Reset restores
+  `screenshotDataUrl`, which is what was loaded.
+- One button per row, not two. Restore is strictly better where it
+  applies, and the Date column is 100px wide.
+- The tooltip's whole job is to say this, since the two buttons sit in
+  the same place and read alike.
+
+### It is a new capture
+
+Not an edit of the old record. The original record and its files are
+never touched.
+
+- **Its own `timestamp`**, read off the clock like any capture.
+  Carrying the original's would put `log.json` wildly out of order,
+  and — since the stamp is what addresses a record — would need a
+  uniqueness search across every history file to avoid colliding with
+  the record it came from.
+- **Its own artifact filenames**, from that new stamp, so two reopens
+  of one record can't write the same file.
+- The one economy: an artifact the user hasn't edited still points at
+  the file it was loaded from, so reopening just to add a prompt
+  doesn't duplicate a screenshot on disk.
+  - `session.reopened` holds the loaded filename plus the revision it
+    was loaded at. While the revision matches, saves write that file.
+  - The first edit moves the revision — both counters are monotonic,
+    so it never moves back — and saves switch to `bases.<x>`, the new
+    stamp's name.
+  - `capture.<x>Filename` therefore *starts* at the loaded name;
+    `rebumpFilenameIfLocked` swaps in `bases.<x>` when the revision
+    moves. Starting it at the new name instead would never reach the
+    loaded one, because the rebump early-returns while nothing has
+    changed.
+  - A save that wrote a still-reopened file takes no `saved.<x>` lock:
+    that file isn't from the `bases.<x>` series, and locking it would
+    put the first edit at `<newBase>-1` with no `<newBase>` beside it.
+
+### What carries across
+
+- `prompt`, `url`, `title`, `imageUrl` from the record.
+- **The screenshot's baked-in flags.** `hasHighlights` /
+  `hasRedactions` / `isCropped` describe pixels, and those pixels
+  arrive already baked, so the flags ride on
+  `capture.bakedScreenshotFlags` rather than being derived from an
+  edit stack that no longer exists.
+  - The page ORs them into what it reports at save time, and they are
+    never cleared within the session — not even by Reset, which goes
+    back to the loaded image with those same edits still in it.
+  - Reported whenever the screenshot is being saved, not only when
+    there is something new to bake: a reopen that draws nothing still
+    has to say what the image carries.
+- **`isEdited` on the HTML / selection**, because the body on disk
+  *is* the edited body. Dropping it would relabel the user's edit as a
+  raw scrape.
+- The Save checkboxes come from the record, not from the user's stored
+  Capture-page defaults: this is a reopen of one specific capture, so
+  what that capture saved is the better answer.
+- Only the selection format the original chose exists on disk. The
+  other two rows stay empty, which is what greys them out.
+
+### Degradations
+
+- Needs **Allow access to file URLs** — every artifact is read back
+  over `file://` (SW-side, so the page doesn't ship megabytes over the
+  message channel).
+  - With the toggle off the button doesn't fire at all: it flashes the
+    file-access banner, the same as the Snapshots-directory button.
+    Opening a Capture page with nothing in it would be worse, and it
+    would navigate away from the banner that explains why.
+- Failures are **per artifact**, so a reopen degrades one row at a
+  time rather than failing outright.
+  - A reopen is never a *total* capture failure, even with every file
+    unreadable: the prompt, URL and title come from the log record,
+    not from disk, and those are often the point. The per-row error
+    icons say what couldn't be read. (A failed capture is different —
+    there is genuinely nothing to render.)
+- Nothing-to-read and can't-read are different channels. Only the
+  second is an error.
+  - A record that saved no HTML / no screenshot quiet-disables that
+    row (`htmlUnavailable` / `screenshotUnavailable`).
+  - A capture writes exactly one selection format, so the other two
+    rows are quiet-disabled too (`selectionFormatsUnavailable`). They
+    aren't empty selections — they were never captured, and the
+    per-format "Selection has no text content" icon would be a claim
+    about a selection nobody made.
+  - A file that should be there and isn't gets the error icon and the
+    filename that failed.
+- A file readable but not decodable as an image counts as unreadable:
+  otherwise the page would show an empty preview with Save screenshot
+  still checked.
+- Artifact filenames are checked before use. A hand-edited record can
+  name anything; a path separator, or `log.json` itself, is refused
+  rather than followed — `fetch` would resolve `../` outside the
+  capture directory, and a save writes with `conflictAction:
+  'overwrite'`.
+- The `lastCapture` slot survives a reopen. A capture replaces the
+  last capture by definition and a restore consumes it, but a reopen
+  does neither — and the slot holds the only unsaved state in the
+  product. It is spent only if the reopened session can't fit in the
+  session-storage quota without it.
+- No capture directory at all is the one hard failure: the message
+  goes to the button's tooltip, like Restore's.
 
 ## File links and `file://`
 

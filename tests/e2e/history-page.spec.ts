@@ -31,10 +31,16 @@
 // and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
 // control hidden, and the plain empty-log notice — is covered below.
 
+import { stat } from 'node:fs/promises';
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { resetCaptureState } from '../fixtures/files';
-import { configureAndCapture, openDetailsFlow } from './details-helpers';
+import {
+  configureAndCapture,
+  dragRect,
+  openDetailsFlow,
+  seedSelection,
+} from './details-helpers';
 
 interface SeededRecord {
   timestamp: string;
@@ -733,4 +739,271 @@ test('with file access off, nothing on the page starts a file:// load', async ({
     .toHaveAttribute('title', /Allow access to file URLs/);
 
   await historyPage.close();
+});
+
+
+// ───────────────────────── Reopen from a row ─────────────────────────
+//
+// Reopen is the sibling of Restore for every row that isn't the
+// restorable one: it reads the record's saved files back off disk and
+// opens a Capture page seeded from them. Needs a *real* capture so
+// there are real files in a real capture directory to read back.
+test('Reopen re-opens an older capture from its saved files', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'reopen me later',
+  });
+
+  const historyPage = await extensionContext.newPage();
+  await historyPage.goto(`chrome-extension://${extensionId}/history.html`);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(1);
+
+  // That row is the restorable one, so it carries Restore, not Reopen —
+  // the two are mutually exclusive per row.
+  await expect(rows.nth(0).locator('.date-cell .restore-btn')).toHaveText('Restore');
+  await expect(historyPage.locator('.reopen-btn')).toHaveCount(0);
+
+  // Consume the slot, which is what turns that row into an ordinary
+  // one. Restoring and closing is the honest way to get there: the row
+  // keeps its real files, and only the `lastCapture` slot moves.
+  const sw = await getServiceWorker();
+  await sw.evaluate(() => chrome.storage.session.remove('lastCapture'));
+  await expect(historyPage.locator('.restore-btn')).toHaveCount(0);
+  await expect(rows.nth(0).locator('.date-cell .reopen-btn')).toHaveText('Reopen');
+
+  // The record we're about to reopen, so we can compare against it.
+  const before = await sw.evaluate(async () => {
+    const data = await chrome.storage.local.get('captureLog');
+    return (data.captureLog ?? []) as { timestamp: string; screenshot?: { filename: string } }[];
+  });
+  expect(before).toHaveLength(1);
+
+  const reopened = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 20000,
+  });
+  await rows.nth(0).locator('.reopen-btn').click();
+  const reopenedPage = await reopened;
+
+  // Seeded from the record: the prompt comes back, and the preview is
+  // the saved screenshot rather than a fresh capture of anything.
+  await expect(reopenedPage.locator('#prompt-text')).toHaveValue('reopen me later');
+  await expect(reopenedPage.locator('#preview')).toHaveJSProperty('complete', true);
+  await expect(reopenedPage.locator('#preview')).not.toHaveJSProperty('naturalWidth', 0);
+
+  // Nothing has been drawn, so there is nothing to undo — the whole
+  // point of Reopen versus Restore.
+  await expect(reopenedPage.locator('#undo')).toBeDisabled();
+
+  // Reopening consumes nothing, so the button is still on the row.
+  await expect(rows.nth(0).locator('.date-cell .reopen-btn')).toHaveText('Reopen');
+
+  await reopenedPage.close();
+  await historyPage.close();
+  await openerPage.close();
+});
+
+
+// The two things Reopen has to get right that Restore never faces:
+// flags for edits that are already baked into the pixels, and not
+// duplicating a file the user never touched.
+test('Reopen keeps the baked-in flags and reuses files until they are edited', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  // Draw a box, so the saved PNG carries a highlight and the record
+  // says so. That highlight is what has to survive the round trip.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'drawn on',
+  });
+
+  const sw = await getServiceWorker();
+  const readLog = () => sw.evaluate(async () => {
+    const data = await chrome.storage.local.get('captureLog');
+    return (data.captureLog ?? []) as {
+      timestamp: string;
+      prompt?: string;
+      screenshot?: { filename: string; hasHighlights?: true };
+    }[];
+  });
+  const original = (await readLog())[0];
+  expect(original.screenshot?.hasHighlights).toBe(true);
+  // Both tests here need "Allow access to file URLs", which Reopen
+  // reads the saved artifacts with. The harness profile has it on; a
+  // profile without it would flash the page's banner instead of
+  // opening anything.
+  const fileSize = async (name: string): Promise<number> => {
+    // Resolved through the download record rather than a fixed path:
+    // the harness gives each run its own temp downloads directory.
+    const path = await sw.evaluate(async (n) => {
+      const items = await chrome.downloads.search({});
+      const ours = items.filter(
+        (i) => i.byExtensionId === chrome.runtime.id && i.filename.endsWith(n),
+      );
+      return ours.length ? ours[ours.length - 1].filename : null;
+    }, name);
+    if (!path) throw new Error(`no download record for ${name}`);
+    return (await stat(path)).size;
+  };
+  const originalBytes = await fileSize(original.screenshot!.filename);
+
+  await sw.evaluate(() => chrome.storage.session.remove('lastCapture'));
+  const historyPage = await extensionContext.newPage();
+  await historyPage.goto(`chrome-extension://${extensionId}/history.html`);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows.nth(0).locator('.reopen-btn')).toHaveText('Reopen');
+
+  // ── Reopen and save with nothing changed ──
+  const first = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 20000,
+  });
+  await rows.nth(0).locator('.reopen-btn').click();
+  const firstPage = await first;
+  await expect(firstPage.locator('#prompt-text')).toHaveValue('drawn on');
+  await configureAndCapture(firstPage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'reopened, unchanged',
+  });
+
+  const afterPlain = await readLog();
+  expect(afterPlain).toHaveLength(2);
+  const plain = afterPlain[1];
+  // A new record with its own timestamp — not an edit of the old one,
+  // and not a duplicate of its stamp.
+  expect(plain.timestamp).not.toBe(original.timestamp);
+  expect(plain.prompt).toBe('reopened, unchanged');
+  // The highlight is baked into pixels this session never edited, and
+  // the record still says so.
+  expect(plain.screenshot?.hasHighlights).toBe(true);
+  // Nothing was edited, so it points at the very same file: a reopen
+  // to add a prompt must not duplicate a screenshot on disk.
+  expect(plain.screenshot?.filename).toBe(original.screenshot?.filename);
+
+  // ── Reopen the *same* row again and draw on it ──
+  //
+  // The same original record, reopened a second time and independently
+  // edited: the case where two reopens must not collide on a filename.
+  // It sits at row 1 now, under the row the save above just added
+  // (which is the restorable one, so it carries Restore instead).
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator('.date-cell .restore-btn')).toHaveText('Restore');
+  const second = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 20000,
+  });
+  await rows.nth(1).locator('.reopen-btn').click();
+  const secondPage = await second;
+  // Wait for the loaded image to decode and lay out: `dragRect` works
+  // in percentages of the overlay, which is zero-sized until then.
+  await expect(secondPage.locator('#prompt-text')).toHaveValue('drawn on');
+  await expect(secondPage.locator('#preview')).toHaveJSProperty('complete', true);
+  await expect(secondPage.locator('#preview')).not.toHaveJSProperty('naturalWidth', 0);
+  await dragRect(secondPage, { xPct: 0.35, yPct: 0.55 }, { xPct: 0.6, yPct: 0.8 });
+  await configureAndCapture(secondPage, {
+    saveScreenshot: true,
+    saveHtml: false,
+    prompt: 'reopened and drawn on again',
+  });
+
+  const afterEdit = await readLog();
+  expect(afterEdit).toHaveLength(3);
+  const edited = afterEdit[2];
+  expect(edited.screenshot?.hasHighlights).toBe(true);
+  // Edited, so it must NOT overwrite the file the first two records
+  // share — the new name comes off this session's own timestamp, which
+  // is what keeps two independent reopens of one record apart.
+  expect(edited.screenshot?.filename).not.toBe(original.screenshot?.filename);
+  // And the shared file is untouched, byte for byte: the unedited
+  // reopen re-wrote it with the bytes it loaded, and the edited one
+  // went elsewhere. This is the property the reopen economy rests on,
+  // and the one an ext-sync or bake regression would break silently.
+  expect(await fileSize(original.screenshot!.filename)).toBe(originalBytes);
+
+  await historyPage.close();
+  await openerPage.close();
+});
+
+
+// What an old capture *didn't* save is not a failure. A reopened
+// record carries at most one selection format and may carry no
+// screenshot at all; both cases quiet-grey their rows rather than
+// flagging them, the way `htmlUnavailable` always has for HTML.
+test('Reopen greys what a capture never saved, without calling it an error', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // Capture a selection and no screenshot, so the reopened session has
+  // both absences to render: no image at all, and exactly one of the
+  // three selection formats.
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'purple.html',
+    seedSelection,
+  );
+  await capturePage.locator('#cap-screenshot').setChecked(false);
+  await capturePage.locator('#cap-selection').setChecked(true);
+  await capturePage.locator('#cap-selection-markdown').check();
+  await Promise.all([
+    capturePage.waitForEvent('close'),
+    capturePage.locator('#capture').click(),
+  ]);
+
+  const sw = await getServiceWorker();
+  await sw.evaluate(() => chrome.storage.session.remove('lastCapture'));
+  const historyPage = await extensionContext.newPage();
+  await historyPage.goto(`chrome-extension://${extensionId}/history.html`);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows.nth(0).locator('.reopen-btn')).toHaveText('Reopen');
+
+  const reopened = extensionContext.waitForEvent('page', {
+    predicate: (p) => p.url().endsWith('/capture.html'),
+    timeout: 20000,
+  });
+  await rows.nth(0).locator('.reopen-btn').click();
+  const page = await reopened;
+
+  // The format that was saved is live and selected.
+  await expect(page.locator('#cap-selection-markdown')).toBeEnabled();
+  await expect(page.locator('#cap-selection-markdown')).toBeChecked();
+
+  // The other two were never captured: disabled, but not flagged.
+  for (const other of ['html', 'text']) {
+    await expect(page.locator(`#cap-selection-${other}`)).toBeDisabled();
+    await expect(page.locator(`#row-selection-${other}`)).not.toHaveClass(/has-error/);
+  }
+  // No screenshot was saved: same deal.
+  await expect(page.locator('#cap-screenshot')).toBeDisabled();
+  await expect(page.locator('#row-screenshot')).not.toHaveClass(/has-error/);
+
+  await page.close();
+  await historyPage.close();
+  await openerPage.close();
 });

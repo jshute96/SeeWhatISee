@@ -164,15 +164,18 @@
   th.page-cell { width: 30%; }
 
   .date-cell .time { color: #555; }
-  /* "Restore" button under the timestamp, on the one row the saved
-     last-capture describes (at most one row ever carries it).
+  /* The per-row button under the timestamp: "Restore" on the one row
+     the saved last-capture describes (at most one row ever carries
+     it), "Reopen" on every other.
 
      Sized down from the page's other `.btn`s deliberately: the Date
      column is 100px wide (80px inside the cell's padding), which
-     "Restore" at 12px plus this padding and border just fits. Widen
+     "Restore" at 12px plus this padding and border just fits (and
+     "Reopen", the other label this styles, is narrower still). Widen
      the label or the padding and it will spill into Screenshot —
      `table-layout: fixed` won't grow the column to take it. */
-  .restore-btn {
+  .restore-btn,
+  .reopen-btn {
     display: block;
     margin-top: 6px;
     padding: 2px 6px;

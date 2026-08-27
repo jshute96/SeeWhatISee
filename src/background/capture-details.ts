@@ -1,9 +1,12 @@
 import {
   captureBothToMemory,
   recordDetailedCapture,
+  selectionFilenamesFor,
 } from '../capture.js';
 import {
   noSelectionContentMessage,
+  SELECTION_EXTENSIONS,
+  type CaptureRecord,
   type EditableArtifactKind,
   type InMemoryCapture,
   type SelectionFormat,
@@ -12,6 +15,10 @@ import {
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  joinCapturePath,
+  LOG_FILE_NAME,
+  pathToFileUrl,
+  peekCaptureDirectory,
   waitForDownloadComplete,
 } from '../capture/downloads.js';
 import { compactTimestamp, serializeRecord } from '../capture/log-store.js';
@@ -29,6 +36,7 @@ import {
 } from '../capture/packed-text.js';
 import {
   captureImageToMemory,
+  fetchImageInSW,
   imageExtensionFor,
 } from '../capture/image-source.js';
 import {
@@ -45,6 +53,7 @@ import {
   type CapturePageUiState,
   type LastCaptureRecord,
   clearLastCapture,
+  clearLastCaptureForQuota,
   getLastCapture,
   promoteSessionToLastCapture,
 } from './last-capture.js';
@@ -564,6 +573,24 @@ export interface DetailsSession {
     selections?: Partial<Record<SelectionFormat, string>>;
   };
   /**
+   * Artifacts this session started out pointing at, for a session the
+   * History page reopened from an existing record: the file already on
+   * disk, plus the revision the session loaded it at.
+   *
+   * While the revision still matches, saves write that same file and
+   * the new record references it — a reopen that changes nothing adds
+   * a log row without duplicating bytes. The first edit moves the
+   * revision (both counters are monotonic, so it never moves back) and
+   * saves switch to `bases.<x>`, which the reopen pinned to the new
+   * capture's own timestamp. That is what keeps two independent
+   * reopens of one record from writing the same file.
+   */
+  reopened?: {
+    screenshot?: { filename: string; revision: number };
+    contents?: { filename: string; revision: number };
+    selections?: Partial<Record<SelectionFormat, { filename: string; revision: number }>>;
+  };
+  /**
    * `serializeRecord` of the `log.json` record this session's most
    * recent save wrote — the identity key the History page uses to
    * find the row that a *Restore last capture* would re-open.
@@ -647,7 +674,11 @@ function nextSaveFilename(
   base: string,
   saved: { bumpIndex: number; revision: number } | undefined,
   currentRevision: number,
+  reopened?: { filename: string; revision: number },
 ): string {
+  // A reopened artifact nobody has touched still names the file it was
+  // loaded from, whatever else this session has done.
+  if (reopened && reopened.revision === currentRevision) return reopened.filename;
   if (!saved) return base;
   return bumpedFilename(base, nextBumpIndex(saved, currentRevision));
 }
@@ -755,6 +786,225 @@ export async function restoreLastCapture(
 }
 
 /**
+ * Re-open an existing `log.json` record in a Capture page.
+ *
+ * The sibling of *Restore last capture*, for every row that isn't the
+ * restorable one. Restore replays a live session — its undo stack, its
+ * unbaked edits, its unsaved prompt. There is no such session here:
+ * all that survives on disk is what the capture *saved*, so the
+ * screenshot arrives with its highlights, redactions and crop already
+ * part of the pixels. The reopened page can draw more on top, but it
+ * cannot take those apart, and Reset goes back to the loaded image
+ * rather than to a blank one (it restores `screenshotDataUrl`, which
+ * is what was loaded).
+ *
+ * Deliberately a **new capture**, not an edit of the old one:
+ *
+ * - It gets its own `timestamp`, read off the clock like any capture.
+ *   Carrying the original's would put records in `log.json` wildly out
+ *   of order, and — since the stamp is what a record is addressed by —
+ *   would need a uniqueness search across every history file to avoid
+ *   colliding with the record it came from.
+ * - Its artifact filenames come from that new stamp, so two reopens of
+ *   one record can't write the same file.
+ * - The original record and its files are untouched.
+ *
+ * The one economy: an artifact the user hasn't edited still points at
+ * the file it was loaded from, so reopening to add a prompt doesn't
+ * duplicate a screenshot on disk. `session.reopened` holds that until
+ * the first edit — see `DetailsSession.reopened`.
+ *
+ * Needs the "Allow access to file URLs" toggle: every artifact is read
+ * back over `file://`. Per-artifact failures degrade rather than fail
+ * the reopen — a deleted screenshot opens the page with the same
+ * `screenshotError` pane a failed capture would, so the user can still
+ * reopen the prompt and the URL.
+ */
+export async function reopenCapture(
+  record: CaptureRecord,
+  opener: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  const directory = await peekCaptureDirectory();
+  if (!directory) {
+    throw new Error(
+      'Could not find the capture directory, so there is nothing to reopen from.',
+    );
+  }
+  // Records come from `log.json`, which is a file in the user's
+  // Downloads folder and can be hand-edited. A `filename` is supposed
+  // to be a bare basename; anything else is refused rather than
+  // followed:
+  //   - `../…` would read outside the capture directory (`fetch`
+  //     normalizes it), and
+  //   - a bare name that happens to be `log.json` would load the log
+  //     as an artifact body and then, on save, overwrite it — every
+  //     write uses `conflictAction: 'overwrite'`.
+  // The threat model is small (whoever edited the log can read those
+  // files anyway), but the blast radius of that second one isn't.
+  const readable = (name: string): boolean =>
+    !name.includes('/') && !name.includes('\\') && name !== LOG_FILE_NAME;
+  const fileUrl = (name: string): string | null =>
+    (readable(name) ? pathToFileUrl(joinCapturePath(directory, name)) : null);
+  const now = new Date();
+  const ts = compactTimestamp(now);
+
+  // Screenshot. `fetchImageInSW` normalizes the MIME to match the
+  // extension it picks, so the bake's sticky-format rule (JPEG source
+  // stays JPEG) works on a reopened image exactly as on a fresh one.
+  let image: { dataUrl: string; ext: string } | null = null;
+  const shotUrl = record.screenshot ? fileUrl(record.screenshot.filename) : null;
+  if (shotUrl) image = await fetchImageInSW(shotUrl);
+  // A file we could read isn't necessarily an image we can show.
+  // `imageExtensionFor` falls back to `unknown` for a blob with no
+  // usable MIME, which yields a data URL the page can't decode — an
+  // empty preview with the Save box still checked. Treated as a read
+  // failure here, not inside `fetchImageInSW`, whose other caller has
+  // a lossy page-side fallback worth keeping.
+  if (image && image.ext === 'unknown') image = null;
+  const ext = image?.ext ?? 'png';
+
+  // Two sets of names. `fresh` is this capture's own, derived from its
+  // own stamp — that is what an edit moves the save onto, and what
+  // keeps two reopens of one record from writing the same file.
+  // `capture.<x>Filename` starts at the *loaded* name instead, because
+  // a save that changes nothing should land back on the file it came
+  // from rather than copy it. `rebumpFilenameIfLocked` swaps in
+  // `bases.<x>` the moment a revision moves.
+  const fresh = {
+    screenshot: `screenshot-${ts}.${ext}`,
+    contents: `contents-${ts}.html`,
+    selections: selectionFilenamesFor(ts),
+  };
+  const capture: InMemoryCapture = {
+    screenshotDataUrl: image?.dataUrl ?? '',
+    html: '',
+    url: record.url,
+    title: record.title,
+    timestamp: now.toISOString(),
+    screenshotFilename: image ? record.screenshot!.filename : fresh.screenshot,
+    screenshotOriginalExt: ext,
+    contentsFilename: fresh.contents,
+  };
+  if (record.imageUrl) capture.imageUrl = record.imageUrl;
+  // Flags ride separately from the edit stack that produced them:
+  // those edits are baked into the bytes and can't be reconstructed.
+  if (record.screenshot && image) {
+    const { filename: _f, ...flags } = record.screenshot;
+    if (Object.keys(flags).length > 0) capture.bakedScreenshotFlags = flags;
+  }
+  if (record.screenshot && !image) {
+    capture.screenshotError = `Could not read ${record.screenshot.filename}.`;
+  } else if (!record.screenshot) {
+    // Nothing to read and nothing wrong — the original capture simply
+    // didn't save an image. The quiet channel, not `screenshotError`:
+    // an error icon would claim a problem, and pairing it with a
+    // genuinely unreadable HTML file would read as a total failure
+    // headlined by the half that is fine.
+    capture.screenshotUnavailable = true;
+  }
+
+  const contentsUrl = record.contents ? fileUrl(record.contents.filename) : null;
+  const html = contentsUrl ? await readCaptureText(contentsUrl) : null;
+  if (html !== null) {
+    capture.html = html;
+    capture.contentsFilename = record.contents!.filename;
+  } else if (record.contents) {
+    capture.htmlError = `Could not read ${record.contents.filename}.`;
+  } else {
+    // Quietly disabled rather than flagged, same as the image flows:
+    // an HTML-less capture isn't a failure to surface.
+    capture.htmlUnavailable = true;
+  }
+
+  // Only the format the original capture chose exists on disk; the
+  // other two rows stay empty, which is what greys them out.
+  let selectionBody: string | null = null;
+  if (record.selection) {
+    const selUrl = fileUrl(record.selection.filename);
+    selectionBody = selUrl ? await readCaptureText(selUrl) : null;
+    if (selectionBody === null) {
+      capture.selectionError = `Could not read ${record.selection.filename}.`;
+    } else {
+      capture.selections = { html: '', text: '', markdown: '' };
+      capture.selections[record.selection.format] = selectionBody;
+      capture.selectionFilenames = {
+        ...fresh.selections,
+        [record.selection.format]: record.selection.filename,
+      };
+      // The two formats this capture never wrote. Absent by design,
+      // not empty — the page greys them instead of flagging them.
+      capture.selectionFormatsUnavailable = (
+        Object.keys(SELECTION_EXTENSIONS) as SelectionFormat[]
+      ).filter((f) => f !== record.selection!.format);
+    }
+  }
+
+  const session: Omit<LastCaptureRecord, 'capture'> = {
+    // Pinned to the *new* stamp, so the first edit moves the save off
+    // the loaded file and onto a name no other reopen can pick.
+    bases: {
+      screenshot: fresh.screenshot,
+      contents: fresh.contents,
+      selections: capture.selectionFilenames ? { ...fresh.selections } : undefined,
+    },
+    reopened: {},
+  };
+  // Revision 0 is where every counter starts, so "still 0" is exactly
+  // "untouched since the reopen".
+  if (record.screenshot && image) {
+    session.reopened!.screenshot = { filename: record.screenshot.filename, revision: 0 };
+  }
+  if (record.contents && html !== null) {
+    session.reopened!.contents = { filename: record.contents.filename, revision: 0 };
+    // The body on disk *is* the edited body, so the flag has to carry
+    // — otherwise a reopen would quietly relabel the user's edit as a
+    // raw scrape.
+    if (record.contents.isEdited) session.htmlEdited = true;
+  }
+  if (record.selection && selectionBody !== null) {
+    const fmt = record.selection.format;
+    session.reopened!.selections = { [fmt]: { filename: record.selection.filename, revision: 0 } };
+    if (record.selection.isEdited) session.selectionEdited = { [fmt]: true };
+  }
+  // The prompt and the Save checkboxes are page state, so they ride in
+  // `uiState` — the same channel a Restore uses.
+  //
+  // The checkboxes come from the record rather than from the user's
+  // stored Capture-page defaults: this is a reopen of a specific
+  // capture, so what *that* capture saved is the better answer than
+  // what the user usually saves. An artifact whose file wouldn't load
+  // is left unchecked — its row is disabled anyway.
+  session.uiState = {
+    prompt: record.prompt ?? '',
+    saveCheckboxes: {
+      screenshot: image !== null,
+      html: html !== null,
+      selection: selectionBody !== null,
+      format: selectionBody !== null ? record.selection!.format : null,
+    },
+  };
+  // `logKey` is deliberately absent: this session has written no row
+  // yet, so no row may light up a Restore button for it.
+  await openCapturePageWithSession(capture, opener, session);
+}
+
+/**
+ * Read one capture artifact back as text, or `null` when it can't be
+ * read — deleted, moved, or the file-URL toggle off. Callers turn that
+ * into the matching per-artifact error so a reopen degrades one row at
+ * a time instead of failing outright.
+ */
+async function readCaptureText(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * True only when *both* the screenshot and the HTML capture produced
  * actual error strings — i.e. there is nothing useful to render on the
  * Capture page. We deliberately do NOT treat `htmlUnavailable` as a
@@ -830,7 +1080,13 @@ async function openCapturePageWithSession(
     ...(await tabPlacement(opener)),
   };
 
-  if (isTotalCaptureFailure(data)) {
+  // A *reopen* is never a total failure. Both files being unreadable
+  // means the toggle is off or the directory moved — but the prompt,
+  // URL and title came from the log record, not from disk, and those
+  // are often the whole reason for reopening. The per-row error icons
+  // say what couldn't be read. (A failed capture is different: there
+  // is genuinely nothing to render.)
+  if (!restored?.reopened && isTotalCaptureFailure(data)) {
     const message = getCombinedCaptureError(data);
     await createTabWithPlacement({
       ...createProps,
@@ -847,7 +1103,16 @@ async function openCapturePageWithSession(
   // the new session with — so a Restore that ultimately fails the
   // probe doesn't leave a stale duplicate behind. See
   // `docs/capture-page.md` "Restore last capture".
-  await clearLastCapture();
+  //
+  // **Except on a reopen**, which keeps the slot until the quota
+  // actually needs it (below). A capture replaces the last capture by
+  // definition, and a restore consumes the slot — but a reopen does
+  // neither. The user asked to reopen something old, and the slot is
+  // the only unsaved state in the product: a prompt typed and a
+  // drawing drawn on a page closed a minute ago, with nothing else
+  // holding them.
+  const reopening = restored?.reopened !== undefined;
+  if (!reopening) await clearLastCapture();
 
   // Compress the text artifacts — or drop them, if they're over-cap
   // even compressed — before they can blow the session-storage
@@ -893,10 +1158,16 @@ async function openCapturePageWithSession(
   // `runWithErrorReporting` from opening a *second* error tab on
   // top of the one we just opened. Same rationale as the
   // post-create race branch below.
-  const probe = await checkSessionStorageRoom(
+  let probe = await checkSessionStorageRoom(
     detailsStorageKey(0),
     buildSession(),
   );
+  // The reopen kept the slot; if that is what put us over, spend it
+  // now and re-probe. Losing the slot beats refusing the reopen, and
+  // this is the only path that reaches the probe still holding it.
+  if (!probe.ok && reopening && await clearLastCaptureForQuota()) {
+    probe = await checkSessionStorageRoom(detailsStorageKey(0), buildSession());
+  }
   if (!probe.ok) {
     const message = `${formatQuotaError('capture', probe, captureBreakdown(data))}\n${CAPTURE_DIRECTLY_HINT}`;
     await createTabWithPlacement({
@@ -1319,6 +1590,7 @@ async function rebumpFilenameIfLocked(
     getCurrentFilename: (s: DetailsSession) => string;
     setCurrentFilename: (s: DetailsSession, name: string) => void;
     getSaved: (s: DetailsSession) => { bumpIndex: number; revision: number } | undefined;
+    getReopened?: (s: DetailsSession) => { filename: string; revision: number } | undefined;
     getCurrentRevision: (s: DetailsSession) => number;
     dropCache: (s: DetailsSession) => void;
   },
@@ -1332,8 +1604,12 @@ async function rebumpFilenameIfLocked(
   // existed — but every path that writes `saved` was preceded by a
   // session that pinned `bases` at creation, so the two go together.)
   const saved = adapter.getSaved(session);
-  if (!saved) return;
-  // Same revision as the previous save → the current filename
+  const reopened = adapter.getReopened?.(session);
+  // A reopened session has a filename to move *off* even before its
+  // first save: it starts out naming the file it was loaded from.
+  if (!saved && !reopened) return;
+  // Same revision as the previous save (or as the reopen, before
+  // there is a save) → the current filename
   // already names the on-disk file we'd be re-locking. Skip the
   // recompute: `nextSaveFilename` derives from `bases.<x>`, which
   // carries the *original* extension, so for a screenshot that
@@ -1342,9 +1618,10 @@ async function rebumpFilenameIfLocked(
   // block keeps ext in sync with bytes; rebumping on same revision
   // can only break that invariant. (See `docs/capture-page.md`
   // "Multi-capture filename strategy" for the full failure chain.)
-  if (saved.revision === adapter.getCurrentRevision(session)) return;
+  const currentRevision = adapter.getCurrentRevision(session);
+  if ((saved ?? reopened)!.revision === currentRevision) return;
   const base = adapter.getBase(session) ?? adapter.getCurrentFilename(session);
-  const desired = nextSaveFilename(base, saved, adapter.getCurrentRevision(session));
+  const desired = nextSaveFilename(base, saved, currentRevision, reopened);
   if (desired === adapter.getCurrentFilename(session)) return;
   adapter.setCurrentFilename(session, desired);
   adapter.dropCache(session);
@@ -1398,6 +1675,7 @@ export async function ensureScreenshotDownloaded(
     getCurrentFilename: (s) => s.capture.screenshotFilename,
     setCurrentFilename: (s, name) => { s.capture.screenshotFilename = name; },
     getSaved: (s) => s.saved?.screenshot,
+    getReopened: (s) => s.reopened?.screenshot,
     getCurrentRevision: () => editVersion,
     dropCache: (s) => {
       if (s.downloads?.screenshot) {
@@ -1430,10 +1708,19 @@ export async function ensureScreenshotDownloaded(
   // hit, no re-download), so `capture.screenshotFilename` and
   // `recordDetailedCapture`'s eventual log entry would lie about the
   // file's contents.
+  //
+  // Skipped on an untouched *reopened* screenshot too. Its filename is
+  // the one the file was loaded under, which is by definition already
+  // in sync with its own bytes — while `screenshotOriginalExt` is what
+  // `imageExtensionFor` derived from the re-fetched blob, and the two
+  // differ for a non-canonical extension on disk (`.jpeg`, uppercase).
+  // Rewriting would write a second identical file under the
+  // canonicalized name and lose the point of the reopen economy.
   const pre = await requireDetailsSession(tabId);
   const cached = pre.downloads?.screenshot;
   const cacheHit = cached !== undefined && cached.editVersion === editVersion;
-  if (!cacheHit) {
+  const untouchedReopen = pre.reopened?.screenshot?.revision === editVersion;
+  if (!cacheHit && !untouchedReopen) {
     const targetExt = screenshotOverride
       ? extFromDataUrl(screenshotOverride)
       : pre.capture.screenshotOriginalExt;
@@ -1508,6 +1795,7 @@ export async function ensureHtmlDownloaded(tabId: number): Promise<string> {
     getCurrentFilename: (s) => s.capture.contentsFilename,
     setCurrentFilename: (s, name) => { s.capture.contentsFilename = name; },
     getSaved: (s) => s.saved?.html,
+    getReopened: (s) => s.reopened?.contents,
     getCurrentRevision: (s) => s.revisions?.html ?? 0,
     dropCache: (s) => {
       if (s.downloads?.html) {
@@ -1569,6 +1857,7 @@ export async function ensureSelectionDownloaded(
       };
     },
     getSaved: (s) => s.saved?.selections?.[format],
+    getReopened: (s) => s.reopened?.selections?.[format],
     getCurrentRevision: (s) => s.revisions?.selection?.[format] ?? 0,
     dropCache: (s) => {
       if (s.downloads?.selections?.[format]) {
@@ -1914,6 +2203,12 @@ export function installDetailsMessageHandlers(): void {
         }
         sendResponse({
           screenshotDataUrl: session.capture.screenshotDataUrl,
+          // Only a reopened capture has these. The page ORs them into
+          // what it reports at save time, so the new record keeps
+          // saying what the loaded pixels carry.
+          bakedScreenshotFlags: session.capture.bakedScreenshotFlags,
+          screenshotUnavailable: session.capture.screenshotUnavailable,
+          selectionFormatsUnavailable: session.capture.selectionFormatsUnavailable,
           html,
           selections,
           url: session.capture.url,
@@ -2109,30 +2404,47 @@ export function installDetailsMessageHandlers(): void {
           // a restored session would re-save against.
           postSave.logKey = serializeRecord(logged);
           postSave.saved = postSave.saved ?? {};
+          // A save that wrote a *reopened* artifact's original file
+          // takes no lock. The lock exists to bump a `-N` off
+          // `bases.<x>`, and this file isn't from that series — locking
+          // it would make the first edit land at `<newBase>-1` with no
+          // `<newBase>` beside it. The reopen entry already pins the
+          // filename for as long as the revision holds, and the edit
+          // that breaks it moves the save to `bases.<x>` cleanly.
+          const stillReopened = (
+            entry: { revision: number } | undefined,
+            rev: number,
+          ): boolean => entry !== undefined && entry.revision === rev;
           if (msg.screenshot) {
             const rev = msg.editVersion ?? 0;
-            postSave.saved.screenshot = {
-              bumpIndex: nextBumpIndex(postSave.saved.screenshot, rev),
-              revision: rev,
-            };
+            if (!stillReopened(postSave.reopened?.screenshot, rev)) {
+              postSave.saved.screenshot = {
+                bumpIndex: nextBumpIndex(postSave.saved.screenshot, rev),
+                revision: rev,
+              };
+            }
           }
           if (msg.html) {
             const rev = postSave.revisions?.html ?? 0;
-            postSave.saved.html = {
-              bumpIndex: nextBumpIndex(postSave.saved.html, rev),
-              revision: rev,
-            };
+            if (!stillReopened(postSave.reopened?.contents, rev)) {
+              postSave.saved.html = {
+                bumpIndex: nextBumpIndex(postSave.saved.html, rev),
+                revision: rev,
+              };
+            }
           }
           if (msg.selectionFormat && postSave.capture.selectionFilenames) {
             const fmt = msg.selectionFormat;
             const rev = postSave.revisions?.selection?.[fmt] ?? 0;
-            postSave.saved.selections = {
-              ...(postSave.saved.selections ?? {}),
-              [fmt]: {
-                bumpIndex: nextBumpIndex(postSave.saved.selections?.[fmt], rev),
-                revision: rev,
-              },
-            };
+            if (!stillReopened(postSave.reopened?.selections?.[fmt], rev)) {
+              postSave.saved.selections = {
+                ...(postSave.saved.selections ?? {}),
+                [fmt]: {
+                  bumpIndex: nextBumpIndex(postSave.saved.selections?.[fmt], rev),
+                  revision: rev,
+                },
+              };
+            }
           }
           await saveDetailsSession(tabId, postSave);
           sendResponse({ ok: true });

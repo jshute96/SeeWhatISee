@@ -69,6 +69,9 @@ listeners. The substantive logic lives in `src/background/`:
   `ensure*Downloaded` cache, multi-capture filename bump (locks
   files referenced by a `recordDetailedCapture` and writes
   `<base>-N.<ext>` on later edits).
+  - `reopenCapture` also lives here: a new capture seeded from an
+    existing `log.json` record's saved files. See [`history-page.md` →
+    Reopen from a row](history-page.md#reopen-from-a-row).
 - `last-capture.ts` — single-slot `lastCapture` session-storage:
   promote-on-close, restore-on-menu-click, low-priority quota
   relief. See [`capture-page.md` → Restore last

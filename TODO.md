@@ -142,6 +142,18 @@
     * Only ever on one row, and only for a capture that was saved —
       one closed without saving is still on the toolbar menu, but has
       no row here to sit on.
+  * A **Reopen** button sits in the same place on every other row, and
+    starts a new capture from what that one saved — its screenshot,
+    page, prompt and selection.
+    * Any drawings are already part of the saved image, so they can't
+      be undone; Reset returns to it rather than to a blank image.
+    * Saving adds a new capture and leaves the original alone. An
+      artifact you didn't edit keeps pointing at the file it came
+      from, so reopening just to add a prompt doesn't duplicate it.
+    * Needs "Allow access to file URLs", since it reads the saved
+      files back — with the toggle off the button points at the
+      file-access banner instead. Anything it can't read is left out,
+      and the rest still opens.
 
 ### Not documented
 

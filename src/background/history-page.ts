@@ -24,11 +24,13 @@
 // page are both SW-side, and importing `last-capture.js` into the page
 // would drag the whole capture module graph into it. So the SW hands
 // the page the restorable record's `logKey` (on registration, and
-// again whenever the slot changes) and takes the restore click back as
-// a message.
+// again whenever the slot changes) and takes the click back as a
+// message. **Reopen**, on every other row, comes back the same way and
+// for the same reason.
 
-import { restoreLastCapture } from './capture-details.js';
+import { reopenCapture, restoreLastCapture } from './capture-details.js';
 import { getLastCapture } from './last-capture.js';
+import type { CaptureRecord } from '../capture/types.js';
 
 /**
  * `chrome.storage.session` key holding the tab id of the open History
@@ -192,6 +194,29 @@ export function installHistoryMessageHandler(): void {
         return await restorableLogKey();
       })().then(
         (logKey) => sendResponse({ ok: true, logKey }),
+        (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
+      );
+      return true;
+    }
+
+    // Reopen click on any other row. The page hands over the parsed
+    // record it rendered — it already has it, and the SW would
+    // otherwise have to re-read and re-find it in files the page may
+    // have loaded and the SW hasn't.
+    //
+    // The record is data the page read out of the user's own capture
+    // files, and every field it drives (filenames, url, title, prompt)
+    // ends up back in the user's own directory. A hand-edited
+    // `log.json` can therefore steer this — the same as it steers
+    // every other reader of the log.
+    if (action === 'reopenCaptureFromHistory') {
+      const record = (msg as { record?: unknown }).record;
+      if (!record || typeof record !== 'object') {
+        sendResponse({ error: 'no record to reopen' });
+        return true;
+      }
+      void reopenCapture(record as CaptureRecord, sender.tab).then(
+        () => sendResponse({ ok: true }),
         (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
       );
       return true;

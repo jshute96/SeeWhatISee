@@ -273,7 +273,7 @@ export async function scrapeSelection(
  * suffix so files written from the same capture sort together
  * regardless of which format the user ended up saving.
  */
-function selectionFilenamesFor(ts: string): Record<SelectionFormat, string> {
+export function selectionFilenamesFor(ts: string): Record<SelectionFormat, string> {
   return {
     html: `selection-${ts}.${SELECTION_EXTENSIONS.html}`,
     text: `selection-${ts}.${SELECTION_EXTENSIONS.text}`,

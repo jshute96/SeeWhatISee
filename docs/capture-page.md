@@ -1249,6 +1249,10 @@ otherwise double the crop and stack highlights on each other. Order:
   - The original comes from main via `ctx.originalImageUrl()`, not
     from `previewImg.src` (View cropped replaced it) or the bottom
     of `viewCropStack` (empty in a restored session).
+  - On a *reopened* capture that original is the saved image, edits
+    and all, so Reset goes back to what was loaded rather than to a
+    blank capture. That falls out of the same rule rather than being
+    a special case.
   - Undoable in one step: the discarded state goes onto
     `wholeStateStack` and a `reset` marker is pushed onto the
     now-empty history, so Undo swaps the whole world back and the
@@ -1620,6 +1624,14 @@ If the user has any edits *and* is saving the screenshot:
 - If there are no edits, or the screenshot isn't being saved, no
   override is sent and the record's screenshot object stays bare
   (just `filename`, no edit flags).
+- **Except on a reopened capture.** A capture the History page
+  reopened arrives with its highlights / redactions / crop already in
+  the pixels, so those flags ride on `capture.bakedScreenshotFlags`
+  rather than coming from an edit stack. The page ORs them into what
+  it reports, gated on the Save-screenshot checkbox rather than on
+  "is there something to bake" — a reopen that draws nothing still has
+  to say what the image carries. See
+  [history-page.md → Reopen from a row](history-page.md#reopen-from-a-row).
 - **Bake-in is format-sticky.** `renderHighlightedImage` picks
   `bakeMime()` based on the source data URL: JPEG source →
   `toDataURL('image/jpeg', 0.92)`; everything else →

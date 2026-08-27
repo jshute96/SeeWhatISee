@@ -346,10 +346,11 @@ export async function fetchImageBytes(
  * SW-side image fetch — used for `file://` URLs and only for
  * those (see `fetchImageBytes`'s comment for why). Returns `null`
  * on any failure so the caller can fall through to other
- * strategies. Applies the same MIME normalization as the page-side
+ * strategies, or (for the History page's Reopen, which has no other
+ * strategy) report the image as unavailable. Applies the same MIME normalization as the page-side
  * path so the `data:` URL's prefix matches the chosen extension.
  */
-async function fetchImageInSW(
+export async function fetchImageInSW(
   srcUrl: string,
 ): Promise<{ dataUrl: string; ext: string } | null> {
   let blob: Blob;

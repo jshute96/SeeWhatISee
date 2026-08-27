@@ -117,6 +117,13 @@ export interface ScreenshotArtifact {
 }
 
 /**
+ * A `ScreenshotArtifact`'s flags without the filename — "what has been
+ * baked into these pixels". Carried on its own by the reopen flow,
+ * which has the flags before it has a name to write them under.
+ */
+export type ScreenshotFlags = Omit<ScreenshotArtifact, 'filename'>;
+
+/**
  * Kinds of captured body that the Capture page's Edit dialogs can
  * replace. Imported by both the SW (`background.ts`) for its
  * `updateArtifact` dispatch table and the Capture page
@@ -412,6 +419,28 @@ export interface InMemoryCapture {
    */
   imageUrl?: string;
   /**
+   * Selection formats that don't exist for this capture at all, as
+   * opposed to existing and coming out empty.
+   *
+   * A capture writes exactly one selection format to disk, so a
+   * reopened record can only ever supply that one. The other two
+   * aren't empty selections — they were never captured, which is why
+   * they get the quiet grey rather than the per-format error icon
+   * ("Selection has no text content" would be a claim about a
+   * selection nobody made).
+   */
+  selectionFormatsUnavailable?: SelectionFormat[];
+  /**
+   * No screenshot exists and that isn't a failure — the reopened
+   * record simply never saved one. Quiet-disables the Save screenshot
+   * row, the way `htmlUnavailable` does for HTML: there is nothing to
+   * explain, so an error icon would be claiming a problem.
+   *
+   * Distinct from `screenshotError`, which means "there should be an
+   * image here and there isn't".
+   */
+  screenshotUnavailable?: boolean;
+  /**
    * Image-context flow flag: HTML was deliberately not scraped
    * because the user came in via right-clicking an image, not the
    * whole-tab capture path. Distinct from `htmlError` — there's no
@@ -421,6 +450,18 @@ export interface InMemoryCapture {
    * page with a relevant caption selected).
    */
   htmlUnavailable?: boolean;
+  /**
+   * Edits already baked into `screenshotDataUrl` before this session
+   * ever saw it — set only by the History page's Reopen, which loads a
+   * PNG whose highlights / redactions / crop are part of the pixels.
+   *
+   * The page ORs these into the flags it reports at save time, so the
+   * new record keeps saying what the image carries even though the
+   * edit stack that produced them is long gone. They can never be
+   * revoked within the session: Reset goes back to the loaded image,
+   * which still has them baked in.
+   */
+  bakedScreenshotFlags?: ScreenshotFlags;
   /**
    * Use `imageFlowDefaults` instead of the user's stored
    * `capturePageDefaults` when seeding the Capture page checkboxes.

@@ -112,6 +112,17 @@ const SELECTION_FORMATS: SelectionFormat[] = ['html', 'text', 'markdown'];
 
 interface DetailsData {
   screenshotDataUrl: string;
+  /**
+   * Edits already baked into `screenshotDataUrl` when this session
+   * received it — a reopened capture, whose highlights / redactions /
+   * crop are part of the pixels and have no edit stack behind them.
+   * Absent on a fresh capture.
+   */
+  bakedScreenshotFlags?: {
+    hasHighlights?: true;
+    hasRedactions?: true;
+    isCropped?: true;
+  };
   html: string;
   url: string;
   /**
@@ -164,6 +175,17 @@ interface DetailsData {
    * the screenshot row/preview with an error icon.
    */
   screenshotError?: string;
+  /**
+   * No screenshot exists and that isn't a failure — a reopened record
+   * that never saved one. Quiet-disables the row, the way
+   * `htmlUnavailable` does for HTML.
+   */
+  screenshotUnavailable?: boolean;
+  /**
+   * Selection formats that were never captured, as opposed to
+   * captured-and-empty. Quiet-greyed rather than flagged.
+   */
+  selectionFormatsUnavailable?: SelectionFormat[];
   /**
    * Stored "Default items to save" preferences from the Options
    * page, split by selection-presence. `loadData()` applies the
@@ -334,6 +356,15 @@ let capturedUrl = '';
  * which never show an image).
  */
 let originalImageDataUrl = '';
+
+/**
+ * Edits already baked into `originalImageDataUrl` — set only for a
+ * capture the History page reopened, where the saved PNG's markup is
+ * part of the pixels. Fixed for the life of the session: Reset goes
+ * back to that same image, so nothing here can be undone away. OR-ed
+ * into the flags reported at save time.
+ */
+let bakedScreenshotFlags: DetailsData['bakedScreenshotFlags'];
 
 /**
  * Natural pixel size of `originalImageDataUrl`, measured once the
@@ -1020,6 +1051,7 @@ async function loadData(): Promise<void> {
     }
     previewImg.src = response.screenshotDataUrl;
     originalImageDataUrl = response.screenshotDataUrl;
+    bakedScreenshotFlags = response.bakedScreenshotFlags;
     capturedUrl = response.url;
     // Title falls back to the URL when no title was captured (covers
     // restricted pages, scrape failures, and the rare untitled tab).
@@ -1068,6 +1100,19 @@ async function loadData(): Promise<void> {
       // render() calls (which can run before loadData paints the rest
       // of the badges) don't briefly show an "PNG · 0 B" pill from a
       // bogus empty data URL.
+      setScreenshotErrored(true);
+    } else if (response.screenshotUnavailable) {
+      // Reopened a record that saved no image. Same disabled set as
+      // the error path but no `has-error` styling and no error-icon
+      // tooltip — there is nothing to explain. `setScreenshotErrored`
+      // still latches, because it guards the size pill against the
+      // empty data URL, which is just as empty here.
+      screenshotBox.checked = false;
+      screenshotBox.disabled = true;
+      copyScreenshotBtn.disabled = true;
+      downloadScreenshotBtn.disabled = true;
+      copyImageBtn.disabled = true;
+      downloadImageBtn.disabled = true;
       setScreenshotErrored(true);
     }
     updateImageSizeBadge();
@@ -1160,12 +1205,19 @@ async function loadData(): Promise<void> {
           r.downloadBtn.disabled = false;
           contentfulFormats.push(format);
           anyFormatHasContent = true;
-        } else {
+        } else if (!response.selectionFormatsUnavailable?.includes(format)) {
           // Selection *was* captured, but this specific format came
           // out empty (e.g. image-only selection → empty text, or
           // a whitespace-only selection across all three). Show the
           // per-format error icon so the user understands the row
           // isn't disabled for mysterious reasons.
+          //
+          // A format that was never captured at all takes neither
+          // branch: the row is already disabled, and it stays quietly
+          // that way. That's a reopened record, which can only carry
+          // the one format its capture wrote to disk — "Selection has
+          // no text content" would be a claim about a selection
+          // nobody made.
           r.row.classList.add('has-error');
           r.errorIcon.title = `Selection has no ${format} content`;
         }
@@ -1471,9 +1523,23 @@ captureBtn.addEventListener('click', (e) => {
     // Per-kind flags only matter when we're actually saving the
     // screenshot — they describe what's baked into the image, so
     // there's nothing for the SW to flag on a record that doesn't
-    // include the image. `bakeIn` already folds both conditions in.
-    const flags = bakeIn
+    // include the image.
+    //
+    // Gated on the checkbox rather than on `bakeIn`: a reopened
+    // capture's flags describe pixels that arrived already baked, so
+    // they have to survive a save with nothing new to bake. They are
+    // OR-ed with this session's own edits and never cleared by them —
+    // not even by Reset, which goes back to the loaded image with
+    // those same edits still in it.
+    const live = bakeIn
       ? editFlags()
+      : { hasHighlights: false, hasRedactions: false, isCropped: false };
+    const flags = screenshotBox.checked
+      ? {
+        hasHighlights: live.hasHighlights || bakedScreenshotFlags?.hasHighlights === true,
+        hasRedactions: live.hasRedactions || bakedScreenshotFlags?.hasRedactions === true,
+        isCropped: live.isCropped || bakedScreenshotFlags?.isCropped === true,
+      }
       : { hasHighlights: false, hasRedactions: false, isCropped: false };
 
     setStatusMessage('Saving…', 'info');
