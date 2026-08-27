@@ -527,6 +527,11 @@ never touched.
 - A file readable but not decodable as an image counts as unreadable:
   otherwise the page would show an empty preview with Save screenshot
   still checked.
+- With no image at all — unreadable or never saved — the Capture page
+  replaces its Edit-image controls with a **No captured image** note,
+  rather than offering a drawing surface nothing could be saved from.
+  See [capture-page.md → No image, no
+  editor](capture-page.md#no-image-no-editor).
 - Artifact filenames are checked before use. A hand-edited record can
   name anything; a path separator, or `log.json` itself, is refused
   rather than followed — `fetch` would resolve `../` outside the

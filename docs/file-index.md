@@ -304,7 +304,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + log file verification) |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the Capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
-| `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape-failure UX |
+| `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape / screenshot failure UX |
 | `tests/e2e/capture-paste.spec.ts` | E2E for rich-text paste — html→markdown / html-source routing, source-view short-circuit, real copy/paste round-trips |
 | `tests/e2e/capture-prompt-autogrow.spec.ts` | E2E for the prompt textarea's auto-grow sizing — whole-row growth, box matches content, measuring never shifts layout width |
 | `tests/e2e/capture-prompt-enter.spec.ts` | E2E for the Capture-page Prompt Enter behaviour and `defaultButton` setting — ring placement, plain/Shift/Ctrl/`\`+Enter routing, live updates |
@@ -331,7 +331,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/history-page.spec.ts` | E2E for the History page — how it renders a seeded capture log, how it's opened, and what it declines to load with file access off |
+| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering a seeded log, opening it, the Restore / Reopen row actions, and what it declines to load with file access off |
 | `tests/e2e/log-history-files.spec.ts` | E2E for the flush to `history-*.json` and the History page reading the flushed file and `log.json` from disk |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |

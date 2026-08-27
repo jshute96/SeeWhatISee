@@ -1009,6 +1009,14 @@
   [data-capture-main][hidden] {
     display: none !important;
   }
+  /* Hidden together by `showNoImageNote`. `!important` for the same
+     reason as the rule above: a `display` added here later would
+     otherwise outrank the UA `[hidden]` rule and silently un-hide
+     them. */
+  .highlight-controls[hidden],
+  .image-box[hidden] {
+    display: none !important;
+  }
 </style>
 </head>
 <body>
@@ -1326,6 +1334,10 @@
   <hr data-capture-main>
 
   <div class="image-and-highlights" data-capture-main>
+    <!-- Stands in for the editor when a capture has no image, in the
+         "Edit image" title's place. See `showNoImageNote`. -->
+    <div id="no-image-note" class="highlight-title" role="heading" aria-level="2"
+         hidden>No captured image</div>
     <div class="highlight-controls">
       <div class="highlight-title" role="heading" aria-level="2">Edit image</div>
       <!-- Drawing-tool palette. Exactly one tool is selected at a time

@@ -1003,6 +1003,16 @@ test('Reopen greys what a capture never saved, without calling it an error', asy
   await expect(page.locator('#cap-screenshot')).toBeDisabled();
   await expect(page.locator('#row-screenshot')).not.toHaveClass(/has-error/);
 
+  // And with no image there is nothing to edit, so the palette and
+  // the image pane give way to a note rather than offering a drawing
+  // surface over an empty `<img>` — anything drawn there could never
+  // be saved. The section itself stays, so the page doesn't read as
+  // one that failed to finish rendering.
+  await expect(page.locator('#no-image-note')).toBeVisible();
+  await expect(page.locator('#no-image-note')).toHaveText('No captured image');
+  await expect(page.locator('#tool-box')).toBeHidden();
+  await expect(page.locator('#overlay')).toBeHidden();
+
   await page.close();
   await historyPage.close();
   await openerPage.close();

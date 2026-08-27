@@ -40,7 +40,7 @@ import {
   setEditorCode,
   waitForClipboardWrites,
 } from './details-helpers';
-import { waitForDownloadPath } from '../fixtures/files';
+import { resetCaptureState, waitForDownloadPath } from '../fixtures/files';
 
 test('details: edit-html dialog — copy, edit, copy-overwrites, capture is no-op', async ({
   extensionContext,
@@ -894,6 +894,124 @@ async function openDetailsFlowWithFailedScrape(
     });
   }
 }
+
+/**
+ * Same shape as `openDetailsFlowWithFailedScrape`, but for the
+ * screenshot half: `captureVisibleTab` throws while the scrape still
+ * succeeds. Leaves `screenshotDataUrl` empty and `screenshotError`
+ * set, with no `htmlError` — deliberately, because two errors is
+ * `isTotalCaptureFailure` and routes to the "Capture failed" pane
+ * instead of the page under test. In real use that pairing comes from
+ * a failure specific to the screenshot: Chrome's ~2/sec
+ * `captureVisibleTab` quota, or an occluded / minimized window.
+ */
+async function openDetailsFlowWithFailedScreenshot(
+  extensionContext: BrowserContext,
+  fixtureServer: { baseUrl: string },
+  getServiceWorker: () => Promise<Worker>,
+  errorMessage: string,
+): Promise<{ openerPage: Page; capturePage: Page }> {
+  const sw0 = await getServiceWorker();
+  // Same clean slate `openDetailsFlow` opens with, so an earlier test
+  // in this worker can't leave defaults or UI state behind.
+  await resetCaptureState(sw0);
+  await sw0.evaluate((msg) => {
+    interface ShotSpy { __seeShotOrig?: typeof chrome.tabs.captureVisibleTab }
+    const g = self as unknown as ShotSpy;
+    if (!g.__seeShotOrig) {
+      g.__seeShotOrig = chrome.tabs.captureVisibleTab.bind(chrome.tabs);
+    }
+    (chrome.tabs as { captureVisibleTab: typeof chrome.tabs.captureVisibleTab })
+      .captureVisibleTab = (async () => {
+        throw new Error(msg);
+      }) as typeof chrome.tabs.captureVisibleTab;
+  }, errorMessage);
+
+  // Everything after the stub is installed goes inside the `try`: the
+  // service worker is worker-scoped, so a throw that skipped the
+  // restore would leave every later test in this worker unable to
+  // capture anything.
+  try {
+    // Not `openDetailsFlow`: it waits for `#preview` to decode, which
+    // is precisely what never happens here. Drive the flow directly
+    // and wait on the row instead — `loadData` sets that and swaps in
+    // the no-image note in the same pass.
+    const openerPage = await extensionContext.newPage();
+    await openerPage.goto(`${fixtureServer.baseUrl}/purple.html`);
+    await openerPage.bringToFront();
+    const capturePagePromise = extensionContext.waitForEvent('page', {
+      predicate: (p) => p.url().endsWith('/capture.html'),
+      timeout: 20000,
+    });
+    const sw = await getServiceWorker();
+    await sw.evaluate(async () => {
+      await (
+        self as unknown as {
+          SeeWhatISee: { startCaptureWithDetails: () => Promise<void> };
+        }
+      ).SeeWhatISee.startCaptureWithDetails();
+    });
+    const capturePage = await capturePagePromise;
+    await capturePage.waitForLoadState('domcontentloaded');
+    await capturePage.locator('#row-screenshot.has-error').waitFor();
+    return { openerPage, capturePage };
+  } finally {
+    const sw = await getServiceWorker();
+    await sw.evaluate(() => {
+      interface ShotSpy { __seeShotOrig?: typeof chrome.tabs.captureVisibleTab }
+      const g = self as unknown as ShotSpy;
+      if (g.__seeShotOrig) {
+        (chrome.tabs as { captureVisibleTab: typeof chrome.tabs.captureVisibleTab })
+          .captureVisibleTab = g.__seeShotOrig;
+      }
+    });
+  }
+}
+
+test('details: a failed screenshot replaces the image editor with a note', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const reason = 'Cannot capture this page';
+  const { openerPage, capturePage } = await openDetailsFlowWithFailedScreenshot(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    reason,
+  );
+
+  // The row reports the failure, as it always has.
+  await expect(capturePage.locator('#cap-screenshot')).toBeDisabled();
+  await expect(capturePage.locator('#row-screenshot')).toHaveClass(/has-error/);
+  await expect(capturePage.locator('#error-screenshot')).toHaveAttribute(
+    'title',
+    new RegExp(`Unable to capture screenshot.*${reason}`),
+  );
+
+  // And the editing controls give way to a note. There is no image,
+  // so a drawing surface over an empty `<img>` would only collect
+  // edits that can never be saved — `bakeIn` needs the Save-screenshot
+  // checkbox, which this path unchecks and disables.
+  await expect(capturePage.locator('#no-image-note')).toBeVisible();
+  await expect(capturePage.locator('#no-image-note')).toHaveText('No captured image');
+  await expect(capturePage.locator('#tool-box')).toBeHidden();
+  await expect(capturePage.locator('#tool-crop')).toBeHidden();
+  await expect(capturePage.locator('#undo')).toBeHidden();
+  await expect(capturePage.locator('#preview')).toBeHidden();
+  // Asserted separately because it's hidden by a different mechanism
+  // — an inline `display`, since it sits outside both hidden boxes
+  // and `SVGSVGElement` has no `hidden`.
+  await expect(capturePage.locator('#viewport-edges')).toBeHidden();
+
+  // The rest of the capture is untouched: HTML scraped fine, and the
+  // prompt still takes a URL-plus-prompt capture.
+  await expect(capturePage.locator('#cap-html')).toBeEnabled();
+  await expect(capturePage.locator('#prompt-text')).toBeEditable();
+
+  await capturePage.close();
+  await openerPage.close();
+});
 
 test('details: html scrape failure still opens the page with HTML/selection disabled + error icons', async ({
   extensionContext,

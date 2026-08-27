@@ -1298,6 +1298,47 @@ otherwise double the crop and stack highlights on each other. Order:
   keep painting their 1px past the edge. See the View cropped
   section for what this changes.
 
+### No image, no editor
+
+The Edit-image controls and the image pane give way to a
+**No captured image** note whenever the capture has no image:
+
+- a reopened record whose PNG can't be read — `screenshotDataUrl`
+  stays `''` and `screenshotError` is set;
+- a reopened record that never saved one (`screenshotUnavailable`);
+- a failed `captureVisibleTab` where the HTML scrape still
+  *succeeded*.
+  - Narrow: the usual cause of a screenshot failure — a restricted
+    URL — fails the scrape too, and two errors is
+    `isTotalCaptureFailure`, which routes to the "Capture failed"
+    pane instead.
+  - What's left is a failure specific to the screenshot: Chrome's
+    ~2/sec `captureVisibleTab` quota, or a transient "failed to
+    capture tab" from an occluded or minimized window.
+
+Without it the page offers a full drawing surface over a zero-sized
+`<img>` with an empty `src` — palette, Crop, Zoom, Undo / Reset /
+Copy / Save and the overlay all live.
+
+- Anything drawn there is **inert**: `bakeIn` requires the
+  Save-screenshot checkbox, which every no-image path unchecks and
+  disables, so nothing is baked and no `screenshot` artifact is
+  recorded.
+- The controls are hidden rather than disabled. There is no image to
+  edit, so a greyed palette would describe a state the user can't
+  reach — unlike the Save rows, where "this capture had none" is
+  worth saying.
+- **The section and the rule above it stay**, with the note sitting
+  where the *Edit image* title would be. Taking the whole thing down
+  leaves the page looking like it failed to finish rendering; a line
+  naming what's missing reads as deliberate.
+- `#viewport-edges` is taken down separately: it's positioned
+  absolutely against `.image-and-highlights`, so it isn't inside
+  either box that gets hidden.
+- A reopen is exempt from `isTotalCaptureFailure` (see
+  [history-page.md](history-page.md#reopen-from-a-row)), so it reaches
+  this state even with the HTML unreadable too.
+
 ### Undo scope (`Ctrl+Z` / `Ctrl+Y`)
 
 `undo-scope.ts` routes the undo / redo keys between the page's two

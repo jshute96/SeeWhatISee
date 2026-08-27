@@ -379,6 +379,7 @@ let originalImageSize: { w: number; h: number } | null = null;
 const copyScreenshotBtn = document.getElementById('copy-screenshot-name') as HTMLButtonElement;
 const copyHtmlBtn = document.getElementById('copy-html-name') as HTMLButtonElement;
 const screenshotRow = document.getElementById('row-screenshot') as HTMLDivElement;
+const noImageNote = document.getElementById('no-image-note') as HTMLDivElement;
 const screenshotErrorIcon = document.getElementById('error-screenshot') as HTMLSpanElement;
 const htmlRow = document.getElementById('row-html') as HTMLDivElement;
 const htmlErrorIcon = document.getElementById('error-html') as HTMLSpanElement;
@@ -984,6 +985,23 @@ document.addEventListener('click', (e) => {
 // ─── Initial data load ────────────────────────────────────────────
 
 
+/**
+ * Swap the Edit-image controls for a "No captured image" note, for a
+ * capture with no image to draw on. See `docs/capture-page.md` →
+ * "No image, no editor" for which captures those are and why the
+ * controls go rather than grey out.
+ *
+ * One-way: `loadData` runs once per page, so there is no inverse.
+ */
+function showNoImageNote(): void {
+  highlightControls.hidden = true;
+  imageBox.hidden = true;
+  // Sits outside both boxes (absolute, against
+  // `.image-and-highlights`), and `SVGSVGElement` has no `hidden`.
+  edgesSvg.style.display = 'none';
+  noImageNote.hidden = false;
+}
+
 async function loadData(): Promise<void> {
   try {
     // Catch sendMessage rejections (SW not yet alive, "Could not
@@ -1085,6 +1103,7 @@ async function loadData(): Promise<void> {
     copyUrlBtn.disabled = !response.url;
 
     if (response.screenshotError) {
+      showNoImageNote();
       screenshotBox.checked = false;
       screenshotBox.disabled = true;
       copyScreenshotBtn.disabled = true;
@@ -1102,6 +1121,7 @@ async function loadData(): Promise<void> {
       // bogus empty data URL.
       setScreenshotErrored(true);
     } else if (response.screenshotUnavailable) {
+      showNoImageNote();
       // Reopened a record that saved no image. Same disabled set as
       // the error path but no `has-error` styling and no error-icon
       // tooltip — there is nothing to explain. `setScreenshotErrored`
