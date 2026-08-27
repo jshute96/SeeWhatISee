@@ -480,14 +480,15 @@ def read_last_line(path):
 def history_files(source_dir, log_path):
     """The files holding the capture history, oldest first.
 
-    Each history file is named for the *newest* record it holds, using
-    the same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture
-    filenames, so the names are fixed-width and sorting them is
-    chronological. Only stamp-shaped names (digits and hyphens) count:
-    a word-y `history-notes.json` is someone else's file, and would
-    land at an arbitrary spot in the "chronological" order. The
-    extension's directory listing applies the same rule
-    (`HISTORY_FILE_TOKEN`); keep the two in step.
+    Each history file is named for *when it was written*, using the
+    same zero-padded `YYYYMMDD-HHMMSS-mmm` stamp as capture filenames,
+    so the names are fixed-width and sorting them is chronological —
+    which the `--limit` walk below depends on, not just the display
+    order. Only stamp-shaped names (digits and hyphens) count: a
+    word-y `history-notes.json` is someone else's file, and would land
+    at an arbitrary spot in that order. The extension's directory
+    listing applies the same rule (`HISTORY_FILE_TOKEN`); keep the two
+    in step.
     """
     try:
         names = os.listdir(source_dir)

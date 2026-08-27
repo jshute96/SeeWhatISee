@@ -153,10 +153,13 @@ The backend actions for anything beyond the latest capture. The
 - **Order.** History files oldest first, then `log.json` — one JSONL record
   per line, capture order, same path rewriting (and `--copy-to-dir` /
   `--print_selection` handling) as `--get-latest`.
-  - History files sort by name because each is named for the newest record
-    it holds, using the zero-padded stamp capture filenames use. The
+  - History files sort by name because each is named for the moment it
+    was written, using the zero-padded stamp capture filenames use. The
     stamp is fixed-width, so every name is `history-<stamp>.json` and a
-    plain sort is chronological.
+    plain sort is write order — which is the order the records are in.
+    The stamp comes from the clock, not from a record inside the file:
+    a record's timestamp is pinned when the capture is taken, so it
+    can be older than one already in an earlier file.
 - **Reading only what's needed.** `--limit N` walks the files from the
   newest end and stops as soon as it has N matches, so it never opens
   history files it wouldn't emit from. `--all` reads everything, by

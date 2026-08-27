@@ -26,9 +26,13 @@ distinction:
 
 - **The files** — `log.json` and the **history files** beside it, in
   the user's capture directory. These *are* the capture log.
-  - A history file is named `history-<timestamp>.json` and holds a
-    batch of older records that no longer fit in `log.json`. They
-    accumulate; nothing rewrites one once it's written.
+  - A history file is named `history-<timestamp>.json` for the moment
+    it was written — not for any record inside it — and holds a batch
+    of older records that no longer fit in `log.json`. They
+    accumulate; nothing rewrites one once it's written, with one
+    deliberate exception: a retried flush overwrites the file its
+    abandoned attempt left behind (see
+    [architecture.md → History files](architecture.md#history-files)).
 - **The browser copy** — the same records cached in
   `chrome.storage.local`. It exists because a Chrome extension can't
   read its own files without a permission the user has to grant, and
@@ -479,11 +483,14 @@ here or it belongs fixed.
 - **History files Chrome has forgotten.** A new history file takes a
   name no history file on disk is using — but the flush's collision
   guard can only see the ones Chrome still has download records for.
-  If the user cleared their download history *and* the new batch
-  happens to end at the same record as an existing history file, that
-  file is overwritten. Needs both halves to line up. (With file reads
-  on, the History page doesn't share this blind spot: it finds history
-  files by listing the directory itself — see `docs/history-page.md`.)
+  If the user cleared their download history, an existing file is
+  invisible to that guard and could be overwritten.
+  - Vanishingly unlikely: a history file is named for the millisecond
+    it is written, so the new flush would have to land on the exact
+    millisecond an existing file was written on.
+  - (With file reads on, the History page doesn't share this blind
+    spot at all: it finds history files by listing the directory
+    itself — see `docs/history-page.md`.)
 - **A capture directory that isn't ours.** Everything is keyed on the
   download records, so pointing Chrome's download directory somewhere
   that already contains a `SeeWhatISee/log.json` written by another

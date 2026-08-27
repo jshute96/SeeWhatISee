@@ -54,9 +54,10 @@ function parseAll(stdout: string): Record<string, any>[] {
 }
 
 /**
- * Two history files plus log.json. History file names carry the compact stamp of
- * the newest record they hold, so their byte-wise order is the capture
- * order — the seeding here relies on that just like the script does.
+ * Two history files plus log.json. History file names carry the compact stamp
+ * of the moment each file was written, so their byte-wise order is the order
+ * the records are in — the seeding here relies on that just like the script
+ * does.
  */
 function seedHistory() {
   writeFileOfRecords('history-20260409-120001-000.json', [

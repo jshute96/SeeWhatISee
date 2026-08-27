@@ -388,7 +388,10 @@ export async function readLogText(directory: string): Promise<string | null> {
  *   text and href, identical for these all-ASCII names).
  * - The names embed `compactTimestamp` (see `log-store.ts`), so a
  *   lexicographic sort *is* chronological; descending = newest first,
- *   true write order. (The stamps are local time, so a DST fall-back
+ *   true write order. That holds because a history file is stamped
+ *   with the moment it was written, not with a record inside it —
+ *   record timestamps are pinned at capture time and are not in
+ *   append order. (The stamps are local time, so a DST fall-back
  *   hour can sort out of order — accepted, it matches the filenames
  *   the user sees.)
  * - `res.ok` is deliberately NOT checked: Chrome hands the generated

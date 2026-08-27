@@ -277,11 +277,23 @@ Every record has `timestamp` and `url`, plus optional fields:
 - So the full capture history lives on disk while no single write
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.
-- `<timestamp>` is the `compactTimestamp` of the newest record in
-  the file, so history files sort chronologically and the name
-  normally matches that capture's own files — normally, because a repeat
-  save's record can sit a millisecond past the stamp its files
-  carry.
+- `<timestamp>` is the `compactTimestamp` of **when the file was
+  written**, not of any record inside it, so history files sort
+  chronologically by name.
+  - Deliberately not a stamp from a record inside the file: record
+    timestamps are pinned when the capture is *taken*, so they aren't
+    in append order — a Capture-page session can save minutes after
+    other captures have appended ahead of it, which would let a batch
+    end on a record older than one in an earlier file.
+  - That matters because every reader treats filename order as
+    chronological, including `SeeWhatISee.py --limit`, which walks
+    from the newest *file* and stops early.
+  - Ascending order is an **invariant**, not just what the clock
+    usually does — a drain starts its stamps past the newest history
+    file it can see (`stampFloor`), so a DST fall-back hour or a clock
+    set backwards can't produce a name that sorts too low. A stamp
+    more than ~25h ahead of the clock is ignored as bogus, so one
+    stray file can't drag every later name forward with it.
 - Consequence for readers: once the log has filled, `log.json`
   holds **51–100** entries depending on where in the flush cycle
   it is, not always 100.
@@ -303,6 +315,12 @@ Every record has `timestamp` and `url`, plus optional fields:
     is abandoned, everything not yet moved stays in storage (the new
     record included), and the next capture retries. Rejecting would
     orphan the screenshot already on disk and lose the record.
+  - A batch's chosen name is recorded in `chrome.storage.local`
+    (`pendingHistoryFiles`) *before* the file is written, and the
+    retry reuses it — so a capture that writes the file and then dies
+    before trimming the log overwrites its own orphan rather than
+    writing the same 50 records twice under two names. Cleared once
+    the batch is out of the log for good.
   - A new history file never takes a name one on disk already uses —
     see [log-consistency.md](log-consistency.md).
 - **Nothing in the extension deletes the history files.** A `log.json`

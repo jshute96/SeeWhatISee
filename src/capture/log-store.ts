@@ -58,52 +58,117 @@ export const LOG_MAX_ENTRIES = 100;
 export const LOG_HISTORY_BATCH = 50;
 
 /**
- * Name of the history file holding `batch`.
+ * `chrome.storage.local` key pinning the history-file name each
+ * pending batch was given — a `{ [batchKey]: filename }` map.
  *
- * Named for the **newest** record it contains, so the name says what
- * the file ends at and normally matches that capture's own screenshot
- * / HTML filenames — normally, because `uniqueTimestamp` can leave a
- * repeat save's record a millisecond past the stamp its files were
- * written with. Deterministic, so a retried flush can't produce two
- * files with the same contents under different names.
+ * A capture can write its history file and then die (SW killed, or
+ * `log.json` never trimmed). The next capture reconciles against the
+ * untrimmed `log.json` and re-derives the identical batch — and since
+ * names come off the clock, it would mint a fresh one, leaving two
+ * files holding the same records. `dedupeRecords` hides that on the
+ * History page, but `skills/SeeWhatISee.py` concatenates history files
+ * without deduping, so an agent would see every record twice.
  *
- * Falls back to `fallback` for a record whose timestamp won't parse (a
- * hand-edited log).
+ * So the name is recorded *before* the file is written and the retry
+ * reuses it, landing on top of the orphan instead of beside it.
  *
- * **Never returns a name already in `used`** — the history files
- * already on disk, plus the names handed out during *this* drain —
- * advancing the stamp a millisecond at a time until it's free. Every
- * write uses `conflictAction: 'overwrite'`, so a collision would
- * silently destroy the batch that landed first, and history files on disk
- * are exactly what a capture must never damage.
- *
- * A same-name clash with an existing history file isn't hypothetical: a
- * user who deletes rows out of a `log.json` that later refills past
- * the cap produces a different batch of 50 ending at the same record,
- * and so the same name.
- *
- * Bumping the stamp rather than appending a `-1`, `-2`, … suffix keeps
- * every history file name matching one pattern, so anything reading the
- * directory can parse the stamp without a special case. It essentially
- * never fires, because `uniqueTimestamp` keeps the record timestamps
- * these names come from unique.
- *
- * Batches from *separate* `recordCapture` calls aren't covered: they'd
- * have to be 50 apart yet still share a millisecond-precision stamp,
- * i.e. one pinned timestamp spanning >50 records. Left alone rather
- * than paying a `downloads.search` per flush to close it.
- *
- * A *retried* flush deliberately reuses the name: same batch, same
- * contents, and overwriting the failed write is what we want.
+ * An entry is dropped once its batch is out of the log for good. A
+ * batch abandoned mid-drain keeps its entry — it is still in the log
+ * and is exactly what will be retried. A clean drain drops the whole
+ * key, collecting entries for batches nothing can re-derive any more
+ * (a hand-edited or deleted `log.json`).
  */
-function historyFileName(
-  batch: CaptureRecord[],
-  fallback: Date,
-  used: Set<string>,
-): string {
-  const last = batch[batch.length - 1];
-  const parsed = new Date(last?.timestamp ?? '');
-  let d = Number.isNaN(parsed.getTime()) ? fallback : parsed;
+export const PENDING_HISTORY_STORAGE_KEY = 'pendingHistoryFiles';
+
+/**
+ * Identity of a flush batch, stable across the capture that retries
+ * it: the count plus the first and last record. The retry re-derives
+ * the batch from the same `log.json`, and `uniqueTimestamp` keeps our
+ * record timestamps distinct, so those three can't match two different
+ * batches in a log we wrote.
+ *
+ * A hand-edited log can defeat it — swapping a record in the middle
+ * keys the same — but then the retry overwrites the orphan with what
+ * the log now says, which is what disk authority wants anyway.
+ *
+ * `serializeRecord`, not `JSON.stringify`: a record round-tripped
+ * through `chrome.storage.local` can come back with its keys
+ * reordered, and only canonical field order compares equal. Ends only,
+ * because the key is stored and 50 whole records per pending batch is
+ * a lot to spend on this.
+ */
+function batchKey(batch: CaptureRecord[]): string {
+  // Never empty: the drain only runs while the log is over its cap,
+  // and `batchSize` is floored at 1.
+  return [
+    batch.length,
+    serializeRecord(batch[0]),
+    serializeRecord(batch[batch.length - 1]),
+  ].join('\n');
+}
+
+/**
+ * How far ahead of the clock an existing stamp may be and still be
+ * believed — a DST fall-back hour and ordinary skew, with room to
+ * spare. Past it the file is treated as bogus and ignored; otherwise
+ * one file written under a wildly wrong clock would drag every later
+ * name forward with it, permanently.
+ */
+const STAMP_FLOOR_LOOKAHEAD_MS = 25 * 60 * 60 * 1000;
+
+/**
+ * Earliest instant a new history file may be stamped with, so names
+ * stay in ascending order even when the clock doesn't. Fires on a DST
+ * fall-back hour (`compactTimestamp` is local time, so that hour's
+ * stamps repeat) and on a clock set backwards.
+ *
+ * Matters because `SeeWhatISee.py --limit` walks files from the newest
+ * end and stops early: a name that sorts too low doesn't reorder the
+ * output, it returns the wrong records. Costs no I/O — `used` already
+ * holds every history file the drain could find.
+ *
+ * The price when it fires is a name ahead of the true write time.
+ * Nothing reads the stamp back as a time; it sorts, and it is
+ * recognizable in a directory listing.
+ */
+function stampFloor(used: Set<string>, now: number): number {
+  let floor = now;
+  for (const name of used) {
+    const m = /^.*?(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(\d{3})\.json$/.exec(name);
+    if (!m) continue;
+    const [, y, mo, d, h, min, s, ms] = m.map(Number);
+    // Local time, matching `compactTimestamp`, so this round-trips the
+    // stamp back to the instant that produced it.
+    const t = new Date(y, mo - 1, d, h, min, s, ms).getTime();
+    if (Number.isNaN(t)) continue;
+    if (t >= floor && t - now <= STAMP_FLOOR_LOOKAHEAD_MS) floor = t + 1;
+  }
+  return floor;
+}
+
+/**
+ * Name for a history file about to be written: `writtenAt`, which the
+ * drain advances a millisecond per batch.
+ *
+ * Not a stamp from a record inside the file — record timestamps are
+ * pinned when the capture is *taken*, so they aren't in append order,
+ * and a batch can end on a record older than one in an earlier file.
+ * Filename order has to be chronological; see `stampFloor`.
+ *
+ * **Never returns a name already in `used`** (the files on disk, plus
+ * this drain's own), advancing a millisecond until it is free: every
+ * write is `conflictAction: 'overwrite'`, so a collision would destroy
+ * whichever batch landed first. Bumping the stamp rather than adding a
+ * `-N` suffix keeps every name matching one pattern. It rarely fires —
+ * `stampFloor` has already cleared every name the drain can see, so
+ * what is left is two batches in the same millisecond.
+ *
+ * A retry normally takes its name from the pending map instead (see
+ * `PENDING_HISTORY_STORAGE_KEY`), reaching here only when that map
+ * couldn't be read or its entry was already collected.
+ */
+function historyFileName(writtenAt: Date, used: Set<string>): string {
+  let d = writtenAt;
   let name = `${HISTORY_FILE_PREFIX}${compactTimestamp(d)}.json`;
   while (used.has(name)) {
     d = new Date(d.getTime() + 1);
@@ -406,8 +471,16 @@ export async function recordCapture(
     // zero would make the loop below spin forever on an empty batch.
     const batchSize = Math.max(1, LOG_HISTORY_BATCH);
     const now = Date.now();
+    // Where this drain's history file names start. Normally `now`;
+    // `stampFloor` pushes it later when the clock has gone backwards
+    // since the newest file on disk.
+    let mintFrom = now;
     let flushed = 0;
     const usedNames = new Set<string>();
+    // Names pinned by an earlier capture whose flush wrote the file
+    // but didn't get to finish. Empty in the steady state; see
+    // `PENDING_HISTORY_STORAGE_KEY`.
+    let pendingNames: Record<string, string> = {};
     // Seeded with the history files already on disk, so a flush can't land
     // on top of one. Only paid when a flush is actually about to
     // happen — once per 50 captures, not once per capture. History files
@@ -428,15 +501,59 @@ export async function recordCapture(
       } catch (err) {
         console.info('[SeeWhatISee] could not list existing history files; names unseeded:', err);
       }
+      // Same "only a guard" reasoning as the listing above: without
+      // it a retry writes a second copy of a batch, which is bad, but
+      // skipping the drain is worse.
+      try {
+        const stash = await chrome.storage.local.get(PENDING_HISTORY_STORAGE_KEY);
+        const value: unknown = stash[PENDING_HISTORY_STORAGE_KEY];
+        // Shape-checked, not cast: a non-object here would make the
+        // `pendingNames[key] = name` below throw inside the *drain's*
+        // catch, abandoning the flush on this capture and identically
+        // on every one after it.
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          pendingNames = value as Record<string, string>;
+        }
+      } catch (err) {
+        console.info('[SeeWhatISee] could not read pending history file names:', err);
+      }
+      // Pins are off-limits to a fresh mint, same as the files on
+      // disk: a pin is claimed only when its own batch comes up, so
+      // without this an earlier batch could mint a later batch's
+      // pinned name and be overwritten by it.
+      for (const name of Object.values(pendingNames)) usedNames.add(name);
+      // After both seedings, so it sees every name the drain knows of.
+      mintFrom = stampFloor(usedNames, now);
     }
+    // Batches whose file landed and whose records are about to leave
+    // the log — their pins have done their job. A batch abandoned
+    // mid-drain deliberately isn't here: it stays in the log, so the
+    // retry must find the same name waiting.
+    const settledKeys: string[] = [];
+    // A clean drain drops the whole key, which also collects entries
+    // for batches nothing can re-derive any more — those appear in no
+    // `settledKeys` and would otherwise linger forever.
+    let drainClean = true;
     try {
       while (kept.length > LOG_MAX_ENTRIES) {
         const batch = kept.slice(0, batchSize);
-        // The fallback advances a millisecond per batch so a drain of
-        // several batches whose timestamps *all* fail to parse still
-        // reads as distinct times; `usedNames` is what actually
-        // guarantees no two batches share a filename.
-        const fallback = new Date(now + flushed);
+        const key = batchKey(batch);
+        // A pinned name means this exact batch already had a file
+        // written for it by a capture that didn't survive to trim it
+        // out of the log. Reuse the name so the write overwrites that
+        // orphan instead of duplicating it.
+        let name = pendingNames[key];
+        if (name === undefined) {
+          // A millisecond per batch, so a multi-batch drain stays
+          // ordered within itself.
+          name = historyFileName(new Date(mintFrom + flushed), usedNames);
+          pendingNames[key] = name;
+          // Recorded *before* the write, so the name survives a crash
+          // anywhere after the download begins.
+          await chrome.storage.local.set({ [PENDING_HISTORY_STORAGE_KEY]: pendingNames });
+        } else {
+          usedNames.add(name);
+        }
         flushed += 1;
         // **Awaited to completion, not just to the download starting.**
         // A record must not leave `log.json` before the history file
@@ -445,17 +562,16 @@ export async function recordCapture(
         // drop the whole batch. `chrome.downloads.download` resolves
         // the moment the write begins, so without this the ordering
         // would be nominal only — the same reason `log.json` waits.
-        await writeJsonFileComplete(
-          historyFileName(batch, fallback, usedNames),
-          serializeLog(batch),
-        );
+        await writeJsonFileComplete(name, serializeLog(batch));
         kept = kept.slice(batchSize);
+        settledKeys.push(key);
       }
     } catch (err) {
       // Expected-and-handled: the entries stay put and the next
       // capture retries, so this must not reach the chrome://extensions
       // Errors page. `kept` is reassigned only after a batch lands, so
       // an abandoned drain leaves a coherent list either way.
+      drainClean = false;
       console.info('[SeeWhatISee] history file write failed; retrying next capture:', err);
     }
     // File first, storage second — see "Ordering" above. Awaited to
@@ -464,15 +580,40 @@ export async function recordCapture(
     // write begins, which would leave storage able to land first after
     // all.
     const downloadId = await writeJsonFile(LOG_FILE_NAME, serializeLog(kept));
+    let logWritten = true;
     try {
       await waitForDownloadComplete(downloadId);
     } catch (err) {
       // The record still belongs in storage: its artifacts are on
       // disk, and the next capture reconciles against whatever the
       // file turned out to be.
+      logWritten = false;
       console.info('[SeeWhatISee] log.json write did not complete:', err);
     }
     await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
+    // The trimmed log is now both on disk and in storage, so the
+    // batches in `settledKeys` are gone for good and nothing can
+    // re-derive them — their pinned names can go.
+    //
+    // **Only once the file actually landed.** An interrupted write
+    // leaves the untrimmed log on disk, and disk is authoritative, so
+    // the next capture re-derives the same batch — which with the pins
+    // dropped would mint a second name for it.
+    //
+    // Swallowed for the same reason: the cost is a stale entry, which
+    // the next clean drain collects.
+    if (logWritten && settledKeys.length > 0) {
+      try {
+        if (drainClean) {
+          await chrome.storage.local.remove(PENDING_HISTORY_STORAGE_KEY);
+        } else {
+          for (const key of settledKeys) delete pendingNames[key];
+          await chrome.storage.local.set({ [PENDING_HISTORY_STORAGE_KEY]: pendingNames });
+        }
+      } catch (err) {
+        console.info('[SeeWhatISee] could not clear pending history file names:', err);
+      }
+    }
     return downloadId;
   });
 }

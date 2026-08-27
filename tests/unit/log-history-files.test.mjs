@@ -125,6 +125,22 @@ function lastLogWrite() {
   return writes.filter((w) => w.filename.endsWith('/log.json')).pop();
 }
 
+/** The `YYYYMMDD-HHMMSS-MMM` stamp out of a `history-*.json` name.
+ *  Fixed-width, so string compare is chronological compare. */
+function stampOf(filename) {
+  return /history-([\d-]+)\.json$/.exec(filename)[1];
+}
+
+/** `compactTimestamp` for a millisecond value — local time, matching
+ *  the store, so the comparison holds in any timezone. */
+function compactStamp(ms) {
+  const d = new Date(ms);
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+    + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    + `-${pad(d.getMilliseconds(), 3)}`;
+}
+
 test('under the cap, nothing moves out of the log', async () => {
   const store = stubChrome([rec(1), rec(2)]);
   await recordCapture(rec(3));
@@ -153,20 +169,91 @@ test('crossing the cap flushes the oldest half to a history file', async () => {
   assert.deepEqual(parseLogText(lastLogWrite().body), store.captureLog);
 });
 
-test('the history file is named for the newest record it holds', async () => {
-  const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
+test('the history file is named for when it was written, not for a record', async () => {
+  const before = Date.now();
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   await recordCapture(rec(100));
-  // rec(49) is the last record in the batch. `compactTimestamp` is
-  // local-time, so derive the expected stamp the same way rather than
-  // hardcoding a timezone-dependent string.
-  const d = new Date(store.captureLog[0].timestamp); // shot-50, one after
-  const prev = new Date(d.getTime() - 1000);
-  const pad = (n, w = 2) => String(n).padStart(w, '0');
-  const stamp =
-    `${prev.getFullYear()}${pad(prev.getMonth() + 1)}${pad(prev.getDate())}`
-    + `-${pad(prev.getHours())}${pad(prev.getMinutes())}${pad(prev.getSeconds())}`
-    + `-${pad(prev.getMilliseconds(), 3)}`;
-  assert.equal(historyFileWrites()[0].filename, `SeeWhatISee/history-${stamp}.json`);
+  const after = Date.now();
+
+  // Every record in the batch is stamped in 2026 (see `rec`), so a
+  // name anywhere near *now* can only have come from the clock.
+  const stamp = stampOf(historyFileWrites()[0].filename);
+  assert.ok(stamp >= compactStamp(before) && stamp <= compactStamp(after),
+    `${stamp} is not between ${compactStamp(before)} and ${compactStamp(after)}`);
+});
+
+test('file names stay ordered when record timestamps are not', async () => {
+  // A Capture-page session pins its timestamp when the capture is
+  // *taken*, so a record saved later can carry an earlier stamp than
+  // one appended before it. Here the batch that flushes *second* ends
+  // on a much *older* record, and its file still has to sort second —
+  // every consumer reads filename order as chronological (the History
+  // page, `history_files()` in SeeWhatISee.py).
+  const recent = Array.from({ length: 50 }, (_, i) => rec(i));
+  const ancient = Array.from({ length: 50 }, (_, i) => ({
+    timestamp: new Date(Date.UTC(2020, 0, 1, 0, 0, i)).toISOString(),
+    screenshot: { filename: `old-${i}.png` },
+  }));
+  stubChrome([...recent, ...ancient, ...Array.from({ length: 51 }, (_, i) => rec(100 + i))]);
+  await recordCapture(rec(500));
+
+  const files = historyFileWrites();
+  assert.equal(files.length, 2);
+  // Second file holds the 2020 records...
+  assert.equal(parseLogText(files[1].body)[0].screenshot.filename, 'old-0.png');
+  // ...and is still named after the first.
+  assert.ok(stampOf(files[1].filename) > stampOf(files[0].filename),
+    `${files[1].filename} should sort after ${files[0].filename}`);
+});
+
+test('a retried flush overwrites its orphan instead of duplicating it', async () => {
+  // Chrome writes a download to a temp file and renames, so the
+  // failure that matters isn't a half-written file — it's the history
+  // file landing and the capture then dying before `log.json` is
+  // trimmed. The next capture re-derives the identical batch, and must
+  // reuse the name so the second write lands on top of the first.
+  const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
+  const realDownload = chrome.downloads.download;
+  chrome.downloads.download = async (opts) => {
+    const id = await realDownload(opts);
+    // The history file itself is written; everything after it fails.
+    if (opts.filename.includes('/history-')) throw new Error('killed after the write');
+    return id;
+  };
+  await recordCapture(rec(100));
+  const firstName = historyFileWrites()[0].filename;
+  // Nothing was trimmed, so the same batch is still due to flush.
+  assert.equal(store.captureLog.length, 101);
+
+  chrome.downloads.download = realDownload;
+  await recordCapture(rec(101));
+
+  const names = historyFileWrites().map((w) => w.filename);
+  assert.equal(names.length, 2);
+  assert.equal(names[1], firstName, 'the retry should reuse the pinned name');
+  // And the pin is released once the batch is out of the log for good.
+  assert.equal(store.pendingHistoryFiles, undefined);
+});
+
+test('an abandoned batch keeps its pinned name while a settled one drops it', async () => {
+  // Two batches due, the second fails outright (no file). Batch 1 is
+  // out of the log for good so its pin can go; batch 2 is still in the
+  // log and will be re-derived, so its pin has to survive.
+  const store = stubChrome(Array.from({ length: 150 }, (_, i) => rec(i)));
+  const realDownload = chrome.downloads.download;
+  let historyFileCalls = 0;
+  chrome.downloads.download = async (opts) => {
+    if (opts.filename.includes('/history-')) {
+      historyFileCalls += 1;
+      if (historyFileCalls === 2) throw new Error('disk full');
+    }
+    return realDownload(opts);
+  };
+  await recordCapture(rec(150));
+
+  const pins = Object.values(store.pendingHistoryFiles ?? {});
+  assert.equal(pins.length, 1, 'exactly the abandoned batch should stay pinned');
+  assert.notEqual(pins[0], historyFileWrites()[0].filename.replace(/^.*\//, ''));
 });
 
 test('a log far over the cap drains in batches, oldest file first', async () => {
@@ -265,10 +352,12 @@ test('records sharing a timestamp all survive the history file round-trip', asyn
   assert.equal(new Set(sessionRows.map((r) => serializeLog([r]))).size, 6);
 });
 
-test('two batches ending on one timestamp get distinct history file names', async () => {
-  // Contrived: 50 saves in one session so both batches end inside it.
+test('every batch in one drain gets a distinct history file name', async () => {
+  // Each batch gets its own millisecond by construction, so this is
+  // the ordering guarantee more than the collision guard:
   // `conflictAction: 'overwrite'` means a shared name would destroy
-  // the first batch outright.
+  // the batch that landed first, and a name out of order would break
+  // the chronological-by-filename rule every reader depends on.
   const session = sameStampRecords(60);
   stubChrome([...session, ...Array.from({ length: 141 }, (_, i) => rec(i))]);
   await recordCapture(rec(500));
@@ -277,30 +366,98 @@ test('two batches ending on one timestamp get distinct history file names', asyn
   assert.equal(names.length, 3);
   assert.equal(new Set(names).size, 3);
   // Disambiguated by advancing the stamp, not by a suffix, so every
-  // history file name still matches the one pattern a reader can parse.
+  // history file name still matches the one pattern a reader can parse
+  // — and so the names stay in write order.
   for (const name of names) {
     assert.match(name, /\/history-\d{8}-\d{6}-\d{3}\.json$/);
   }
+  assert.deepEqual(names.map(stampOf), [...names.map(stampOf)].sort());
 });
 
-test('a history file already on disk pushes the flush to a fresh name', async () => {
-  // First run, nothing on disk: learn the name this batch naturally
-  // flushes to. (Computed rather than hardcoded because the name is a
-  // *local-time* stamp of the batch's newest record.)
-  const seed = () => Array.from({ length: 100 }, (_, i) => rec(i + 1));
-  stubChrome(seed());
+test('history files already on disk push the flush past every one of them', async () => {
+  // Seed the whole window of names the drain could otherwise mint —
+  // every millisecond from now to now+200 — so it can't land on a free
+  // one by simply reading the clock a moment later. `conflictAction:
+  // 'overwrite'` means reusing any of these would destroy a real file,
+  // so `getHistoryFilePaths` seeding plus `stampFloor` have to steer
+  // the flush past the lot.
+  //
+  // Seeding a whole window, rather than one name a second drain would
+  // have picked, is what keeps this honest: names come off the clock,
+  // so any single re-run produces a different stamp whether or not the
+  // guard exists.
+  const now = Date.now();
+  const window = Array.from({ length: 201 },
+    (_, i) => `/d/SeeWhatISee/history-${compactStamp(now + i)}.json`);
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i + 1)),
+    { historyFilesOnDisk: window });
   await recordCapture(rec(101));
-  const taken = historyFileWrites()[0].filename.replace(/^.*\//, '');
 
-  // Second run, same batch — but that name is already on disk from an
-  // earlier install/session. `conflictAction: 'overwrite'` means
-  // reusing it would destroy the old file, so the collision guard's
-  // `getHistoryFilePaths` seeding must steer the flush past it.
-  stubChrome(seed(), { historyFilesOnDisk: [`/d/SeeWhatISee/${taken}`] });
+  const name = historyFileWrites()[0].filename;
+  assert.match(name, /\/history-\d{8}-\d{6}-\d{3}\.json$/);
+  assert.ok(!window.includes(name), `${name} collides with a file on disk`);
+  // Past them, not merely different: filename order has to stay
+  // chronological, so the new file must sort after every existing one.
+  assert.ok(stampOf(name) > stampOf(window[window.length - 1]),
+    `${name} should sort after ${window[window.length - 1]}`);
+});
+
+test('a stamp far ahead of the clock is ignored rather than followed', async () => {
+  // Without the lookahead clamp, one stray file — a stale copy, or one
+  // written while the machine's clock was wrong — would drag the floor
+  // to its stamp and every history file after it would inherit that
+  // bad clock permanently.
+  const bogus = `/d/SeeWhatISee/history-${compactStamp(Date.now() + 400 * 24 * 3600 * 1000)}.json`;
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i + 1)),
+    { historyFilesOnDisk: [bogus] });
+  const before = Date.now();
   await recordCapture(rec(101));
-  const name = historyFileWrites()[0].filename.replace(/^.*\//, '');
-  assert.notEqual(name, taken);
-  assert.match(name, /^history-\d{8}-\d{6}-\d{3}\.json$/);
+  const after = Date.now();
+
+  const stamp = stampOf(historyFileWrites()[0].filename);
+  assert.ok(stamp >= compactStamp(before) && stamp <= compactStamp(after),
+    `${stamp} should come off the clock, not from ${bogus}`);
+});
+
+test('a failed log.json write keeps the pins so the retry still reuses them', async () => {
+  // The other half of the crash window: the history file lands, but
+  // `log.json` is never trimmed. Disk is authoritative, so the next
+  // capture adopts the untrimmed log and re-derives the same batch —
+  // which means the pin has to survive even though the batch *did*
+  // leave storage on this pass.
+  //
+  // Injected at `waitForDownloadComplete`, not at `download`: the
+  // download itself starting is what `writeJsonFile` awaits, and a
+  // throw there propagates out of `recordCapture` (so the cleanup
+  // never runs and there is nothing to test). The window that matters
+  // is the write *completing* — `recordCapture` swallows that failure
+  // and carries on.
+  const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
+  const realDownload = chrome.downloads.download;
+  const realSearch = chrome.downloads.search;
+  // Only *this* download interrupts. Keyed on the id rather than the
+  // filename because the reconcile looks `log.json` up by name too,
+  // and reporting that one interrupted would block the capture
+  // outright instead of exercising the write-completion path.
+  let logDownloadId = -1;
+  chrome.downloads.download = async (opts) => {
+    const id = await realDownload(opts);
+    if (opts.filename.endsWith('/log.json')) logDownloadId = id;
+    return id;
+  };
+  chrome.downloads.search = async (query = {}) => {
+    if (query.id !== undefined && query.id === logDownloadId) {
+      return [{ id: query.id, state: 'interrupted', error: 'FILE_FAILED' }];
+    }
+    return realSearch(query);
+  };
+  await recordCapture(rec(100));
+  chrome.downloads.download = realDownload;
+  chrome.downloads.search = realSearch;
+  const firstName = historyFileWrites()[0].filename;
+  const pins = Object.values(store.pendingHistoryFiles ?? {});
+  assert.equal(pins.length, 1, 'the pin must survive an unwritten log.json');
+  assert.equal(`SeeWhatISee/${pins[0]}`, firstName);
 });
 
 // `dedupeRecords` is display-side: it collapses one record that

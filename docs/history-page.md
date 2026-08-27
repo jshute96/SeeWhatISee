@@ -188,8 +188,8 @@ Finding that tab is less obvious than it looks:
     apart from a genuinely empty history.
 - Merging is a plain concatenation: the storage log, then each history
   file's records, files in `listHistoryFiles()` order (newest first
-  by the timestamp in each filename). No sort; dedup only on exact
-  record text.
+  by the timestamp in each filename, which is the moment that file was
+  written). No sort; dedup only on exact record text.
   - **Not sorted by `timestamp`.** File order is *append* order, which
     isn't timestamp order: a Capture-page session pins its timestamp
     when it opens, so a record saved later can carry an earlier stamp
