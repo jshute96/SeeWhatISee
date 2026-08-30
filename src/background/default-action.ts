@@ -6,6 +6,7 @@
 // defaults.
 
 import { scrapeSelection } from '../capture.js';
+import { resolveCaptureTab, type GestureTab } from '../capture/target-tab.js';
 import {
   CAPTURE_ACTIONS,
   type CaptureAction,
@@ -321,10 +322,11 @@ export async function setDefaultWithSelectionId(id: string): Promise<void> {
 // permission alone is not enough. Don't drop `activeTab` from the manifest
 // without testing on chrome://extensions or you'll silently re-break this.
 //
-// We deliberately don't pass the listener's `tab` arg through to
-// captureVisible — instead captureVisible re-queries the active tab
-// itself, so the immediate and delayed paths share one resolution
-// strategy (active tab in the last-focused window).
+// The listener's `tab` arg is threaded all the way down to the
+// capture entry points: it names the tab the click actually happened
+// on, which is both what the user meant and what the `activeTab`
+// grant covers. See `capture/target-tab.ts` for why inferring it from
+// `lastFocusedWindow` instead is unreliable.
 //
 // runWithErrorReporting catches rejection and opens the friendly
 // error Capture page, so user-actionable failures like "No active
@@ -353,10 +355,18 @@ const DOUBLE_CLICK_MS = 250;
  * subsequent action itself will surface any real failure through
  * the icon/tooltip error channel.
  */
-export async function activeTabHasSelection(): Promise<boolean> {
+export async function activeTabHasSelection(
+  gestureTab?: GestureTab,
+): Promise<boolean> {
   try {
-    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (active?.id === undefined) return false;
+    // Probe the tab the gesture happened on — the one an immediate
+    // action will capture. A *delayed* default re-resolves after its
+    // countdown and may legitimately end up elsewhere; probing the
+    // clicked tab is still the right call there, since the choice of
+    // action has to be made from what the user was looking at when
+    // they clicked.
+    const active = await resolveCaptureTab(gestureTab);
+    if (active.id === undefined) return false;
     return !!(await scrapeSelection(active.id, active.url ?? ''));
   } catch {
     return false;
@@ -370,15 +380,19 @@ export async function activeTabHasSelection(): Promise<boolean> {
  * the tab state at dispatch time (after any tab switch during the
  * double-click window). Ignore-selection short-circuits the probe.
  */
-async function dispatchAction(withoutId: string, withId: string): Promise<void> {
+async function dispatchAction(
+  withoutId: string,
+  withId: string,
+  gestureTab?: GestureTab,
+): Promise<void> {
   let useWith = false;
   if (withId !== IGNORE_SELECTION_ID) {
-    useWith = await activeTabHasSelection();
+    useWith = await activeTabHasSelection(gestureTab);
   }
   if (useWith) {
     const action = findCaptureAction(withId);
     if (action) {
-      await action.run();
+      await action.run(gestureTab);
       return;
     }
     // Unrecognized with-selection id falls through to without —
@@ -391,7 +405,7 @@ async function dispatchAction(withoutId: string, withId: string): Promise<void> 
     );
   }
   const action = findCaptureAction(withoutId) ?? CAPTURE_ACTIONS[0]!;
-  await action.run();
+  await action.run(gestureTab);
 }
 
 /**
@@ -401,13 +415,13 @@ async function dispatchAction(withoutId: string, withId: string): Promise<void> 
  * keyboard press has no need for double-press detection — there's a
  * separate command for that).
  */
-export async function runDblDefault(): Promise<void> {
+export async function runDblDefault(gestureTab?: GestureTab): Promise<void> {
   const dblWithoutId = await getDefaultDblWithoutSelectionId();
   const dblWithId = await getDefaultDblWithSelectionId();
-  await dispatchAction(dblWithoutId, dblWithId);
+  await dispatchAction(dblWithoutId, dblWithId, gestureTab);
 }
 
-export async function handleActionClick(): Promise<void> {
+export async function handleActionClick(gestureTab?: GestureTab): Promise<void> {
   const clickWithoutId = await getDefaultWithoutSelectionId();
   const clickWithId = await getDefaultWithSelectionId();
   const dblWithoutId = await getDefaultDblWithoutSelectionId();
@@ -418,20 +432,24 @@ export async function handleActionClick(): Promise<void> {
   if (pendingClickTimer !== undefined) {
     clearTimeout(pendingClickTimer);
     pendingClickTimer = undefined;
-    await runWithErrorReporting(() => dispatchAction(dblWithoutId, dblWithId));
+    await runWithErrorReporting(
+      () => dispatchAction(dblWithoutId, dblWithId, gestureTab),
+      gestureTab,
+    );
     return;
   }
 
   // First click: wait for a potential second click before running
-  // the click-* defaults. If the user switches tabs during the
-  // 250 ms window, the capture targets whatever tab is visible when
-  // the timer fires — captureVisibleTab can only capture what's on
-  // screen, and re-activating the original tab would be surprising.
+  // the click-* defaults. The capture still targets the clicked tab
+  // even if the user moves during the 250 ms window — the window is
+  // short enough that "capture what I clicked on" is the only
+  // reading, and it keeps us on the tab `activeTab` was granted for.
   await new Promise<void>((resolve) => {
     pendingClickTimer = setTimeout(() => {
       pendingClickTimer = undefined;
-      void runWithErrorReporting(() =>
-        dispatchAction(clickWithoutId, clickWithId),
+      void runWithErrorReporting(
+        () => dispatchAction(clickWithoutId, clickWithId, gestureTab),
+        gestureTab,
       ).then(resolve, resolve);
     }, DOUBLE_CLICK_MS);
   });

@@ -1,8 +1,9 @@
 import {
-  captureBothToMemory,
+  captureBothToMemoryWithTab,
   recordDetailedCapture,
   selectionFilenamesFor,
 } from '../capture.js';
+import type { GestureTab } from '../capture/target-tab.js';
 import {
   noSelectionContentMessage,
   SELECTION_EXTENSIONS,
@@ -716,21 +717,22 @@ function extFromDataUrl(dataUrl: string): 'png' | 'jpg' {
   return /^data:image\/jpeg[;,]/.test(dataUrl) ? 'jpg' : 'png';
 }
 
-export async function startCaptureWithDetails(delayMs = 0): Promise<void> {
+export async function startCaptureWithDetails(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<void> {
   // Capture both artifacts *before* opening the new tab so we
   // snapshot the user's current page (not the empty capture.html
-  // tab). captureBothToMemory queries the active tab itself, after
-  // the optional delay, so delayed details captures follow focus /
-  // hover state the same way delayed screenshots do.
-  const data = await captureBothToMemory(delayMs);
-
-  // Re-query the active tab so we can position the Capture page tab
-  // immediately to its right and remember it as the opener. The
-  // tab strip hasn't moved between captureBothToMemory's query
-  // and now (no async user input in between), so this resolves to
-  // the same tab the screenshot came from.
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  await openCapturePageWithSession(data, active);
+  // tab). The target is resolved after the optional delay, so
+  // delayed details captures follow focus / hover state the same way
+  // delayed screenshots do.
+  //
+  // We reuse the tab that capture resolved (rather than re-querying)
+  // to place the Capture page: it's the tab the screenshot actually
+  // came from, so the new tab always lands in the window the user is
+  // looking at.
+  const { capture, tab } = await captureBothToMemoryWithTab(delayMs, gestureTab);
+  await openCapturePageWithSession(capture, tab);
 }
 
 /**

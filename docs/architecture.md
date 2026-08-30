@@ -95,19 +95,26 @@ listeners. The substantive logic lives in `src/background/`:
 
 `src/capture.ts` provides the building blocks every action calls:
 
-- `captureVisible(delayMs?)` calls `chrome.tabs.captureVisibleTab`
-  to get a PNG data URL of the visible tab region and saves it
-  directly. `delayMs` runs a countdown (with a toolbar badge)
-  before the active-tab lookup so the user can reposition / hover
-  during the wait.
-- `savePageContents(delayMs?)` uses
+- Every entry point takes an optional `gestureTab` and resolves
+  its target through `resolveCaptureTab`
+  (`src/capture/target-tab.ts`) — see
+  [capture-actions.md → Target-tab resolution](capture-actions.md#target-tab-resolution).
+- `captureVisible(delayMs?, gestureTab?)` calls
+  `chrome.tabs.captureVisibleTab` to get a PNG data URL of the
+  visible tab region and saves it directly. `delayMs` runs a
+  countdown (with a toolbar badge) before the target lookup so the
+  user can reposition / hover during the wait.
+- `savePageContents(delayMs?, gestureTab?)` uses
   `chrome.scripting.executeScript` to grab
-  `document.documentElement.outerHTML` from the active tab and
+  `document.documentElement.outerHTML` from the target tab and
   saves it as an HTML file. Same delay semantics as
   `captureVisible`.
-- `captureBothToMemory(delayMs?)` does *both* of the above
-  without saving, returning the data for the Capture page flow to
-  stash and preview. Same delay semantics.
+- `captureBothToMemory(delayMs?, gestureTab?)` does *both* of the
+  above without saving, returning the data for the Capture page
+  flow to stash and preview. Same delay semantics.
+  `captureBothToMemoryWithTab` is the same call plus the tab it
+  resolved, so the Capture page can be placed next to the page it
+  actually captured.
 - `downloadScreenshot` / `downloadHtml` start a download from the
   pre-captured data; `waitForDownloadComplete` polls until the
   file is on disk and returns its absolute path. The SW caches

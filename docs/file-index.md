@@ -182,7 +182,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 |------|-------------|
 | `src/manifest.json` | Manifest V3 manifest, copied verbatim into `dist/` |
 | `src/background.ts` | MV3 service worker entrypoint — wires Chrome event listeners to the modules under `src/background/` and exposes `self.SeeWhatISee` for tests |
-| `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules under `src/capture/` |
+| `src/capture.ts` | Capture entry points (`captureVisible`/`savePageContents`/`captureSelection`/`captureBothToMemory`/`captureBothToMemoryWithTab`/`scrapeSelection`), record types, `recordDetailedCapture` + `saveCapture` — orchestrates the submodules under `src/capture/` |
 | `src/capture.html` | Capture page — page-card, save options, edit dialogs, prompt, drawing-tool palette + image overlay; stale-load error pane when opened without a SW session |
 | `src/capture-page.ts` | Controller for `capture.html`: page-card, prompt, save options, Copy-filename clipboard, Edit dialogs, More… menu, bake-in — orchestrates the submodules under `src/capture-page/` |
 | `src/ask-inject.ts` | MAIN-world helpers (clear composer, attach files, type prompt, click submit) callable via a `window.postMessage` bridge from the widget; chip-count gate per call |
@@ -243,6 +243,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
+| `src/capture/target-tab.ts` | Picks which tab a capture targets — prefers the gesture's own tab over Chrome's unreliable last-focused-window bookkeeping |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 
 ### Capture-page modules (`src/capture-page/`)
@@ -323,6 +324,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo / Redo, Reset and undoing it, More-menu dismissal + slide-up placement |
 | `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink operator — target/label rules, history/Undo wiring, drill-through on nested fixtures |
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width + DPR-stub regressions, continuous wheel / pinch / key zoom with cursor anchoring, arrow-key fine pan, pan snap, Zoom-popover |
+| `tests/e2e/capture-gesture-tab.spec.ts` | E2E that a capture targets the gesture's tab, not the last-focused window's, when the two disagree |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |

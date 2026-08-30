@@ -51,6 +51,7 @@ import {
   fetchImageBytes,
   probeActiveTabImage,
 } from './capture/image-source.js';
+import { resolveCaptureTab, type GestureTab } from './capture/target-tab.js';
 import {
   noSelectionContentMessage,
   SELECTION_EXTENSIONS,
@@ -103,47 +104,45 @@ async function countdownSleep(delayMs: number): Promise<void> {
 
 
 /**
- * Capture the currently visible region of the active tab in the
- * last-focused window.
+ * Capture the currently visible region of the tab the gesture
+ * happened on (see `resolveCaptureTab` for how the target is picked,
+ * and why a plain active-tab query isn't good enough).
  *
  * `delayMs` (default 0) sleeps for the given number of milliseconds
  * before capturing, so the user can activate hover states, open menus,
  * etc. during the wait. The await keeps the MV3 service worker alive
  * for the duration of the timer.
  *
- * We always resolve the active tab *after* the delay (rather than
- * caching the tab passed in by the action / contextMenus listeners)
- * so that:
- *   - the recorded `url` and the captured pixels always describe the
- *     same page, even if the user switched tabs / windows / popups
- *     during the delay;
- *   - delayed captures naturally follow focus to whatever window the
- *     user is now looking at.
+ * `resolveCaptureTab` runs that countdown itself — it samples the
+ * active tab on both sides of the wait to tell a real focus change
+ * from stale bookkeeping — and resolves the target *after* it. So the
+ * recorded `url` and the captured pixels always describe the same
+ * page even if the user moved around during the wait, and delayed
+ * captures can follow focus to whichever window the user ends up on.
  *
- * If the last-focused window isn't a regular browser window with an
- * active tab — e.g. DevTools is on top — the query returns `[]` and
- * we throw. Capturing a different window just so the call succeeds
- * would be confusing; the right fix from the user side is to focus
- * the real window first (or use a `delayMs` and switch focus during
- * the wait). The throw is caught by the action / context-menu
- * wrappers (and the targeted `unhandledrejection` handler in
- * background.ts catches the SW devtools console invocation path),
- * so it surfaces on the friendly error page rather than as an
- * unhandled rejection.
+ * When nothing resolves — no gesture tab and no active tab in a
+ * regular browser window, e.g. DevTools is on top — we throw.
+ * Capturing some other window just so the call succeeds would be
+ * confusing; the right fix from the user side is to focus the real
+ * window first (or use a `delayMs` and switch focus during the wait).
+ * The throw is caught by the action / context-menu wrappers (and the
+ * targeted `unhandledrejection` handler in background.ts catches the
+ * SW devtools console invocation path), so it surfaces on the
+ * friendly error page rather than as an unhandled rejection.
  *
- * Trade-off: the `activeTab` permission grant from a toolbar gesture
- * applies to the tab that was active at gesture time. If the user
- * switches to a different `chrome://` page during a delayed capture,
- * the new tab isn't covered by `activeTab` (and `<all_urls>` doesn't
- * cover `chrome://`), so the capture will fail. For normal http(s)
- * pages this isn't an issue.
+ * Trade-off: the `activeTab` permission grant applies to the tab the
+ * gesture happened on. If the user switches to a different
+ * `chrome://` page during a delayed capture, the new tab isn't
+ * covered by `activeTab` (and `<all_urls>` doesn't cover
+ * `chrome://`), so the capture will fail. For normal http(s) pages
+ * this isn't an issue, and immediate captures never hit it at all
+ * since they stay on the granted tab.
  */
-export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
-  if (delayMs > 0) {
-    await countdownSleep(delayMs);
-  }
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!active) throw new Error('No active tab found to capture');
+export async function captureVisible(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<CaptureResult> {
+  const active = await resolveCaptureTab(gestureTab, delayMs, countdownSleep);
 
   // When the tab is a bare image (file:// or http(s):// directly
   // pointing at a PNG / JPG / etc.), grab the source image bytes
@@ -162,7 +161,7 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
 }
 
 /**
- * Save the full HTML of the active tab in the last-focused window.
+ * Save the full HTML of the tab the gesture happened on.
  *
  * Uses `chrome.scripting.executeScript` to grab
  * `document.documentElement.outerHTML` from the page. The result is
@@ -171,18 +170,17 @@ export async function captureVisible(delayMs = 0): Promise<CaptureResult> {
  * screenshot capture — the only difference is the filename extension.
  *
  * `delayMs` (default 0) behaves the same as `captureVisible`'s delay:
- * the SW awaits a timer, and the active-tab lookup happens *after*
- * the wait so the scrape follows focus changes / navigations during
- * the delay.
+ * the SW awaits a timer, and the target lookup happens *after* the
+ * wait so the scrape follows focus changes / navigations during the
+ * delay.
  *
  * Requires the `scripting` permission in the manifest.
  */
-export async function savePageContents(delayMs = 0): Promise<CaptureResult> {
-  if (delayMs > 0) {
-    await countdownSleep(delayMs);
-  }
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!active) throw new Error('No active tab found to capture');
+export async function savePageContents(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<CaptureResult> {
+  const active = await resolveCaptureTab(gestureTab, delayMs, countdownSleep);
 
   const results = await chrome.scripting.executeScript({
     target: { tabId: active.id! },
@@ -298,12 +296,9 @@ export function selectionFilenamesFor(ts: string): Record<SelectionFormat, strin
 export async function captureSelection(
   format: SelectionFormat = 'html',
   delayMs = 0,
+  gestureTab?: GestureTab,
 ): Promise<CaptureRecord> {
-  if (delayMs > 0) {
-    await countdownSleep(delayMs);
-  }
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!active) throw new Error('No active tab found to capture');
+  const active = await resolveCaptureTab(gestureTab, delayMs, countdownSleep);
 
   const bodies = await scrapeSelection(active.id!, active.url ?? '');
   if (!bodies) throw new Error('No text selected');
@@ -362,22 +357,37 @@ export async function captureSelection(
  * (Copy-filename buttons); `recordDetailedCapture` then writes the
  * log record referencing whichever artifacts were materialized.
  *
- * The active-tab query happens once and both the screenshot and the
- * HTML scrape target that tab, so the two artifacts are guaranteed
- * to describe the same page. If the user switches tabs during the
+ * Target resolution happens once and both the screenshot and the HTML
+ * scrape use that tab, so the two artifacts are guaranteed to
+ * describe the same page. If the user switches tabs during the
  * Capture page flow, the tab identifier we capture here is stable.
  *
- * `delayMs` (default 0) sleeps before the active-tab lookup so the
- * user can activate hover states / open menus before the capture
- * freezes. Same semantics as `captureVisible`'s delay — focus
- * follows wherever the user ends up by the time the timer fires.
+ * `delayMs` (default 0) sleeps before the target lookup so the user
+ * can activate hover states / open menus before the capture freezes.
+ * Same semantics as `captureVisible`'s delay — focus follows wherever
+ * the user ends up by the time the timer fires.
  */
-export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture> {
-  if (delayMs > 0) {
-    await countdownSleep(delayMs);
-  }
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!active) throw new Error('No active tab found to capture');
+export async function captureBothToMemory(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<InMemoryCapture> {
+  return (await captureBothToMemoryWithTab(delayMs, gestureTab)).capture;
+}
+
+/**
+ * `captureBothToMemory` plus the tab it resolved.
+ *
+ * The Capture page flow needs both: the payload to render, and the
+ * source tab to position the new tab next to. Re-resolving the target
+ * after the fact would reintroduce the bug this whole path exists to
+ * avoid — by then the gesture is over, and a fresh active-tab query
+ * can land on a different window than the one we just captured.
+ */
+export async function captureBothToMemoryWithTab(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<{ capture: InMemoryCapture; tab: chrome.tabs.Tab }> {
+  const active = await resolveCaptureTab(gestureTab, delayMs, countdownSleep);
 
   // Image-tab short-circuit: when the tab is showing a bare image
   // file directly, treat it like the upload-image flow. We use the
@@ -386,7 +396,10 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   // already renders for uploads. See `probeActiveTabImage`.
   const imageTab = await probeActiveTabImage(active);
   if (imageTab) {
-    return captureImageTabToMemory(active, imageTab.url, imageTab.title);
+    return {
+      capture: await captureImageTabToMemory(active, imageTab.url, imageTab.title),
+      tab: active,
+    };
   }
 
   let screenshotDataUrl = '';
@@ -426,7 +439,7 @@ export async function captureBothToMemory(delayMs = 0): Promise<InMemoryCapture>
   if (scrape.htmlError !== undefined) capture.htmlError = scrape.htmlError;
   if (scrape.selectionError !== undefined) capture.selectionError = scrape.selectionError;
   if (screenshotError !== undefined) capture.screenshotError = screenshotError;
-  return capture;
+  return { capture, tab: active };
 }
 
 /**

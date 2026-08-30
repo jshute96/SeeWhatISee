@@ -466,18 +466,76 @@ submenu inside the page context menu (no parent created in code).
   for the page-side fetch / canvas-fallback strategies, MIME →
   extension ladder, and tainted-canvas error handling.
 
-## Active-tab resolution
+## Target-tab resolution
 
-`captureVisible` always re-queries the active tab in the
-last-focused window *after* any delay, then captures that tab and
-records its URL.
+Every capture entry point resolves its target through
+`resolveCaptureTab` (`src/capture/target-tab.ts`), which prefers
+the tab the triggering **gesture** happened on.
 
-- This keeps `url` and captured pixels consistent even if the
-  user switches tabs, windows, or interacts with a popup during
-  the delay.
-- If the focused window isn't a regular browser window with an
-  active tab (e.g. DevTools is on top), the query returns nothing
-  and the call throws.
+Why not just query the active tab:
+
+- `chrome.tabs.query({ active: true, lastFocusedWindow: true })`
+  reads Chrome's own focus bookkeeping, updated from
+  `windows.onFocusChanged` — not "the window the user clicked in".
+- With several windows open (especially across virtual desktops,
+  where a window manager may not deliver the focus changes Chrome
+  expects), that bookkeeping can name a window the user left
+  earlier, and the click doesn't correct it.
+- The capture then targets the wrong window: wrong page recorded,
+  and the Capture page opens somewhere the user isn't looking
+  (it's placed next to the resolved tab).
+
+Where the gesture tab comes from:
+
+- `chrome.action.onClicked` and `chrome.contextMenus.onClicked`
+  both hand us the tab; `chrome.commands.onCommand` hands us the
+  active tab of the window the shortcut was pressed in.
+- It threads down through `CaptureAction.run(gestureTab)` to each
+  capture entry point.
+- Gestureless callers (SW devtools console, e2e harness) pass
+  nothing and fall back to the active-tab query.
+
+The rules:
+
+- **No gesture tab** — the active-tab query is all we have.
+- **`delayMs === 0`** — the gesture tab, always. It's what the
+  user was looking at, and the tab `activeTab` was granted on.
+- **`delayMs > 0`** — re-query, because delayed captures are meant
+  to follow focus (that's what the countdown is for).
+
+The delayed path takes the queried tab when any of these says the
+answer is real rather than stale:
+
+- it's in the gesture's own window;
+- it names a *different* window than a sample taken before the
+  countdown — focus demonstrably moved while we waited;
+- Chrome reports its window as focused right now.
+
+Failing all three, the query is repeating what it said before the
+delay and can't confirm it, so we stay on the gesture tab.
+
+Notes on the mechanics:
+
+- `resolveCaptureTab` runs the countdown itself. The pre-delay
+  sample has to be taken inside, before the wait.
+- The pre-delay sample is what keeps this working when Chrome
+  isn't the frontmost application at all when the timer fires —
+  then no window reports `focused`, and the focus check alone
+  would have wrongly rejected a window the user really did switch
+  to.
+- `windows.get().focused` is *not* independent evidence: it comes
+  from the same `onFocusChanged` plumbing as `lastFocusedWindow`.
+  It's a better signal (a live per-window flag, not a "most
+  recent" pointer), which is why it's one check of three.
+- Resolution happens after the delay, so `url` and captured pixels
+  stay consistent with each other.
+- When nothing resolves at all (no gesture tab, and no active tab
+  in a regular browser window — e.g. DevTools is on top), the call
+  throws.
+- The Capture page flow uses `captureBothToMemoryWithTab`, which
+  hands back the resolved tab alongside the payload. Placing the
+  new tab from a fresh query would reintroduce the same divergence
+  after the gesture is over.
 
 ## Keyboard commands
 

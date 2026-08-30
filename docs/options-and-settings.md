@@ -121,13 +121,23 @@ Reads all four stored ids up front, then picks a path:
 - **Second click within window.** Clear the timer and run
   `dispatchAction(dblWithout, dblWith)` instead.
 
-`dispatchAction(without, with)` probes for a selection on the active
-tab. If one is present and the `with` id isn't `ignore-selection`, it
-runs the `with` action; otherwise it runs the `without` action. The
-probe runs lazily inside the timer / on the second click so the
-selection state always reflects the tab at *dispatch* time, not at
-click time. Probe failures (restricted URL, closed tab) fall through
-to `false` so the click still runs the without-selection action.
+`dispatchAction(without, with)` then picks between the two ids:
+
+- Probes for a selection on the tab the click happened on — the
+  same tab the action will capture, resolved through
+  `resolveCaptureTab`. See
+  [capture-actions.md → Target-tab resolution](capture-actions.md#target-tab-resolution).
+- Selection present and the `with` id isn't `ignore-selection` →
+  run the `with` action; otherwise the `without` action.
+- The probe runs lazily inside the timer / on the second click, so
+  the *selection state* reflects the page at dispatch time rather
+  than at click time.
+- The *tab* it reads, though, stays the clicked one: the
+  double-click window is short, and following a tab switch there
+  would both surprise the user and leave the `activeTab` grant
+  behind.
+- Probe failures (restricted URL, closed tab) fall through to
+  `false`, so the click still runs the without-selection action.
 
 ## Toolbar tooltip
 
@@ -225,9 +235,11 @@ than naming a specific action:
 - `_execute_action` — Chrome's reserved name; fires
   `chrome.action.onClicked` and so triggers the same
   `handleActionClick` path a toolbar click would (subject to the
-  250 ms double-click window).
-- `01-secondary-action` — calls `runDblDefault()` directly, no timer
-  involved. Selection-aware via the same `dispatchAction` helper, so
+  250 ms double-click window), gesture tab included.
+- `01-secondary-action` — calls `runDblDefault(tab)` directly, no
+  timer involved. `chrome.commands.onCommand` hands us the active
+  tab of the window the shortcut was pressed in, so hotkeys target
+  the same tab a click in that window would. Selection-aware via the same `dispatchAction` helper, so
   a pressed Secondary hotkey always fires the same dispatch a Dbl
   click would.
 

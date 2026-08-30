@@ -6,6 +6,7 @@ import {
   savePageContents,
 } from '../capture.js';
 import type { SelectionFormat } from '../capture/types.js';
+import type { GestureTab } from '../capture/target-tab.js';
 import { isBlankText } from '../capture/packed-text.js';
 import {
   downloadHtml,
@@ -94,9 +95,15 @@ interface BaseCaptureAction {
   /** When `false`, only the 0s variant is generated — no 3s entry
    * shows up anywhere. Defaults to `true`. */
   supportsDelayed?: boolean;
-  /** Runs the action with the given delay (ms). `delayMs === 0` is
-   * the immediate / no-delay path. */
-  run: (delayMs: number) => Promise<unknown>;
+  /**
+   * Runs the action with the given delay (ms). `delayMs === 0` is
+   * the immediate / no-delay path.
+   *
+   * `gestureTab` is the tab the triggering gesture happened on, when
+   * there was one — see `capture/target-tab.ts`. Every base action
+   * passes it straight down to its capture entry point.
+   */
+  run: (delayMs: number, gestureTab: GestureTab) => Promise<unknown>;
 }
 
 export interface CaptureAction {
@@ -120,8 +127,9 @@ export interface CaptureAction {
    * entry into the right menu section. */
   delaySec: number;
   /** Runs when the user picks this action (either from a menu entry
-   * or a toolbar click when it's the current default). */
-  run: () => Promise<unknown>;
+   * or a toolbar click when it's the current default). Pass the
+   * gesture's tab whenever the caller has one. */
+  run: (gestureTab?: GestureTab) => Promise<unknown>;
 }
 
 /**
@@ -134,8 +142,11 @@ export interface CaptureAction {
  * Deliberately ignores `data.htmlError` — a URL-only record doesn't
  * need HTML, so a restricted-URL scrape failure shouldn't block it.
  */
-export async function captureUrlOnly(delayMs = 0): Promise<void> {
-  const data = await captureBothToMemory(delayMs);
+export async function captureUrlOnly(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<void> {
+  const data = await captureBothToMemory(delayMs, gestureTab);
   await recordDetailedCapture({
     capture: data,
     includeScreenshot: false,
@@ -162,8 +173,11 @@ export async function captureUrlOnly(delayMs = 0): Promise<void> {
  * content when the preferred format is empty for this capture (e.g.
  * image-only selection → empty text body, configured default = text).
  */
-export async function saveDefaults(delayMs = 0): Promise<void> {
-  const data = await captureBothToMemory(delayMs);
+export async function saveDefaults(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<void> {
+  const data = await captureBothToMemory(delayMs, gestureTab);
   const defaults = await getCaptureDetailsDefaults();
 
   const allFormats: SelectionFormat[] = ['html', 'text', 'markdown'];
@@ -228,8 +242,11 @@ export async function saveDefaults(delayMs = 0): Promise<void> {
  * — the action's error-reporting channel then swaps the icon /
  * tooltip so the user sees why nothing landed.
  */
-export async function captureAll(delayMs = 0): Promise<void> {
-  const data = await captureBothToMemory(delayMs);
+export async function captureAll(
+  delayMs = 0,
+  gestureTab?: GestureTab,
+): Promise<void> {
+  const data = await captureBothToMemory(delayMs, gestureTab);
   if (data.screenshotError) {
     throw new Error(data.screenshotError);
   }
@@ -284,7 +301,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     // continuation.
     baseTooltipFragment: 'Capture...',
     group: 'primary',
-    run: (delayMs) => startCaptureWithDetails(delayMs),
+    run: (delayMs, tab) => startCaptureWithDetails(delayMs, tab),
   },
   {
     // Runs the same artifact-write path the Capture page would on
@@ -300,14 +317,14 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTooltipFragment: 'Save default items',
     group: 'more',
     supportsDelayed: false,
-    run: (delayMs) => saveDefaults(delayMs),
+    run: (delayMs, tab) => saveDefaults(delayMs, tab),
   },
   {
     baseId: 'save-screenshot',
     baseTitle: 'Save screenshot',
     baseTooltipFragment: 'Save screenshot',
     group: 'more',
-    run: (delayMs) => captureVisible(delayMs),
+    run: (delayMs, tab) => captureVisible(delayMs, tab),
   },
   {
     baseId: 'save-page-contents',
@@ -316,7 +333,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     group: 'more',
     // No delayed variants — see `save-defaults`.
     supportsDelayed: false,
-    run: (delayMs) => savePageContents(delayMs),
+    run: (delayMs, tab) => savePageContents(delayMs, tab),
   },
   {
     baseId: 'save-url',
@@ -329,7 +346,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     // intent is "record *this* URL" — and it's easy to reproduce
     // intentionally by just opening the other page first.
     supportsDelayed: false,
-    run: (delayMs) => captureUrlOnly(delayMs),
+    run: (delayMs, tab) => captureUrlOnly(delayMs, tab),
   },
   {
     baseId: 'save-all',
@@ -338,7 +355,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     group: 'more',
     // No delayed variants — see `save-defaults`.
     supportsDelayed: false,
-    run: (delayMs) => captureAll(delayMs),
+    run: (delayMs, tab) => captureAll(delayMs, tab),
   },
   // Three selection-format shortcuts. A single capture can only
   // produce one selection file, so we expose each serialization
@@ -364,7 +381,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     // action; waiting doesn't help. Still bindable as the default
     // click action at 0s via the Options page.
     supportsDelayed: false,
-    run: (delayMs) => captureSelection('html', delayMs),
+    run: (delayMs, tab) => captureSelection('html', delayMs, tab),
   },
   {
     baseId: 'save-selection-text',
@@ -372,7 +389,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTooltipFragment: 'Save selection',
     group: 'more',
     supportsDelayed: false,
-    run: (delayMs) => captureSelection('text', delayMs),
+    run: (delayMs, tab) => captureSelection('text', delayMs, tab),
   },
   {
     baseId: 'save-selection-markdown',
@@ -380,7 +397,7 @@ const BASE_CAPTURE_ACTIONS: BaseCaptureAction[] = [
     baseTooltipFragment: 'Save selection',
     group: 'more',
     supportsDelayed: false,
-    run: (delayMs) => captureSelection('markdown', delayMs),
+    run: (delayMs, tab) => captureSelection('markdown', delayMs, tab),
   },
 ];
 
@@ -421,7 +438,7 @@ export const CAPTURE_ACTIONS: CaptureAction[] = BASE_CAPTURE_ACTIONS.flatMap((ba
     baseId: base.baseId,
     group: base.group,
     delaySec,
-    run: () => base.run(delaySec * 1000),
+    run: (gestureTab?: GestureTab) => base.run(delaySec * 1000, gestureTab),
   }));
 });
 

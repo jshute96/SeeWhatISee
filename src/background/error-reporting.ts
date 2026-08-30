@@ -1,4 +1,5 @@
 import { noSelectionContentMessage } from '../capture/types.js';
+import type { GestureTab } from '../capture/target-tab.js';
 import { LogWriteBlockedError } from '../capture/log-reconcile.js';
 import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
@@ -135,10 +136,18 @@ export async function reportCaptureError(
 }
 
 /**
- * The tab the user was on, for placing the error tab beside it. A
- * failure here just means Chrome picks the position.
+ * The tab the user was on, for placing the error tab beside it.
+ *
+ * Prefers the gesture's own tab when the caller has one: an error
+ * page that opens in a different window than the click came from is
+ * the same "nothing appears to happen" failure the capture paths
+ * avoid (see `capture/target-tab.ts`). A failure here just means
+ * Chrome picks the position.
  */
-async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+async function errorTabOpener(
+  gestureTab: GestureTab,
+): Promise<chrome.tabs.Tab | undefined> {
+  if (gestureTab) return gestureTab;
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     return tab;
@@ -160,12 +169,18 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
  * inline-error surface (saveDetails on the Capture page, Ask flow)
  * deliberately don't go through here — see the comments at those
  * call sites.
+ *
+ * `gestureTab` (when the caller has one) anchors the error page next
+ * to the tab the gesture came from.
  */
-export async function runWithErrorReporting(fn: () => Promise<unknown>): Promise<void> {
+export async function runWithErrorReporting(
+  fn: () => Promise<unknown>,
+  gestureTab?: GestureTab,
+): Promise<void> {
   try {
     await fn();
   } catch (err) {
-    await reportCaptureError(err, await activeTab());
+    await reportCaptureError(err, await errorTabOpener(gestureTab));
   }
 }
 

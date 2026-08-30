@@ -129,16 +129,23 @@ Not worth it. See the error-reporting section below.
 A real toolbar click grants `activeTab` for *the tab that was
 active when the click happened*.
 
-- The "Save screenshot in 3s" path `await`s a timer, then
-  re-queries the active tab. If the user switches to a different
-  tab during the delay, the captured tab won't be covered by
-  `activeTab` anymore — it has to fall back to the host
+- Immediate captures stay on that tab by construction — the
+  listener's `tab` argument is what they target. See
+  [capture-actions.md → Target-tab resolution](capture-actions.md#target-tab-resolution).
+- The "Save screenshot in 3s" path `await`s a timer, then may
+  follow focus to another tab. A captured tab the user moved to
+  isn't covered by `activeTab` — it has to fall back to the host
   permission.
 - Normal http(s) pages are fine because `<all_urls>` covers them.
 - A delayed capture that lands on a *different* `chrome://` tab
   than the gesture originated from will fail: `<all_urls>`
   doesn't cover `chrome://`, and the `activeTab` grant doesn't
   follow the user to a new restricted tab.
+
+This grant is also a *diagnostic*. "The 'activeTab' permission is
+not in effect…" from `captureVisibleTab` means we aimed at a tab
+the gesture didn't grant — historically a symptom of resolving
+the target from window focus instead of from the gesture.
 
 ### Gotcha: the Chrome Web Store blocks `captureVisibleTab`
 

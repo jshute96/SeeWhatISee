@@ -116,13 +116,16 @@ installLogSyncMessageHandler();
 void refreshLogFileExistence();
 installWidgetStoreCleanup();
 
-chrome.action.onClicked.addListener(() => {
+chrome.action.onClicked.addListener((tab) => {
   // Fire-and-forget refresh so any hotkey edit since our last
   // render propagates before the next menu open. The click itself
   // runs immediately on the current menu state — stale hints are
   // cosmetic, and the next right-click will show the fresh ones.
   void refreshMenusIfHotkeysChanged();
-  void handleActionClick();
+  // `tab` is the tab the click happened on — pass it down rather
+  // than re-deriving the target from window focus. See
+  // `capture/target-tab.ts`.
+  void handleActionClick(tab);
 });
 
 // Keyboard shortcuts declared in manifest.json's `commands` block.
@@ -134,14 +137,19 @@ chrome.action.onClicked.addListener(() => {
 // Each command routes through runWithErrorReporting so a failed
 // active-tab lookup or restricted-URL scrape surfaces on the
 // toolbar icon the same way a toolbar click would.
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener((command, tab) => {
   void refreshMenusIfHotkeysChanged();
   const actionId = command.replace(COMMAND_PREFIX_PATTERN, '');
+  // `tab` is the active tab of the window the shortcut was pressed
+  // in — the keyboard equivalent of the toolbar click's tab, and the
+  // one the keypress granted `activeTab` on. See
+  // `capture/target-tab.ts`.
+  //
   // Meta-command: run whatever the user has stored as their
   // double-click default. Selection-aware via the same probe
   // `handleActionClick` uses on its second-click branch.
   if (actionId === 'secondary-action') {
-    void runWithErrorReporting(() => runDblDefault());
+    void runWithErrorReporting(() => runDblDefault(tab), tab);
     return;
   }
   const action = findCaptureAction(actionId);
@@ -149,7 +157,7 @@ chrome.commands.onCommand.addListener((command) => {
     console.warn('[SeeWhatISee] unhandled keyboard command:', command);
     return;
   }
-  void runWithErrorReporting(() => action.run());
+  void runWithErrorReporting(() => action.run(tab), tab);
 });
 
 let activeInstall: Promise<void> = Promise.resolve();
@@ -309,10 +317,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     id = id.slice(0, -SHORTCUT_SUFFIX.length);
   }
 
-  // Top-level capture entry: run its action.
+  // Top-level capture entry: run its action on the tab the
+  // right-click happened on (see `capture/target-tab.ts`).
   const action = findCaptureAction(id);
   if (action) {
-    await runWithErrorReporting(() => action.run());
+    await runWithErrorReporting(() => action.run(tab), tab);
     return;
   }
 
@@ -324,7 +333,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // it, `openerTabId` linked) so the user lands the new tab next to
   // the page they triggered from.
   if (id === UPLOAD_IMAGE_MENU_ID) {
-    await runWithErrorReporting(() => openUploadCapturePage(tab));
+    await runWithErrorReporting(() => openUploadCapturePage(tab), tab);
     return;
   }
 
@@ -334,7 +343,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // the restore helper drops the slot as part of opening the new tab
   // so the bytes don't sit duplicated in session storage.
   if (id === RESTORE_LAST_CAPTURE_MENU_ID) {
-    await runWithErrorReporting(() => restoreLastCapture(tab));
+    await runWithErrorReporting(() => restoreLastCapture(tab), tab);
     return;
   }
 
@@ -344,7 +353,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // unexpected tab-create failure still surfaces on the
   // icon/tooltip channel.
   if (id === HISTORY_MENU_ID) {
-    await runWithErrorReporting(() => openHistoryPage());
+    await runWithErrorReporting(() => openHistoryPage(), tab);
     return;
   }
 
@@ -353,15 +362,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // matching field, so under normal operation these calls always have
   // something to copy.
   if (id === COPY_LAST_SCREENSHOT_MENU_ID) {
-    await runWithErrorReporting(() => copyLastScreenshotFilename());
+    await runWithErrorReporting(() => copyLastScreenshotFilename(), tab);
     return;
   }
   if (id === COPY_LAST_HTML_MENU_ID) {
-    await runWithErrorReporting(() => copyLastHtmlFilename());
+    await runWithErrorReporting(() => copyLastHtmlFilename(), tab);
     return;
   }
   if (id === COPY_LAST_SELECTION_MENU_ID) {
-    await runWithErrorReporting(() => copyLastSelectionFilename());
+    await runWithErrorReporting(() => copyLastSelectionFilename(), tab);
     return;
   }
 
@@ -372,8 +381,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // for the page-side fetch that actually pulls the image bytes.
   if (id === IMAGE_CAPTURE_MENU_ID) {
     if (tab && info.srcUrl) {
-      await runWithErrorReporting(() =>
-        startCaptureWithDetailsFromImage(tab, info.srcUrl!),
+      await runWithErrorReporting(
+        () => startCaptureWithDetailsFromImage(tab, info.srcUrl!),
+        tab,
       );
     }
     return;
@@ -384,8 +394,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // visible tab.
   if (id === IMAGE_SAVE_SCREENSHOT_MENU_ID) {
     if (tab && info.srcUrl) {
-      await runWithErrorReporting(() =>
-        captureImageAsScreenshot(tab, info.srcUrl!),
+      await runWithErrorReporting(
+        () => captureImageAsScreenshot(tab, info.srcUrl!),
+        tab,
       );
     }
     return;
@@ -398,7 +409,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // provider here to avoid acting on stale state if the listeners
   // haven't fired yet.
   if (id === PIN_ASK_TARGET_MENU_ID) {
-    await runWithErrorReporting(() => togglePinAskTarget(tab));
+    await runWithErrorReporting(() => togglePinAskTarget(tab), tab);
     // The storage-change listener fires on the `askPin` write
     // inside togglePinAskTarget and will also call refreshPinAskTargetMenu.
     // This explicit refresh is a belt-and-suspenders sync — covers
