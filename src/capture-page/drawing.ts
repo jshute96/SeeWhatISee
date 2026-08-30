@@ -24,11 +24,14 @@
 //     a crop region on mouseup; the saved PNG is shrunk to the
 //     crop. Multiple crops stack; the most-recent active one wins.
 //
-// There's no right-click drawing. There's no in-place conversion
-// between kinds: every drag commits one new edit of the active
-// tool's kind, and Undo simply removes the last edit (Reset wipes
-// the stack). Coordinates are percentages of the image so edits
-// survive resizes and prompt growth.
+// There's no right-click drawing. Every drag commits one new edit of
+// the active tool's kind, and Undo simply removes the last edit
+// (Reset wipes the stack). The one after-the-fact kind change is
+// the More menu's Convert submenu, which retargets the *last* edit
+// when it's box-shaped — the fix for a box drawn with the wrong
+// tool selected.
+// Coordinates are percentages of the image so edits survive resizes
+// and prompt growth.
 //
 // Edge-handle resize works alongside the tool palette: the four
 // edges and four corners of any rect-shaped edit (rect / redact /
@@ -102,6 +105,18 @@ export interface LineEdit {
 }
 export type Edit = RectEdit | LineEdit;
 
+/** True for the box-shaped kinds (rect / redact / crop) — the ones
+ *  that carry resizable geometry and a convertible kind. Takes a
+ *  `string` so it can also narrow a `Tool` or a `data-` attribute. */
+function isRectKind(k: string): k is RectKind {
+  return k === 'rect' || k === 'redact' || k === 'crop';
+}
+
+/** The same test, narrowing a whole edit. */
+function isRectEdit(e: Edit): e is RectEdit {
+  return isRectKind(e.kind);
+}
+
 // History is a log of edit-stack mutations. Undo pops the most
 // recent entry and reverses it:
 //
@@ -131,9 +146,14 @@ export type Edit = RectEdit | LineEdit;
 //     pushed above the marker as ordinary add-ops, so Undo peels them
 //     off one at a time and only the final click (on the marker)
 //     goes back to what was there before the paste.
+//   - `prevKind` set — the op was a Convert click, which changed an
+//     existing rect-shaped edit's `kind` in place. Undo puts the
+//     previous kind back. Geometry never moves, so this never
+//     travels with `prev`.
 type HistoryOp = {
   id: number;
   prev?: { x: number; y: number; w: number; h: number };
+  prevKind?: RectKind;
   viewCrop?: true;
   reset?: true;
   paste?: true;
@@ -385,6 +405,23 @@ export interface DrawingContext {
   edgesSvg: SVGSVGElement;
   shrinkBtn: HTMLButtonElement;
   viewCroppedBtn: HTMLButtonElement;
+  /** More-menu item that opens the Convert submenu. Doesn't act on
+   *  click — see `convertRow`. */
+  convertLastBtn: HTMLButtonElement;
+  /** The Convert submenu itself: a `hidden`-toggled box dropped
+   *  below the item, holding one button per rect kind. */
+  convertRow: HTMLDivElement;
+  /** The row's buttons, in DOM order. Drawing reads
+   *  `dataset.convert` (a `RectKind`) and toggles `.selected` /
+   *  `aria-checked` to show which kind the target already is. */
+  convertButtons: HTMLButtonElement[];
+  /** Fired whenever the Convert submenu opens or closes, so main can
+   *  mark the More menu as having a submenu up. `hadFocus` says the
+   *  submenu held focus when it closed, so main can rescue it —
+   *  Chrome's own fix-up for a hidden focused element runs a frame
+   *  later, too late to detect from here. Optional — the submenu
+   *  still works without it. */
+  onConvertRowToggled?(open: boolean, hadFocus: boolean): void;
   copyAnnotationsBtn: HTMLButtonElement;
   pasteAnnotationsBtn: HTMLButtonElement;
   importAnnotationsBtn: HTMLButtonElement;
@@ -638,7 +675,7 @@ function detectBoxHandle(p: Point): BoxHandleHit | null {
   const ac = activeCrop();
   for (let i = edits.length - 1; i >= 0; i--) {
     const e = edits[i]!;
-    if (e.kind !== 'rect' && e.kind !== 'redact' && e.kind !== 'crop') continue;
+    if (!isRectEdit(e)) continue;
     if (e.kind === 'crop' && (!ac || ac.id !== e.id)) continue;
     const handle = handleAtRect(p, { x: e.x, y: e.y, w: e.w, h: e.h });
     if (handle) {
@@ -816,7 +853,7 @@ function snapPoint(p: Point, opts: SnapOptions = {}): Point {
   corners.push({ x: r.width, y: r.height });
   edgePoints.push(nearestPointOnRectEdges(p, { x: 0, y: 0, w: 100, h: 100 }));
   for (const e of edits) {
-    if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+    if (isRectEdit(e)) {
       const x = (e.x / 100) * r.width;
       const y = (e.y / 100) * r.height;
       const w = (e.w / 100) * r.width;
@@ -963,7 +1000,7 @@ function snapBoxDragCursor(p: Point, bd: BoxDragState): Point {
   }
   for (const ed of edits) {
     if (ed.id === bd.editId) continue;
-    if (ed.kind === 'rect' || ed.kind === 'redact' || ed.kind === 'crop') {
+    if (isRectEdit(ed)) {
       const x = (ed.x / 100) * r.width;
       const w = (ed.w / 100) * r.width;
       const y = (ed.y / 100) * r.height;
@@ -1436,6 +1473,19 @@ export function render(): void {
   }
   setMenuItemDisabled(ctx.viewCroppedBtn, !viewCropTarget());
 
+  // Convert submenu. Only the top of the stack can be retargeted, so
+  // the item greys out whenever that isn't box-shaped — and the
+  // submenu closes with it, rather than sitting open over a target
+  // that no longer exists (an Undo, or a line drawn on top).
+  const convertible = convertTarget();
+  setMenuItemDisabled(ctx.convertLastBtn, !convertible);
+  if (!convertible) setConvertRowOpen(false);
+  for (const btn of ctx.convertButtons) {
+    const isCurrent = !!convertible && btn.dataset.convert === convertible.kind;
+    btn.classList.toggle('selected', isCurrent);
+    btn.setAttribute('aria-checked', isCurrent ? 'true' : 'false');
+  }
+
   // Annotation transfer. Copy asks about live state, so it tracks
   // every render; the two paste-side items read the payloads main
   // last handed us (refreshed on each More-menu open).
@@ -1594,6 +1644,103 @@ function updateDragFromLocalPoint(p: Point): void {
   }
   if (dragStart === null) return;
   dragCurrent = p;
+  render();
+}
+
+// ─── Convert last drawn box ───────────────────────────────────────
+//
+// Fixes a box drawn with the wrong tool selected — typically a red
+// Box where a Crop was meant. Instead of undoing and re-dragging,
+// the More menu's "Convert last drawn box…" item opens a submenu of
+// the three rect kinds under itself, and picking one retargets the
+// edit in place, keeping its geometry.
+//
+// Deliberately the *last* edit only: "the thing I just drew" needs
+// no selection UI, and it's the case the slip actually happens in.
+//
+// One inert corner, shared with every other path that makes a crop:
+// a box covering (near enough) the whole image converts to a crop
+// that `activeCrop` reads as "no crop", so the picture doesn't
+// change. That's the right answer — a full-image crop crops nothing
+// — it just isn't a visible one. The mirror case is the same: after
+// View cropped the stack's top is a whole-image crop, so Convert
+// will happily turn it into a red box around the whole picture.
+
+// The edit a Convert click would retarget: the top of the stack when
+// it's box-shaped, else null (a line / arrow on top, or no edits).
+function convertTarget(): RectEdit | null {
+  const last = edits[edits.length - 1];
+  if (!last) return null;
+  return isRectEdit(last) ? last : null;
+}
+
+// Breathing room between the Convert submenu and the bottom of the
+// window when it has to slide up to fit — matching the column
+// popovers' own margin.
+const CONVERT_ROW_MARGIN_PX = 4;
+
+// How far the submenu's top overlaps the item that opened it, so the
+// two read as attached rather than as separate boxes.
+const CONVERT_ROW_OVERLAP_PX = 2;
+
+// Drop the submenu just below the item that opened it, then slide it
+// up if that would hang it past the bottom of the window. `offsetTop`
+// is relative to `#more-menu` (the submenu's containing block), so the
+// placement survives the menu's own slide-up and any page scroll.
+function placeConvertRow(): void {
+  const row = ctx.convertRow;
+  const btn = ctx.convertLastBtn;
+  const top = btn.offsetTop + btn.offsetHeight - CONVERT_ROW_OVERLAP_PX;
+  row.style.top = `${top}px`;
+  const overflow = row.getBoundingClientRect().bottom -
+    (document.documentElement.clientHeight - CONVERT_ROW_MARGIN_PX);
+  if (overflow > 0) row.style.top = `${top - overflow}px`;
+}
+
+// Show / hide the Convert submenu. One place for it so every close
+// path (a pick, the target going away, the More menu closing) leaves
+// the item's `aria-expanded` in step with the submenu.
+function setConvertRowOpen(open: boolean): void {
+  // Idempotent: `render()` re-asserts the closed state on every drag
+  // mousemove, and re-writing the attribute would dirty style for
+  // nothing.
+  if (ctx.convertRow.hidden === !open) return;
+  // Read before the `hidden` write: hiding a focused element doesn't
+  // move `document.activeElement` synchronously, so afterwards this
+  // still reports the button that's now hidden.
+  const hadFocus = !open && ctx.convertRow.contains(document.activeElement);
+  ctx.convertRow.hidden = !open;
+  ctx.convertLastBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // Placed only once unhidden: a `hidden` element has no box to
+  // measure. Both happen in the same task, so the pre-clamp position
+  // is never painted.
+  if (open) placeConvertRow();
+  ctx.onConvertRowToggled?.(open, hadFocus);
+}
+
+/** Close the Convert submenu. Called by main when the More menu
+ *  closes, so the next open starts from the resting state. */
+export function closeConvertRow(): void {
+  setConvertRowOpen(false);
+}
+
+/** Re-place an open Convert submenu. Called by main whenever the More
+ *  menu itself is re-placed (a window resize), since the submenu's
+ *  `top` is derived from the item and its slide-up clamp from the
+ *  window. A no-op while it's closed. */
+export function repositionConvertRow(): void {
+  if (!ctx.convertRow.hidden) placeConvertRow();
+}
+
+// Retarget the last drawn box to `kind`. A no-op when it already is
+// that kind, so clicking the pushed-down button costs nothing and
+// can't stack an undo step that changes nothing.
+function applyConvert(kind: RectKind): void {
+  const target = convertTarget();
+  if (!target || target.kind === kind) return;
+  editHistory.push({ id: target.id, prevKind: target.kind });
+  target.kind = kind;
+  commitEdit();
   render();
 }
 
@@ -1967,7 +2114,7 @@ function isEditOutside(e: Edit, frame: RectPct): boolean {
       Math.min(e.y1, e.y2), Math.max(e.y1, e.y2),
     );
   }
-  if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+  if (isRectEdit(e)) {
     return outside(e.x, e.x + e.w, e.y, e.y + e.h);
   }
   return false;
@@ -2219,13 +2366,18 @@ function undoLastEdit(): void {
   } else {
     const idx = edits.findIndex((e) => e.id === last.id);
     if (idx >= 0) {
-      if (last.prev) {
+      // Both in-place ops below only ever target rect-shaped edits
+      // (rect / redact / crop), so the kind check guards them
+      // together — unreachable for line / arrow.
+      const e = edits[idx]!;
+      if (last.prevKind) {
+        // In-place kind op (Convert click) — put the old kind back.
+        // Geometry never moved, so there's nothing else to restore.
+        if (isRectEdit(e)) e.kind = last.prevKind;
+      } else if (last.prev) {
         // In-place geometry op (Shrink click or edge-handle resize)
-        // — restore the rect's pre-mutation geometry. Only rect-shaped
-        // edits (rect / redact / crop) carry resizable geometry, so
-        // this branch is unreachable for line / arrow.
-        const e = edits[idx]!;
-        if (e.kind === 'rect' || e.kind === 'redact' || e.kind === 'crop') {
+        // — restore the rect's pre-mutation geometry.
+        if (isRectEdit(e)) {
           e.x = last.prev.x;
           e.y = last.prev.y;
           e.w = last.prev.w;
@@ -3309,7 +3461,7 @@ export function initDrawing(context: DrawingContext): void {
           const idx = edits.findIndex((ed) => ed.id === boxDrag!.editId);
           if (idx >= 0) {
             const target = edits[idx]!;
-            if (target.kind === 'rect' || target.kind === 'redact' || target.kind === 'crop') {
+            if (isRectEdit(target)) {
               const prev = { x: target.x, y: target.y, w: target.w, h: target.h };
               target.x = next.x;
               target.y = next.y;
@@ -3376,7 +3528,7 @@ export function initDrawing(context: DrawingContext): void {
           x2: (end.x / r.width) * 100,
           y2: (end.y / r.height) * 100,
         };
-      } else if (selectedTool === 'rect' || selectedTool === 'redact' || selectedTool === 'crop') {
+      } else if (isRectKind(selectedTool)) {
         const x = Math.min(dragStart.x, end.x);
         const y = Math.min(dragStart.y, end.y);
         const wPct = (Math.abs(dx) / r.width) * 100;
@@ -3735,6 +3887,33 @@ export function initDrawing(context: DrawingContext): void {
   ctx.viewCroppedBtn.addEventListener('click', () => {
     applyViewCrop();
   });
+
+  // The Convert item is a disclosure, not an action: it toggles the
+  // row of kind buttons below it and leaves the menu open (main's
+  // item-click closer carves it out for that reason).
+  ctx.convertLastBtn.addEventListener('click', () => {
+    setConvertRowOpen(ctx.convertRow.hidden);
+  });
+  // Arrowing out of the submenu closes it — the keyboard's answer to
+  // the mouse's "a press anywhere else in the menu dismisses it".
+  // Without it the focus ring can walk onto rows the submenu is
+  // painting over. A close that hides the focused button fires this
+  // too, with a null `relatedTarget`; `setConvertRowOpen` is
+  // idempotent, so that's a no-op.
+  ctx.convertRow.addEventListener('focusout', (e) => {
+    const next = (e as FocusEvent).relatedTarget as Node | null;
+    if (next && ctx.convertRow.contains(next)) return;
+    setConvertRowOpen(false);
+  });
+  for (const btn of ctx.convertButtons) {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.convert;
+      // Guarded rather than cast: the attribute is markup, and a
+      // typo there should do nothing rather than write a bogus kind
+      // into the edit stack.
+      if (kind && isRectKind(kind)) applyConvert(kind);
+    });
+  }
 
   ctx.copyAnnotationsBtn.addEventListener('click', () => {
     const payload = buildAnnotationTransfer();

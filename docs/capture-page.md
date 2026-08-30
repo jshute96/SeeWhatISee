@@ -493,9 +493,9 @@ See [Image fit-to-viewport + Zoom](#image-fit-to-viewport--zoom).
 The screenshot preview is wrapped in an SVG overlay where the user
 draws annotations with a *modal* tool palette. Exactly one tool
 button is selected at a time; a left-button drag commits an edit
-of that tool's kind. There's no right-click drawing, and no
-in-place "convert this rect to a crop / redact" — every drag is a
-fresh edit.
+of that tool's kind. There's no right-click drawing, and every
+drag is a fresh edit — the one after-the-fact kind change is the
+More menu's Convert submenu (see Convert last drawn box).
 
 ### Cursor clamping to the visible pane
 
@@ -564,8 +564,8 @@ fresh edit.
 
 **More menu**
 
-- Holds the picture-rewriting actions — Shrink and View cropped
-  — so the column stays short. Labels are longer than the
+- Holds the picture-rewriting actions — Shrink, View cropped and
+  Convert — so the column stays short. Labels are longer than the
   column allowed ("Shrink last … to fit content", "Replace with
   cropped image"); ids, tooltips and enable rules are the same ones
   they had as buttons.
@@ -577,6 +577,11 @@ fresh edit.
   to "box", "redaction" or "crop" depending on what the next click
   would tighten, and falls back to "box or crop" when there's
   nothing to shrink (the disabled state).
+- The Convert item is the one row that isn't a pick: it toggles the
+  `#convert-row` submenu below it and leaves the menu open. Main's
+  item-click closer carves it out; the submenu's own buttons close
+  the menu like any other item, and `onAfterClose` closes the
+  submenu.
 - Markup is static (`#more-menu` in `capture.html`), not built
   lazily like the Zoom menu: the drawing module looks the items up
   by id at init and drives their `disabled` state from `render()`.
@@ -789,6 +794,99 @@ fresh edit.
     so the next segment's live preview points from the just-
     committed (possibly nudged) endpoint at where the OS cursor
     visibly is — not back at the consumed nudge position.
+
+### Convert last drawn box
+
+**What it does**
+
+- Lives in the More menu as "Convert last drawn box…", below
+  "Replace with cropped image".
+- Fixes a box drawn with the wrong tool selected — typically a red
+  Box where a Crop was meant — without an undo-and-redraw cycle.
+- Clicking the item opens `#convert-row`, a submenu holding the
+  three rect kinds side by side (Box / Redact icons, plus a
+  word-labelled Crop), dropped just under the item and over the rows
+  below it.
+- The More menu stays live behind it, the way a native submenu
+  leaves its parent menu usable.
+- Picking a kind retargets the edit in place; the geometry doesn't
+  move.
+
+**Target and enable rule**
+
+- The target is the *last* edit on the stack, and only when it's
+  box-shaped (`rect` / `redact` / `crop`).
+  - "The thing I just drew" needs no selection UI, and it's the
+    case the slip actually happens in.
+  - A line / arrow on top, or an empty stack, greys the item out.
+- `render()` drives both the disabled flag and the submenu: when the
+  target goes away, the submenu closes with the item rather than
+  sitting open over nothing.
+- The button for the kind the target already is shows pushed down
+  (`.selected`, same look as the column's tool buttons). Clicking it
+  is a silent no-op, so it can't stack an undo step that changes
+  nothing.
+
+**Undo**
+
+- Each conversion is one undoable step: a `HistoryOp` carrying
+  `prevKind`, the mirror of Shrink's `prev` geometry op.
+- Undo puts the old kind back, leaving the edit (and its geometry)
+  in place — it doesn't remove the box.
+- Redo rides on the whole-state snapshots like every other op.
+
+**Submenu mechanics**
+
+- `#convert-row` is its own box, not a strip inside the menu: same
+  chrome as the two column popovers, one `z-index` above them, and
+  only the three buttons in it.
+- Placement is absolute against `#more-menu` (itself absolute, so
+  it's the containing block): indented 24px from its left edge, with
+  `top` just below the opening item (a 2px overlap, so the two read
+  as attached). It paints *over* the rows underneath rather than
+  hanging off the menu's right side.
+  - Deriving `top` from the item's `offsetTop` keeps the two aligned
+    through the menu's own slide-up placement and any page scroll.
+  - Re-placed whenever the menu is (`onAfterReposition`, which the
+    popover fires on open and on every window resize), so the
+    slide-up clamp can't go stale under an open submenu.
+  - Slid up when that would hang it past the bottom of the window,
+    with the same 4px margin the column popovers keep.
+  - Placed on open, once unhidden — a `hidden` element has no box to
+    measure.
+- It stays in the menu's DOM order (out of flow via CSS) so it keeps
+  its place in the arrow-key rotation, right after the item that
+  opens it.
+- Its buttons join that rotation only while it's open
+  (`.convert-row:not([hidden]) .convert-btn` in the More menu's
+  `itemSelector`). The menu traps Tab, so leaving them out would put
+  them beyond the keyboard's reach.
+- A press anywhere else in the More menu closes it — the separator,
+  the menu's own padding, or another row — the way clicking off a
+  submenu does in a native menu.
+  - Disabled rows included: `#more-menu.submenu-open` drops their
+    `pointer-events` while the submenu is up, so the press falls
+    through to the menu. Chrome fires no mouse events at all for a
+    disabled control, so otherwise they'd be dead spots that swallow
+    it.
+  - Scoped to that window, so their "Unavailable: …" tooltips still
+    work the rest of the time.
+- Arrowing back out of it closes it — the keyboard's answer to the
+  mouse's dismissal rule, and what keeps the focus ring off the rows
+  the submenu is painting over. (Escape still closes the whole menu,
+  rather than just the submenu.)
+- A submenu that closes while focus is inside it (arrow out, or
+  Ctrl+Z from inside) would drop focus on `<body>`; main hands it
+  back to the More button, where a close would have put it.
+  - The "did it hold focus" flag is read *before* the element is
+    hidden: Chrome's own fix-up for a hidden focused element runs a
+    frame later, so checking afterwards sees the stale value.
+- `#convert-last` carries `aria-owns` as well as `aria-controls`: a
+  menu's children have to be menu items, so that re-parents the
+  submenu under the item in the accessibility tree.
+- The buttons are `role="menuitemradio"` with `aria-checked`, the
+  same pattern the Zoom menu's items use — exactly one of the three
+  describes what the target already is.
 
 ### Shrink action
 

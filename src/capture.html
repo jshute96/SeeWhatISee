@@ -884,6 +884,60 @@
     margin: 4px 0;
     background: #ddd;
   }
+  /* Submenu the Convert item opens: its own box beside the More menu,
+   * holding just the three kind buttons side by side. They mirror the
+   * column's Box / Redact / Crop chrome — same glyphs, same
+   * pushed-down look for the kind the target already is — so which
+   * button means which is obvious.
+   *
+   * Positioned against `#more-menu`, which is itself absolute and so
+   * is the containing block: indented from its left edge and dropped
+   * just below the item that opened it (the drawing module sets
+   * `top`), so it paints over the rows underneath — the usual
+   * submenu look, and it keeps the whole thing in one place instead
+   * of trailing off to the right of the menu. Same chrome as the two
+   * column popovers, one z-index above them. */
+  .convert-row {
+    position: absolute;
+    left: 24px;
+    display: flex;
+    gap: 6px;
+    padding: 4px 6px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    z-index: 11;
+  }
+  /* Needed for the same reason as `.palette-menu[hidden]`: the
+   * `display: flex` above outranks the UA `[hidden]` rule. */
+  .convert-row[hidden] {
+    display: none;
+  }
+  /* While the submenu is up, disabled rows stop taking mouse events,
+   * so a press on one falls through to the menu itself and dismisses
+   * the submenu — Chrome fires no events at all for a disabled
+   * control, so without this those rows are dead spots that swallow
+   * the press. Scoped to that window so their "Unavailable: …"
+   * tooltips still work the rest of the time. */
+  #more-menu.submenu-open .palette-menu-item:disabled {
+    pointer-events: none;
+  }
+  /* Same box chrome as the column's tool buttons (`.highlight-buttons
+   * button`, which can't reach in here), with tighter padding since
+   * the submenu isn't on the column's grid. The glyph sizing *is*
+   * shared — see the `.tool-btn-icon svg` rule below. */
+  .convert-btn {
+    padding: 4px 6px;
+    font-size: 14px;
+    font-family: inherit;
+    color: inherit;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+  }
+
   /* Narrower left padding for the ✓ gutter, which `.palette-menu` (no
    * check column) doesn't have. */
   .zoom-menu-item {
@@ -939,15 +993,22 @@
   .highlight-buttons .tool-btn-icon {
     padding: 6px 6px;
   }
-  .tool-btn-icon svg {
+  .tool-btn-icon svg,
+  .convert-btn svg {
     display: block;
     width: 22px;
     height: 16px;
     margin: 0 auto;
   }
-  /* Pushed-down look for the selected tool. Action buttons (Undo /
-   * Reset) never get this class — they're not modes. */
-  .highlight-buttons .tool-btn.selected {
+  /* Pushed-down look for the selected tool, and for the Convert
+   * submenu's button naming the kind its target already is. Action
+   * buttons (Undo / Reset) never get this class — they're not modes.
+   * Both selectors tie with `shared-styles.css`'s
+   * `.btn:hover:not(:disabled)` on specificity and win on source
+   * order (this <style> is after that link), which is what keeps a
+   * hover from un-pushing the button under the pointer. */
+  .highlight-buttons .tool-btn.selected,
+  .palette-menu .convert-btn.selected {
     background: #cfd6dc;
     border-color: #2b3a44;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -1424,6 +1485,45 @@
         <button id="view-cropped" class="palette-menu-item" type="button"
                 role="menuitem" disabled
                 title="Replace the image with just the cropped region, as if that was the captured screenshot">Replace with cropped image</button>
+        <!-- Convert: fixes a box drawn with the wrong tool. Unlike the
+             other items it doesn't act on click — it opens the
+             `#convert-row` submenu below it, and the kind
+             buttons in there do the work. The drawing module owns
+             both, and closing the More menu closes the submenu. -->
+        <button id="convert-last" class="palette-menu-item" type="button"
+                role="menuitem" disabled
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="convert-row" aria-owns="convert-row"
+                title="Convert the last drawn box or crop to another box type">Convert last drawn box&hellip;</button>
+        <!-- Left in the item flow in DOM order (it's out of flow via
+             CSS) so it keeps its place in the menu's arrow-key
+             rotation, right after the item that opens it. A menu's
+             children have to be menu items, so `aria-owns` on
+             `#convert-last` re-parents this submenu under the item
+             that opens it in the accessibility tree. -->
+        <div id="convert-row" class="convert-row" role="menu"
+             aria-labelledby="convert-last" hidden>
+          <!-- `menuitemradio`, like the Zoom menu's items: exactly one
+               of the three describes what the target already is, and
+               the checked one is the no-op. -->
+          <button id="convert-to-rect" class="convert-btn btn" type="button"
+                  role="menuitemradio" data-convert="rect"
+                  title="Convert to box" aria-label="Convert to box"
+                  aria-checked="false">
+            <svg aria-hidden="true"><use href="#draw-box-icon"></use></svg>
+          </button>
+          <button id="convert-to-redact" class="convert-btn btn" type="button"
+                  role="menuitemradio" data-convert="redact"
+                  title="Convert to redaction box"
+                  aria-label="Convert to redaction box"
+                  aria-checked="false">
+            <svg aria-hidden="true"><use href="#draw-redact-icon"></use></svg>
+          </button>
+          <button id="convert-to-crop" class="convert-btn btn" type="button"
+                  role="menuitemradio" data-convert="crop"
+                  title="Convert to crop region"
+                  aria-checked="false">Crop</button>
+        </div>
         <div class="palette-menu-sep" role="separator"></div>
         <!-- Image-edit transfer: copy this capture's drawings + crop
              onto another capture of the same size, so a before/after

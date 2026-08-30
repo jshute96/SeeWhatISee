@@ -74,6 +74,15 @@ export function createMenuPopover(opts: {
   /** Run just before the menu is shown — used by Zoom to refresh
    *  its check marks. */
   onBeforeOpen?(): void;
+  /** Run just after the menu is hidden — used by More… to close the
+   *  Convert submenu, so the next open starts from the resting
+   *  state. Only fires on a close that actually hid the menu. */
+  onAfterClose?(): void;
+  /** Run just after the menu has been placed (on open, and on every
+   *  window resize while it's up) — used by More… to re-place the
+   *  Convert submenu, whose own position is derived from the menu's
+   *  and from the window. */
+  onAfterReposition?(): void;
 }): MenuPopover {
   const { menu, button } = opts;
   const keyNav = createMenuKeyNav({ menu, itemSelector: opts.itemSelector });
@@ -154,6 +163,7 @@ export function createMenuPopover(opts: {
   function reposition(): void {
     menu.style.top = `${button.offsetTop}px`;
     clampIntoViewport();
+    opts.onAfterReposition?.();
   }
 
   /**
@@ -231,6 +241,7 @@ export function createMenuPopover(opts: {
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('mousedown', onOutsideDown, true);
     window.removeEventListener('resize', onResize);
+    opts.onAfterClose?.();
   }
 
   return {

@@ -81,6 +81,8 @@ import {
   getDrawingSnapshot,
   restoreDrawingSnapshot,
   applyRestoredViewCrop,
+  closeConvertRow,
+  repositionConvertRow,
   setAnnotationTransferSources,
   type AnnotationTransfer,
   type Tool,
@@ -555,6 +557,11 @@ const imagePanel = document.querySelector(
 ) as HTMLDivElement;
 const shrinkBtn = document.getElementById('shrink') as HTMLButtonElement;
 const viewCroppedBtn = document.getElementById('view-cropped') as HTMLButtonElement;
+const convertLastBtn = document.getElementById('convert-last') as HTMLButtonElement;
+const convertRow = document.getElementById('convert-row') as HTMLDivElement;
+const convertButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('.convert-btn'),
+);
 const copyAnnotationsBtn = document.getElementById('copy-annotations') as HTMLButtonElement;
 const pasteAnnotationsBtn = document.getElementById('paste-annotations') as HTMLButtonElement;
 const importAnnotationsBtn = document.getElementById('import-annotations') as HTMLButtonElement;
@@ -576,9 +583,10 @@ const toolButtons = Array.from(
 //
 // Open / close / dismiss behaviour is shared with the Zoom menu via
 // `createMenuPopover` — see `menu-popover.ts` for the mechanics.
-// The items themselves (`#shrink`, `#view-cropped`) are owned by the
-// drawing module, which wires their clicks and disabled state; this
-// only opens and closes the container.
+// The items themselves (`#shrink`, `#view-cropped`, `#convert-last`
+// and its kind row) are owned by the drawing module, which wires
+// their clicks and disabled state; this only opens and closes the
+// container.
 // The annotation-transfer items' enabled state depends on two
 // session-storage slots, which `render()` can't await (it runs on
 // every drag mousemove). Re-read both just before the menu paints
@@ -589,8 +597,13 @@ const toolButtons = Array.from(
 const morePopover = createMenuPopover({
   menu: moreMenu,
   button: moreBtn,
-  itemSelector: '.palette-menu-item',
+  // The Convert submenu's buttons join the arrow-key rotation only
+  // while it's open — the menu traps Tab, so leaving them out would
+  // put them out of the keyboard's reach entirely.
+  itemSelector: '.palette-menu-item, .convert-row:not([hidden]) .convert-btn',
   onBeforeOpen: () => { void refreshAnnotationTransferSources(); },
+  onAfterClose: () => { closeConvertRow(); },
+  onAfterReposition: () => { repositionConvertRow(); },
 });
 
 async function readTransferSource(
@@ -655,8 +668,30 @@ moreBtn.addEventListener('click', (e) => {
 // Any item click dismisses the menu. Registered on the container so
 // it stays independent of the drawing module's own handlers — both
 // run, in either order.
+// A press anywhere else in the menu dismisses the Convert submenu,
+// the way clicking off a submenu does in a native menu — the
+// separator, the menu's own padding, or another row, enabled or not.
+// Press, not click, so it feels immediate; the item-click closer
+// below still runs for an actual pick.
+//
+// Disabled rows reach this only because `#more-menu.submenu-open`
+// drops their `pointer-events` while the submenu is up: Chrome fires
+// no mouse events at all for a disabled control, so the press would
+// otherwise die on the row.
+moreMenu.addEventListener('mousedown', (e) => {
+  const target = e.target as HTMLElement;
+  if (target.closest('#convert-row, #convert-last')) return;
+  closeConvertRow();
+});
+
 moreMenu.addEventListener('click', (e) => {
-  if (!(e.target as HTMLElement).closest('.palette-menu-item')) return;
+  const target = e.target as HTMLElement;
+  // Convert is the one item that isn't a pick: it opens the submenu
+  // of kind buttons below it, which the close would immediately
+  // hide. Those buttons *are* picks, so they close like any other
+  // item.
+  if (target.closest('#convert-last')) return;
+  if (!target.closest('.palette-menu-item, .convert-btn')) return;
   // `close()` hands focus back to `#more` — focus would otherwise
   // land on `<body>` when the item it sits on goes `hidden`.
   morePopover.close();
@@ -1684,6 +1719,20 @@ initDrawing({
   edgesSvg,
   shrinkBtn,
   viewCroppedBtn,
+  convertLastBtn,
+  convertRow,
+  convertButtons,
+  onConvertRowToggled: (open, hadFocus) => {
+    // Marks the window in which disabled rows give up their mouse
+    // events, so a press on one dismisses the submenu — see the
+    // `#more-menu.submenu-open` rule in capture.html.
+    moreMenu.classList.toggle('submenu-open', open);
+    // A submenu that closed while focus was inside it (arrow into
+    // it, then Ctrl+Z) would leave focus on `<body>` a frame later,
+    // where the menu's arrow keys have nothing to step from. Hand it
+    // back to the opener, the same place a close would put it.
+    if (hadFocus && morePopover.isOpen()) moreBtn.focus();
+  },
   copyAnnotationsBtn,
   pasteAnnotationsBtn,
   importAnnotationsBtn,

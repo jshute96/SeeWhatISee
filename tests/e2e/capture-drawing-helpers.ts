@@ -317,13 +317,16 @@ export async function readPolylineChainStart(
  * Click one of the More-menu items (`#shrink`, `#view-cropped`).
  * They live in the `#more-menu` popover, so the menu has to be
  * opened first; it closes again on the item click, so every click
- * goes through this helper rather than being batched.
+ * goes through this helper rather than being batched. The exception
+ * is `#convert-last`, which leaves the menu open and opens its
+ * submenu instead.
  */
 export async function clickMoreMenuItem(
   capturePage: Page,
   selector:
     | '#shrink'
     | '#view-cropped'
+    | '#convert-last'
     | '#copy-annotations'
     | '#paste-annotations'
     | '#import-annotations',

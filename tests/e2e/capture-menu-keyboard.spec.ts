@@ -209,9 +209,9 @@ test('keyboard: More… menu arrows skip disabled items', async ({
   );
   await waitForImageLoaded(capturePage);
 
-  // A drawn box enables Shrink (and Copy annotations); View cropped
-  // stays disabled without a crop, so it's the row the arrows have to
-  // skip.
+  // A drawn box enables Shrink, Convert and Copy annotations; View
+  // cropped stays disabled without a crop, so it's the row the arrows
+  // have to skip.
   await dragRect(
     capturePage,
     { xPct: 0.2, yPct: 0.2 },
@@ -224,8 +224,12 @@ test('keyboard: More… menu arrows skip disabled items', async ({
   await expect(capturePage.locator('#more-menu')).toBeVisible();
   await expect(capturePage.locator('#shrink')).toBeFocused();
   await capturePage.keyboard.press('ArrowDown');
+  await expect(capturePage.locator('#convert-last')).toBeFocused();
+  await capturePage.keyboard.press('ArrowDown');
   await expect(capturePage.locator('#copy-annotations')).toBeFocused();
   // …and back up past it the same way.
+  await capturePage.keyboard.press('ArrowUp');
+  await expect(capturePage.locator('#convert-last')).toBeFocused();
   await capturePage.keyboard.press('ArrowUp');
   await expect(capturePage.locator('#shrink')).toBeFocused();
 

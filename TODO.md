@@ -81,6 +81,12 @@
 
 ### Pending docs for features not released yet
 
+* **Convert last drawn box** — a More-menu item that retargets the
+  last drawn box / redaction / crop to another of those kinds, for
+  when it was drawn with the wrong tool selected.
+  * README's More… menu list needs the item, under "Replace with
+    cropped image".
+
 * **`see-what-i-see-history` skill** — scan or search past captures
   by count, date/time, site, or text, instead of only the latest one.
   * README's command lists (Claude plugin, Gemini extension, generic
