@@ -1481,7 +1481,7 @@
            aria-labelledby="more" hidden>
         <button id="shrink" class="palette-menu-item" type="button"
                 role="menuitem" disabled
-                title="Shrink the last drawn box or crop region, to fit its contents, removing surrounding margins">Shrink last box or crop to fit content</button>
+                title="Shrink the last drawn box, or the crop region, to fit its contents, removing surrounding margins">Shrink last drawn box to fit content</button>
         <button id="view-cropped" class="palette-menu-item" type="button"
                 role="menuitem" disabled
                 title="Replace the image with just the cropped region, as if that was the captured screenshot">Replace with cropped image</button>
@@ -1489,12 +1489,14 @@
              other items it doesn't act on click — it opens the
              `#convert-row` submenu below it, and the kind
              buttons in there do the work. The drawing module owns
-             both, and closing the More menu closes the submenu. -->
+             both, and closing the More menu closes the submenu. Its
+             label (like Shrink's) is rewritten by `render()` to name
+             the target; the one here is the pre-init state. -->
         <button id="convert-last" class="palette-menu-item" type="button"
                 role="menuitem" disabled
                 aria-haspopup="menu" aria-expanded="false"
                 aria-controls="convert-row" aria-owns="convert-row"
-                title="Convert the last drawn box or crop to another box type">Convert last drawn box&hellip;</button>
+                title="Convert the last drawn box, or the crop region, to another box type">Convert last drawn box&hellip;</button>
         <!-- Left in the item flow in DOM order (it's out of flow via
              CSS) so it keeps its place in the menu's arrow-key
              rotation, right after the item that opens it. A menu's

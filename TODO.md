@@ -12,7 +12,7 @@
   - Select tool so we can pick elements
     - Delete element
     - Maybe drag to move
-    - Maybe convert object types if you drew the wrong one (box/redact/crop, or line/arrow)
+    - Convert or shrink a selected object. (The More menu's Convert and Shrink items currently act on the last drawn or edited item, and one special case for full-image crop.)
 * A Redo button or menu item (the ctrl-Y / ctrl-shift-Z shortcuts are done)
 
 ### Possible big features
@@ -86,6 +86,13 @@
   when it was drawn with the wrong tool selected.
   * README's More… menu list needs the item, under "Replace with
     cropped image".
+
+* **Shrink follows the last box acted on** — Shrink no longer picks
+  its target from the selected tool; it acts on the same box Convert
+  does (the last one drawn or edited), with the Crop tool still
+  meaning "the crop region, or the whole image".
+  * README's Shrink bullet still describes the per-tool rule and the
+    old "Shrink last … to fit content" label.
 
 * **`see-what-i-see-history` skill** — scan or search past captures
   by count, date/time, site, or text, instead of only the latest one.

@@ -1459,26 +1459,33 @@ export function render(): void {
   const hasEditHistory = editHistory.length > 0;
   ctx.undoBtn.disabled = !hasEditHistory;
   ctx.resetBtn.disabled = !canReset();
+  // Read once and shared by both rows below, so their labels can't
+  // describe different reads of the same history.
+  const acted = actedTarget();
+
   const shrinkable = shrinkTarget();
   setMenuItemDisabled(ctx.shrinkBtn, !shrinkable);
-  // The menu item names what the next click would actually shrink,
-  // so the user doesn't have to remember which tool the action
-  // follows. With nothing to shrink it stays generic (and greyed).
-  // Guarded assignment: `render()` runs on every drag mousemove, and
-  // writing `textContent` replaces the text node even when the
-  // string is identical.
-  const shrinkLabel = `Shrink last ${shrinkTargetNoun(shrinkable)} to fit content`;
-  if (ctx.shrinkBtn.textContent !== shrinkLabel) {
-    ctx.shrinkBtn.textContent = shrinkLabel;
-  }
+  // Each item names what its own click would act on, so the user
+  // doesn't have to work it out from the stack. With nothing to act
+  // on both keep the box wording (and grey out).
+  //
+  // Guarded assignment on both: `render()` runs on every drag
+  // mousemove, and writing `textContent` replaces the text node even
+  // when the string is identical.
+  const label = shrinkLabel(shrinkable, acted);
+  if (ctx.shrinkBtn.textContent !== label) ctx.shrinkBtn.textContent = label;
   setMenuItemDisabled(ctx.viewCroppedBtn, !viewCropTarget());
 
-  // Convert submenu. Only the top of the stack can be retargeted, so
+  // Convert submenu. Only the last box acted on can be retargeted, so
   // the item greys out whenever that isn't box-shaped — and the
   // submenu closes with it, rather than sitting open over a target
   // that no longer exists (an Undo, or a line drawn on top).
-  const convertible = convertTarget();
+  const convertible = acted?.edit ?? null;
   setMenuItemDisabled(ctx.convertLastBtn, !convertible);
+  const convertText = convertLabel(acted);
+  if (ctx.convertLastBtn.textContent !== convertText) {
+    ctx.convertLastBtn.textContent = convertText;
+  }
   if (!convertible) setConvertRowOpen(false);
   for (const btn of ctx.convertButtons) {
     const isCurrent = !!convertible && btn.dataset.convert === convertible.kind;
@@ -1655,8 +1662,10 @@ function updateDragFromLocalPoint(p: Point): void {
 // the three rect kinds under itself, and picking one retargets the
 // edit in place, keeping its geometry.
 //
-// Deliberately the *last* edit only: "the thing I just drew" needs
-// no selection UI, and it's the case the slip actually happens in.
+// Deliberately the last edit acted on only: "the thing I just drew
+// (or just resized)" needs no selection UI, and it's the case the
+// slip actually happens in. Shrink picks its target the same way, so
+// the two items always name the same object.
 //
 // One inert corner, shared with every other path that makes a crop:
 // a box covering (near enough) the whole image converts to a crop
@@ -1666,12 +1675,64 @@ function updateDragFromLocalPoint(p: Point): void {
 // View cropped the stack's top is a whole-image crop, so Convert
 // will happily turn it into a red box around the whole picture.
 
-// The edit a Convert click would retarget: the top of the stack when
-// it's box-shaped, else null (a line / arrow on top, or no edits).
+/** The box-shaped edit the user last acted on, and how they got
+ *  there — `edited` for an op that *changed* an existing edit (an
+ *  edge-handle resize, a Shrink, a Convert), false for one that added
+ *  it. Both halves come from one read of the history, so the target
+ *  and the word for it can't disagree. */
+type ActedTarget = { edit: RectEdit; edited: boolean };
+
+// What both Convert and Shrink retarget. Normally the top of the
+// stack, but an edge-handle resize (or a Shrink) of a box buried
+// under newer ones counts as acting on *that* box, so the history's
+// last op wins where the two disagree. Null when the thing last acted
+// on isn't box-shaped (a line / arrow, or an empty stack).
+//
+// Whole-state markers (View cropped / Reset / Paste) name no single
+// edit, so those fall back to the top of the stack — and read as
+// "drawn", since no single edit was changed.
+function actedTarget(): ActedTarget | null {
+  const last = editHistory[editHistory.length - 1];
+  // Null for a marker, and for an op whose edit is gone.
+  const touched = last && !isHistoryMarker(last)
+    ? edits.find((e) => e.id === last.id) ?? null
+    : null;
+  const edit = touched ?? edits[edits.length - 1] ?? null;
+  if (!edit || !isRectEdit(edit)) return null;
+  const edited = touched === edit
+    && (last!.prev !== undefined || last!.prevKind !== undefined);
+  return { edit, edited };
+}
+
+/**
+ * What Convert and Shrink call the object they'd act on. Shared so
+ * the two rows name it the same way:
+ *
+ *   - 'crop region'     — the target is a crop, or Shrink is in the
+ *     Crop tool's always-the-crop mode (`'crop-region'`). Not "last
+ *     drawn": the crop that matters isn't necessarily the last thing
+ *     drawn, and it may not exist yet.
+ *   - 'last drawn box'  — a box or redaction that the last action
+ *     drew. One noun for both: which one it is is obvious from the
+ *     picture, and the alternative reads as two different targets.
+ *   - 'last edited box' — the same, but reached by resizing /
+ *     shrinking / converting it rather than drawing it.
+ */
+function targetNoun(target: ActedTarget | 'crop-region' | null): string {
+  if (target === 'crop-region' || target?.edit.kind === 'crop') {
+    return 'crop region';
+  }
+  return `last ${target?.edited ? 'edited' : 'drawn'} box`;
+}
+
+// The Convert menu item's label. Its Shrink twin is `shrinkLabel`.
+function convertLabel(target: ActedTarget | null): string {
+  return `Convert ${targetNoun(target)}…`;
+}
+
+// The edit a Convert click would retarget.
 function convertTarget(): RectEdit | null {
-  const last = edits[edits.length - 1];
-  if (!last) return null;
-  return isRectEdit(last) ? last : null;
+  return actedTarget()?.edit ?? null;
 }
 
 // Breathing room between the Convert submenu and the bottom of the
@@ -1748,17 +1809,20 @@ function applyConvert(kind: RectKind): void {
 //
 // The Shrink action tightens a rectangle around its content by
 // reading the pre-edit base image and asking `src/shrink.ts` to
-// trim solid borders. Which rectangle gets shrunk is decided by
-// the currently selected tool:
+// trim solid borders. Which rectangle gets shrunk follows the same
+// "the thing I just drew" rule as Convert — *not* the selected
+// tool, which was easy to lose track of (a restored session in
+// particular comes back on the default tool):
 //
-//   - 'rect' / 'redact' — the most recent edit of that kind. If
-//     the stack has none, the button is disabled.
-//   - 'crop'            — the active crop, or (if there is none)
-//     the full image: that case commits a *new* crop edit so the
-//     user can shrink straight from "no crop yet" to "crop fitting
-//     the page content".
-//   - 'line' / 'arrow'  — disabled (lines have no rectangular
-//     extent to tighten).
+//   - Normally the last box-shaped edit acted on
+//     (`lastActedRectEdit`) — the same target Convert uses, so the
+//     two items always name the same object. A line / arrow last, or
+//     an empty stack, disables the item.
+//   - The Crop tool is the exception: with it selected the target is
+//     always the crop region, so "trim the whole page to its
+//     content" stays reachable with a box on top or nothing drawn at
+//     all. That means the active crop, or — with none — the full
+//     image, which commits a *new* crop edit.
 //
 // We never shrink against the rendered overlay: redactions paint
 // over the object you'd want to wrap, so the algorithm has to see
@@ -1776,29 +1840,28 @@ type ShrinkTarget =
 // button's disabled state (in `render()`) and to look up the
 // target inside the click handler.
 function shrinkTarget(): ShrinkTarget | null {
-  if (selectedTool === 'rect' || selectedTool === 'redact') {
-    for (let i = edits.length - 1; i >= 0; i--) {
-      const e = edits[i]!;
-      if (e.kind === selectedTool) return { kind: 'rect-edit', edit: e };
-    }
-    return null;
-  }
+  // Crop tool: always the crop region, even with a box on top —
+  // that's the mode the "trim the whole page" fallback lives in.
   if (selectedTool === 'crop') {
     const c = activeCrop();
     return c ? { kind: 'rect-edit', edit: c } : { kind: 'new-crop' };
   }
-  return null;
+  const acted = actedTarget();
+  return acted ? { kind: 'rect-edit', edit: acted.edit } : null;
 }
 
-// What the Shrink menu item calls its current target: the kind of
-// edit a click would tighten, or the generic pairing when there's
-// nothing to act on.
-function shrinkTargetNoun(target: ShrinkTarget | null): string {
-  if (!target) return 'box or crop';
-  if (target.kind === 'new-crop') return 'crop';
-  if (target.edit.kind === 'redact') return 'redaction';
-  if (target.edit.kind === 'crop') return 'crop';
-  return 'box';
+// The Shrink menu item's label, naming what a click would tighten.
+// Shares `targetNoun` with Convert's label, so the two rows agree
+// wherever they act on the same thing — everywhere except the Crop
+// tool's crop-region mode, where only Shrink switches. The no-target
+// (disabled) case keeps the box wording.
+function shrinkLabel(
+  target: ShrinkTarget | null,
+  acted: ActedTarget | null,
+): string {
+  const cropRegion = !!target
+    && (target.kind === 'new-crop' || target.edit.kind === 'crop');
+  return `Shrink ${targetNoun(cropRegion ? 'crop-region' : acted)} to fit content`;
 }
 
 // Cache of the natural-resolution base-image pixel buffer. Reading
@@ -2214,9 +2277,9 @@ function cropBaseImage(
 }
 
 // Enabled state + click target for the View cropped button: the
-// active crop, whatever tool is selected (unlike Shrink, this isn't
-// a per-tool action). A full-image crop reports as no crop, so the
-// button stays disabled when there's nothing to re-frame.
+// active crop, whatever tool is selected and wherever the crop sits
+// in the stack. A full-image crop reports as no crop, so the button
+// stays disabled when there's nothing to re-frame.
 function viewCropTarget(): RectEdit | undefined {
   return activeCrop();
 }
@@ -2716,9 +2779,10 @@ function setSelectedTool(tool: Tool): void {
     btn.classList.toggle('selected', isMine);
     btn.setAttribute('aria-pressed', isMine ? 'true' : 'false');
   }
-  // Shrink's enabled state depends on the selected tool (it
-  // operates on the last matching edit, or on the crop region in
-  // Crop mode), so a re-render keeps its disabled flag in sync.
+  // Shrink switches to the crop region while the Crop tool is
+  // selected, so its enabled state and label still track the tool
+  // even though its target otherwise doesn't. Re-render to keep
+  // both in sync.
   render();
 }
 
@@ -3975,18 +4039,20 @@ export function initDrawing(context: DrawingContext): void {
 
     let tightPx = shrinkRect(base, startPx);
 
-    // Box-mode multi-step drilling: a previously-shrunk Box has its
-    // edges 1 pixel *outside* the content (the +1 expansion), so the
-    // algorithm's snapshot from `startPx` is plain bg and the next
-    // line in is content — no advance. Crop / Redact don't have this
-    // problem because their edges already sit ON the content. To let
-    // Box drill into nested content the same way (e.g. a coarse box
-    // → tight around a text+divider block on click 1 → tight around
+    // Multi-step drilling for a `rect` edit (this and the rules
+    // below key off the *edit's* kind, not the selected tool): a
+    // previously-shrunk box has its edges 1 pixel *outside* the
+    // content (the +1 expansion), so the algorithm's snapshot from
+    // `startPx` is plain bg and the next line in is content — no
+    // advance. Crop and redaction edits don't have this problem
+    // because their edges already sit ON the content. To let a box
+    // drill into nested content the same way (e.g. a coarse box →
+    // tight around a text+divider block on click 1 → tight around
     // just the text on click 2 once the divider's uniform pixels
     // become the new snapshot), retry from the rect contracted by 1
     // when the first attempt couldn't advance. The contracted rect's
-    // edges sit on the previous content's outer pixels, mirroring the
-    // Crop / Redact starting state.
+    // edges sit on the previous content's outer pixels, mirroring a
+    // crop / redaction's starting state.
     //
     // The retry is all-or-nothing: it fires only when the first
     // attempt advanced *zero* edges. Partially-advanced results (e.g.
@@ -4017,13 +4083,13 @@ export function initDrawing(context: DrawingContext): void {
 
     // Algorithm-noop guard: if no edge moved (the start was already
     // wrapping the content as tightly as the snapshot rule allows
-    // — including the Box drilling retry above), bail *before* the
-    // Box +1 expansion. Without this, repeated Box clicks would
+    // — including the drilling retry above), bail *before* the box
+    // +1 expansion. Without this, repeated clicks on a box would
     // unconditionally re-expand by 1 each click — pulsing on clean
     // content, growing on noisy content.
     if (rectsEqual(tightPx, startPx)) return;
 
-    // For Box outlines, the rect is the stroke geometry — the user
+    // For a box outline, the rect is the stroke geometry — the user
     // wants the stroke centerline to sit just outside the wrapped
     // object, not painted across it. Expanding the tight content
     // rect by 1 natural pixel on every side puts the centerline one

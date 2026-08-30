@@ -1,11 +1,17 @@
-// E2E coverage for "Convert last drawn box…" (`#convert-last`, in the
-// More menu) — the fix for a box drawn with the wrong tool selected.
-// The item opens a submenu (`#convert-row`) of the three rect kinds
-// under the item; picking one retargets the last edit in place.
+// E2E coverage for the Convert item (`#convert-last`, in the More
+// menu) — the fix for a box drawn with the wrong tool selected. The
+// item opens a submenu (`#convert-row`) of the three rect kinds under
+// itself; picking one retargets the box in place.
+//
+// Its target is the last box-shaped edit *acted on* — normally the
+// top of the stack, but an edge-resize of a buried box counts too.
+// Shrink shares that rule and the label wording; the label cases live
+// in `capture-drawing-shrink.spec.ts`.
 //
 // Covered here:
-//   - the enable rule (top of the stack must be box-shaped) and the
-//     submenu closing when the target goes away;
+//   - the enable rule and the submenu closing when the target goes
+//     away, plus the resize-of-a-buried-box case and the Crop tool's
+//     divergence from Shrink;
 //   - the pushed-down button showing what the target already is;
 //   - a Box → Crop conversion keeping the geometry, and Undo putting
 //     the kind back;
@@ -15,6 +21,7 @@ import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
 import {
   clickMoreMenuItem,
+  dragEdge,
   readEditFlags,
   readEditKinds,
   readEffectiveCrop,
@@ -40,6 +47,8 @@ test('convert: enable rule and the row that shows the current kind', async ({
 
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
   await expect(item).toBeEnabled();
+  // The label names the target, in the same words Shrink's row uses.
+  await expect(item).toHaveText('Convert last drawn box…');
 
   // The item is a disclosure, not a pick: the menu stays open and
   // the row appears under it.
@@ -81,8 +90,8 @@ test('convert: enable rule and the row that shows the current kind', async ({
   await expect(capturePage.locator('#more-menu')).toBeVisible();
   await capturePage.keyboard.press('Escape');
 
-  // Only the *top* of the stack counts: a line drawn over a box is
-  // what the item looks at, so it stays disabled.
+  // The last *op* is what counts: a line drawn over a box is the
+  // thing last acted on, so the item goes disabled.
   await capturePage.locator('#tool-box').click();
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
   await expect(item).toBeEnabled();
@@ -95,11 +104,13 @@ test('convert: enable rule and the row that shows the current kind', async ({
   await expect(item).toBeEnabled();
 
   // Open, the submenu's buttons join the menu's arrow rotation. The
-  // menu traps Tab, so that's the only way to reach them.
+  // menu traps Tab, so that's the only way to reach them. Shrink is
+  // the first enabled row (it names the same box Convert does), so
+  // one Down lands on Convert.
   await capturePage.locator('#more').focus();
-  // Convert is the first enabled row here — Shrink is disabled in
-  // Line mode, and View cropped without a crop.
   await capturePage.keyboard.press('Enter');
+  await expect(capturePage.locator('#shrink')).toBeFocused();
+  await capturePage.keyboard.press('ArrowDown');
   await expect(item).toBeFocused();
   await capturePage.keyboard.press('Enter');
   await expect(row).toBeVisible();
@@ -127,6 +138,74 @@ test('convert: enable rule and the row that shows the current kind', async ({
   await capturePage.keyboard.press('Escape');
   await expect(capturePage.locator('#more-menu')).toBeHidden();
   await expect(row).toBeHidden();
+
+  await openerPage.close();
+});
+
+test('convert: follows a resize of a box buried under a newer one', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const item = capturePage.locator('#convert-last');
+
+  // An outer box, then a smaller one drawn inside it — the newer one
+  // is on top of the stack.
+  const outer = { x: 20, y: 20, w: 60, h: 60 };
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
+  await dragRect(capturePage, { xPct: 0.35, yPct: 0.35 }, { xPct: 0.5, yPct: 0.5 });
+
+  // Dragging the outer box's west edge acts on *it*, so it becomes
+  // the target even though the newer box still sits above it. The
+  // label switches to the edited wording.
+  await dragEdge(capturePage, 'w', outer, 0.15);
+  await expect(item).toHaveText('Convert last edited box…');
+  // Shrink names the same box, off the same helper.
+  await expect(capturePage.locator('#shrink'))
+    .toHaveText('Shrink last edited box to fit content');
+
+  await clickMoreMenuItem(capturePage, '#convert-last');
+  await capturePage.locator('#convert-to-redact').click();
+
+  // The outer box (first on the stack) is the one that changed.
+  expect(await readEditKinds(capturePage)).toEqual(['redact', 'rect']);
+
+  await openerPage.close();
+});
+
+test('convert: the Crop tool moves Shrink off the shared target, not Convert', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+  const item = capturePage.locator('#convert-last');
+  const shrink = capturePage.locator('#shrink');
+
+  // The one state where the two rows disagree on purpose: Shrink
+  // switches to the crop region with the Crop tool selected, while
+  // Convert keeps naming the box that was last drawn.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
+  await capturePage.locator('#tool-crop').click();
+  await expect(shrink).toHaveText('Shrink crop region to fit content');
+  await expect(item).toHaveText('Convert last drawn box…');
+  await expect(item).toBeEnabled();
+
+  // Converting still acts on that box, not on any crop.
+  await clickMoreMenuItem(capturePage, '#convert-last');
+  await capturePage.locator('#convert-to-redact').click();
+  expect(await readEditKinds(capturePage)).toEqual(['redact']);
 
   await openerPage.close();
 });

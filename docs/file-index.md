@@ -252,7 +252,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/paste.ts` | Capture-page rich-text paste — `attachHtmlAwarePaste` (text/html → markdown or HTML-source), highlighter / markdown detection, nbsp normalization |
 | `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guards (destination kinds/count, text size), cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: Fit + continuous-scale sizing, zoom menu, wheel / pinch / key zoom, drag pan with box snap + arrow-key nudge |
-| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped + Convert last box + annotation Copy / Paste / Import (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
+| `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped + Convert last box (shared target/label rule) + annotation Copy / Paste / Import (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
 | `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour plus slide-up-to-fit placement (re-run on resize) for the Capture column's Zoom and More… popovers |
@@ -293,7 +293,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying captures against `log.json`, and seeding / resetting the capture log |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/fixtures/pages/gradient.html` | Multi-stop linear-gradient page — used by the large-screenshot-recompress e2e to produce a capture where JPEG clearly beats PNG |
-| `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink-tool e2e tests |
+| `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink e2e tests |
 | `tests/fixtures/pages/shrink-nested.html` | Grey page → blue card → red inner block — exercises the two-step Shrink (page bg → card → inner block) e2e |
 | `tests/fixtures/pages/red-image.html` | Fixture page with `<img>`s (http PNG, inline JPEG data URL, http JPEG, http WEBP) for the image-context capture e2e tests |
 | `tests/fixtures/pages/red-pixel.png` | 200x200 solid-red PNG used as the `<img>` source in `red-image.html` |
@@ -313,7 +313,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-drawing-basic.spec.ts` | E2E for per-tool draw → save flows (Box/Line/Arrow/Crop/Redact), the saved record's edit flags, Undo/Reset state + undo-of-Reset order |
 | `tests/e2e/capture-drawing-resize-nudge.spec.ts` | E2E for box-edge resize, arrow-key nudge of an in-flight drag, and visible-pane clamping under zoom |
 | `tests/e2e/capture-drawing-polyline.spec.ts` | E2E for Polyline / Poly-arrow chains and the Ctrl-promote shortcut, plus chain-lifetime edge cases |
-| `tests/e2e/capture-drawing-convert.spec.ts` | E2E for the Convert last drawn box action — enable rule, the kind submenu, geometry-preserving conversion, Undo, keyboard reach |
+| `tests/e2e/capture-drawing-convert.spec.ts` | E2E for the Convert action — shared target rule (incl. buried-box resize, Crop-tool divergence), the kind submenu, geometry-preserving conversion, Undo, keyboard reach |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-status-layout.spec.ts` | E2E for the page's vertical layout contract — a status message must not raise a scrollbar, and the rule stays centred |
 | `tests/e2e/capture-menu-keyboard.spec.ts` | E2E for keyboard use of the tool buttons (Space / Enter selects) and arrow navigation in the Zoom / More… / Ask menus |
@@ -321,7 +321,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
 | `tests/e2e/capture-annotation-transfer.spec.ts` | E2E for annotation Copy / Paste / Import — cross-capture round-trip, re-derived applied crop, overwrite + per-edit Undo / Redo, disabled-state tooltips |
 | `tests/e2e/capture-view-cropped.spec.ts` | E2E for the View cropped action — re-framing, crop-of-a-crop, edit re-mapping / off-frame drop, Undo / Redo, Reset and undoing it, More-menu dismissal + slide-up placement |
-| `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink-tool operator — per-mode enable state, history/Undo wiring, drill-through on nested fixtures |
+| `tests/e2e/capture-drawing-shrink.spec.ts` | E2E for the Shrink operator — target/label rules, history/Undo wiring, drill-through on nested fixtures |
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width + DPR-stub regressions, continuous wheel / pinch / key zoom with cursor anchoring, arrow-key fine pan, pan snap, Zoom-popover |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |

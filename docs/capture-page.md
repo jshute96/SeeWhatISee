@@ -566,17 +566,19 @@ More menu's Convert submenu (see Convert last drawn box).
 
 - Holds the picture-rewriting actions — Shrink, View cropped and
   Convert — so the column stays short. Labels are longer than the
-  column allowed ("Shrink last … to fit content", "Replace with
-  cropped image"); ids, tooltips and enable rules are the same ones
+  column allowed ("Shrink last drawn box to fit content", "Replace
+  with cropped image"); ids, tooltips and enable rules are the same ones
   they had as buttons.
 - Below a `.palette-menu-sep` rule, a second group: the annotation
   Copy / Paste / Import items (see the Annotation transfer section).
   Their tooltips are rewritten by `render()` too, and gain an
   "Unavailable: …" line when disabled.
-- The Shrink item names its target: `render()` rewrites the label
-  to "box", "redaction" or "crop" depending on what the next click
-  would tighten, and falls back to "box or crop" when there's
-  nothing to shrink (the disabled state).
+- The Shrink and Convert items name their target: `render()`
+  rewrites both labels from one helper ("last drawn box" / "last
+  edited box" / "crop region"), so they agree wherever they act on
+  the same thing — everywhere except while the Crop tool is selected,
+  where only Shrink switches to the crop region. With nothing to act
+  on both keep the box wording and grey out.
 - The Convert item is the one row that isn't a pick: it toggles the
   `#convert-row` submenu below it and leaves the menu open. Main's
   item-click closer carves it out; the submenu's own buttons close
@@ -799,8 +801,9 @@ More menu's Convert submenu (see Convert last drawn box).
 
 **What it does**
 
-- Lives in the More menu as "Convert last drawn box…", below
-  "Replace with cropped image".
+- Lives in the More menu below "Replace with cropped image", named
+  for its live target — "Convert last drawn box…", "Convert last
+  edited box…" or "Convert crop region…".
 - Fixes a box drawn with the wrong tool selected — typically a red
   Box where a Crop was meant — without an undo-and-redraw cycle.
 - Clicking the item opens `#convert-row`, a submenu holding the
@@ -812,13 +815,42 @@ More menu's Convert submenu (see Convert last drawn box).
 - Picking a kind retargets the edit in place; the geometry doesn't
   move.
 
-**Target and enable rule**
+**Target and enable rule** (shared with Shrink)
 
-- The target is the *last* edit on the stack, and only when it's
-  box-shaped (`rect` / `redact` / `crop`).
-  - "The thing I just drew" needs no selection UI, and it's the
-    case the slip actually happens in.
-  - A line / arrow on top, or an empty stack, greys the item out.
+- The target is the last box-shaped edit *acted on* (`actedTarget`),
+  and Shrink uses the same helper, so the two rows act on the same
+  object and say so in the same words — except while the Crop tool is
+  selected, where Shrink switches to the crop region and Convert
+  doesn't.
+  - Normally that's the top of the stack. Where the two disagree the
+    history's last op wins, so an edge-resize of a box buried under
+    newer ones retargets both items onto that box.
+  - "The thing I just drew or just moved" needs no selection UI, and
+    it's the case the slip actually happens in.
+  - Deliberately *not* the selected tool, which the old Shrink rule
+    used: it was easy to lose track of, and a restored session comes
+    back on the default tool.
+  - A line / arrow last, or an empty stack, greys the item out.
+  - A whole-state marker (View cropped / Reset / Paste) names no
+    single edit, so those fall back to the top of the stack, read as
+    "drawn". A restore drops those markers, so a restored session can
+    target the edit the next-older op touched instead — the same
+    stack, one step further back.
+  - What this rule gives up, versus the old per-tool one: a line or
+    arrow drawn last disables both items until it's undone, and a box
+    buried under a newer one is only reachable by acting on it (an
+    edge drag). Nothing scans down the stack for "the most recent
+    edit of some kind" any more.
+- The label comes from `targetNoun`, the other half of the shared
+  pair (`actedTarget` returns the drawn / edited flag alongside the
+  edit, so the target and the word for it come from one read of the
+  history):
+  - "crop region" for a crop — the crop that matters isn't
+    necessarily the last thing drawn, and may not exist yet.
+  - "last drawn box" / "last edited box" otherwise, on whether the
+    last op added the edit or changed one. One noun for both box
+    kinds: which it is is obvious from the picture, and naming them
+    separately reads as two different targets.
 - `render()` drives both the disabled flag and the submenu: when the
   target goes away, the submenu closes with the item rather than
   sitting open over nothing.
@@ -890,18 +922,21 @@ More menu's Convert submenu (see Convert last drawn box).
 
 ### Shrink action
 
-- Lives in the More menu as "Shrink last … to fit content", where
-  the ellipsis names the live target (see the More menu section).
+- Lives in the More menu as "Shrink <target> to fit content", where
+  the target is named exactly as Convert names it — "last drawn
+  box", "last edited box" or "crop region".
 - Tightens a rectangle around its content by reading the *base*
   (pre-edit) image and trimming solid borders.
-- Target follows the selected tool: the most recent edit of that
-  kind for Box / Redact, the active crop for Crop, or a fresh crop
-  edit when Crop has no active region (starting from the full
-  image).
-- Disabled in Line / Arrow modes, and in Box / Redact modes when no
-  edit of that kind exists. `render()` refreshes both the disabled
-  flag and the label, and `setSelectedTool` re-renders, so the item
-  tracks the active tool.
+- Target is the shared one (see Convert's "Target and enable rule"),
+  with one addition of its own:
+  - With the **Crop tool** selected the target is always the crop
+    region — the active crop, or a fresh crop edit starting from the
+    full image when there is none.
+  - That keeps "trim the whole page to its content" reachable with a
+    box on top, or with nothing drawn at all.
+- Disabled when the shared target is empty (a line / arrow last, or
+  an empty stack) and the Crop tool isn't selected. `render()`
+  refreshes both the disabled flag and the label.
 - Backed by `src/shrink.ts` — a pure pixel-buffer operator with
   unit tests. Each edge advances inward as long as the line one
   step deeper still matches the *original* edge line, sliced to
@@ -913,23 +948,26 @@ More menu's Convert submenu (see Convert last drawn box).
   content.
 - Per-channel tolerance (default 3) absorbs JPEG noise / mild
   anti-aliasing.
-- Box mode expands the tight content bbox by 1 natural pixel on
-  every side (clamped to the image) so the stroke centerline sits
-  just outside the wrapped object. The stroke's half-width can
+- A `rect` (box) edit expands the tight content bbox by 1 natural
+  pixel on every side (clamped to the image) so the stroke centerline
+  sits just outside the wrapped object. The stroke's half-width can
   still cross by a fraction of a display pixel on a downscaled
-  preview. Crop / Redact use the tight bbox unchanged.
+  preview. Crop and redaction edits use the tight bbox unchanged.
+  - These rules key off the *edit's* kind, not the selected tool —
+    they always did, so retargeting Shrink changed nothing here.
 - Cache: the natural-resolution `ImageData` is materialized on
   first click and cached keyed by `previewImg.src` — repeated
   clicks on the same capture skip the canvas decode.
 - Each click is its own undoable step:
   - Rect-edit shrinks mutate the existing edit's geometry and
     push a `HistoryOp` carrying the *previous* `{x, y, w, h}`.
-    Undo restores those coordinates in place.
+    Undo restores those coordinates in place. That op is also what
+    flips both labels to "last edited box".
   - The new-crop case (Crop mode, no active crop) appends a
     fresh `'crop'` edit and pushes a regular `add` op. Undo
     removes it, returning to "no crop yet".
-- Box-mode drilling retry:
-  - A Box rect's edges sit 1 pixel *outside* the wrapped content
+- Box drilling retry:
+  - A box's edges sit 1 pixel *outside* the wrapped content
     (the +1 expansion), so a fresh algorithm call from the box
     edge sees plain bg as the snapshot.
   - That snapshot can't reach the previous content's outline, so
@@ -946,7 +984,7 @@ More menu's Convert submenu (see Convert last drawn box).
   algorithm actually contracted at least one edge. Without this
   guard, repeat Box clicks would re-expand by 1 each time —
   pulsing on clean content, growing on noisy content.
-- No-grow invariant (Box mode) — the +1 outward expansion is
+- No-grow invariant (box edits) — the +1 outward expansion is
   clamped per-edge so it can never push an edge *past* `startPx`.
   - Edges that genuinely advanced ≥ 1 px sit ≥ 1 px inside
     `startPx`, so `tightPx ± 1` is already inside `startPx` and
@@ -961,7 +999,7 @@ More menu's Convert submenu (see Convert last drawn box).
     1-pixel oscillation, or monotonic growth across repeated
     clicks. With the clamp, a Shrink click is guaranteed to never
     move any edge outward.
-- Multi-step refinement (all rect modes) — successive clicks can
+- Multi-step refinement (all rect kinds) — successive clicks can
   legitimately keep shrinking when an earlier click landed on a
   uniform stripe (e.g. a button border). On the next click that
   stripe becomes the new bg snapshot, and the algorithm walks past
@@ -984,8 +1022,8 @@ More menu's Convert submenu (see Convert last drawn box).
 - Everything downstream then treats the smaller picture as the
   whole screenshot: Fit / zoom, the Image-size pill, the bake, and
   the edge-handle "drag to crop" affordance.
-- Enabled whenever an active crop exists, in any tool mode —
-  unlike Shrink, it isn't a per-tool action.
+- Enabled whenever an active crop exists, whatever tool is selected
+  and wherever the crop sits in the stack.
 - Re-croppable: a new crop drawn inside the re-framed image can be
   applied again, so the user can drill down in steps.
 - Motivation: park the page on exactly the region of interest, at

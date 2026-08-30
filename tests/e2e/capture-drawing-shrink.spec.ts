@@ -1,5 +1,5 @@
-// E2E coverage for the Shrink-tool operator on the Capture page —
-// the "tighten the rect around its content" item (`#shrink`, in the
+// E2E coverage for the Shrink operator on the Capture page — the
+// "tighten the rect around its content" item (`#shrink`, in the
 // More menu).
 //
 // `shrink-target.html` is a grey page with a single black block
@@ -14,18 +14,20 @@
 //
 // The underlying pixel algorithm has its own unit tests in
 // `tests/unit/shrink.test.mjs`; this file focuses on the button's
-// integration with the edit-stack (history / Undo) and the per-tool
-// enable/disable rules.
+// integration with the edit-stack (history / Undo) and on the
+// target / label rules it shares with Convert — plus the Crop
+// tool's always-the-crop-region case, which is Shrink's alone.
 
 import { test, expect } from '../fixtures/extension';
 import { dragRect, openDetailsFlow } from './details-helpers';
 import {
   clickMoreMenuItem,
+  dragEdge,
   readEffectiveCrop,
   readLastBounds,
 } from './capture-drawing-helpers';
 
-test('shrink: button is enabled in Crop mode and disabled for Line / Arrow', async ({
+test('shrink: follows the last drawn box, whatever tool is selected', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -38,21 +40,67 @@ test('shrink: button is enabled in Crop mode and disabled for Line / Arrow', asy
   );
   const shrinkBtn = capturePage.locator('#shrink');
 
-  // Default tool is Box. With no Box edits on the stack yet, Shrink
-  // has no target and stays disabled.
+  // Nothing drawn and a non-crop tool selected — no target.
   await expect(shrinkBtn).toBeDisabled();
 
-  // Crop mode: Shrink is always enabled (it falls back to the full
-  // image when no crop exists yet).
-  await capturePage.locator('#tool-crop').click();
+  // A drawn box is the target, and stays the target when the tool
+  // changes under it: the action follows the stack, not the palette.
+  await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
+  await expect(shrinkBtn).toBeEnabled();
+  await capturePage.locator('#tool-line').click();
+  await expect(shrinkBtn).toBeEnabled();
+  await expect(shrinkBtn).toHaveText('Shrink last drawn box to fit content');
+
+  // A line on top of it has no rectangular extent to tighten.
+  await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
+  await expect(shrinkBtn).toBeDisabled();
+  await capturePage.locator('#undo').click();
   await expect(shrinkBtn).toBeEnabled();
 
-  // Line / Arrow modes have no rectangular geometry — Shrink stays
-  // disabled regardless of the edit stack.
-  await capturePage.locator('#tool-line').click();
-  await expect(shrinkBtn).toBeDisabled();
-  await capturePage.locator('#tool-arrow').click();
-  await expect(shrinkBtn).toBeDisabled();
+  // Crop mode is the exception — always enabled, since it falls back
+  // to the full image when no crop exists yet.
+  await capturePage.locator('#tool-crop').click();
+  await expect(shrinkBtn).toBeEnabled();
+  await expect(shrinkBtn).toHaveText('Shrink crop region to fit content');
+
+  await openerPage.close();
+});
+
+test('shrink: acts on a box buried under a newer one after a resize', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    'shrink-target.html',
+  );
+
+  // An outer box with grey margins to trim, then a redaction drawn
+  // inside it — the redaction is on top of the stack. Two different
+  // kinds so each one's bounds are readable on its own.
+  const outer = { x: 15, y: 15, w: 70, h: 70 };
+  await dragRect(capturePage, { xPct: 0.15, yPct: 0.15 }, { xPct: 0.85, yPct: 0.85 });
+  await capturePage.locator('#tool-redact').click();
+  await dragRect(capturePage, { xPct: 0.4, yPct: 0.4 }, { xPct: 0.5, yPct: 0.5 });
+  const innerBefore = await readLastBounds(capturePage, 'redact');
+
+  // Resizing the outer box makes it the target, even buried.
+  await dragEdge(capturePage, 'w', outer, 0.12);
+  await expect(capturePage.locator('#shrink'))
+    .toHaveText('Shrink last edited box to fit content');
+
+  await clickMoreMenuItem(capturePage, '#shrink');
+
+  // The outer box tightened onto the fixture's block; the redaction
+  // on top of it is untouched.
+  const outerAfter = await readLastBounds(capturePage, 'rect');
+  expect(outerAfter!.x).toBeGreaterThan(15);
+  expect(outerAfter!.x).toBeLessThan(35);
+  expect(outerAfter!.w).toBeLessThan(70);
+  expect(await readLastBounds(capturePage, 'redact')).toEqual(innerBefore);
 
   await openerPage.close();
 });
@@ -70,25 +118,45 @@ test('shrink: the menu item names the target it would shrink', async ({
   );
   const item = capturePage.locator('#shrink');
 
-  // Box tool with nothing drawn: no target, so the label stays
-  // generic (and the item is disabled).
-  await expect(item).toHaveText('Shrink last box or crop to fit content');
+  // Nothing drawn: no target, so the label keeps the box wording
+  // (and the item is disabled).
+  await expect(item).toHaveText('Shrink last drawn box to fit content');
 
   // A drawn Box becomes the target.
   await dragRect(capturePage, { xPct: 0.2, yPct: 0.2 }, { xPct: 0.8, yPct: 0.8 });
-  await expect(item).toHaveText('Shrink last box to fit content');
+  await expect(item).toHaveText('Shrink last drawn box to fit content');
 
-  // Redact mode names the redaction it would tighten, and reverts to
-  // the generic pairing when there's no redaction on the stack.
+  // A redaction drawn over it takes the top of the stack. Both box
+  // kinds read as "box" — which one it is is obvious from the
+  // picture.
   await capturePage.locator('#tool-redact').click();
-  await expect(item).toHaveText('Shrink last box or crop to fit content');
   await dragRect(capturePage, { xPct: 0.3, yPct: 0.3 }, { xPct: 0.6, yPct: 0.6 });
-  await expect(item).toHaveText('Shrink last redaction to fit content');
+  await expect(item).toHaveText('Shrink last drawn box to fit content');
 
-  // Crop mode always has a target — the active crop, or the full
-  // image when no crop exists yet.
+  // Every crop case reads as the crop region — whether that's a
+  // drawn crop or the full-image fallback.
   await capturePage.locator('#tool-crop').click();
-  await expect(item).toHaveText('Shrink last crop to fit content');
+  await expect(item).toHaveText('Shrink crop region to fit content');
+  await dragRect(capturePage, { xPct: 0.1, yPct: 0.1 }, { xPct: 0.9, yPct: 0.9 });
+  await expect(item).toHaveText('Shrink crop region to fit content');
+
+  // The crop sticks as the target while it's the last thing acted
+  // on, even back on the Box tool — but a box drawn on top takes
+  // over.
+  await capturePage.locator('#tool-box').click();
+  await expect(item).toHaveText('Shrink crop region to fit content');
+  await dragRect(capturePage, { xPct: 0.45, yPct: 0.45 }, { xPct: 0.55, yPct: 0.55 });
+  await expect(item).toHaveText('Shrink last drawn box to fit content');
+
+  // Changing an existing box rather than drawing one says so — here
+  // a Shrink click, which mutates the box it just named. Drawn wide
+  // enough around the fixture's block that the click has margins to
+  // trim, so it really does mutate.
+  await dragRect(capturePage, { xPct: 0.15, yPct: 0.15 }, { xPct: 0.85, yPct: 0.85 });
+  await expect(item).toHaveText('Shrink last drawn box to fit content');
+  await clickMoreMenuItem(capturePage, '#shrink');
+  await expect(item).toHaveText('Shrink last edited box to fit content');
+  await expect(capturePage.locator('#convert-last')).toHaveText('Convert last edited box…');
 
   await openerPage.close();
 });
