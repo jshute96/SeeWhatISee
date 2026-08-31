@@ -27,6 +27,7 @@ import {
   LOG_FILE_NAME,
   downloadArtifact,
   getHistoryFilePaths,
+  pruneOldLogRecords,
   waitForDownloadComplete,
 } from './downloads.js';
 import { LogWriteBlockedError, inspectLogFile } from './log-reconcile.js';
@@ -591,6 +592,11 @@ export async function recordCapture(
       console.info('[SeeWhatISee] log.json write did not complete:', err);
     }
     await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
+    // This write is now the one true `log.json` record, so the rows
+    // every earlier capture left behind — all naming this same file —
+    // can go. Skipped when the write didn't land: then an older record
+    // is still the newest one describing the file on disk.
+    if (logWritten) await pruneOldLogRecords(downloadId);
     // The trimmed log is now both on disk and in storage, so the
     // batches in `settledKeys` are gone for good and nothing can
     // re-derive them — their pinned names can go.

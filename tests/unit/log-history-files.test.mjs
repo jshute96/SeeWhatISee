@@ -34,6 +34,8 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   writes = [];
   const store = { captureLog: existing };
   let nextId = 1;
+  /** Id of the most recent `log.json` write, for the record below. */
+  let lastLogId = 0;
   globalThis.chrome = {
     runtime: { id: EXT_ID },
     storage: {
@@ -55,7 +57,9 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
         // Undo the `data:` wrapper `writeJsonFile` puts around the text.
         const body = decodeURIComponent(url.slice(url.indexOf(',') + 1));
         writes.push({ filename, body });
-        return nextId++;
+        const id = nextId++;
+        if (filename.endsWith('log.json')) lastLogId = id;
+        return id;
       },
       search: async (query = {}) => {
         // The history-file query (`getHistoryFilePaths`) gets the
@@ -80,7 +84,10 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
         const body = last ? last.body : serializeLog(store.captureLog ?? []);
         const size = new TextEncoder().encode(body).length;
         return [{
-          id: 0,
+          // The id of the write that produced it, so the post-write
+          // prune recognizes this as the record it just created —
+          // otherwise it would bail before touching the stub at all.
+          id: lastLogId,
           filename: `SeeWhatISee/log.json`,
           byExtensionId: EXT_ID,
           state: 'complete',
@@ -89,6 +96,11 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
           bytesReceived: size,
         }];
       },
+      // Every capture prunes the `log.json` rows older than its own
+      // write out of the download list. The stub above reports exactly
+      // one record — the newest write — so nothing is ever older, and
+      // this is only here to be found rather than called.
+      erase: async () => {},
       // The reconcile waits briefly for Chrome's existence re-check
       // before trusting `exists` (see `startExistsWatch`). These tests
       // never delete anything, so no delta is ever fired — the listener

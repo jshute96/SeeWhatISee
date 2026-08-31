@@ -732,6 +732,54 @@ async function ourLogRecords(): Promise<chrome.downloads.DownloadItem[]> {
 }
 
 /**
+ * Drop the `log.json` download records older than `keepId`.
+ *
+ * `keepId` is a `DownloadItem.id` — Chrome's own persistent handle for
+ * one download, as returned by `chrome.downloads.download`, unique
+ * within the profile and stable across service-worker and browser
+ * restarts. **Not a position in any list**, so the search below finds
+ * it rather than indexing to it, and "older" is decided by the list's
+ * `-startTime` order, never by comparing ids.
+ *
+ * Every capture rewrites the same `log.json`, so without this the
+ * user's download history fills up with one row per capture, all
+ * pointing at the same file. Only the newest is of any use — to the
+ * user *or* to us, since `readLogFileRecord` answers from the newest
+ * complete record.
+ *
+ * Records only: the file itself stays where it is. Best-effort, and
+ * never a reason to fail the capture that triggered it.
+ *
+ * Call this only once the `keepId` write has landed. Erasing the older
+ * records while the new one is still in flight (or after it failed)
+ * would throw away the last record that describes a file actually on
+ * disk, which is what the reconcile in `log-reconcile.ts` leans on.
+ *
+ * **Strictly older records only.** Every `log.json` write today goes
+ * through `serializeWrite` in the service worker, so a newer record
+ * shouldn't exist while this runs — but should one ever appear, it is
+ * the record that describes the file next (`readLogFileRecord` waits
+ * such a write out rather than answering from an older one), so this
+ * leaves it alone. A `keepId` no longer in the list says nothing about
+ * which of the rest are older, so that prunes nothing.
+ */
+export async function pruneOldLogRecords(keepId: number): Promise<void> {
+  try {
+    // Newest first, so everything past the kept record is older.
+    const ours = await ourLogRecords();
+    const keepAt = ours.findIndex((item) => item.id === keepId);
+    if (keepAt < 0) return;
+    // In parallel: the first prune on an old profile can face every
+    // row that profile ever accumulated, and the capture doesn't
+    // return until they're gone. `eraseDownloadRecord` swallows its
+    // own failures, so one stuck row can't take the rest with it.
+    await Promise.all(ours.slice(keepAt + 1).map((item) => eraseDownloadRecord(item.id)));
+  } catch (err) {
+    console.info('[SeeWhatISee] could not prune old log.json records:', err);
+  }
+}
+
+/**
  * Byte size of the file a download record wrote.
  *
  * **This is the size at download time.** Chrome re-checks `exists` on

@@ -138,6 +138,29 @@ landed.
   artifacts are on disk and the next capture reconciles against
   whatever the file turned out to be.
 
+### Pruning the older `log.json` records
+
+Every capture rewrites the same `log.json`, so Chrome's download list
+would otherwise collect one row per capture, all naming the same file.
+`pruneOldLogRecords` (`downloads.ts`) erases the rows older than
+the one just written.
+
+- Records only — the file itself is untouched, and only rows written
+  by this extension for `log.json` are considered.
+- Nothing else wants the older rows: `readLogFileRecord` answers from
+  the newest `complete` record, and the rest describe a file that has
+  been overwritten many times since.
+- Runs only once the new write has landed. Pruning around a write that
+  failed would throw away the last record describing what is actually
+  on disk, which is what the record-only route reads.
+- Strictly *older* records. Every log write is serialized in the
+  service worker, so a newer row shouldn't exist here — but should one
+  ever appear, it describes the file next, and is left alone.
+- A kept record that has itself gone from the list says nothing about
+  which of the rest are older, so that prunes nothing.
+- Best-effort: a row that wouldn't go away is cosmetic, never a reason
+  to fail the capture.
+
 ## Working out what's in the file
 
 Every capture does this before it writes anything, at the top of
