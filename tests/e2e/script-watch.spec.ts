@@ -881,6 +881,219 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
   });
 });
 
+// ---- Extension stop protocol ------------------------------------------------
+//
+// The extension's half of this lives in `src/capture/watch-status.ts`;
+// the whole contract is written up in `docs/watch-protocol.md`.
+
+test.describe('SeeWhatISee.py --watch stop protocol', () => {
+  test.setTimeout(30_000);
+
+  /** Read `.watch-status.json`, or null if there isn't one. */
+  function readStatus(): { pid: number; started: string; heartbeat: string } | null {
+    const file = path.join(tmpDir, '.watch-status.json');
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+
+  /** Write the file the Capture page's Stop button downloads. */
+  function requestStop(): void {
+    fs.writeFileSync(
+      path.join(tmpDir, 'watch-stop.json'),
+      JSON.stringify({ pid: 0, requestedAt: new Date().toISOString() }) + '\n',
+    );
+  }
+
+  test('publishes a status file while watching and clears it on exit', async () => {
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    const status = readStatus();
+    expect(status?.pid).toBe(watch.proc.pid);
+    // Both stamps are ISO 8601 in UTC, which is what the extension's
+    // `Date.parse` freshness check assumes.
+    expect(Date.parse(status!.started)).toBeGreaterThan(0);
+    expect(Date.parse(status!.heartbeat)).toBeGreaterThan(0);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(readStatus()).toBeNull();
+  });
+
+  test('a stop file stops the watcher and takes every file with it', async () => {
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(readStatus()).not.toBeNull();
+
+    requestStop();
+    // A requested shutdown is a clean one, not a signalled 143.
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    expect(watch.output()).toContain('stop requested from the extension');
+
+    // Everything the protocol wrote is gone, so the Capture page sees
+    // no watcher and the next one isn't stopped by a stale request.
+    expect(readStatus()).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  test('a leftover stop file does not stop the next watcher', async () => {
+    // Nobody answered this one — the watcher it was aimed at was
+    // already gone by the time it landed.
+    requestStop();
+
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1_000));
+
+    expect(watch.proc.exitCode).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+    expect(readStatus()?.pid).toBe(watch.proc.pid);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+  });
+
+  test('a takeover republishes the status file for the new watcher', async () => {
+    const watch1 = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    const watch2 = startWatch(['--directory', tmpDir]);
+    expect(await waitForExit(watch1.proc, 5_000)).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 500));
+
+    // The status file names the live watcher, not the one it replaced
+    // — whose own exit must not have cleared it out from under it.
+    expect(readStatus()?.pid).toBe(watch2.proc.pid);
+
+    watch2.kill();
+    await waitForExit(watch2.proc, 3_000);
+  });
+
+  test('a malformed status file breaks neither --stop nor a new watcher', async () => {
+    // Every shape that isn't the object we write — hand-edited, half a
+    // file, someone else's JSON. Reading one happens on the exit path
+    // of every watcher, so it must not raise.
+    for (const contents of ['null', '[]', '"x"', '42', 'not json', '', '{}']) {
+      fs.writeFileSync(path.join(tmpDir, '.watch-status.json'), contents);
+      const stop = runAction(['--stop', '--directory', tmpDir]);
+      expect(stop.exitCode, `--stop on a status file of ${contents}`).toBe(0);
+      expect(stop.stderr).toBe('');
+      // Nothing live is named in there, so it goes.
+      expect(fs.existsSync(path.join(tmpDir, '.watch-status.json'))).toBe(false);
+    }
+
+    fs.writeFileSync(path.join(tmpDir, '.watch-status.json'), 'null');
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(watch.proc.exitCode).toBeNull();
+    expect(readStatus()?.pid).toBe(watch.proc.pid);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+  });
+
+  test('--stop finds the watcher through the status file alone', async () => {
+    // The deprecated pidfile is a fallback, not the way in: a watcher
+    // whose pidfile was lost (hand-deleted, or an older --stop that
+    // raced) is still named by the status file, and must still stop.
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    fs.rmSync(path.join(tmpDir, '.watch.pid'));
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('Stopping existing watcher');
+    expect(await waitForExit(watch.proc, 5_000)).not.toBeNull();
+  });
+
+  test('--stop still falls back to the pidfile for an older watcher', async () => {
+    // What a watcher from a version that publishes no status file
+    // leaves behind: a pidfile, and nothing else.
+    const sleeper = spawn('sleep', ['300'], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(tmpDir, '.watch.pid'), `${sleeper.pid}\n`);
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('Stopping existing watcher');
+    // Signal 0 rather than the exit code: a SIGTERMed process reports
+    // `null` for its code, which `waitForExit` also uses for a timeout.
+    const alive = (): boolean => {
+      try { process.kill(sleeper.pid!, 0); return true; } catch { return false; }
+    };
+    for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(alive()).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  test('a dead status file does not mask a live older watcher', async () => {
+    // The cross-version case the pidfile exists for: a new watcher was
+    // SIGKILLed (its status file survives, naming a corpse), then an
+    // older-version watcher took the slot and knows only the pidfile.
+    // Reading the status file alone would report nothing to stop.
+    const sleeper = spawn('sleep', ['300'], { stdio: 'ignore' });
+    fs.writeFileSync(
+      path.join(tmpDir, '.watch-status.json'),
+      JSON.stringify({ pid: 999999999, started: 'x', heartbeat: 'x' }) + '\n',
+    );
+    fs.writeFileSync(path.join(tmpDir, '.watch.pid'), `${sleeper.pid}\n`);
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('Stopping existing watcher');
+    const alive = (): boolean => {
+      try { process.kill(sleeper.pid!, 0); return true; } catch { return false; }
+    };
+    for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(alive()).toBe(false);
+    expect(readStatus()).toBeNull();
+  });
+
+  test('a status file naming pid 0 signals nothing', async () => {
+    // `os.kill(0, ...)` is "my whole process group" — for a watcher an
+    // agent started, that is the agent. A corrupt status file must
+    // never reach it. This test would kill its own runner if it did.
+    fs.writeFileSync(
+      path.join(tmpDir, '.watch-status.json'),
+      JSON.stringify({ pid: 0, started: 'x', heartbeat: 'x' }) + '\n',
+    );
+    fs.writeFileSync(path.join(tmpDir, '.watch.pid'), '0\n');
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.exitCode).toBe(0);
+    expect(stop.stdout).toContain('No existing watcher to stop');
+    expect(readStatus()).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  test('a new watcher sweeps up temp files a hard kill left behind', async () => {
+    const orphan = path.join(tmpDir, '.watch-status.json.999999999.tmp');
+    fs.writeFileSync(orphan, '{}');
+
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(fs.existsSync(orphan)).toBe(false);
+    expect(readStatus()?.pid).toBe(watch.proc.pid);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+  });
+
+  test('--stop clears the files a killed watcher left behind', async () => {
+    // A watcher that died without running its cleanup (SIGKILL, or the
+    // machine losing power), plus a stop request nobody answered.
+    fs.writeFileSync(path.join(tmpDir, '.watch.pid'), '999999999\n');
+    fs.writeFileSync(
+      path.join(tmpDir, '.watch-status.json'),
+      JSON.stringify({ pid: 999999999, started: 'x', heartbeat: 'x' }) + '\n',
+    );
+    requestStop();
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('No existing watcher to stop');
+    expect(readStatus()).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+});
+
 // ---- Config file (.SeeWhatISee) tests ---------------------------------------
 
 test.describe('SeeWhatISee.py --watch config file', () => {

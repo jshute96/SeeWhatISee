@@ -352,6 +352,24 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
 }
 
 /**
+ * Whether `file://` reads are available. The toggle lives in
+ * `chrome://extensions`, is off by default, and flipping it reloads
+ * the extension — so this is a fresh answer every service-worker life.
+ *
+ * Guarded rather than called bare: `chrome.extension` is a legacy
+ * namespace, and a missing method should degrade to the no-reads path
+ * instead of failing whatever asked.
+ */
+export async function canReadFiles(): Promise<boolean> {
+  try {
+    if (typeof chrome.extension?.isAllowedFileSchemeAccess !== 'function') return false;
+    return await chrome.extension.isAllowedFileSchemeAccess();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read `log.json` from `directory`, or `null` if we can't.
  *
  * A missing file resolves non-ok rather than rejecting, which would
@@ -363,8 +381,26 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
  * directory.
  */
 export async function readLogText(directory: string): Promise<string | null> {
+  return readCaptureFileText(directory, LOG_FILE_NAME);
+}
+
+/**
+ * Read one file out of the capture directory over `file://`, or `null`
+ * if we can't — missing, denied (toggle off), or a failed read all fold
+ * together, and callers that need to tell them apart disambiguate
+ * themselves.
+ *
+ * `no-store` because one caller polls the same path every 250ms while
+ * waiting for a watcher to exit; a cached hit there would read as "the
+ * file is still present" and report a stop that worked as failed.
+ */
+export async function readCaptureFileText(
+  directory: string,
+  name: string,
+): Promise<string | null> {
   try {
-    const res = await fetch(pathToFileUrl(joinCapturePath(directory, LOG_FILE_NAME)));
+    const res = await fetch(pathToFileUrl(joinCapturePath(directory, name)),
+                            { cache: 'no-store' });
     if (!res.ok) return null;
     return await res.text();
   } catch {
@@ -729,10 +765,22 @@ async function discardDownload(downloadId: number): Promise<void> {
   } catch (err) {
     console.info('[SeeWhatISee] could not remove probe file:', err);
   }
+  await eraseDownloadRecord(downloadId);
+}
+
+/**
+ * Forget a download record, leaving the file alone.
+ *
+ * For writes the user has no reason to see afterwards: it takes the
+ * row out of Chrome's download list (and so out of the download
+ * bubble's contents), while the file stays on disk for whoever the
+ * write was for. Best-effort — a record we couldn't erase is cosmetic.
+ */
+export async function eraseDownloadRecord(downloadId: number): Promise<void> {
   try {
     await chrome.downloads.erase({ id: downloadId });
   } catch (err) {
-    console.info('[SeeWhatISee] could not erase probe record:', err);
+    console.info('[SeeWhatISee] could not erase download record:', err);
   }
 }
 

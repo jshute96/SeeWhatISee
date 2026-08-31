@@ -15,6 +15,13 @@
      * below it, which subtracts it from its top margin. See the
      * `#ask-status` rule for why the slot's height must be fixed. */
     --status-row-h: 16px;
+    /* Panel chrome for the boxes that group content rather than act:
+     * the captured-page card and the watcher indicator. A step lighter
+     * than the `.app-header` deep-purple-50 band (see
+     * shared-styles.css) so they read as the same family without
+     * competing with it. */
+    --panel-bg: #f6f3fb;
+    --panel-border: #d1c4e9;
     /* Row gap inside `.right-stack` (prompt row / button row / status).
      * The `hr` subtracts it too — the gap below the button row is the
      * one that trails off into the rule's margin. */
@@ -47,9 +54,9 @@
     gap: 12px;
     margin: 0 0 16px 0;
     padding: 8px 12px;
-    border: 1px solid #bbb;
+    border: 1px solid var(--panel-border);
     border-radius: 4px;
-    background: #f5f5f5;
+    background: var(--panel-bg);
     overflow: hidden;
   }
   /* `min-width: 0` is load-bearing: without it the flex child can't
@@ -512,9 +519,13 @@
   button#capture,
   button.ask-row,
   button.ask-caret-btn,
-  button.ask-provider-btn {
+  button.ask-provider-btn,
+  button#watch-stop-btn {
     /* One height for every action button so the row stays flush after
-     * wrapping; flex-centring makes vertical padding unnecessary. */
+     * wrapping; flex-centring makes vertical padding unnecessary.
+     * (`#watch-stop-btn` overrides the height below — it sits inside
+     * the watcher box, so it is smaller than the row's buttons, but
+     * everything else about it stays identical.) */
     height: var(--ask-btn-h);
     border: 1px solid #555;
     background: #f5f5f5;
@@ -571,6 +582,59 @@
     gap: 6px;
     border-top-left-radius: 4px;
     border-bottom-left-radius: 4px;
+  }
+  /* Running-watch-script indicator, the row's tail: a label and its
+   * Stop button, boxed together in the same panel chrome as the
+   * captured-page card so they read as one grouped state readout
+   * rather than two more controls. Exactly as tall as the row's
+   * buttons (`box-sizing: border-box`), so showing it can't change the
+   * row's height — the Stop button inside is smaller instead.
+   *
+   * `margin-left: auto` pushes it to the far end of the row, so it
+   * ends flush with the prompt textarea above rather than crowding the
+   * Ask buttons. On a wrapped row it right-aligns on its own line. */
+  .watch-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--ask-btn-h);
+    box-sizing: border-box;
+    padding: 0 8px;
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    background: var(--panel-bg);
+    margin-left: auto;
+  }
+  /* Needed: the `display: flex` above outranks the UA `[hidden]` rule. */
+  .watch-status[hidden] {
+    display: none;
+  }
+  /* Same 14px as the Save-checkbox labels (`.checkboxes label`) — the
+   * other place on the page that states something rather than acting. */
+  .watch-status-label {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  /* Same chrome as every other button in the row — border, background
+   * and `.btn`'s raised / pressed feedback — but sized down to fit
+   * inside the watcher box. The power symbol is just its icon. */
+  button#watch-stop-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 4px;
+    color: #333;
+  }
+  button#watch-stop-btn svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+  }
+  button#watch-stop-btn:disabled {
+    cursor: not-allowed;
   }
   .ask-row-label {
     /* Inline-block so the hotkey letter's underline renders cleanly. */
@@ -1100,6 +1164,14 @@
         <rect x="11" y="6" width="2" height="8" fill="#fff"></rect>
         <rect x="11" y="16" width="2" height="2" fill="#fff"></rect>
       </symbol>
+      <!-- Power symbol — the conventional "stop this running process"
+           glyph in developer tooling. Stops the watch script. -->
+      <symbol id="power-icon" viewBox="0 0 24 24">
+        <path d="M12 3v9" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round"></path>
+        <path d="M6.9 6.9a7.2 7.2 0 1 0 10.2 0" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round"></path>
+      </symbol>
       <!-- Pencil — the edit action. -->
       <symbol id="edit-icon" viewBox="0 0 24 24">
         <path d="M4 20h4L19 9l-4-4L4 16v4z"
@@ -1386,6 +1458,17 @@
           <div id="ask-menu" class="ask-menu" role="menu" hidden>
             <ul></ul>
           </div>
+        </div>
+        <!-- Shown only while a watch script is running and we can see
+             it (`src/capture-page/watch-status.ts`); hidden again the
+             moment it stops, with no message of its own. -->
+        <div id="watch-status" class="watch-status" hidden>
+          <span class="watch-status-label"
+                title="A watch script is collecting new captures as they are saved.&#10;These are started with /see-what-i-see-watch in coding agents.">Watcher running</span>
+          <button id="watch-stop-btn" type="button" class="btn"
+                  title="Stop the running watch script" aria-label="Stop watcher">
+            <svg aria-hidden="true"><use href="#power-icon"></use></svg>
+          </button>
         </div>
       </div>
       <div id="ask-status" role="status" aria-live="polite"></div>

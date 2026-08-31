@@ -157,6 +157,11 @@ log file into the same directory. `log.json` is newline-delimited
 JSON (one record per line), grep-friendly history of recent
 captures. Scripts read the last line of `log.json` to get the latest record.
 
+The same directory also carries the watch script's coordination
+files — `.watch.pid`, `.watch-status.json`, `watch-stop.json` — which
+are how the Capture page shows and stops a running watcher. They hold
+no capture data; see [`watch-protocol.md`](watch-protocol.md).
+
 ### Record fields
 
 Every record has `timestamp` and `url`, plus optional fields:

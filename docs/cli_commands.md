@@ -116,12 +116,16 @@ field on the record. See
   `--loop` flag keeps `SeeWhatISee.py` emitting one JSON record
   per capture without exiting, so the agent gets a notification
   per capture without relaunching the watcher.
-- `--pid-lockfile` makes the watcher write `.watch.pid` so a second
-  invocation auto-kills the first. `/see-what-i-see-stop` runs the
+- `--pid-lockfile` makes the watcher publish `.watch-status.json` (and
+  the deprecated `.watch.pid`) so a second invocation auto-kills the
+  first. `/see-what-i-see-stop` runs the
   dedicated `stop.sh` wrapper (sibling skill, which `exec`s
   `SeeWhatISee.py --stop`) to terminate; the previous `Monitor`
   observes the script exit and notifies the agent that the watcher
   stopped.
+- Such a watcher also exits when `watch-stop.json` appears in that
+  directory, which is how the extension's Capture page shows a running
+  watcher and stops it. See [watch-protocol.md](watch-protocol.md).
 
 ### Gemini CLI (foreground loop)
 
@@ -365,10 +369,13 @@ the candidates.
 
 - Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
   a thin wrapper that `exec`s `SeeWhatISee.py --stop`. The unified
-  script resolves the watch directory the same way the watcher
-  does, kills the PID stored in `$DIR/.watch.pid`, and removes the
-  file. (`watch.sh --stop` reaches the same backend code path,
-  since the watch wrapper forwards arbitrary flags through.)
+  script resolves the watch directory the same way the watcher does,
+  kills the pid named by `$DIR/.watch-status.json` (falling back to the
+  deprecated `$DIR/.watch.pid` for a watcher an older version started),
+  and clears all three files of the
+  [watch protocol](watch-protocol.md). (`watch.sh --stop`
+  reaches the same backend code path, since the watch wrapper
+  forwards arbitrary flags through.)
   Gemini has no equivalent — its loop isn't a background process.
 
 ## Scripts

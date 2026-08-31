@@ -183,7 +183,9 @@ referenced from this doc live in
 
 ### Captured-page card
 
-- Bordered strip showing the capture's page metadata.
+- Bordered strip showing the capture's page metadata, in the shared
+  panel chrome (`--panel-bg` / `--panel-border` — a lighter tint of
+  the app header's purple, also used by the watcher indicator).
 - Title row: clickable link with the captured tab's title (falls
   back to the URL when the title is empty); a stack of size pills
   on the right (Image / HTML / Selection, top-to-bottom).
@@ -481,6 +483,33 @@ as the prompt textarea:
     page's overall height alone — several specs measure the image at
     pixel precision and are sensitive to a changed fit scale.
 - Covered by `tests/e2e/capture-status-layout.spec.ts`.
+
+### Running watch script (`#watch-status`)
+
+The tail of the button row, after the Ask buttons: a *Watcher
+running* label and a power-symbol Stop button, boxed together, shown
+only while a stoppable watch script is running.
+
+- The box uses the same panel chrome as the captured-page card
+  (`--panel-bg` / `--panel-border`), so it reads as a grouped state
+  readout rather than two more controls. It is exactly as tall as the
+  row's buttons, so showing it can't change the row's height — the
+  Stop button inside is sized down instead.
+- The label carries a tooltip saying what a watcher is and that
+  `/see-what-i-see-watch` starts one; the button's says what it stops.
+- Hidden whenever no watcher is visible, which is also the whole
+  success story for Stop — the watcher exits, its status file goes
+  with it, and the block disappears with no message.
+- A stop that doesn't take effect within 5s reports `Failed to stop
+  watch script` in the status line above, leaving the block up.
+- Needs "Allow access to file URLs"; without it nothing is ever shown.
+- Showing or hiding the block can wrap the row, so both re-fit the
+  image — see § Vertical layout contract.
+- The per-provider Ask buttons insert *before* this block rather than
+  appending to the row, so it stays the tail.
+- Protocol, file formats and version compatibility:
+  [watch-protocol.md](watch-protocol.md). Covered by
+  `tests/e2e/capture-watch-status.spec.ts`.
 
 ### Preview image
 

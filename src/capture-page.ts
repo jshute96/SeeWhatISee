@@ -47,6 +47,7 @@ import {
 import { createMenuPopover } from './capture-page/menu-popover.js';
 import { isKeyboardClick } from './capture-page/menu-keys.js';
 import { initUndoScope } from './capture-page/undo-scope.js';
+import { initWatchStatus } from './capture-page/watch-status.js';
 import {
   closeLogSyncDialog,
   initLogSync,
@@ -1828,6 +1829,14 @@ initSaveAs({
 // Wires the out-of-sync log dialog and, on an `?error=` page carrying
 // a `?logsync=` payload, opens it for the stranded capture.
 initLogSync();
+
+initWatchStatus({
+  container: document.getElementById('watch-status') as HTMLElement,
+  stopBtn: document.getElementById('watch-stop-btn') as HTMLButtonElement,
+  setStatusMessage,
+  statusText: () => pageStatus.textContent ?? '',
+  refit: fitImage,
+});
 
 initUndoScope({
   imagePanel,

@@ -243,6 +243,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
+| `src/capture/watch-status.ts` | Watch-script stop protocol — reads the running watcher's `.watch-status.json`, writes the `watch-stop.json` request |
 | `src/capture/target-tab.ts` | Picks which tab a capture targets — prefers the gesture's own tab over Chrome's unreliable last-focused-window bookkeeping |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
 
@@ -260,6 +261,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
 | `src/capture-page/log-sync.ts` | The Capture page's out-of-sync log dialog — `showLogSyncDialog` for failed saves, plus the error page's `?logsync=` wiring |
 | `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` / `Ctrl+Y` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
+| `src/capture-page/watch-status.ts` | `initWatchStatus(ctx)` — the running-watch-script indicator and its Stop button, refreshed when the page comes back to the front |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
 | `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
 
@@ -317,6 +319,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-drawing-convert.spec.ts` | E2E for the Convert action — shared target rule (incl. buried-box resize, Crop-tool divergence), the kind submenu, geometry-preserving conversion, Undo, keyboard reach |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-status-layout.spec.ts` | E2E for the page's vertical layout contract — a status message must not raise a scrollbar, and the rule stays centred |
+| `tests/e2e/capture-watch-status.spec.ts` | E2E for the Capture page's watch-script indicator — shows a planted status file, Stop writes the request, failure message |
 | `tests/e2e/capture-menu-keyboard.spec.ts` | E2E for keyboard use of the tool buttons (Space / Enter selects) and arrow navigation in the Zoom / More… / Ask menus |
 | `tests/e2e/capture-undo-key.spec.ts` | E2E for `Ctrl+Z` / `Ctrl+Y` routing between the image edit stack and the prompt's own text undo, and the redo stack's semantics |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
@@ -342,7 +345,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
 | `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + history files, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
-| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch --pid-lockfile` (once/loop, `--after`, `--stop`, config file, absolute paths, concurrency) |
+| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch --pid-lockfile` (once/loop, `--after`, `--stop`, stop protocol, config file, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
@@ -386,6 +389,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
 | `tests/unit/packed-text.test.mjs` | Unit tests for `src/capture/packed-text.ts` — pack/skip thresholds, declining incompressible bodies, UTF-8 round-trip, size helpers |
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
+| `tests/unit/watch-status.test.mjs` | Unit tests for `src/capture/watch-status.ts` — status-file parsing, heartbeat staleness, the stop request's contents |
 | `tests/unit/error-reporting.test.mjs` | Unit tests for `friendlyErrorMessage` — covers each rewritten throw-site string plus the verbatim-passthrough fallback |
 | `tests/unit/last-capture.test.mjs` | Unit tests for `src/background/last-capture.ts` — denylist contents, round-trip, `bases` regression, auto-carry of future fields, quota-swallow |
 | `tests/unit/open-tab.test.mjs` | Unit tests for `src/background/open-tab.ts` — placement fields, popup/missing-window skips, unplaced retry, error propagation |
@@ -409,6 +413,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `ask-live-tests.md` | Manual live e2e suite — CDP-attach pattern, setup, design principles (token economy, library-only injection), troubleshooting, adding a provider |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
 | `cli_commands.md` | Per-CLI command inventory (Claude / Gemini), their backing wrapper scripts, and the unified `SeeWhatISee.py` backend |
+| `watch-protocol.md` | The three files behind showing / stopping a watch script from the Capture page, and their version compatibility |
 | `mcp-server.md` | Design doc for the `mcp-server/` MCP server — TS, single-bundled-file, mirrors `SeeWhatISee.py` plus a subscription stream |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |

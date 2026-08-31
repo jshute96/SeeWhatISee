@@ -25,6 +25,7 @@
 import { type CaptureRecord } from './types.js';
 import {
   type LogFileRecordLookup,
+  canReadFiles,
   getLogFileRecord,
   logRecordSize,
   parentDirectory,
@@ -62,24 +63,6 @@ export class LogWriteBlockedError extends Error {
   ) {
     super("Saved this capture's files, but couldn't update the capture log.");
     this.name = 'LogWriteBlockedError';
-  }
-}
-
-/**
- * Whether `file://` reads are available. The toggle lives in
- * `chrome://extensions`, is off by default, and flipping it reloads
- * the extension — so this is a fresh answer every service-worker life.
- *
- * Guarded rather than called bare: `chrome.extension` is a legacy
- * namespace, and a missing method should degrade to the record-only
- * path instead of failing the capture.
- */
-async function canReadFiles(): Promise<boolean> {
-  try {
-    if (typeof chrome.extension?.isAllowedFileSchemeAccess !== 'function') return false;
-    return await chrome.extension.isAllowedFileSchemeAccess();
-  } catch {
-    return false;
   }
 }
 

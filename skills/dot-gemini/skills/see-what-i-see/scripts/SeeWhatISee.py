@@ -20,6 +20,9 @@ stream is in capture order, oldest first. --search / --filter_site /
 history; records that arrive later under --watch are emitted
 regardless.
 
+A --pid-lockfile watcher also publishes its presence to the extension
+and can be stopped from the Capture page; see docs/watch-protocol.md.
+
 Source-dir resolution (used for both reading log.json and writing the
 pidfile) is the same regardless of action:
   --directory DIR         explicit override, used as-is.
@@ -69,6 +72,31 @@ SEARCH_DEFAULT_LIMIT = 10
 ARTIFACT_KEYS = ("screenshot", "contents", "selection")
 
 POLL_SECONDS = 0.5
+
+# Files in the source dir that coordinate who is watching, and let the
+# extension show and stop us (see docs/watch-protocol.md).
+#
+# `.watch-status.json` is the live record of a stoppable watcher: its
+# pid, when it started, and a heartbeat. The Capture page asks us to
+# exit by dropping `watch-stop.json` beside it.
+#
+# `.watch.pid` is the original lock — one line, the pid — and is now
+# **deprecated**, written only so older versions of this script can
+# still find and replace us. Its format is frozen: old code parses the
+# whole file as an integer. Nothing here reads it except `watcher_pid`'s
+# fallback, so later we could stop writing this file.
+STATUS_FILE = ".watch-status.json"
+PID_FILE = ".watch.pid"
+# The odd one out, with no leading dot: the extension can only put a
+# file on disk through the downloads API, which refuses a leading-dot
+# filename outright ("Invalid filename").
+STOP_FILE = "watch-stop.json"
+
+# How often the status file's `heartbeat` is refreshed. A heartbeat
+# that has gone quiet is how the extension spots a watcher killed with
+# SIGKILL (or a machine that lost power) that never got to clean its
+# files up.
+HEARTBEAT_SECONDS = 30
 
 USAGE = """\
 Usage: SeeWhatISee.py [ACTIONS] [OPTIONS]
@@ -122,8 +150,11 @@ General options:
   --help               Show this help and exit.
 
 Options for --watch:
-  --pid-lockfile       Write $SOURCE_DIR/.watch.pid so --stop or a subsequent
-                       --watch can find and replace this watcher.
+  --pid-lockfile       Write $SOURCE_DIR/{.watch-status.json, .watch.pid} so
+                       --stop or a subsequent --watch can find and replace
+                       this watcher. Also exits when watch-stop.json appears
+                       beside them, which is how the extension's Capture page
+                       stops this watcher.
   --loop               Keep polling after each emission; default is to exit
                        after the first.
   --after TIMESTAMP    Before polling, emit the record(s) that follow the last
@@ -805,55 +836,202 @@ def remove_quietly(path):
         pass
 
 
+def valid_pid(value):
+    """`value` if it is a pid we are willing to signal, else None.
+
+    `os.kill(0, ...)` signals our whole process group — for a watcher
+    started by an agent, that can be the agent itself — and a negative
+    pid signals some other group, so a corrupt or hand-edited file must
+    never reach `os.kill`. Booleans are ints in Python; exclude them.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value > 1 else None
+
+
 def read_pid(pidfile):
     try:
         with open(pidfile, encoding="utf-8") as handle:
-            return int(handle.read().strip())
+            return valid_pid(int(handle.read().strip()))
     except (OSError, ValueError):
         return None
 
 
-def kill_existing(pidfile):
-    """Kill any running watcher named by the pidfile; remove the file.
-
-    True if a live watcher was found and signalled, False if not.
-    """
-    pid = read_pid(pidfile)
-    if pid is None:
-        return False
+def pid_alive(pid):
+    """Whether a process with this pid exists. Signal 0 only checks."""
     try:
         os.kill(pid, 0)
+        return True
     except OSError:
-        remove_quietly(pidfile)   # stale pidfile
+        return False
+
+
+def kill_pid(pid):
+    """SIGTERM a watcher and wait briefly for it to go.
+
+    True if it was alive to be signalled, False if there was nothing
+    there — a pid nobody is using any more reads as "already stopped".
+    """
+    if pid is None or not pid_alive(pid):
         return False
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
     for _ in range(5):
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not pid_alive(pid):
             break
         time.sleep(0.1)
-    # Belt-and-braces: only remove if the file still names that pid. A
-    # racing fresh watcher may have already claimed the slot.
-    if read_pid(pidfile) == pid:
-        remove_quietly(pidfile)
     return True
 
 
-def claim_pidfile(pidfile):
-    """Take over the watcher slot, and give it back however we exit."""
-    kill_existing(pidfile)
+def iso_now():
+    """UTC timestamp the extension's `Date.parse` reads without guessing."""
+    return datetime.now(timezone.utc).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
+
+
+def status_pid(status_path):
+    """The pid the status file names, or None if there isn't one.
+
+    Anything else the file might hold — missing, unreadable, not JSON,
+    JSON that isn't an object, an object without a numeric `pid` — is
+    the same answer: nobody is named here. This runs on the exit path
+    of every watcher, so it must not raise.
+    """
+    try:
+        with open(status_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return valid_pid(data.get("pid"))
+
+
+def write_status(status_path, started):
+    """Publish (or refresh) the status file the Capture page polls.
+
+    Written to a temp file and renamed into place: the page reads it on
+    a timer, and catching a half-written file would read as "no watcher
+    is running" and flicker its Stop button away.
+
+    Silent on failure — a status file we can't write costs the Capture
+    page's button, never the watching itself.
+    """
+    tmp = "%s.%d.tmp" % (status_path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(),
+                       "started": started,
+                       "heartbeat": iso_now()}, handle)
+            handle.write("\n")
+        os.replace(tmp, status_path)
+    except OSError:
+        remove_quietly(tmp)
+
+
+def clear_if_gone(path, named_pid, stopped_pid):
+    """Delete a watcher file that no live watcher stands behind.
+
+    Left alone when it names a different, still-running process: that
+    is a watcher racing us for the slot, and its own exit will clean up
+    after it.
+    """
+    if named_pid is None or named_pid == stopped_pid or not pid_alive(named_pid):
+        remove_quietly(path)
+
+
+def watcher_pid(source_dir):
+    """The pid of the watcher holding the slot, or None if there isn't one.
+
+    Normally that pid comes from `.watch-status.json`. Falling back to
+    `.watch.pid` covers one case: a watcher started by a version of
+    this script old enough that it never wrote the status file.
+    """
+    pid = status_pid(os.path.join(source_dir, STATUS_FILE))
+    if pid is not None and pid_alive(pid):
+        return pid
+    # A status file naming a dead pid must not mask the pidfile: an
+    # older watcher leaves the corpse's file alone when it takes the
+    # slot, and reading only that would report nothing to stop while it
+    # keeps running. Falling back to the dead pid keeps the caller able
+    # to clear the file it left behind.
+    return read_pid(os.path.join(source_dir, PID_FILE)) or pid
+
+
+def clear_status_temps(source_dir):
+    """Remove `.watch-status.json.<pid>.tmp` files left by a hard kill."""
+    prefix = STATUS_FILE + "."
+    try:
+        names = os.listdir(source_dir)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith(prefix) and name.endswith(".tmp"):
+            remove_quietly(os.path.join(source_dir, name))
+
+
+def clear_watch_files(source_dir, stopped_pid):
+    """Drop the files of a watcher that is gone.
+
+    Each file is judged by the pid it names, so a racing fresh watcher
+    that has already rewritten one of them keeps it. `stopped_pid` is
+    the watcher we just stopped, or None when we never identified one —
+    then only files nothing live stands behind are cleared.
+    """
+    status_path = os.path.join(source_dir, STATUS_FILE)
+    pidfile = os.path.join(source_dir, PID_FILE)
+    clear_if_gone(status_path, status_pid(status_path), stopped_pid)
+    clear_if_gone(pidfile, read_pid(pidfile), stopped_pid)
+
+
+def stop_watcher(source_dir):
+    """--stop: kill the running watcher and clear the files it leaves.
+
+    True if a live watcher was found, False if not.
+    """
+    pid = watcher_pid(source_dir)
+    stopped = kill_pid(pid)
+    clear_watch_files(source_dir, pid)
+    # Whatever the Capture page asked for, this satisfies it — and a
+    # request nobody answered must not stop the *next* watcher.
+    remove_quietly(os.path.join(source_dir, STOP_FILE))
+    return stopped
+
+
+def claim_watch_slot(source_dir):
+    """Take over the watcher slot, and give it back however we exit.
+
+    Returns the start timestamp to stamp the status file with.
+    """
+    pidfile = os.path.join(source_dir, PID_FILE)
+    status_path = os.path.join(source_dir, STATUS_FILE)
+    previous = watcher_pid(source_dir)
+    kill_pid(previous)
+    clear_watch_files(source_dir, previous)
+    # `write_status` unlinks its own temp file when the write fails,
+    # but a watcher killed mid-write leaves one behind for good. We
+    # have just stopped whoever held the slot, so any that remain are
+    # nobody's.
+    clear_status_temps(source_dir)
+    # Any stop request predates us, so it was never aimed at us.
+    remove_quietly(os.path.join(source_dir, STOP_FILE))
+    # Pidfile before status file, deliberately: an older --stop reads
+    # only the pidfile, so that is the one that must never be missing
+    # while we hold the slot.
     with open(pidfile, "w", encoding="utf-8") as handle:
         handle.write("%d\n" % os.getpid())
+    started = iso_now()
+    write_status(status_path, started)
 
     def release(*_args):
-        # Only remove if it still names us; another instance may have
-        # overwritten it in a race.
+        # Only remove if they still name us; another instance may have
+        # overwritten them in a race.
         if read_pid(pidfile) == os.getpid():
             remove_quietly(pidfile)
+        if status_pid(status_path) == os.getpid():
+            remove_quietly(status_path)
 
     def terminate(*_args):
         release()
@@ -865,6 +1043,7 @@ def claim_pidfile(pidfile):
     atexit.register(release)
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
+    return started
 
 
 def log_mtime(log_path):
@@ -947,7 +1126,7 @@ def lines_after(lines, cursor):
     return lines[-1:]
 
 
-def watch(opts, emitter, source_dir, log_path, pidfile):
+def watch(opts, emitter, source_dir, log_path):
     # Chrome only creates the source dir on the first download.
     # Watching can legitimately start before that, so create it now (we
     # need somewhere for the pidfile to land and a target to poll).
@@ -956,8 +1135,13 @@ def watch(opts, emitter, source_dir, log_path, pidfile):
     except OSError:
         die("Error: cannot create watch directory: %s" % source_dir)
 
-    if opts.pid_lockfile:
-        claim_pidfile(pidfile)
+    # The stop protocol rides on the pid lock: only a watcher that
+    # claimed the slot publishes a status file, and only that watcher
+    # answers a stop request.
+    status_path = os.path.join(source_dir, STATUS_FILE)
+    stop_path = os.path.join(source_dir, STOP_FILE)
+    started = claim_watch_slot(source_dir) if opts.pid_lockfile else None
+    last_beat = time.monotonic()
 
     # Don't emit the current contents on poll-loop entry — only changes
     # from this point. (--get-latest already handled "current".)
@@ -973,6 +1157,20 @@ def watch(opts, emitter, source_dir, log_path, pidfile):
         return
 
     while True:
+        if started is not None:
+            if os.path.exists(stop_path):
+                # The Capture page's Stop button. Take the request with
+                # us; the atexit release deletes the pid and status files.
+                # On stderr, not stdout: stdout is the record stream.
+                remove_quietly(stop_path)
+                print("Stopping: stop requested from the extension",
+                      file=sys.stderr)
+                return
+            now = time.monotonic()
+            if now - last_beat >= HEARTBEAT_SECONDS:
+                last_beat = now
+                write_status(status_path, started)
+
         current = log_mtime(log_path)
         if current is not None and current != last_mtime:
             last_mtime = current
@@ -1033,11 +1231,10 @@ def main(argv):
     opts = parse_args(argv)
     source_dir = resolve_dir(opts)
     log_path = os.path.join(source_dir, "log.json")
-    pidfile = os.path.join(source_dir, ".watch.pid")
     emitter = Emitter(opts, source_dir)
 
     if opts.stop:
-        if kill_existing(pidfile):
+        if stop_watcher(source_dir):
             print("Stopping existing watcher on %s" % source_dir)
         else:
             print("No existing watcher to stop")
@@ -1049,7 +1246,7 @@ def main(argv):
         list_history(opts, emitter, source_dir, log_path)
 
     if opts.watch:
-        watch(opts, emitter, source_dir, log_path, pidfile)
+        watch(opts, emitter, source_dir, log_path)
 
 
 if __name__ == "__main__":

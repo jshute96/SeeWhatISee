@@ -214,7 +214,7 @@ let askMenu: HTMLDivElement;
 let askMenuList: HTMLUListElement;
 let askTargetLabel: HTMLSpanElement;
 let askBtnIcon: HTMLSpanElement;
-// Per-provider Ask buttons are appended directly into `.button-row`
+// Per-provider Ask buttons are inserted directly into `.button-row`
 // (not a wrapper div) so they're real flex children of the row —
 // `display: contents` wrappers can perturb the row's `gap` math
 // and visually unbalance the spacing between buttons.
@@ -416,11 +416,16 @@ async function refreshAskTargetLabel(): Promise<void> {
 function renderAskProviderButtons(enabled: AskProviderListing[]): void {
   // Wipe the previous render's per-provider buttons (identified by
   // class) without disturbing the static `#capture` / `.ask-split`
-  // children. Then append the fresh set into `.button-row` so each
+  // children. Then insert the fresh set into `.button-row` so each
   // new button is a direct flex child of the row.
   askButtonRow
     .querySelectorAll('.ask-provider-btn')
     .forEach((el) => el.remove());
+  // The watch-script indicator is the row's tail (see
+  // `capture-page/watch-status.ts`), so insert ahead of it rather than
+  // appending. `insertBefore(btn, null)` appends, which is exactly
+  // what we want on a page that doesn't have the block.
+  const rowTail = askButtonRow.querySelector('#watch-status');
   for (const provider of enabled) {
     const dest: AskDestination = { kind: 'newTab', provider: provider.id };
     const btn = document.createElement('button');
@@ -457,7 +462,7 @@ function renderAskProviderButtons(enabled: AskProviderListing[]): void {
         ctx.closeAfterFromModifiers(e, false),
       );
     });
-    askButtonRow.appendChild(btn);
+    askButtonRow.insertBefore(btn, rowTail);
   }
 }
 

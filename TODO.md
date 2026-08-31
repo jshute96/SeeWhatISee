@@ -120,6 +120,15 @@ What it costs:
 
 ### Pending docs for features not released yet
 
+* **See what a watch script is running, and stop it, from the Capture page** — when
+  `/see-what-i-see-watch` is running, the Capture page's button row
+  shows it with a Stop button; both sides need the updated script
+  (`.watch-status.json` / `watch-stop.json`), and the extension needs
+  "Allow access to file URLs" to see it at all.
+  * README's Capture-page section needs the indicator, and the
+    file-access note should mention this as another thing the toggle
+    buys.
+
 * **Convert last drawn box** — a More-menu item that retargets the
   last drawn box / redaction / crop to another of those kinds, for
   when it was drawn with the wrong tool selected.
