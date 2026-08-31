@@ -21,6 +21,45 @@
 * HTML element picker (like in Chrome dev console) to capture an element
 * Capture selection on pages with complex text canvas widgets (e.g. Google Docs). Possibly by hooking a fake Copy operation.
 
+### CDP capture (needs the `debugger` permission)
+
+CDP is the Chrome DevTools Protocol — the wire protocol DevTools and
+Puppeteer speak. `chrome.debugger` lets an extension attach to a tab and
+send CDP commands.
+
+What it would let us start doing:
+* Full-page screenshot as a single image, rendered by the browser, without
+  scroll-and-stitch (`Page.captureScreenshot` with `captureBeyondViewport`).
+* Render the page off-screen at a chosen width/height/DPR
+  (`Emulation.setDeviceMetricsOverride`) — e.g. a fixed-width reader shot,
+  or 2x for legibility.
+* Capture the console: real errors, CSP violations, failed subresource
+  loads (`Log`, `Runtime.exceptionThrown`). A content script can only
+  monkeypatch `console.*`, and misses everything browser-generated.
+* Capture the network log, including response bodies (`Network`).
+  `webRequest` can't give us bodies.
+* See into closed shadow roots and cross-origin iframes in one pierced
+  tree (`DOM.getDocument` with `pierce`) — content scripts can't.
+* Snapshot DOM + computed styles + layout boxes in one call
+  (`DOMSnapshot.captureSnapshot`).
+* Accessibility tree (`Accessibility.getFullAXTree`) — compact semantic
+  structure, a plausibly better snapshot format for an LLM than HTML.
+* Map a drawn region back to the DOM nodes under it
+  (`DOM.getNodeForLocation`), so a circled area can extract just that
+  subtree. Pairs with the element-picker idea above.
+* Self-contained MHTML archive of the page (`Page.captureSnapshot`).
+* Emulate dark mode, reduced motion, locale, timezone (`Emulation`).
+
+What it costs:
+* `debugger` **cannot be an optional permission** — it must be declared
+  up front, and adding it to a published extension disables it for
+  existing users until they re-accept the new warning.
+* A "SeeWhatISee started debugging this browser" infobar shows for the
+  whole time we're attached. Keep attach/capture/detach short.
+* Heightened Chrome Web Store review.
+* Does **not** unlock restricted pages — `chrome://`, other extensions,
+  the Web Store all reject the attach, same as content scripts.
+
 ### Optimizations
 * Redo currently snapshots the whole drawing state on every Undo, instead of storing per-op inverses.
   - Cost is O(edits) per keypress, so undoing a run of N edits is O(N²) in small edit records. A few hundred KB in a realistic session, and it's dropped on the next commit, so this is cleanup rather than a fix.
