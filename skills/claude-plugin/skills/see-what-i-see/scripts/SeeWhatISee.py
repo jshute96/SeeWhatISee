@@ -98,6 +98,13 @@ STOP_FILE = "watch-stop.json"
 # files up.
 HEARTBEAT_SECONDS = 30
 
+# Exit code for "a stop was requested, and honoured", used by a
+# single-shot watcher: its caller is an agent that re-runs it once per
+# capture, so "stop" has to be distinguishable from "here is your
+# capture" (0) and from an error. A --loop watcher just exits 0 — the
+# process ending is itself the end of the watch.
+EXIT_STOPPED = 3
+
 USAGE = """\
 Usage: SeeWhatISee.py [ACTIONS] [OPTIONS]
 
@@ -154,7 +161,9 @@ Options for --watch:
                        --stop or a subsequent --watch can find and replace
                        this watcher. Also exits when watch-stop.json appears
                        beside them, which is how the extension's Capture page
-                       stops this watcher.
+                       stops this watcher. A watcher stopped that way exits 0
+                       with --loop, and 3 without it (where exiting 0 would
+                       look like "here is your capture" to the caller).
   --loop               Keep polling after each emission; default is to exit
                        after the first.
   --after TIMESTAMP    Before polling, emit the record(s) that follow the last
@@ -1165,6 +1174,11 @@ def watch(opts, emitter, source_dir, log_path):
                 remove_quietly(stop_path)
                 print("Stopping: stop requested from the extension",
                       file=sys.stderr)
+                # A single-shot run is one iteration of a loop the agent
+                # re-runs, so exiting 0 with nothing on stdout would
+                # just start the next one.
+                if not opts.loop:
+                    sys.exit(EXIT_STOPPED)
                 return
             now = time.monotonic()
             if now - last_beat >= HEARTBEAT_SECONDS:

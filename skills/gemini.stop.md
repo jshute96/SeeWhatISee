@@ -1,0 +1,13 @@
+---
+name: see-what-i-see-stop
+description: Stop a running SeeWhatISee watch loop started by /see-what-i-see-watch.
+---
+
+Stop a running SeeWhatISee watch loop started by `/see-what-i-see-watch`.
+
+The watch loop is a series of blocking runs, one per capture. This stops the run that is currently waiting; the loop it belongs to must not be restarted afterwards. It can also stop a watcher started in another session, or by another tool.
+
+## Steps
+
+1. Run `./scripts/stop.sh` (relative to this skill's directory).
+2. Relay the script's output to the user (it will say either "Stopping existing watcher" or "No existing watcher to stop").

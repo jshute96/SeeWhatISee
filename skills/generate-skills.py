@@ -43,6 +43,7 @@ PAIRS = [
     ("claude.history.md","skills/claude-plugin/skills/see-what-i-see-history/SKILL.md"),
     ("gemini.see.md",    "skills/dot-gemini/skills/see-what-i-see/SKILL.md"),
     ("gemini.watch.md",  "skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md"),
+    ("gemini.stop.md",   "skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md"),
     ("gemini.xtract.md", "skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md"),
     ("gemini.history.md","skills/dot-gemini/skills/see-what-i-see-history/SKILL.md"),
     # MCP-driven skills. These double as (a) installable skills that drive

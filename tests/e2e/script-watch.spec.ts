@@ -921,13 +921,15 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     expect(readStatus()).toBeNull();
   });
 
-  test('a stop file stops the watcher and takes every file with it', async () => {
-    const watch = startWatch(['--directory', tmpDir]);
+  test('a stop file stops a --loop watcher and takes every file with it', async () => {
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 500));
     expect(readStatus()).not.toBeNull();
 
     requestStop();
-    // A requested shutdown is a clean one, not a signalled 143.
+    // A requested shutdown is a clean one, not a signalled 143. The
+    // process ending is itself the end of the watch, so 0 misleads
+    // nobody.
     expect(await waitForExit(watch.proc, 5_000)).toBe(0);
     expect(watch.output()).toContain('stop requested from the extension');
 
@@ -936,6 +938,34 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     expect(readStatus()).toBeNull();
     expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  test('a stop file stops a single-shot watcher, which exits 3', async () => {
+    // The single-shot wrappers are one iteration of a loop the agent
+    // re-runs, so "stopped" has to be distinguishable from "here is
+    // your capture" — 0 with nothing on stdout would just start the
+    // next iteration.
+    const watch = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(readStatus()?.pid).toBe(watch.proc.pid);
+
+    requestStop();
+    expect(await waitForExit(watch.proc, 5_000)).toBe(3);
+    expect(watch.output()).toContain('stop requested from the extension');
+    expect(readStatus()).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+  });
+
+  test('--stop ends the single-shot run an agent loop is waiting in', async () => {
+    const watch = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('Stopping existing watcher');
+    // Signalled, so the shell's 128 + SIGTERM. Non-zero either way,
+    // which is what the skill tells the agent means "don't re-run".
+    expect(await waitForExit(watch.proc, 5_000)).toBe(143);
+    expect(readStatus()).toBeNull();
   });
 
   test('a leftover stop file does not stop the next watcher', async () => {

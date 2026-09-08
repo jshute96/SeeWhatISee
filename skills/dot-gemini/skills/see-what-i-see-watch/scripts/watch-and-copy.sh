@@ -12,6 +12,11 @@
 # adds --copy-to-dir so the captured files land somewhere Gemini can
 # read (see ../../see-what-i-see/scripts/copy-last-snapshot.sh for
 # the why).
+#
+# --pid-lockfile makes each blocked iteration visible to the
+# extension's Capture page and stoppable — from there, or with
+# /see-what-i-see-stop. Stopped that way the run exits non-zero, which
+# is the loop's signal not to run again.
 
 set -euo pipefail
 
@@ -26,4 +31,4 @@ TARGET_DIR="$TARGET_DIR/SeeWhatISee"
 # SeeWhatISee.py lives in the see-what-i-see skill's scripts/ dir;
 # reach across sibling-relative.
 exec "$(dirname "${BASH_SOURCE[0]}")/../../see-what-i-see/scripts/SeeWhatISee.py" \
-  --watch --catch-up-one --copy-to-dir "$TARGET_DIR" "$@"
+  --watch --catch-up-one --pid-lockfile --copy-to-dir "$TARGET_DIR" "$@"

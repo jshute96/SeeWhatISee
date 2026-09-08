@@ -108,6 +108,7 @@ do not edit the per-bundle copies.
   - `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
+  - `skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
   - `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
   - `skills/mcp/see-what-i-see/SKILL.md` (also read by `mcp-server/build-prompts.mjs` for the MCP prompt body)

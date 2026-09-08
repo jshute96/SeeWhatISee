@@ -129,6 +129,14 @@ What it costs:
     file-access note should mention this as another thing the toggle
     buys.
 
+* **Single-shot watch loops are stoppable too** — the Gemini and
+  generic polling wrappers now pass `--pid-lockfile`, so the iteration
+  they're blocked in shows on the Capture page and answers Stop /
+  `--stop`; Gemini gained a `/see-what-i-see-stop` command for it.
+  * README's Gemini section needs the new command, and its
+    `settings.json` allow-list needs
+    `.../skills/see-what-i-see-stop/scripts/stop.sh`.
+
 * **Convert last drawn box** — a More-menu item that retargets the
   last drawn box / redaction / crop to another of those kinds, for
   when it was drawn with the wrong tool selected.

@@ -14,7 +14,7 @@ and Gemini CLI) read them via slash commands. This doc covers:
 |------------------------------|-------------|------------|------------------|
 | `/see-what-i-see`            | ✓           | ✓          | one-shot         |
 | `/see-what-i-see-watch`      | ✓ (async background) | ✓ (foreground loop) | loop |
-| `/see-what-i-see-stop`       | ✓           | —          | one-shot         |
+| `/see-what-i-see-stop`       | ✓           | ✓          | one-shot         |
 | `see-what-i-see-history`     | ✓           | ✓          | one-shot         |
 
 `see-what-i-see-history` is written without a slash because it isn't a
@@ -131,7 +131,7 @@ field on the record. See
 
 - Backed by `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh`,
   a wrapper that computes the workspace tmp dir and `exec`s
-  `SeeWhatISee.py --watch --catch-up-one --copy-to-dir <tmp>`.
+  `SeeWhatISee.py --watch --catch-up-one --pid-lockfile --copy-to-dir <tmp>`.
 - Gemini CLI has no async background worker with a completion
   callback, so the loop is built agent-side: each iteration runs
   `watch-and-copy.sh` synchronously, which blocks until there's
@@ -141,9 +141,15 @@ field on the record. See
   per invocation (unlike Claude's multi-record default), because the
   agent processes one record per tool call. Multiple pending
   captures are drained by successive iterations.
-- No pidfile, no `--stop` (the wrapper omits `--pid-lockfile`).
-  The user interrupts Gemini (or tells the agent to stop) to end
-  the loop.
+- `--pid-lockfile` covers each iteration while it blocks, which is
+  nearly all of the loop's life: the watch shows up on the Capture
+  page and can be stopped from there or with `/see-what-i-see-stop`.
+  Between two iterations nobody is running and nothing is published —
+  see [watch-protocol.md](watch-protocol.md).
+- A stopped iteration exits non-zero (3 for a Capture-page request,
+  143 for a signal), and the skill tells the agent not to re-invoke
+  after a non-zero exit. Interrupting Gemini, or telling the agent to
+  stop, still works too.
 
 ## Reading the capture history (`--all` / `--limit`)
 
@@ -365,9 +371,9 @@ the candidates.
 - Tools vary too much here (subagents, batching, parallelism) to
   prescribe one shape.
 
-## `/see-what-i-see-stop` (Claude only)
+## `/see-what-i-see-stop`
 
-- Calls `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`,
+- Calls the bundle's `see-what-i-see-stop/scripts/stop.sh`,
   a thin wrapper that `exec`s `SeeWhatISee.py --stop`. The unified
   script resolves the watch directory the same way the watcher does,
   kills the pid named by `$DIR/.watch-status.json` (falling back to the
@@ -376,7 +382,9 @@ the candidates.
   [watch protocol](watch-protocol.md). (`watch.sh --stop`
   reaches the same backend code path, since the watch wrapper
   forwards arbitrary flags through.)
-  Gemini has no equivalent — its loop isn't a background process.
+- Present in all three bundles. On Gemini it stops the blocking
+  iteration a `/see-what-i-see-watch` loop is currently waiting in;
+  that iteration's non-zero exit is what stops the loop itself.
 
 ## Scripts
 
@@ -403,7 +411,8 @@ skills/claude-plugin/                ← Claude plugin install tree (mirrored in
 skills/dot-gemini/                   ← Gemini extension tree (mirrored into ../SeeWhatISee-gemini/)
   skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
   skills/see-what-i-see/scripts/copy-last-snapshot.sh     ← /see-what-i-see          → SeeWhatISee.py --get-latest --copy-to-dir <tmp>
-  skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one --copy-to-dir <tmp>
+  skills/see-what-i-see-watch/scripts/watch-and-copy.sh   ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one --pid-lockfile --copy-to-dir <tmp>
+  skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.py --stop
   skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags (--copy → --copy-to-dir <tmp>)
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
@@ -434,7 +443,8 @@ the see-what-i-see skill's `scripts/` dir for the backend via
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`         | `--stop`                                        | `$DIR` (in place) | none (just stops the watcher) |
 | `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`   | none forced — forwards the caller's history flags; refuses a run with no count or filter | `$DIR` (in place) | one JSON record per match |
 | `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`   | `--get-latest --copy-to-dir <tmp>`              | `$SRC_DIR` → `$TARGET_DIR` (copied) | last record |
-| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | `--watch --catch-up-one --copy-to-dir <tmp>` (forwards `--after`) | `$SRC_DIR` → `$TARGET_DIR` (copied) | one new record per invocation |
+| `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | `--watch --catch-up-one --pid-lockfile --copy-to-dir <tmp>` (forwards `--after`) | `$SRC_DIR` → `$TARGET_DIR` (copied) | one new record per invocation |
+| `skills/dot-gemini/skills/see-what-i-see-stop/scripts/stop.sh`           | `--stop`                                        | `$SRC_DIR` (in place) | none (just stops the watcher) |
 | `skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh`      | none forced — forwards the caller's history flags; `--copy` becomes `--copy-to-dir <tmp>`; refuses a run with no count or filter | `$SRC_DIR`, or → `$TARGET_DIR` with `--copy` | one JSON record per match |
 
 Key differences come from the wrapper-supplied defaults:
@@ -449,10 +459,11 @@ Key differences come from the wrapper-supplied defaults:
   passes `--catch-up-one` instead (mutually exclusive with
   `--loop`): each invocation emits at most one record and exits,
   so the agent loops externally.
-- **Pidfile.** Only Claude `watch.sh` passes `--pid-lockfile`,
-  because only Claude Code has async background tasks with a real
-  OS process lifetime the script can manage. Same applies to
-  `--stop`, which auto-implies `--pid-lockfile`.
+- **Pidfile.** Every watch wrapper passes `--pid-lockfile`, so a
+  watch is always visible to the Capture page and stoppable while a
+  process is actually running. What differs is how long that is:
+  Claude's `--loop` watcher holds it for the whole watch, a
+  single-shot wrapper only for the iteration it is blocked in.
 - **Directory resolution.** The unified script supports
   `--directory` and a `.SeeWhatISee` config file
   (`directory=<path>` in `$PWD/.SeeWhatISee` or
@@ -481,6 +492,7 @@ Several files drive the prompts:
 - `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
+- `skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
 

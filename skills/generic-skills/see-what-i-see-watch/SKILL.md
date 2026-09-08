@@ -25,7 +25,7 @@ Pick the approach that fits your tool. It comes down to two independent question
 
 ### Otherwise — single-shot watcher, run in a loop
 
-Each run of `./scripts/watch-once.sh` (no timeout) blocks until the next capture, prints one JSON record, then exits — so you re-run it once per capture:
+Each run of `./scripts/watch-once.sh` (no timeout) blocks until the next capture, prints one JSON record, then exits — so you re-run it once per capture.
 
 1. Run `./scripts/watch-once.sh` and wait for it to finish. It prints one JSON record.
 2. Process that record (see below).
@@ -35,7 +35,7 @@ Each run of `./scripts/watch-once.sh` (no timeout) blocks until the next capture
 
 Always pass `--after <timestamp of the last record you processed>` on the follow-up runs. That makes each run emit the single next capture after that timestamp — returning immediately if one was already waiting.
 
-**On a non-zero exit** (the watcher was killed or errored): tell the user it stopped and do NOT restart.
+**On a non-zero exit** (the watcher was stopped, killed, or errored): tell the user it stopped and do NOT restart.
 
 ## Process each snapshot
 

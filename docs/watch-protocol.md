@@ -17,11 +17,31 @@ Code: `skills/SeeWhatISee.py` (script side),
 | `.watch-status.json` | watch script | a stoppable watcher is running |
 | `watch-stop.json` | extension | please exit |
 
-Only a watcher started with `--pid-lockfile` (what
-`/see-what-i-see-watch` runs) takes part. A single-shot `--watch`
-publishes nothing and can't be stopped this way, and neither can the
-MCP server's `watch` — it holds its subscription in-process, with no
-pid lock and nothing on disk (see [mcp-server.md](mcp-server.md)).
+Only a watcher started with `--pid-lockfile` takes part. Every
+`/see-what-i-see-watch` wrapper passes it, streaming and single-shot
+alike; a `--watch` run without it publishes nothing and can't be
+stopped this way, and neither can the MCP server's `watch` — it holds
+its subscription in-process, with no pid lock and nothing on disk (see
+[mcp-server.md](mcp-server.md)).
+
+### Single-shot watchers hold the slot only while they run
+
+- The Gemini and generic polling loops are a *series* of blocking
+  runs, one per capture, driven by the agent re-running the script
+  with `--after`. Each run claims the slot on entry and drops it on
+  exit — nothing persists across the gap between two runs.
+- That gap is the agent working through the capture it was just
+  handed. During it the Capture page shows no watcher and `--stop`
+  finds none, which is accurate: nothing is watching just then.
+- Stopping such a run stops the *run*. The loop stays stopped because
+  the run exits non-zero, which the skill tells the agent means "do
+  not restart":
+  - **3** — a `watch-stop.json` request, i.e. the Capture page's Stop
+    button.
+  - **143** — signalled, which is what `--stop` does.
+  - A `--loop` watcher exits **0** on a stop request instead: the
+    process ending is itself the end of the watch, with nobody left to
+    misread the code.
 
 ### `.watch.pid` is frozen, and deprecated
 
@@ -130,6 +150,18 @@ removal is the script's:
   `Failed to stop watch script` in the page's status line
   (`#ask-status`), with the indicator left up. That message clears
   itself as soon as a later read finds the watcher gone.
+- **Against a single-shot loop, Stop can report success it didn't
+  have.** The page's evidence that a watcher stopped is its status
+  file going away — and between two runs of such a loop it is already
+  gone.
+  - A click that lands in that gap sees no status file on its first
+    poll, so the indicator disappears as if the watch had ended.
+  - Meanwhile the next run clears the request as one that predates it,
+    and the loop carries on; the indicator comes back on a later read.
+  - Narrow, because the button is only offered while the page can see
+    a watcher, and the page's view goes stale only between refreshes.
+    Closing it needs the script to confirm a stop rather than the page
+    inferring one from an absence.
 
 ## Version compatibility
 
