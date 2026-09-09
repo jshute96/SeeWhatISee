@@ -69,10 +69,10 @@ test.describe('SeeWhatISee.py flag-combo validation', () => {
     expect(r.stderr).toContain('--catch-up-one only applies with --watch');
   });
 
-  test('--get-latest --no-pid-lockfile errors out', () => {
-    const r = run(['--get-latest', '--no-pid-lockfile']);
+  test('--get-latest --no-lockfiles errors out', () => {
+    const r = run(['--get-latest', '--no-lockfiles']);
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('--no-pid-lockfile only applies with --watch');
+    expect(r.stderr).toContain('--no-lockfiles only applies with --watch');
   });
 
   // The stop protocol used to be opt-in. Wrappers from an already
@@ -83,10 +83,10 @@ test.describe('SeeWhatISee.py flag-combo validation', () => {
     expect(r.stderr).not.toContain('Unknown option');
   });
 
-  test('--no-pid-lockfile rejects an inline value', () => {
-    const r = run(['--watch', '--no-pid-lockfile=1']);
+  test('--no-lockfiles rejects an inline value', () => {
+    const r = run(['--watch', '--no-lockfiles=1']);
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('--no-pid-lockfile takes no value');
+    expect(r.stderr).toContain('--no-lockfiles takes no value');
   });
 
   test('--watch --catch-up-one --loop errors as mutually exclusive', () => {

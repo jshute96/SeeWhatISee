@@ -431,7 +431,7 @@ The scripts:
   installs by copying files). Actions
   (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
   combinable; options (`--directory`, `--copy-to-dir`,
-  `--no-pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
+  `--no-lockfiles`, `--loop`, `--after`, `--catch-up-one`,
   `--print_selection`, and `--search` / `--filter_site` /
   `--filter_time` for the history listing) tune behavior.
   Handles directory resolution (config file / `--directory` /

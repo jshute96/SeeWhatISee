@@ -511,7 +511,7 @@ Key differences come from the wrapper-supplied defaults:
   exclusive with `--loop`): each invocation emits at most one record
   and exits, so the agent loops externally.
 - **Stop protocol.** Every watch takes part in it (the
-  default; `--no-pid-lockfile` opts out), so a watch is always visible
+  default; `--no-lockfiles` opts out), so a watch is always visible
   to the Capture page and stoppable while a process is actually
   running. What differs is how long that is:
   Claude's `--loop` watcher holds it for the whole watch, a

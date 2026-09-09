@@ -141,7 +141,7 @@ What it costs:
     README wording shouldn't tie the indicator to "a script is
     blocked right now".
   * Taking part is now the default for any `--watch` run, with
-    `--no-pid-lockfile` as the opt-out for parallel watchers — worth a
+    `--no-lockfiles` as the opt-out for parallel watchers — worth a
     line wherever README describes running the script by hand.
 
 * **Google Antigravity plugin** — a fourth client bundle at

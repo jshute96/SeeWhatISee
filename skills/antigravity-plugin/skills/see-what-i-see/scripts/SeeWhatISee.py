@@ -22,7 +22,7 @@ regardless.
 
 A watcher also publishes its presence to the extension and can be
 stopped from the Capture page; see docs/watch-protocol.md.
---no-pid-lockfile opts out, for running watchers in parallel.
+--no-lockfiles opts out, for running watchers in parallel.
 
 Source-dir resolution (used for both reading log.json and writing the
 pidfile) is the same regardless of action:
@@ -180,7 +180,7 @@ General options:
   --help               Show this help and exit.
 
 Options for --watch:
-  --no-pid-lockfile    Skip the files in $SOURCE_DIR that keep one watcher
+  --no-lockfiles       Skip the files in $SOURCE_DIR that keep one watcher
                        running at a time and let other tools stop it
                        (.watch-status.json, .watch.pid, watch-stop.json).
                        Then multiple watchers can run in parallel.
@@ -223,7 +223,7 @@ class Options:
         self.time_span = None      # Span, set by validate()
         self.directory = None
         self.copy_to_dir = None
-        self.pid_lockfile = True   # --no-pid-lockfile opts out
+        self.use_lockfiles = True  # --no-lockfiles opts out
         self.loop = False
         self.after = None
         self.catch_up_one = False
@@ -280,12 +280,13 @@ def parse_args(argv):
         elif arg == "--copy-to-dir":
             opts.copy_to_dir = value(arg, rest)
         elif arg == "--pid-lockfile":
-            # Now the default. Still accepted for a bundle whose watch
-            # wrapper was installed before the see-what-i-see skill
-            # holding this script was updated.
-            opts.pid_lockfile = True
-        elif arg == "--no-pid-lockfile":
-            opts.pid_lockfile = False
+            # Now the default, and keeping its old name: this is here
+            # for a bundle whose watch wrapper was installed before the
+            # see-what-i-see skill holding this script was updated. The
+            # opt-out is --no-lockfiles.
+            opts.use_lockfiles = True
+        elif arg == "--no-lockfiles":
+            opts.use_lockfiles = False
         elif arg == "--loop":
             opts.loop = True
         elif arg == "--after":
@@ -332,8 +333,8 @@ def validate(opts):
             die("Error: --loop only applies with --watch", 2)
         if opts.catch_up_one:
             die("Error: --catch-up-one only applies with --watch", 2)
-        if not opts.pid_lockfile:
-            die("Error: --no-pid-lockfile only applies with --watch", 2)
+        if not opts.use_lockfiles:
+            die("Error: --no-lockfiles only applies with --watch", 2)
     # --catch-up-one is the Gemini single-shot pattern ("emit at most
     # one then exit"); --loop says "keep polling forever".
     if opts.catch_up_one and opts.loop:
@@ -1396,7 +1397,7 @@ def watch(opts, emitter, source_dir, log_path):
     # the slot publishes a session, and only that run answers a stop
     # request.
     stop_path = os.path.join(source_dir, STOP_FILE)
-    slot = claim_watch_slot(opts, source_dir) if opts.pid_lockfile else None
+    slot = claim_watch_slot(opts, source_dir) if opts.use_lockfiles else None
     last_beat = time.monotonic()
 
     def stopped(reason):

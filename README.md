@@ -452,7 +452,7 @@ scripts/SeeWhatISee.py --stop                   # stop a watcher started from an
 
 A second `--watch` on the same directory takes over from the first — so
 starting one from a shell stops an agent's `/see-what-i-see-watch` loop.
-Add `--no-pid-lockfile` to watch alongside it instead.
+Add `--no-lockfiles` to watch alongside it instead.
 
 The capture history — `log.json` plus the older `history-*.json`
 files — can be listed and filtered too:

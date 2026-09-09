@@ -23,7 +23,7 @@ Code: `skills/SeeWhatISee.py` (script side),
 
 Every `--watch` run takes part, streaming and single-shot alike.
 
-- `--no-pid-lockfile` is the opt-out, for running watchers in parallel
+- `--no-lockfiles` is the opt-out, for running watchers in parallel
   on one directory. Such a run publishes nothing and can't be stopped
   this way.
 - Neither can the MCP server's `watch` — it holds its subscription

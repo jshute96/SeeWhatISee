@@ -881,10 +881,10 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
     expect(stop.stdout).toContain('No watch to stop');
   });
 
-  // The stop protocol is on by default; --no-pid-lockfile is the
+  // The stop protocol is on by default; --no-lockfiles is the
   // opt-out for running watchers in parallel on one directory.
-  test('--no-pid-lockfile publishes nothing and is not stoppable', async () => {
-    const watch = startWatch(['--no-pid-lockfile', '--directory', tmpDir]);
+  test('--no-lockfiles publishes nothing and is not stoppable', async () => {
+    const watch = startWatch(['--no-lockfiles', '--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 500));
 
     expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
@@ -898,9 +898,9 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
     await waitForExit(watch.proc, 3_000);
   });
 
-  test('two --no-pid-lockfile watchers coexist and both see a capture', async () => {
-    const watch1 = startWatch(['--no-pid-lockfile', '--loop', '--directory', tmpDir]);
-    const watch2 = startWatch(['--no-pid-lockfile', '--loop', '--directory', tmpDir]);
+  test('two --no-lockfiles watchers coexist and both see a capture', async () => {
+    const watch1 = startWatch(['--no-lockfiles', '--loop', '--directory', tmpDir]);
+    const watch2 = startWatch(['--no-lockfiles', '--loop', '--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 500));
     // Neither took the slot from the other.
     expect(watch1.proc.exitCode).toBeNull();
