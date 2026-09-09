@@ -60,6 +60,7 @@ bundle dir is generated from them, except the bundle's own manifest.
 | `skills/gemini.xtract.md` | Gemini's `see-what-i-see-xtract` alias — same body as `gemini.see.md`, surfaces first in autocomplete |
 | `skills/mcp-server.see.md` | MCP-driven `see-what-i-see` — also the server's prompt body |
 | `skills/mcp-server.watch.md` | MCP-driven `see-what-i-see-watch` — also the server's prompt body |
+| `skills/mcp-server.stop.md` | MCP-driven `see-what-i-see-stop` — calls the `stop_watch` tool; also the server's prompt body |
 | `skills/generic.see.md` | Client-agnostic `see-what-i-see`; also used by Antigravity |
 | `skills/generic.watch.md` | Client-agnostic `see-what-i-see-watch` — streaming, or a single-shot loop |
 | `skills/generic.stop.md` | Client-agnostic `see-what-i-see-stop` |
@@ -145,7 +146,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `mcp-server/bundle.mjs` | esbuild step that bundles `src/cli.ts` + deps into `dist/seewhatisee-mcp.js` with a node shebang |
 | `mcp-server/build-prompts.mjs` | Reads `../skills/mcp/*/SKILL.md` (frontmatter + body), emits `src/prompts.generated.ts` for tsc / bundle to consume |
 | `mcp-server/src/server.ts` | Server factory, source-dir resolution, log.json reader, fs.watch reference-counter; tools + `file://` file resources + prompt handlers |
-| `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--help`), source-dir resolution, stdio transport, `server.connect` |
+| `mcp-server/src/watch-session.ts` | The server's half of the watch protocol — publishes its watch session, answers stop requests, steps aside when displaced |
+| `mcp-server/src/cli.ts` | Bin entrypoint — argv parsing (`--directory`, `--no-lockfiles`, `--help`), source-dir resolution, stdio transport, `server.connect` |
 | `mcp-server/tests/resolve.test.mjs` | Unit tests for `resolveSourceDir` — explicit override, cwd vs home precedence, default fallback, config-file parsing |
 | `mcp-server/tests/server.test.mjs` | End-to-end tests via `InMemoryTransport` covering every tool, the subscribable resource, prompts list/get |
 

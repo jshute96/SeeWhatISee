@@ -37,18 +37,35 @@ claude mcp add see-what-i-see -- npx -y @see-what-i-see/mcp-server
 
 - **`see-what-i-see`** — grab the latest capture and describe it, or follow other instructions in the prompt.
 - **`see-what-i-see-watch`** — watch for new captures, processing each as it arrives.
+- **`see-what-i-see-stop`** — stop a running watch.
 
-Both surface as slash commands in clients that render MCP prompts.
+They surface as slash commands in clients that render MCP prompts.
 
 ### Tools
 
 - **`get_latest`** — returns the most recent capture record: a JSON metadata block (timestamp, URL, title, and each screenshot / HTML snapshot / selection's capture flags) followed by a `resource_link` per file carrying its `file://` `uri` + `mimeType`. Read a file via `resources/read` on that `uri`, or your own file tool at the `file://` path. Small selections are also inlined by default; `return_inline: true` additionally inlines every file (images as image content, others as embedded file resources), `false` suppresses all inlining.
 - **`watch`** — returns new capture records in the same shape as `get_latest` (`return_inline` applies too). With `after: <timestamp>`, drains anything newer immediately. Otherwise blocks for up to `timeout_ms` waiting for the next capture (defaults to ~60s, max 10 min); returns `{ records: [] }` if nothing arrives.
 
+- **`stop_watch`** — ends the watch on the capture directory and reports what it found: `{ "result": "stopped" | "queued" | "nothing", "kind": "server" | "script", "message": "..." }`. `queued` means nothing was watching at that moment and the request waits for the watch's next run. It also stops a `/see-what-i-see-watch` loop running in another tool.
+
 ### Resources
 
 - **`seewhatisee://captures/stream`** — subscribable. Read returns the latest record (or `{ record: null }` if no captures yet). Subscribe to receive a `notifications/resources/updated` notification on every new capture. Not all MCP clients support resource subscriptions; the `watch` tool is the polling fallback.
 - **`file://…` captured files** — `resources/read` on any `file://` URI inside the source directory returns the file: text and HTML as text, images and other binaries as base64 blobs (lexical + symlink containment check). These aren't enumerated by `resources/list` — clients discover them through the `resource_link` blocks in tool results.
+
+## Showing and stopping a watch
+
+While this server is watching — a `watch` call, or a `captures/stream`
+subscription — it publishes that watch in the capture directory.
+
+- The extension's Capture page shows it, and its Stop button ends it.
+- `SeeWhatISee.py --stop` ends it too, without stopping the server,
+  which goes on serving everything else.
+- `stop_watch` works in the other direction: it also stops a watch
+  script running elsewhere.
+- One watch per capture directory is the rule, so starting one here
+  replaces a watch running in another tool. Pass `--no-lockfiles` to
+  run privately alongside one instead.
 
 ## Source and contributing
 

@@ -47,6 +47,14 @@ Between two runs of a single-shot loop:
  "resumeAfter": "2026-08-30T12:04:12.482Z"}
 ```
 
+A watch held by the MCP server, which is a long-lived process the watch
+is only one part of:
+
+```json
+{"sessionStarted": "2026-08-30T12:00:00.123Z", "pid": 12345,
+ "expires": "2026-08-30T12:04:30Z", "kind": "server"}
+```
+
 - **`sessionStarted`** — when the session began, and its identity. Set
   once, adopted unchanged by every later run, named by a stop request.
   Compared as an exact string, never re-parsed into a date and
@@ -59,6 +67,10 @@ Between two runs of a single-shot loop:
 - **`resumeAfter`** — the `--after` value the next run of this session
   is expected to carry. Only single-shot runs write it; a `--loop`
   watcher has no gaps.
+- **`kind`** — absent for the script, `"server"` for a watch a
+  long-lived server holds. It decides how the session is stopped, and
+  what the Capture page calls it. See
+  [Sessions that outlive their process](#sessions-that-outlive-their-process).
 - No version field. A file without one is the shape above; a later
   script can add one if it ever has something to distinguish.
 
@@ -103,6 +115,40 @@ Between two runs of a single-shot loop:
 - To remove it later: drop the fallback in `watcher_pid` and the write
   in `claim_watch_slot` (plus its cleanup in `clear_watch_files`). The
   extension never reads or writes it, so nothing changes there.
+
+### Sessions that outlive their process
+
+Two kinds of thing can hold a session:
+
+- **The script**, which *is* its watch — stopping it and ending the
+  process are the same event.
+- **The MCP server**, which holds a watch while also serving
+  `get_latest`, resources and everything else (see
+  [mcp-server.md](mcp-server.md)).
+
+`kind` says which, and the stop rules follow from it:
+
+| | absent (the script) | `"server"` |
+|--|--|--|
+| Asked to stop by | a signal, or `watch-stop.json` | `watch-stop.json` only |
+| "It stopped" means | the process is gone | the session record cleared |
+| Escalation | SIGTERM, then SIGKILL | never |
+| Writes `.watch.pid` | yes | no |
+
+Why a server is never signalled:
+
+- SIGKILL escalation would take down a server that is still answering
+  everything else. Its watch ending is not its life ending.
+- Node reserves SIGUSR1 to start its inspector, so the one signal the
+  protocol treats as "please stop" is the one signal a Node process
+  should not be sent.
+- Signals don't exist on Windows, where the server is expected to run.
+- It never writes `.watch.pid`, for the same reason: an older `--stop`
+  reads only that file and would SIGTERM the process behind it.
+
+The file channel works for both, which is what makes this cheap: the
+extension's Stop button already writes `watch-stop.json`, and every
+watcher already looks for it.
 
 ## Sessions, not processes
 
@@ -167,6 +213,9 @@ that take turns holding it.
    `pid` — or, for an old bundle's watcher, a live `.watch.pid` with no
    session file — gets the takeover signal and the escalation behind
    it. Only then is the slot free.
+   - A `kind: "server"` session is displaced without a signal: writing
+     our own record over it *is* the notice, and the server steps aside
+     when it reads one that isn't its session's.
 3. **Claim the slot**: rewrite the status file with my `pid` and the
    running lease, and write `.watch.pid`. Claiming *before* checking
    for a stop leaves no window where a request arrives, finds nobody
@@ -259,9 +308,10 @@ the CLI.
 
 | State it finds | What it does | What it says |
 |---|---|---|
-| live `pid` | signals it | `Stopping existing watcher` |
+| live `pid`, `kind` absent | signals it | `Stopping existing watcher` |
+| `kind: "server"` | writes the request, waits for the record to clear | `Asked the MCP server ... to stop` |
 | `pid: null` with `resumeAfter` | writes the request, zeroes the lease | `The watch on <dir> will stop when the agent next runs it` |
-| no session, or an expired one | clears leftovers | `No watch to stop` |
+| no session, or an expired one with nothing to resume | clears leftovers | `No watch to stop` |
 
 ## Asking by signal — `--stop` and takeovers
 
@@ -364,7 +414,9 @@ pid-suffixed, so two runs racing for the slot can't collide on it.
   status file the page never sees, so it shows nothing — working as
   intended, not a bug.
 - The indicator sits at the right end of the button row, after the Ask
-  buttons, and is hidden whenever no watch is visible.
+  buttons, and is hidden whenever no watch is visible. Its tooltip
+  names what is watching, from `kind`: a watch script, or an MCP
+  server.
 - **Stop** writes the request carrying the session id it is showing,
   then hides the indicator. Success is no longer inferred from an
   absent file, so a stop in a gap is reported honestly rather than as

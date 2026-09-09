@@ -169,6 +169,33 @@ next one if none are pending.
   `seewhatisee://captures/stream` is for — no per-request timeout,
   server pushes whenever a capture arrives.
 
+#### `stop_watch`
+
+Ends the watch published in the capture directory, whoever holds it.
+
+- **Input:** none.
+- **Output:** one JSON text block:
+
+  ```json
+  {"result": "stopped", "kind": "server",
+   "message": "Stopped the watch this server was running"}
+  ```
+
+  - `result` — `"stopped"` (the watch let go of the slot),
+    `"queued"` (nobody was in flight; the request waits for the watch's
+    next run), or `"nothing"` (no watch published).
+  - `kind` — `"server"` or `"script"`, whichever held it. Absent on
+    `"nothing"`.
+  - `message` — the same sentence in words, for the model to relay.
+- **Behavior:** the same three-way answer as `SeeWhatISee.py --stop`,
+  reached through the file channel (see
+  [Taking part in the watch protocol](#taking-part-in-the-watch-protocol)).
+  It can stop a CLI watch loop as well as its own watch: whatever the
+  status file names is what gets asked.
+- **Why a tool at all:** without it a model that can see a watch has no
+  way to end one, and "stop watching" is a thing users say. It is also
+  what the `see-what-i-see-stop` prompt calls.
+
 There are no separate file-reading tools. Files are read through the
 resources interface below (or the client's own file tool at the
 `file://` path, or `return_inline`).
@@ -282,8 +309,14 @@ They are the MCP-side equivalents of today's two main SKILL.md files.
   client doesn't support subscriptions. Then process each delivered
   record using the same template blocks.
 
-No `see-what-i-see-stop` equivalent — the client owns the
-subscription's lifecycle and tears it down on its own.
+#### `see-what-i-see-stop`
+
+- **Args:** none.
+- **Renders to:** instructions to call `stop_watch` and relay what it
+  reports. The client still owns its subscription's lifecycle; the
+  prompt exists because a watch is now visible outside the client —
+  on the Capture page, and to `SeeWhatISee.py --stop` — so "stop
+  watching" needs an answer that reaches those too.
 
 ## Sharing the prompt body with the SKILL.md templates
 
@@ -325,6 +358,69 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
   direct `node --test tests/<file>.mjs` invocation. The `test` and
   `build` scripts also re-run it on every test / build.
 
+## Taking part in the watch protocol
+
+The server publishes its watch the same way the script does, so the
+Capture page's indicator and Stop button work against it and
+`SeeWhatISee.py --stop` reaches it. The protocol itself is
+[watch-protocol.md](watch-protocol.md); this is only what the server
+does with it.
+
+### What counts as a session
+
+- **A `watch` call** is a run: it claims the slot on entry and hands
+  the session back on return, with `resumeAfter` set to the last record
+  it returned. Between two calls the session sits in a gap lease,
+  visible and stoppable.
+- **The server remembers its own session** across those calls, so a
+  client moving its cursor around doesn't turn one watch into two. The
+  `resumeAfter` match the CLI loops rely on is the other path: it is how
+  a *restarted* server picks a session back up, having forgotten it.
+- **A stream subscription** is a `--loop` watcher: the session is live
+  from `resources/subscribe` until unsubscribe or disconnect, its lease
+  refreshed on a timer. No `resumeAfter` — it has no gaps.
+- **`get_latest` publishes nothing**, like `--get-latest`.
+- Every record the server writes carries `kind: "server"`, which is
+  what tells `--stop` to ask by file rather than by signal, and the
+  Capture page to say "An MCP server" rather than "A watch script".
+
+### Being stopped
+
+All four routes end at the same place — the session record clears, and
+whoever was watching is told:
+
+- **The Capture page's Stop button** writes `watch-stop.json` naming
+  the session. The server is already watching that directory, so it
+  sees the request, deletes it, and ends the watch.
+- **`SeeWhatISee.py --stop`** writes the same file for a
+  `kind: "server"` session instead of signalling.
+- **The `stop_watch` tool**, for a user who says "stop watching" to the
+  model.
+- **Displacement**: a CLI watcher starting writes its own session
+  record. The server notices the record no longer names its session and
+  ends its watch, rather than two watchers running on one log.
+
+What the client sees, since MCP has no exit codes:
+
+- A `watch` call in flight returns normally with `"stopped"` set —
+  records it had already drained included — which the prompt reads the
+  way the shell skills read exit 3: the watch was stopped on purpose,
+  don't call `watch` again.
+- A subscriber gets a `resources/updated` notification, and the next
+  stream read carries `"stopped": true`.
+
+### Coexisting with a CLI watch
+
+- One watch per capture directory is the protocol's rule, so
+  subscribing or calling `watch` displaces a `/see-what-i-see-watch`
+  loop running in another terminal.
+- Displacement runs both ways, and neither side signals the other: a
+  script taking the slot rewrites the record, and the server steps
+  aside when it sees a record that isn't its session's.
+- `--no-lockfiles` opts a server out of publishing entirely, for
+  deliberately running both. Same name and meaning as the script's, so
+  the opt-out is one thing to know rather than two.
+
 ## Differences from `SeeWhatISee.py`
 
 | Concern              | `SeeWhatISee.py`                          | MCP server                          |
@@ -332,7 +428,7 @@ mcp-server/dist/seewhatisee-mcp.js       (single-file bundle, prompts inlined)
 | Single read          | `--get-latest`                            | `get_latest` tool                   |
 | Drain + wait         | `--watch [--after TS]` (one-shot)         | `watch` tool with `after`           |
 | Streaming loop       | `--watch --loop`                          | `captures/stream` subscription      |
-| Stop watcher         | `--stop`, or the extension's Capture page (see [watch-protocol.md](watch-protocol.md)) | client-managed; unsubscribe / exit  |
+| Stop watcher         | `--stop`, or the extension's Capture page (see [watch-protocol.md](watch-protocol.md)) | `stop_watch` tool, `--stop`, or the Capture page — same protocol |
 | Inline selection     | `--print_selection`                       | small selections inline by default; otherwise `return_inline`, or `resources/read` on the selection's `file://` URI |
 | Workspace copy       | `--copy-to-dir DIR`                       | not needed; clients read in place   |
 | Source dir override  | `--directory DIR`                         | `--directory` server arg (startup only — no per-call override) |

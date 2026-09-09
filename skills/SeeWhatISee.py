@@ -96,6 +96,11 @@ PID_FILE = ".watch.pid"
 # filename outright ("Invalid filename").
 STOP_FILE = "watch-stop.json"
 
+# `kind` in the status file: absent for our own runs, this for a watch a
+# long-lived server holds, where the process outlives the watch. Such a
+# session is asked by file and never signalled — see docs/watch-protocol.md.
+SERVER_KIND = "server"
+
 # How often a running watcher pushes its lease out, and how far. The
 # gap between them is what a SIGKILLed watcher (or a machine that lost
 # power) advertises for before the extension stops believing it.
@@ -999,16 +1004,29 @@ def read_status(status_path):
 
 
 def status_pid(status_path):
-    """The pid of the run the status file names, or None for a gap."""
+    """The pid of the run the status file names, or None for a gap.
+
+    A `kind: "server"` session names a process the watch is only one
+    part of, and one no signal may be aimed at — so as far as everything
+    that signals is concerned, there is no pid here. Such a session is
+    displaced by taking the slot from it, and stopped by asking.
+    """
     status = read_status(status_path)
-    return valid_pid(status.get("pid")) if status else None
+    if status is None or status.get("kind") == SERVER_KIND:
+        return None
+    return valid_pid(status.get("pid"))
 
 
-def write_status(status_path, session, pid, lease_seconds, resume_after=None):
+def write_status(status_path, session, pid, lease_seconds, resume_after=None,
+                 kind=None):
     """Publish (or refresh) the status file the Capture page reads.
 
     `pid` is None between two runs of a single-shot loop, where
     `resume_after` says which --after the next run will carry.
+
+    `kind` is carried through rather than set: our own sessions leave it
+    out, and the only writes that pass one are the ones rewriting a
+    record somebody else published.
 
     Written to a temp file and renamed into place: the page reads it on
     a timer, and catching a half-written file would read as "no watch
@@ -1022,6 +1040,8 @@ def write_status(status_path, session, pid, lease_seconds, resume_after=None):
                "expires": iso_in(lease_seconds)}
     if resume_after is not None:
         payload["resumeAfter"] = resume_after
+    if kind is not None:
+        payload["kind"] = kind
     tmp = "%s.%d.tmp" % (status_path, os.getpid())
     try:
         with open(tmp, "w", encoding="utf-8") as handle:
@@ -1052,7 +1072,7 @@ def stop_request_session(stop_path):
     return session if isinstance(session, str) else None
 
 
-def write_stop_request(stop_path, session):
+def write_stop_request(stop_path, session, pid=None):
     """Ask a session to stop when there is no run of it to signal.
 
     The same file the Capture page's Stop button downloads, written
@@ -1060,7 +1080,7 @@ def write_stop_request(stop_path, session):
     """
     payload = {"sessionStarted": session,
                "requestedAt": iso_now(),
-               "pid": None}
+               "pid": pid}
     try:
         with open(stop_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
@@ -1126,6 +1146,7 @@ def clear_watch_files(source_dir, stopped_pid):
 
 # What --stop found, and therefore what it did about it.
 STOP_SIGNALLED = "signalled"   # a run was in flight; it has been asked to go
+STOP_ASKED = "asked"           # a server held it; asked by file, and it went
 STOP_QUEUED = "queued"         # between runs; the request waits for the next
 STOP_NOTHING = "nothing"       # no watch here at all
 
@@ -1140,6 +1161,18 @@ def stop_watcher(source_dir, queue=True):
     status_path = os.path.join(source_dir, STATUS_FILE)
     stop_path = os.path.join(source_dir, STOP_FILE)
     status = read_status(status_path)
+    # A server record only means a watch while something stands behind
+    # it: an unexpired lease, or a `resumeAfter` a restarted server can
+    # still pick up. A corpse falls through and is swept like any other.
+    if (status is not None and status.get("kind") == SERVER_KIND
+            and (not iso_past(status.get("expires"))
+                 or status.get("resumeAfter") is not None)):
+        if not queue:
+            # This invocation goes on to watch, and taking the slot is
+            # what stops a server: it reads the record, sees a session
+            # that isn't its own, and lets go.
+            return STOP_ASKED
+        return stop_server(source_dir, status)
     pid = watcher_pid(source_dir)
     if pid is not None and pid_alive(pid):
         kill_pid(pid, STOP_SIGNAL)
@@ -1178,6 +1211,34 @@ def stop_watcher(source_dir, queue=True):
     clear_status_temps(source_dir)
     remove_quietly(stop_path)
     return STOP_NOTHING
+
+
+def stop_server(source_dir, status):
+    """Stop a watch a long-lived server holds, by asking for it.
+
+    Never by signal: the watch is one part of a process that goes on
+    serving without it, so "stopped" here is the session record
+    clearing, not the process dying. (And the signal we would send is
+    the one Node reserves to start its inspector.)
+    """
+    status_path = os.path.join(source_dir, STATUS_FILE)
+    stop_path = os.path.join(source_dir, STOP_FILE)
+    session = status["sessionStarted"]
+    write_stop_request(stop_path, session, status.get("pid"))
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        current = read_status(status_path)
+        if current is None or current.get("sessionStarted") != session:
+            return STOP_ASKED
+        time.sleep(0.1)
+    # Nobody was in flight to answer, so the request waits for the
+    # session's next run. Expire the lease meanwhile, so the Capture
+    # page stops showing a watch now rather than when it would have
+    # run out; the record itself stays, since it is what lets that run
+    # recognize the request as its own.
+    write_status(status_path, session, None, 0, status.get("resumeAfter"),
+                 kind=SERVER_KIND)
+    return STOP_QUEUED
 
 
 def adopted_session(status, after):
@@ -1531,6 +1592,8 @@ def main(argv):
         result = stop_watcher(source_dir, queue=not opts.watch)
         if result == STOP_SIGNALLED:
             print("Stopping existing watcher on %s" % source_dir)
+        elif result == STOP_ASKED:
+            print("Asked the MCP server watching %s to stop" % source_dir)
         elif result == STOP_QUEUED:
             print("The watch on %s will stop when the agent next runs it"
                   % source_dir)

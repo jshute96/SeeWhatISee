@@ -58,6 +58,7 @@ PAIRS = [
     # same SKILL.md files and inlines their frontmatter + body into the bundle.
     ("mcp-server.see.md",   "skills/mcp/see-what-i-see/SKILL.md"),
     ("mcp-server.watch.md", "skills/mcp/see-what-i-see-watch/SKILL.md"),
+    ("mcp-server.stop.md",  "skills/mcp/see-what-i-see-stop/SKILL.md"),
     # Generic skills: a client-agnostic hybrid of the Claude and Gemini
     # sets, with the client-specific workarounds removed. Reference-only
     # (the README points users at them to copy/adapt); not mirrored to a

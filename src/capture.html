@@ -1463,10 +1463,12 @@
              it (`src/capture-page/watch-status.ts`); hidden again the
              moment it stops, with no message of its own. -->
         <div id="watch-status" class="watch-status" hidden>
-          <span class="watch-status-label"
-                title="A watch script is collecting new captures as they are saved.&#10;These are started with /see-what-i-see-watch in coding agents.">Watcher running</span>
+          <!-- The label's tooltip says what is watching, so it depends on
+               the session and is set in `src/capture-page/watch-status.ts`
+               rather than here. -->
+          <span class="watch-status-label">Watcher running</span>
           <button id="watch-stop-btn" type="button" class="btn"
-                  title="Stop the running watch script" aria-label="Stop watcher">
+                  title="Stop the running watcher" aria-label="Stop watcher">
             <svg aria-hidden="true"><use href="#power-icon"></use></svg>
           </button>
         </div>

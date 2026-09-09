@@ -10,6 +10,8 @@ import os from 'node:os';
 
 import { pathToFileURL } from 'node:url';
 
+import { spawn } from 'node:child_process';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ResourceUpdatedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -127,12 +129,12 @@ function sleep(ms) {
 // tools/list
 // ---------------------------------------------------------------------------
 
-test('tools/list exposes get_latest and watch', async () => {
+test('tools/list exposes the capture and watch tools', async () => {
   const ctx = await setup();
   try {
     const { tools } = await ctx.client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ['get_latest', 'watch']);
+    assert.deepEqual(names, ['get_latest', 'stop_watch', 'watch']);
   } finally {
     await ctx.cleanup();
   }
@@ -1065,12 +1067,14 @@ test('a burst of fs events for one capture is debounced to a single notification
 // prompts
 // ---------------------------------------------------------------------------
 
-test('prompts/list exposes both prompts', async () => {
+test('prompts/list exposes every prompt', async () => {
   const ctx = await setup();
   try {
     const { prompts } = await ctx.client.listPrompts();
     const names = prompts.map((p) => p.name).sort();
-    assert.deepEqual(names, ['see-what-i-see', 'see-what-i-see-watch']);
+    assert.deepEqual(names, [
+      'see-what-i-see', 'see-what-i-see-stop', 'see-what-i-see-watch',
+    ]);
   } finally {
     await ctx.cleanup();
   }
@@ -1113,5 +1117,323 @@ test('prompts/get rejects unknown prompts', async () => {
     assert.match(String(err), /unknown prompt/i);
   } finally {
     await ctx.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Watch protocol — publishing a session so the extension (and the shell
+// script) can see and stop this server's watch. See docs/watch-protocol.md.
+// ---------------------------------------------------------------------------
+
+const STATUS_FILE = '.watch-status.json';
+const STOP_FILE = 'watch-stop.json';
+
+function readStatus(dir) {
+  const p = path.join(dir, STATUS_FILE);
+  if (!fs.existsSync(p)) return null;
+  return JSON.parse(fs.readFileSync(p, 'utf8'));
+}
+
+/** Write the request the Capture page's Stop button downloads. */
+function requestStop(dir, session) {
+  fs.writeFileSync(
+    path.join(dir, STOP_FILE),
+    JSON.stringify({ sessionStarted: session, requestedAt: new Date().toISOString() }) + '\n',
+  );
+}
+
+/** The `stopped` field a watch result carries when the watch was ended. */
+function stoppedReason(res) {
+  const blocks = res.content.filter((c) => c.type === 'text');
+  for (const b of blocks) {
+    const parsed = JSON.parse(b.text);
+    if (parsed.stopped) return parsed.stopped;
+  }
+  return null;
+}
+
+test('a watch call publishes a session and hands it on', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    // Nothing published until something watches.
+    assert.equal(readStatus(ctx.dir), null);
+    const res = await ctx.client.callTool({ name: 'watch', arguments: {} });
+    assert.deepEqual(JSON.parse(res.content[0].text), { records: [] });
+
+    // The call timed out with nothing new, so the session is handed on for
+    // the next call rather than dropped: no run in flight, a gap lease, and
+    // the cursor its successor is expected to carry.
+    const gap = readStatus(ctx.dir);
+    assert.equal(gap.kind, 'server');
+    assert.equal(gap.pid, null);
+    assert.ok(Date.parse(gap.expires) > Date.now());
+    // No pidfile: an older --stop reads only that, and would signal a process
+    // the watch is just one part of.
+    assert.equal(fs.existsSync(path.join(ctx.dir, '.watch.pid')), false);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('successive watch calls are one session, whatever their cursor', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    await ctx.client.callTool({ name: 'watch', arguments: {} });
+    const first = readStatus(ctx.dir).sessionStarted;
+
+    // The server is one process across calls, so it knows its own session —
+    // a client moving its cursor around doesn't make it a different watch.
+    await ctx.client.callTool({ name: 'watch', arguments: { after: '2020-01-01T00:00:00.000Z' } });
+    assert.equal(readStatus(ctx.dir).sessionStarted, first);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a restarted server resumes the session its cursor names', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    // The record a previous server left between two calls: no run in flight,
+    // and the cursor its successor is expected to carry.
+    const handedOn = '2026-04-08T20:30:12.345Z';
+    fs.writeFileSync(
+      path.join(ctx.dir, STATUS_FILE),
+      JSON.stringify({
+        sessionStarted: '2026-04-08T20:00:00.000Z',
+        pid: null,
+        expires: new Date(Date.now() + 300_000).toISOString(),
+        resumeAfter: handedOn,
+        kind: 'server',
+      }) + '\n',
+    );
+    await ctx.client.callTool({ name: 'watch', arguments: { after: handedOn } });
+    assert.equal(readStatus(ctx.dir).sessionStarted, '2026-04-08T20:00:00.000Z');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a stop request ends a watch call and says so', async () => {
+  const ctx = await setup({ records: [record()], watchDefaultTimeoutMs: 5_000 });
+  try {
+    // Claim a session, then ask it to stop while the next call is blocking.
+    await ctx.client.callTool({ name: 'watch', arguments: {} });
+    const { sessionStarted, resumeAfter } = readStatus(ctx.dir);
+    const pending = ctx.client.callTool({ name: 'watch', arguments: { after: resumeAfter } });
+    await new Promise((r) => setTimeout(r, 200));
+    requestStop(ctx.dir, sessionStarted);
+
+    // It returns well inside the 5s timeout, marked stopped — the client's
+    // equivalent of the script's exit 3.
+    const res = await pending;
+    assert.equal(stoppedReason(res), 'requested');
+    // Everything the protocol wrote is gone, so nothing advertises a watch.
+    assert.equal(readStatus(ctx.dir), null);
+    assert.equal(fs.existsSync(path.join(ctx.dir, STOP_FILE)), false);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a stop request left in the gap ends the next call on entry', async () => {
+  const ctx = await setup({ records: [record()], watchDefaultTimeoutMs: 5_000 });
+  try {
+    await ctx.client.callTool({ name: 'watch', arguments: {} });
+    const { sessionStarted, resumeAfter } = readStatus(ctx.dir);
+    requestStop(ctx.dir, sessionStarted);
+
+    // No capture is written: the call must not wait for one.
+    const started = Date.now();
+    const res = await ctx.client.callTool({ name: 'watch', arguments: { after: resumeAfter } });
+    assert.ok(Date.now() - started < 2_000);
+    assert.equal(stoppedReason(res), 'requested');
+    assert.equal(readStatus(ctx.dir), null);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a subscription holds the session until it ends', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    const live = readStatus(ctx.dir);
+    assert.equal(live.kind, 'server');
+    assert.equal(live.pid, process.pid);
+    // A subscription has no gaps, so nothing to resume from.
+    assert.equal(live.resumeAfter, undefined);
+
+    await ctx.client.unsubscribeResource({ uri: STREAM_URI });
+    assert.equal(readStatus(ctx.dir), null);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a stopped subscription is reported on the next stream read', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    const { sessionStarted } = readStatus(ctx.dir);
+    requestStop(ctx.dir, sessionStarted);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The doorbell carries no payload, so the answer rides on the read it
+    // wakes — and is reported once.
+    const first = await ctx.client.readResource({ uri: `${STREAM_URI}?after=` });
+    assert.equal(JSON.parse(first.contents[0].text).stopped, true);
+    const second = await ctx.client.readResource({ uri: `${STREAM_URI}?after=` });
+    assert.equal(JSON.parse(second.contents[0].text).stopped, undefined);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a watcher taking the slot displaces the server', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    const mine = readStatus(ctx.dir).sessionStarted;
+
+    // Somebody else claims the slot, the way a starting watch script does.
+    fs.writeFileSync(
+      path.join(ctx.dir, STATUS_FILE),
+      JSON.stringify({
+        sessionStarted: '2030-01-01T00:00:00.000Z',
+        pid: 999999999,
+        expires: new Date(Date.now() + 90_000).toISOString(),
+      }) + '\n',
+    );
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The server steps aside rather than fighting for the file, and leaves
+    // the record naming its replacement alone.
+    const res = await ctx.client.readResource({ uri: `${STREAM_URI}?after=` });
+    assert.equal(JSON.parse(res.contents[0].text).stopped, true);
+    assert.equal(readStatus(ctx.dir).sessionStarted, '2030-01-01T00:00:00.000Z');
+    assert.notEqual(mine, '2030-01-01T00:00:00.000Z');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('stop_watch ends this server’s own watch', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    const res = await ctx.client.callTool({ name: 'stop_watch', arguments: {} });
+    const payload = JSON.parse(res.content[0].text);
+    assert.equal(payload.result, 'stopped');
+    assert.equal(payload.kind, 'server');
+    assert.match(payload.message, /Stopped the watch/);
+    assert.equal(readStatus(ctx.dir), null);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('stop_watch reports nothing to stop', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    const none = await ctx.client.callTool({ name: 'stop_watch', arguments: {} });
+    assert.equal(JSON.parse(none.content[0].text).result, 'nothing');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('stop_watch ends this server’s own session between two watch calls', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    // Handed back, not held — but still this server's, so it needs no request
+    // and nobody to wait for.
+    await ctx.client.callTool({ name: 'watch', arguments: {} });
+    assert.notEqual(readStatus(ctx.dir), null);
+
+    const res = await ctx.client.callTool({ name: 'stop_watch', arguments: {} });
+    assert.equal(JSON.parse(res.content[0].text).result, 'stopped');
+    assert.equal(readStatus(ctx.dir), null);
+    assert.equal(fs.existsSync(path.join(ctx.dir, STOP_FILE)), false);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('stop_watch queues for someone else’s watch between runs', async () => {
+  const ctx = await setup({ records: [record()] });
+  try {
+    // A watch script's session, handed back between two of its runs: nobody
+    // is in flight to answer, so the request waits for its next run.
+    fs.writeFileSync(
+      path.join(ctx.dir, STATUS_FILE),
+      JSON.stringify({
+        sessionStarted: '2026-04-08T19:00:00.000000Z',
+        pid: null,
+        expires: new Date(Date.now() + 300_000).toISOString(),
+        resumeAfter: '2026-04-08T20:30:12.345Z',
+      }) + '\n',
+    );
+    const res = await ctx.client.callTool({ name: 'stop_watch', arguments: {} });
+    const payload = JSON.parse(res.content[0].text);
+    assert.equal(payload.result, 'queued');
+    assert.equal(payload.kind, 'script');
+    // The request names it, and the record stays — it is what lets that run
+    // know the request is its own — but its lease is spent, so the Capture
+    // page stops showing a watch now.
+    const request = JSON.parse(fs.readFileSync(path.join(ctx.dir, STOP_FILE), 'utf8'));
+    assert.equal(request.sessionStarted, '2026-04-08T19:00:00.000000Z');
+    assert.equal(readStatus(ctx.dir).sessionStarted, '2026-04-08T19:00:00.000000Z');
+    assert.ok(Date.parse(readStatus(ctx.dir).expires) <= Date.now());
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a real watch script takes the slot without signalling the server', async () => {
+  // The protocol's promise: a `kind: "server"` session is never signalled,
+  // because the signal would land on a process the watch is only one part of.
+  // A synthetic status file can't prove that — this runs the actual script.
+  const ctx = await setup({ records: [record()] });
+  const script = path.resolve(process.cwd(), '../skills/SeeWhatISee.py');
+  let watcher;
+  try {
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    const mine = readStatus(ctx.dir).sessionStarted;
+    assert.equal(readStatus(ctx.dir).pid, process.pid);
+
+    watcher = spawn(script, ['--watch', '--loop', '--directory', ctx.dir], { stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 1_500));
+
+    // This process is still here — the assertion is simply that the test
+    // keeps running — and the slot is the script's now.
+    const taken = readStatus(ctx.dir);
+    assert.notEqual(taken.sessionStarted, mine);
+    assert.equal(taken.pid, watcher.pid);
+    assert.equal(taken.kind, undefined);
+
+    // And the server noticed it was displaced rather than watching on.
+    const read = await ctx.client.readResource({ uri: `${STREAM_URI}?after=` });
+    assert.equal(JSON.parse(read.contents[0].text).stopped, true);
+  } finally {
+    watcher?.kill('SIGKILL');
+    await ctx.cleanup();
+  }
+});
+
+test('--no-lockfiles keeps the watch private', async () => {
+  const dir = tmpdir();
+  writeLog(dir, [record()]);
+  const server = createServer({ sourceDir: dir, watchDefaultTimeoutMs: 150, publishWatch: false });
+  const client = new Client({ name: 'test', version: '0' });
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverT), client.connect(clientT)]);
+  try {
+    await client.subscribeResource({ uri: STREAM_URI });
+    await client.callTool({ name: 'watch', arguments: {} });
+    assert.equal(readStatus(dir), null);
+  } finally {
+    await client.close();
+    await server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

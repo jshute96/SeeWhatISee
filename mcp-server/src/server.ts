@@ -30,7 +30,16 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 
-import { PROMPT_SEE, PROMPT_WATCH } from './prompts.generated.js';
+import { PROMPT_SEE, PROMPT_STOP, PROMPT_WATCH } from './prompts.generated.js';
+import {
+  expireLease,
+  isLive,
+  readStatus,
+  writeStopRequest,
+  SESSION_KIND,
+  WatchSession,
+  type StopReason,
+} from './watch-session.js';
 
 export const STREAM_URI = 'seewhatisee://captures/stream';
 const LOG_FILE = 'log.json';
@@ -55,6 +64,11 @@ function readServerVersion(): string {
 const SERVER_VERSION = readServerVersion();
 const DEFAULT_WATCH_DEFAULT_MS = 60 * 1000;
 const DEFAULT_WATCH_MAX_MS = 10 * 60 * 1000;
+// How long `stop_watch` waits for a watch to let go of the slot before
+// reporting the request as queued instead. Anything in flight answers within a
+// poll or two; longer than that means nobody is there to answer.
+const STOP_WAIT_MS = 2_000;
+const STOP_POLL_MS = 100;
 // fs.watch emits several raw events per logical capture: overlapping file + dir
 // watchers both fire, an in-place write yields separate content/mtime events,
 // and the browser's download can touch the dir multiple times. Coalesce a burst
@@ -549,6 +563,12 @@ export interface ServerOpts {
   watchDefaultTimeoutMs?: number;
   /** Hard upper bound for `watch` timeouts (ms). */
   watchMaxTimeoutMs?: number;
+  /**
+   * Publish this server's watch in the capture directory, so the extension's
+   * Capture page can show and stop it (see ../../docs/watch-protocol.md).
+   * False runs the watch privately, alongside another watcher.
+   */
+  publishWatch?: boolean;
 }
 
 export function createServer(opts: ServerOpts): Server {
@@ -558,8 +578,10 @@ export function createServer(opts: ServerOpts): Server {
   const logPath = path.join(sourceDir, LOG_FILE);
 
   const logWatcher = new LogWatcher(sourceDir);
+  const watchSession = new WatchSession(sourceDir, opts.publishWatch !== false);
   let streamSubscribers = 0;
   let streamListener: ChangeListener | null = null;
+  let streamStopUnsubscribe: (() => void) | null = null;
 
   const server = new Server(
     { name: 'seewhatisee', version: SERVER_VERSION },
@@ -623,6 +645,15 @@ export function createServer(opts: ServerOpts): Server {
           additionalProperties: false,
         },
       },
+      {
+        name: 'stop_watch',
+        description:
+          "Stop the watch on the capture directory — this server's own, or a " +
+          "/see-what-i-see-watch loop running elsewhere. Returns what it found: " +
+          "the watch stopped, a request left for a watch that is between captures, " +
+          "or no watch at all.",
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      },
     ],
   }));
 
@@ -633,6 +664,8 @@ export function createServer(opts: ServerOpts): Server {
         return handleGetLatest(args as Record<string, unknown>);
       case 'watch':
         return await handleWatch(args as Record<string, unknown>);
+      case 'stop_watch':
+        return await handleStopWatch();
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
@@ -660,6 +693,23 @@ export function createServer(opts: ServerOpts): Server {
       typeof args.timeout_ms === 'number' ? args.timeout_ms : watchDefaultMs;
     timeoutMs = Math.max(0, Math.min(timeoutMs, watchMaxMs));
 
+    // Claiming before reading is deliberate: it leaves no window where a stop
+    // request arrives, finds nobody publishing, and is swept by the call that
+    // was starting. A request already aimed at the session this call adopts
+    // ends it here, without waiting for a capture.
+    const stop: { reason: StopReason | null } = { reason: null };
+    // Listening before claiming, so a request already waiting for this session
+    // is heard as the claim finds it rather than after we start blocking.
+    const heardStop = watchSession.onStopped((reason) => { stop.reason = reason; });
+    watchSession.beginRun(after);
+    try {
+      return await runWatch();
+    } finally {
+      heardStop();
+    }
+
+    async function runWatch() {
+
     // Drain pending. If `after` matches a record, return everything after it.
     // If `after` doesn't match any record (e.g. caller's known timestamp is
     // not in the log), match the shell script's lenient semantics and fall
@@ -667,16 +717,100 @@ export function createServer(opts: ServerOpts): Server {
     // On the param being *present*, not truthy, so `after: ''` stays in the
     // cursored shape the way it does on the stream resource. No record carries
     // `''`, so it falls through to the wait's compare and drains from the start.
-    if (after !== undefined) {
-      const pending = recordsAfterCursor(readAllRecords(logPath), after);
-      if (pending && pending.length > 0) {
-        return { content: pending.flatMap((r) => recordContent(r, sourceDir, inline)) };
-      }
+    // Drain before reporting a stop: captures that landed in the gap are the
+    // client's whether or not the watch ended while they were waiting.
+    const pending =
+      after === undefined ? [] : recordsAfterCursor(readAllRecords(logPath), after) ?? [];
+    if (stop.reason !== null) return finishWatch(pending);
+    if (pending.length > 0) return finishWatch(pending);
+
+    return finishWatch(await waitForNext(after, timeoutMs, () => stop.reason !== null));
     }
 
-    const fresh = await waitForNext(after, timeoutMs);
-    if (fresh.length === 0) return jsonContent({ records: [] });
-    return { content: fresh.flatMap((r) => recordContent(r, sourceDir, inline)) };
+    // One exit for every way the call can end, so the session is always handed
+    // on (or released) exactly once, and a stop is always reported.
+    function finishWatch(records: CaptureRecord[]) {
+      const last = records.length ? records[records.length - 1].timestamp : null;
+      // Only a stop leaves nothing to resume from: a call that timed out
+      // empty still belongs to a session its successor should continue, so it
+      // hands back the cursor it came in with.
+      watchSession.endRun(stop.reason !== null ? null : (last ?? after ?? null));
+      if (stop.reason !== null) {
+        return {
+          content: [
+            ...records.flatMap((r) => recordContent(r, sourceDir, inline)),
+            ...jsonContent({ stopped: stop.reason }).content,
+          ],
+        };
+      }
+      if (records.length === 0) return jsonContent({ records: [] });
+      return { content: records.flatMap((r) => recordContent(r, sourceDir, inline)) };
+    }
+  }
+
+  /**
+   * End the watch the capture directory publishes, whoever holds it.
+   *
+   * Always through the file channel — the same request the Capture page's Stop
+   * button writes. A script run polls for it while it watches, and this server
+   * watches the directory for it, so one route reaches both; signalling would
+   * mean knowing which kinds of watcher may be signalled at all.
+   */
+  async function handleStopWatch() {
+    const published = readStatus(sourceDir);
+    if (published === null || (!isLive(published) && published.resumeAfter === undefined)) {
+      return jsonContent({
+        result: 'nothing',
+        message: `No watch to stop on ${sourceDir}`,
+      });
+    }
+    const kind = published.kind === SESSION_KIND ? 'server' : 'script';
+    // Our own watch needs no request and no waiting: we are the one who would
+    // answer it.
+    if (watchSession.owns(published.sessionStarted)) {
+      watchSession.release();
+      return jsonContent({
+        result: 'stopped',
+        kind,
+        message: 'Stopped the watch this server was running',
+      });
+    }
+    writeStopRequest(sourceDir, published.sessionStarted, published.pid);
+    if (await waitForRecordToClear(published.sessionStarted)) {
+      return jsonContent({
+        result: 'stopped',
+        kind,
+        message: `Stopped the ${kind === 'server' ? 'MCP server' : 'watch script'} watching ${sourceDir}`,
+      });
+    }
+    // Nobody was in flight to answer — the watch is between captures, and its
+    // next run finds the request on entry. Expire the lease meanwhile, so the
+    // Capture page stops showing a watch now rather than when the gap lease
+    // would have run out; the record itself stays, since it is what lets that
+    // run recognize the request as its own.
+    expireLease(sourceDir, published);
+    return jsonContent({
+      result: 'queued',
+      kind,
+      message: `The watch on ${sourceDir} will stop when it next runs`,
+    });
+  }
+
+  /**
+   * Wait briefly for the session to let go of the slot, or give up.
+   *
+   * The record is the only honest signal: the request file going away could
+   * equally mean it was never written (`writeStopRequest` swallows its errors,
+   * because a stop we can't ask for is reported by what happens next).
+   */
+  async function waitForRecordToClear(session: string): Promise<boolean> {
+    const deadline = Date.now() + STOP_WAIT_MS;
+    while (Date.now() < deadline) {
+      const now = readStatus(sourceDir);
+      if (now === null || now.sessionStarted !== session) return true;
+      await new Promise((r) => setTimeout(r, STOP_POLL_MS));
+    }
+    return false;
   }
 
   // Block until the log gains records past the caller's cursor, then
@@ -690,6 +824,7 @@ export function createServer(opts: ServerOpts): Server {
   function waitForNext(
     after: string | undefined,
     timeoutMs: number,
+    isStopped: () => boolean,
   ): Promise<CaptureRecord[]> {
     const startRecords = readAllRecords(logPath);
     const baseline =
@@ -702,6 +837,7 @@ export function createServer(opts: ServerOpts): Server {
         settled = true;
         clearTimeout(timer);
         logWatcher.remove(onChange);
+        stopHeard();
         resolve(val);
       };
       const onChange = () => {
@@ -722,6 +858,11 @@ export function createServer(opts: ServerOpts): Server {
         finish(fresh);
       };
       const timer = setTimeout(() => finish([]), timeoutMs);
+      // A stop ends the wait as surely as a capture does — the session is
+      // over, and blocking out the rest of the timeout would leave the client
+      // waiting on a watch that no longer exists.
+      const stopHeard = watchSession.onStopped(() => finish([]));
+      if (isStopped()) finish([]);
       // Arm the watcher BEFORE the catch-up read, then read once. This closes
       // the gap where a capture lands after we snapshot `baseline` but before
       // the watcher is live: a write after `add` fires an fs event; a write
@@ -824,6 +965,13 @@ export function createServer(opts: ServerOpts): Server {
           : records.length === 0
             ? { record: null }
             : toResourceRecord(records[records.length - 1], sourceDir);
+      // A watch stopped while the client was between reads has no other way to
+      // reach it: the doorbell carries no payload, so the answer rides on the
+      // read it wakes. Cleared once told, so it is reported exactly once.
+      if (watchSession.pendingStop) {
+        watchSession.clearPendingStop();
+        Object.assign(payload as Record<string, unknown>, { stopped: true });
+      }
       return {
         contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(payload) }],
       };
@@ -857,6 +1005,14 @@ export function createServer(opts: ServerOpts): Server {
         server.sendResourceUpdated({ uri: STREAM_URI }).catch(() => {});
       };
       logWatcher.add(streamListener);
+      // A subscription is a watch that holds the slot until it ends — the
+      // `--loop` shape, with no gaps to lease across.
+      watchSession.beginStream();
+      // A stop reaches a subscriber the only way anything does: the doorbell,
+      // then the read below tells it the watch is over.
+      streamStopUnsubscribe = watchSession.onStopped(() => {
+        server.sendResourceUpdated({ uri: STREAM_URI }).catch(() => {});
+      });
     }
     return {};
   });
@@ -871,6 +1027,9 @@ export function createServer(opts: ServerOpts): Server {
     if (streamSubscribers === 0 && streamListener) {
       logWatcher.remove(streamListener);
       streamListener = null;
+      streamStopUnsubscribe?.();
+      streamStopUnsubscribe = null;
+      watchSession.endStream();
     }
     return {};
   });
@@ -882,17 +1041,21 @@ export function createServer(opts: ServerOpts): Server {
       logWatcher.remove(streamListener);
       streamListener = null;
     }
+    streamStopUnsubscribe?.();
+    streamStopUnsubscribe = null;
     streamSubscribers = 0;
+    // The client is gone, so the watch it was holding is over. Releasing takes
+    // the session record with it rather than leaving one to time out.
+    watchSession.release();
   };
 
   // -------- prompts --------
 
-  const promptByName = new Map(
-    [PROMPT_SEE, PROMPT_WATCH].map((p) => [p.name, p]),
-  );
+  const prompts = [PROMPT_SEE, PROMPT_WATCH, PROMPT_STOP];
+  const promptByName = new Map(prompts.map((p) => [p.name, p]));
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: [PROMPT_SEE, PROMPT_WATCH].map(({ name, description }) => ({
+    prompts: prompts.map(({ name, description }) => ({
       name,
       description,
     })),

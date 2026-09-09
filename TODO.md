@@ -144,6 +144,14 @@ What it costs:
     `--no-lockfiles` as the opt-out for parallel watchers — worth a
     line wherever README describes running the script by hand.
 
+* **The MCP server takes part in the watch protocol** — a `watch` call
+  or a `captures/stream` subscription now publishes a session, so the
+  Capture page shows and stops an MCP watch, `SeeWhatISee.py --stop`
+  reaches it, and the new `stop_watch` tool / `see-what-i-see-stop`
+  prompt stop a watch from the MCP side (including a shell one).
+  * README's MCP section needs the new prompt and tool, and a line on
+    one watch per directory (`--no-lockfiles` to run alongside).
+
 * **Google Antigravity plugin** — a fourth client bundle at
   `skills/antigravity-plugin/` (`plugin.json` plus the skills),
   generated from the `antigravity.*.md` templates and mirrored to

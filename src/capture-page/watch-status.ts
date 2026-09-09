@@ -68,6 +68,7 @@ export function initWatchStatus(ctx: WatchStatusCtx): void {
   function show(status: WatchStatus | null): void {
     current = status;
     if (status === null) clearFailureMessage();
+    if (status !== null) describeWatcher(status);
     const hidden = status === null;
     if (ctx.container.hidden === hidden) return;
     ctx.container.hidden = hidden;
@@ -89,6 +90,24 @@ export function initWatchStatus(ctx: WatchStatusCtx): void {
     } finally {
       refreshing = false;
     }
+  }
+
+  /**
+   * Say what is watching, from the session's `kind`. The whole tooltip lives
+   * here rather than in the markup: half of it varies, and splitting it would
+   * leave two copies of the half that doesn't.
+   *
+   * The second line holds either way — the MCP server's watch prompt has the
+   * same name as the slash command.
+   */
+  function describeWatcher(status: WatchStatus): void {
+    const label = ctx.container.querySelector('.watch-status-label');
+    if (!(label instanceof HTMLElement)) return;
+    const what = status.kind === 'server'
+      ? 'An MCP server is collecting new captures as they are saved.'
+      : 'A watch script is collecting new captures as they are saved.';
+    label.title =
+      `${what}\nThese are started with /see-what-i-see-watch in coding agents.`;
   }
 
   function reportFailure(): void {

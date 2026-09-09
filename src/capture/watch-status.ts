@@ -58,6 +58,12 @@ export interface WatchStatus {
   sessionStarted: string;
   /** The run in flight, or `null` between two runs of a loop. */
   pid: number | null;
+  /**
+   * What is holding the watch: `"server"` for the MCP server, absent for a
+   * watch script. Only the wording on the indicator depends on it — stopping
+   * is the same file either way.
+   */
+  kind?: string;
 }
 
 /**
@@ -134,7 +140,7 @@ export function parseWatchStatus(text: string, now: number): WatchStatus | null 
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const { sessionStarted, pid, expires } = data as Record<string, unknown>;
+  const { sessionStarted, pid, expires, kind } = data as Record<string, unknown>;
   if (typeof sessionStarted !== 'string') return null;
   // A lease we can't read has expired, not "hasn't yet": the Stop
   // button is only worth offering for a watch we believe is there.
@@ -143,7 +149,11 @@ export function parseWatchStatus(text: string, now: number): WatchStatus | null 
   // `pid` is absent between two runs of a single-shot loop. Anything
   // that isn't a number is that gap as far as we're concerned — we
   // only ever pass it back for diagnostics.
-  return { sessionStarted, pid: typeof pid === 'number' ? pid : null };
+  return {
+    sessionStarted,
+    pid: typeof pid === 'number' ? pid : null,
+    ...(typeof kind === 'string' ? { kind } : {}),
+  };
 }
 
 /**

@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOURCES = [
   { exportName: 'PROMPT_SEE',   file: '../skills/mcp/see-what-i-see/SKILL.md' },
   { exportName: 'PROMPT_WATCH', file: '../skills/mcp/see-what-i-see-watch/SKILL.md' },
+  { exportName: 'PROMPT_STOP',  file: '../skills/mcp/see-what-i-see-stop/SKILL.md' },
 ];
 
 /**

@@ -11,6 +11,7 @@ import { createServer, resolveSourceDir } from './server.js';
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   let explicitDir: string | undefined;
+  let publishWatch = true;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -25,12 +26,16 @@ async function main(): Promise<void> {
       }
       continue;
     }
+    if (arg === '--no-lockfiles') {
+      publishWatch = false;
+      continue;
+    }
     process.stderr.write(`Unknown option: ${arg}\n`);
     printUsage();
     process.exit(2);
   }
   const sourceDir = resolveSourceDir({ explicitDir });
-  const server = createServer({ sourceDir });
+  const server = createServer({ sourceDir, publishWatch });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -46,6 +51,11 @@ Options:
   --directory DIR   Source dir holding log.json + captures. Overrides
                     .SeeWhatISee config and the default
                     $HOME/Downloads/SeeWhatISee.
+  --no-lockfiles    Don't publish this server's watch in the capture
+                    directory, so it neither shows on the extension's
+                    Capture page nor takes the slot from another
+                    watcher. Same flag, same meaning, as
+                    SeeWhatISee.py's.
   --help            Print this message.
 `,
   );
