@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Claude-plugin and Gemini-extension skill files from templates in skills/.
+"""Generate the per-client skill bundles from templates in skills/.
 
 Usage:
   generate-skills.py            Validate: check that each target file exactly
@@ -36,6 +36,12 @@ from pathlib import Path
 # copies the source file's bytes — used for the SeeWhatISee.py master
 # script, which is propagated unchanged into each release-bundle's
 # install location so it can be invoked sibling-relative.
+#
+# A template can feed several targets. Where a client's skill needs
+# nothing of its own, point its target at the generic template rather
+# than adding an identical <client>.<skill>.md that would have to be
+# kept in sync by hand. Only skills that actually differ get their own
+# template.
 PAIRS = [
     ("claude.see.md",    "skills/claude-plugin/skills/see-what-i-see/SKILL.md"),
     ("claude.watch.md",  "skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md"),
@@ -61,9 +67,19 @@ PAIRS = [
     ("generic.watch.md", "skills/generic-skills/see-what-i-see-watch/SKILL.md"),
     ("generic.stop.md",  "skills/generic-skills/see-what-i-see-stop/SKILL.md"),
     ("generic.history.md", "skills/generic-skills/see-what-i-see-history/SKILL.md"),
+    # Antigravity plugin: same absolute-path assumptions as the generic
+    # set (Antigravity reads capture files in place), but with the watch
+    # skill pinned to the single-shot loop instead of offering a choice —
+    # the choice is what made Antigravity agents read the scripts. Only
+    # watch and stop differ, so see and history reuse the generic ones.
+    ("generic.see.md",         "skills/antigravity-plugin/skills/see-what-i-see/SKILL.md"),
+    ("antigravity.watch.md",   "skills/antigravity-plugin/skills/see-what-i-see-watch/SKILL.md"),
+    ("antigravity.stop.md",    "skills/antigravity-plugin/skills/see-what-i-see-stop/SKILL.md"),
+    ("generic.history.md",     "skills/antigravity-plugin/skills/see-what-i-see-history/SKILL.md"),
     ("SeeWhatISee.py",   "skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py", "verbatim"),
     ("SeeWhatISee.py",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py",    "verbatim"),
     ("SeeWhatISee.py",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py",       "verbatim"),
+    ("SeeWhatISee.py",   "skills/antigravity-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py", "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")

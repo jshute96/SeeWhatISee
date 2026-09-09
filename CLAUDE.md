@@ -64,13 +64,17 @@ release repos that live as siblings of this one:
     sibling at the release-repo root — `skills/`, plus top-level
     files like `gemini-extension.json` — *not* nested under a
     `.gemini/` directory.
+- `../SeeWhatISee-antigravity` — the Google Antigravity plugin.
+  - `skills/antigravity-plugin/` here → `plugin/` in the release repo.
+  - See `docs/antigravity-plugin.md`.
 
 Publish with the rsync mirror scripts:
 
 - `skills/copy-claude-plugin-release.sh`
 - `skills/copy-gemini-extension-release.sh`
+- `skills/copy-antigravity-plugin-release.sh`
 
-Both bail if the release repo isn't cloned next to this one. Files are
+They bail if the release repo isn't cloned next to this one. Files are
 copied verbatim (no path rewriting) — anything in the dev tree that
 references its own location must use the *release-repo* path
 (e.g. `marketplace.json` says `"source": "./plugin"`). See
@@ -78,7 +82,7 @@ references its own location must use the *release-repo* path
 
 ## Keep the skill files in sync
 
-The Claude and Gemini skills describe the same `log.json` outputs
+Every client's skills describe the same `log.json` outputs
 and the same steps to take for each. To keep them consistent, they are
 **generated from shared templates** in `skills/` — never edit the
 generated files directly.
@@ -89,9 +93,14 @@ release bundle's `scripts/` dir as a verbatim byte-for-byte copy.
 Edit the canonical `skills/SeeWhatISee.py` and re-run the generator —
 do not edit the per-bundle copies.
 
-- Templates live in `skills/` (one file per generated target, plus
-  shared blocks like `json-record.template.md` and `process.template.md`
-  which are embedded via `[[filename]]` placeholders).
+- Templates live in `skills/`, plus shared blocks like
+  `json-record.template.md` and `process.template.md` which are embedded
+  via `[[filename]]` placeholders.
+  - Usually one template per generated target, but a template can feed
+    several: where a client needs nothing of its own, its target reuses
+    another client's template rather than duplicating it. The Antigravity
+    `see` / `history` skills come from `generic.see.md` /
+    `generic.history.md` that way.
 - The generator is `skills/generate-skills.py`:
   - `skills/generate-skills.py` — validate that each target matches the
     template output (exits non-zero if any differ). Also wired up as
@@ -117,9 +126,14 @@ do not edit the per-bundle copies.
   - `skills/generic-skills/see-what-i-see-watch/SKILL.md`
   - `skills/generic-skills/see-what-i-see-stop/SKILL.md`
   - `skills/generic-skills/see-what-i-see-history/SKILL.md`
+  - `skills/antigravity-plugin/skills/see-what-i-see/SKILL.md`
+  - `skills/antigravity-plugin/skills/see-what-i-see-watch/SKILL.md`
+  - `skills/antigravity-plugin/skills/see-what-i-see-stop/SKILL.md`
+  - `skills/antigravity-plugin/skills/see-what-i-see-history/SKILL.md`
   - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
   - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
   - `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
+  - `skills/antigravity-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
 - When updating behavior shared across skills (e.g. the JSON record shape or
   the processing rules), edit the relevant template in `skills/` and
   re-run the generator so every target picks up the change.

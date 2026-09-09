@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "see-what-i-see",
+  "description": "Get screenshots from the SeeWhatISee Chrome extension"
+}

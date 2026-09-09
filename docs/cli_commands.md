@@ -1,29 +1,29 @@
 # CLI commands
 
-The extension writes captures to disk; two agent CLIs (Claude Code
-and Gemini CLI) read them via slash commands. This doc covers:
+The extension writes captures to disk; agent CLIs (Claude Code, Gemini
+CLI, Google Antigravity) read them via slash commands. This doc covers:
 
 - what each command does,
-- how the two CLIs' versions differ,
+- how the clients' versions differ,
 - the shell wrappers that back them, and
 - the unified `SeeWhatISee.py` backend they all wrap.
 
 ## Commands at a glance
 
-| Command                      | Claude Code | Gemini CLI | One-shot or loop |
-|------------------------------|-------------|------------|------------------|
-| `/see-what-i-see`            | ✓           | ✓          | one-shot         |
-| `/see-what-i-see-watch`      | ✓ (async background) | ✓ (foreground loop) | loop |
-| `/see-what-i-see-stop`       | ✓           | ✓          | one-shot         |
-| `see-what-i-see-history`     | ✓           | ✓          | one-shot         |
+| Command                      | Claude Code | Gemini CLI | Antigravity | One-shot or loop |
+|------------------------------|-------------|------------|-------------|------------------|
+| `/see-what-i-see`            | ✓           | ✓          | ✓           | one-shot         |
+| `/see-what-i-see-watch`      | ✓ (async background) | ✓ (foreground loop) | ✓ (backgrounded single-shot loop) | loop |
+| `/see-what-i-see-stop`       | ✓           | ✓          | ✓           | one-shot         |
+| `see-what-i-see-history`     | ✓           | ✓          | ✓           | one-shot         |
 
 `see-what-i-see-history` is written without a slash because it isn't a
 hand-invoked command in the way the others are — the agent reaches for
 it on its own (it's still invokable by name).
 
-Both CLIs' `/see-what-i-see` and `/see-what-i-see-watch` use the
-same JSON record schema, share the same canonical "process each
-snapshot" block in their prompts, and honor the same `prompt`
+Every client's `/see-what-i-see` and `/see-what-i-see-watch` uses the
+same JSON record schema, shares the same canonical "process each
+snapshot" block in its prompt, and honors the same `prompt`
 field on the record. See
 [Skill prompts](#skill-prompts) below.
 
@@ -64,6 +64,15 @@ field on the record. See
   `exec`s this same wrapper via `../../see-what-i-see/scripts/...`,
   so there's only one implementation.
 
+### Antigravity
+
+- Backed by `skills/antigravity-plugin/skills/see-what-i-see/scripts/get-latest.sh`,
+  a thin wrapper that `exec`s `SeeWhatISee.py --get-latest` — the same
+  in-place form Claude uses.
+- Antigravity reads the referenced files at their real paths under
+  `$DIR`, so no copy step is needed. See
+  [antigravity-plugin.md](antigravity-plugin.md).
+
 ## `/see-what-i-see-watch` — keep describing new captures
 
 - **What it does.** Blocks until a new capture arrives, describes
@@ -71,9 +80,9 @@ field on the record. See
   until they interrupt.
 - **When to use it.** You're iterating on a page and want each
   click to get a description without re-invoking the slash command.
-- **`--after` catch-up (Gemini only).** The Gemini foreground
-  loop avoids skipping captures that arrived while the agent was
-  processing the previous one: each iteration passes the
+- **`--after` catch-up (the single-shot loops).** Gemini's and
+  Antigravity's loops avoid skipping captures that arrived while the
+  agent was processing the previous one: each iteration passes the
   just-processed record's `timestamp` as `--after <ts>` on the next
   invocation, which checks `log.json` for unseen records before
   blocking. Claude's `Monitor`-backed watcher doesn't relaunch
@@ -150,6 +159,21 @@ field on the record. See
   143 for a signal), and the skill tells the agent not to re-invoke
   after a non-zero exit. Interrupting Gemini, or telling the agent to
   stop, still works too.
+
+### Antigravity (backgrounded single-shot loop)
+
+- Backed by `skills/antigravity-plugin/skills/see-what-i-see-watch/scripts/watch-once.sh`,
+  a thin wrapper that `exec`s
+  `SeeWhatISee.py --watch --catch-up-one --pid-lockfile`.
+- Same agent-side loop as Gemini's — one record per run, re-invoked
+  with `--after <ts>` — but without `--copy-to-dir`: Antigravity reads
+  the capture files at their real paths.
+- Antigravity runs the script in the background, so the conversation
+  stays live while a run waits. The output is still one record per run,
+  so the agent still drives the loop.
+- The bundle ships no streaming `watch.sh`. Offering both made agents
+  read the scripts to choose between them; see
+  [antigravity-plugin.md](antigravity-plugin.md).
 
 ## Reading the capture history (`--all` / `--limit`)
 
@@ -382,14 +406,16 @@ the candidates.
   [watch protocol](watch-protocol.md). (`watch.sh --stop`
   reaches the same backend code path, since the watch wrapper
   forwards arbitrary flags through.)
-- Present in all three bundles. On Gemini it stops the blocking
-  iteration a `/see-what-i-see-watch` loop is currently waiting in;
-  that iteration's non-zero exit is what stops the loop itself.
+- Present in every bundle. On the single-shot loops (Gemini,
+  Antigravity) it stops the iteration a `/see-what-i-see-watch` loop is
+  currently waiting in; that iteration's non-zero exit is what stops the
+  loop itself.
 
 ## Scripts
 
 Every per-skill script — Claude's get-latest / watch / stop, Gemini's
-copy-last-snapshot / watch-and-copy, and the generic set under
+copy-last-snapshot / watch-and-copy, Antigravity's under
+`skills/antigravity-plugin/`, and the generic set under
 `skills/generic-skills/` — is a thin wrapper around a single unified
 backend, `SeeWhatISee.py`. Each wrapper
 just `exec`s the backend with the right action flag(s) and,
@@ -416,6 +442,12 @@ skills/dot-gemini/                   ← Gemini extension tree (mirrored into ..
   skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags (--copy → --copy-to-dir <tmp>)
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
+skills/antigravity-plugin/           ← Antigravity plugin tree (mirrored into ../SeeWhatISee-antigravity/plugin/)
+  skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
+  skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.py --get-latest
+  skills/see-what-i-see-watch/scripts/watch-once.sh       ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one --pid-lockfile
+  skills/see-what-i-see-stop/scripts/stop.sh              ← /see-what-i-see-stop     → SeeWhatISee.py --stop
+  skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags
 ```
 
 Each install tree is self-contained: each tree carries its own
@@ -424,7 +456,9 @@ skill's `scripts/` dir. The plugin tree ships as part of the
 Claude Code plugin (mirrored into `../SeeWhatISee-claude` by
 `skills/copy-claude-plugin-release.sh`); the Gemini tree is
 mirrored into `../SeeWhatISee-gemini` (Gemini extension install)
-by `skills/copy-gemini-extension-release.sh`. The
+by `skills/copy-gemini-extension-release.sh`; the Antigravity tree
+into `../SeeWhatISee-antigravity/plugin/` by
+`skills/copy-antigravity-plugin-release.sh`. The
 `SeeWhatISee.py` copies are kept byte-identical by
 `skills/generate-skills.py`, which propagates the canonical
 `skills/SeeWhatISee.py`.
@@ -446,19 +480,24 @@ the see-what-i-see skill's `scripts/` dir for the backend via
 | `skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh` | `--watch --catch-up-one --pid-lockfile --copy-to-dir <tmp>` (forwards `--after`) | `$SRC_DIR` → `$TARGET_DIR` (copied) | one new record per invocation |
 | `skills/dot-gemini/skills/see-what-i-see-stop/scripts/stop.sh`           | `--stop`                                        | `$SRC_DIR` (in place) | none (just stops the watcher) |
 | `skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh`      | none forced — forwards the caller's history flags; `--copy` becomes `--copy-to-dir <tmp>`; refuses a run with no count or filter | `$SRC_DIR`, or → `$TARGET_DIR` with `--copy` | one JSON record per match |
+| `skills/antigravity-plugin/skills/see-what-i-see/scripts/get-latest.sh`   | `--get-latest`                                  | `$DIR` (in place) | last record |
+| `skills/antigravity-plugin/skills/see-what-i-see-watch/scripts/watch-once.sh` | `--watch --catch-up-one --pid-lockfile` (forwards `--after`) | `$DIR` (in place) | one new record per invocation |
+| `skills/antigravity-plugin/skills/see-what-i-see-stop/scripts/stop.sh`    | `--stop`                                        | `$DIR` (in place) | none (just stops the watcher) |
+| `skills/antigravity-plugin/skills/see-what-i-see-history/scripts/history.sh` | none forced — forwards the caller's history flags; refuses a run with no count or filter | `$DIR` (in place) | one JSON record per match |
 
 Key differences come from the wrapper-supplied defaults:
 
-- **In-place vs copy.** Claude wrappers omit `--copy-to-dir`, so
-  the unified script just rewrites paths in place. Gemini wrappers
-  pass `--copy-to-dir <tmp>`, so it also copies referenced files
-  into the workspace tmp dir (required by Gemini's sandbox).
+- **In-place vs copy.** Claude and Antigravity wrappers omit
+  `--copy-to-dir`, so the unified script just rewrites paths in place.
+  Gemini wrappers pass `--copy-to-dir <tmp>`, so it also copies
+  referenced files into the workspace tmp dir (required by Gemini's
+  sandbox).
 - **Loop vs single-emit.** Claude `watch.sh` passes `--loop`, so
   the script stays alive and streams every new record as a
-  separate JSON line until killed. Gemini `watch-and-copy.sh`
-  passes `--catch-up-one` instead (mutually exclusive with
-  `--loop`): each invocation emits at most one record and exits,
-  so the agent loops externally.
+  separate JSON line until killed. Gemini `watch-and-copy.sh` and
+  Antigravity `watch-once.sh` pass `--catch-up-one` instead (mutually
+  exclusive with `--loop`): each invocation emits at most one record
+  and exits, so the agent loops externally.
 - **Pidfile.** Every watch wrapper passes `--pid-lockfile`, so a
   watch is always visible to the Capture page and stoppable while a
   process is actually running. What differs is how long that is:
@@ -467,7 +506,7 @@ Key differences come from the wrapper-supplied defaults:
 - **Directory resolution.** The unified script supports
   `--directory` and a `.SeeWhatISee` config file
   (`directory=<path>` in `$PWD/.SeeWhatISee` or
-  `$HOME/.SeeWhatISee`) on both sides; the Gemini wrappers
+  `$HOME/.SeeWhatISee`) in every bundle; the Gemini wrappers
   additionally honor a pre-set `$TARGET_DIR` env var (used by
   tests) when computing `--copy-to-dir`.
 
@@ -495,10 +534,14 @@ Several files drive the prompts:
 - `skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
 - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
+- `skills/antigravity-plugin/skills/see-what-i-see/SKILL.md`
+- `skills/antigravity-plugin/skills/see-what-i-see-watch/SKILL.md`
+- `skills/antigravity-plugin/skills/see-what-i-see-stop/SKILL.md`
+- `skills/antigravity-plugin/skills/see-what-i-see-history/SKILL.md`
 
 All skill prompts are **generated from templates** in `skills/`,
 which are themselves written in SKILL.md format (YAML frontmatter
-+ markdown body) for both Claude and Gemini.
++ markdown body) for every client.
 
 Shared blocks live as their own files and get inlined into each
 top-level template via `[[filename]]` placeholders, which keeps them

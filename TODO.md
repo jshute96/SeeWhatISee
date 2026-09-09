@@ -137,6 +137,19 @@ What it costs:
     `settings.json` allow-list needs
     `.../skills/see-what-i-see-stop/scripts/stop.sh`.
 
+* **Google Antigravity plugin** — a fourth client bundle at
+  `skills/antigravity-plugin/` (`plugin.json` plus the skills),
+  generated from the `antigravity.*.md` templates and mirrored to
+  `../SeeWhatISee-antigravity/plugin/`. See `docs/antigravity-plugin.md`.
+  * Blocked on creating the `SeeWhatISee-antigravity` release repo —
+    the mirror script bails without it.
+  * README needs an "Antigravity commands" section (the same
+    commands as the other clients; the watch loop runs one
+    backgrounded script per capture, so the conversation stays
+    live) and an install section: clone the release repo, then copy or symlink its
+    `plugin/` to `~/.gemini/config/plugins/see-what-i-see/`, or a
+    workspace `.agents/plugins/`, or `agy plugin install <clone>/plugin`.
+
 * **Convert last drawn box** — a More-menu item that retargets the
   last drawn box / redaction / crop to another of those kinds, for
   when it was drawn with the wrong tool selected.

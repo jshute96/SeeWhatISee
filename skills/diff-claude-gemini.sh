@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Start diffs in `meld` of the corresponding skills for claude and gemini.
+#
+# Shorthand for the generic script; use that directly for other pairs
+# (e.g. `diff-skills-templates.sh generic antigravity`).
 
-DIR=$(dirname "$0")
-
-meld "$DIR"/{claude,gemini}.see.md &
-meld "$DIR"/{claude,gemini}.watch.md &
+exec "$(dirname "$0")/diff-skills-templates.sh" claude gemini
