@@ -176,11 +176,11 @@ test.describe('SeeWhatISee.py combined actions', () => {
     const r = run(['--stop', '--get-latest', '--directory', tmpDir]);
     expect(r.exitCode).toBe(0);
     // Stop runs first → reports nothing-to-stop (pid 999999 isn't alive).
-    expect(r.stdout).toContain('No existing watcher to stop');
+    expect(r.stdout).toContain('No watch to stop');
     // …then get-latest emits the record.
     expect(r.stdout).toContain('x.png');
-    // Order matters: the "No existing watcher" line should precede the JSON.
-    const stopIdx = r.stdout.indexOf('No existing watcher to stop');
+    // Order matters: the "No watch to stop" line should precede the JSON.
+    const stopIdx = r.stdout.indexOf('No watch to stop');
     const recordIdx = r.stdout.indexOf('x.png');
     expect(stopIdx).toBeLessThan(recordIdx);
   });
@@ -203,8 +203,8 @@ test.describe('SeeWhatISee.py combined actions', () => {
     // waiting for the next capture.
     await waitForPattern(w.output, 'before-watch.png');
     const before = w.output();
-    expect(before).toContain('No existing watcher to stop');
-    expect(before.indexOf('No existing watcher to stop'))
+    expect(before).toContain('No watch to stop');
+    expect(before.indexOf('No watch to stop'))
       .toBeLessThan(before.indexOf('before-watch.png'));
 
     // New capture wakes the poll loop; without --loop it then exits.
@@ -237,7 +237,7 @@ test.describe('SeeWhatISee.py combined actions', () => {
     ]);
 
     // --stop runs first and reports nothing-to-stop.
-    await waitForPattern(w.output, 'No existing watcher to stop');
+    await waitForPattern(w.output, 'No watch to stop');
 
     // --watch then claims the pidfile under the live process. Wait
     // for the file to exist and contain *this* process's pid.

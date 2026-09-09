@@ -76,9 +76,12 @@ POLL_SECONDS = 0.5
 # Files in the source dir that coordinate who is watching, and let the
 # extension show and stop us (see docs/watch-protocol.md).
 #
-# `.watch-status.json` is the live record of a stoppable watcher: its
-# pid, when it started, and a heartbeat. The Capture page asks us to
-# exit by dropping `watch-stop.json` beside it.
+# `.watch-status.json` is the record of a watch *session*, which
+# outlives the runs that take turns holding it: who it is
+# (`sessionStarted`), whether anyone is watching right now (`expires`),
+# the run in flight if there is one (`pid`), and what the next run of
+# the session will pass as --after (`resumeAfter`). The Capture page
+# asks us to exit by dropping `watch-stop.json` beside it.
 #
 # `.watch.pid` is the original lock — one line, the pid — and is now
 # **deprecated**, written only so older versions of this script can
@@ -92,11 +95,17 @@ PID_FILE = ".watch.pid"
 # filename outright ("Invalid filename").
 STOP_FILE = "watch-stop.json"
 
-# How often the status file's `heartbeat` is refreshed. A heartbeat
-# that has gone quiet is how the extension spots a watcher killed with
-# SIGKILL (or a machine that lost power) that never got to clean its
-# files up.
+# How often a running watcher pushes its lease out, and how far. The
+# gap between them is what a SIGKILLed watcher (or a machine that lost
+# power) advertises for before the extension stops believing it.
 HEARTBEAT_SECONDS = 30
+LIVE_LEASE_SECONDS = 90
+
+# The lease a single-shot run leaves behind when it hands the session
+# back between captures. It has to cover an agent thinking — describing
+# the capture, answering a follow-up — before it runs the script again,
+# so it is minutes rather than seconds.
+GAP_GRACE_SECONDS = 300
 
 # Exit code for "a stop was requested, and honoured", used by a
 # single-shot watcher: its caller is an agent that re-runs it once per
@@ -422,6 +431,10 @@ class Emitter:
         self.print_selection = opts.print_selection
         self.copy_to_dir = opts.copy_to_dir
         self.out_dir = opts.copy_to_dir or source_dir
+        # The timestamp of the last record emitted, which is what the
+        # agent is told to pass back as --after — so it is also what a
+        # single-shot run publishes as `resumeAfter` on its way out.
+        self.last_timestamp = None
         if opts.copy_to_dir:
             os.makedirs(opts.copy_to_dir, exist_ok=True)
 
@@ -435,6 +448,9 @@ class Emitter:
         if record is None:
             print(raw)
             return
+        stamp = record.get("timestamp")
+        if isinstance(stamp, str):
+            self.last_timestamp = stamp
         if self.copy_to_dir:
             self._copy_artifacts(record)
         self._absolutize(record)
@@ -925,19 +941,48 @@ def kill_pid(pid, request):
     return True
 
 
-def iso_now():
-    """UTC timestamp the extension's `Date.parse` reads without guessing."""
+def iso_now(precise=False):
+    """UTC timestamp the extension's `Date.parse` reads without guessing.
+
+    `precise` adds microseconds, for `sessionStarted` — it identifies a
+    session, and two watches starting in the same second must not end
+    up with the same name.
+    """
     return datetime.now(timezone.utc).isoformat(
+        timespec="microseconds" if precise else "seconds").replace(
+            "+00:00", "Z")
+
+
+def iso_in(seconds):
+    """A UTC timestamp `seconds` from now, for a lease."""
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat(
         timespec="seconds").replace("+00:00", "Z")
 
 
-def status_pid(status_path):
-    """The pid the status file names, or None if there isn't one.
+def iso_past(stamp):
+    """Whether `stamp` is a timestamp that has already gone by.
 
-    Anything else the file might hold — missing, unreadable, not JSON,
-    JSON that isn't an object, an object without a numeric `pid` — is
-    the same answer: nobody is named here. This runs on the exit path
-    of every watcher, so it must not raise.
+    Unreadable reads as past: a lease we can't understand is one we
+    won't act on.
+    """
+    if not isinstance(stamp, str):
+        return True
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed <= datetime.now(timezone.utc)
+
+
+def read_status(status_path):
+    """The status file as a dict, or None if there isn't a usable one.
+
+    Anything the file might hold that we can't act on — missing,
+    unreadable, not JSON, JSON that isn't an object, an object with no
+    session name — is the same answer: nobody is named here. This runs
+    on the exit path of every watcher, so it must not raise.
     """
     try:
         with open(status_path, encoding="utf-8") as handle:
@@ -946,29 +991,78 @@ def status_pid(status_path):
         return None
     if not isinstance(data, dict):
         return None
-    return valid_pid(data.get("pid"))
+    return data if isinstance(data.get("sessionStarted"), str) else None
 
 
-def write_status(status_path, started):
-    """Publish (or refresh) the status file the Capture page polls.
+def status_pid(status_path):
+    """The pid of the run the status file names, or None for a gap."""
+    status = read_status(status_path)
+    return valid_pid(status.get("pid")) if status else None
+
+
+def write_status(status_path, session, pid, lease_seconds, resume_after=None):
+    """Publish (or refresh) the status file the Capture page reads.
+
+    `pid` is None between two runs of a single-shot loop, where
+    `resume_after` says which --after the next run will carry.
 
     Written to a temp file and renamed into place: the page reads it on
-    a timer, and catching a half-written file would read as "no watcher
+    a timer, and catching a half-written file would read as "no watch
     is running" and flicker its Stop button away.
 
     Silent on failure — a status file we can't write costs the Capture
     page's button, never the watching itself.
     """
+    payload = {"sessionStarted": session,
+               "pid": pid,
+               "expires": iso_in(lease_seconds)}
+    if resume_after is not None:
+        payload["resumeAfter"] = resume_after
     tmp = "%s.%d.tmp" % (status_path, os.getpid())
     try:
         with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump({"pid": os.getpid(),
-                       "started": started,
-                       "heartbeat": iso_now()}, handle)
+            json.dump(payload, handle)
             handle.write("\n")
         os.replace(tmp, status_path)
     except OSError:
         remove_quietly(tmp)
+
+
+def stop_request_session(stop_path):
+    """The `sessionStarted` a pending stop request names.
+
+    None covers every way there isn't one to act on: no file,
+    unreadable, not JSON, or JSON that names no session. A request
+    nobody can be identified from is a leftover, not a puzzle — the
+    extension downloads this file atomically, so a half-written one is
+    not a state that happens.
+    """
+    try:
+        with open(stop_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    session = data.get("sessionStarted")
+    return session if isinstance(session, str) else None
+
+
+def write_stop_request(stop_path, session):
+    """Ask a session to stop when there is no run of it to signal.
+
+    The same file the Capture page's Stop button downloads, written
+    from this side for a `--stop` that lands between two runs.
+    """
+    payload = {"sessionStarted": session,
+               "requestedAt": iso_now(),
+               "pid": None}
+    try:
+        with open(stop_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+            handle.write("\n")
+    except OSError:
+        pass
 
 
 def clear_if_gone(path, named_pid, stopped_pid):
@@ -1013,12 +1107,12 @@ def clear_status_temps(source_dir):
 
 
 def clear_watch_files(source_dir, stopped_pid):
-    """Drop the files of a watcher that is gone.
+    """Drop the files of a watch that is over.
 
-    Each file is judged by the pid it names, so a racing fresh watcher
-    that has already rewritten one of them keeps it. `stopped_pid` is
-    the watcher we just stopped, or None when we never identified one —
-    then only files nothing live stands behind are cleared.
+    Each file is judged by the pid it names, so a racing fresh run that
+    has already rewritten one of them keeps it. `stopped_pid` is the
+    run we just stopped, or None when we never identified one — then
+    only files nothing live stands behind are cleared.
     """
     status_path = os.path.join(source_dir, STATUS_FILE)
     pidfile = os.path.join(source_dir, PID_FILE)
@@ -1026,62 +1120,158 @@ def clear_watch_files(source_dir, stopped_pid):
     clear_if_gone(pidfile, read_pid(pidfile), stopped_pid)
 
 
-def stop_watcher(source_dir):
-    """--stop: kill the running watcher and clear the files it leaves.
+# What --stop found, and therefore what it did about it.
+STOP_SIGNALLED = "signalled"   # a run was in flight; it has been asked to go
+STOP_QUEUED = "queued"         # between runs; the request waits for the next
+STOP_NOTHING = "nothing"       # no watch here at all
 
-    True if a live watcher was found, False if not.
+
+def stop_watcher(source_dir, queue=True):
+    """--stop: end the watch session, however much of it is running.
+
+    `queue` is False when this same invocation goes on to watch: the
+    request would then be aimed at the session we are about to adopt,
+    and we would stop ourselves on entry. Taking the slot is the stop.
     """
-    pid = watcher_pid(source_dir)
-    stopped = kill_pid(pid, STOP_SIGNAL)
-    clear_watch_files(source_dir, pid)
-    # SIGKILLing a watcher mid-write is one of the two ways an orphaned
-    # temp file appears, and this is the path that does it.
-    clear_status_temps(source_dir)
-    # Whatever the Capture page asked for, this satisfies it — and a
-    # request nobody answered must not stop the *next* watcher.
-    remove_quietly(os.path.join(source_dir, STOP_FILE))
-    return stopped
-
-
-def claim_watch_slot(source_dir, loop):
-    """Take over the watcher slot, and give it back however we exit.
-
-    `loop` is the watcher's own --loop setting, which decides the exit
-    code a stop request gets — the same split the `watch-stop.json`
-    path makes.
-
-    Returns the start timestamp to stamp the status file with.
-    """
-    pidfile = os.path.join(source_dir, PID_FILE)
     status_path = os.path.join(source_dir, STATUS_FILE)
+    stop_path = os.path.join(source_dir, STOP_FILE)
+    status = read_status(status_path)
+    pid = watcher_pid(source_dir)
+    if pid is not None and pid_alive(pid):
+        kill_pid(pid, STOP_SIGNAL)
+        clear_watch_files(source_dir, pid)
+        # SIGKILLing a run mid-write is one of the two ways an orphaned
+        # temp file appears, and this is the path that does it.
+        clear_status_temps(source_dir)
+        # Whatever the Capture page asked for, this satisfies it — and a
+        # request nobody answered must not stop the *next* watch.
+        remove_quietly(stop_path)
+        return STOP_SIGNALLED
+    # No run to signal. A session that is merely between runs is still
+    # a watch: leave a request its next run will recognize as its own.
+    #
+    # Deliberately not gated on the lease. An agent's turn can outrun
+    # the gap grace — a long tool call, a user who wandered off — and
+    # that loop is still going to come back and watch. Refusing to
+    # queue there would lose the stop, not defer it: the record would
+    # be swept below, so the next run would mint a new session and
+    # carry on watching.
+    if queue and status is not None and status.get("resumeAfter") is not None:
+        session = status["sessionStarted"]
+        write_stop_request(stop_path, session)
+        # Expire the lease rather than deleting the record: the record
+        # is the only thing that lets the next run know the request is
+        # aimed at it, but the Capture page must stop showing a watch
+        # now, not when the gap lease would have run out.
+        write_status(status_path, session, None, 0, status["resumeAfter"])
+        # The status file is the session's, but the pidfile is a run's,
+        # and no run is here — so a leftover one is nobody's.
+        clear_if_gone(os.path.join(source_dir, PID_FILE),
+                      read_pid(os.path.join(source_dir, PID_FILE)), None)
+        clear_status_temps(source_dir)
+        return STOP_QUEUED
+    clear_watch_files(source_dir, pid)
+    clear_status_temps(source_dir)
+    remove_quietly(stop_path)
+    return STOP_NOTHING
+
+
+def adopted_session(status, after):
+    """The session this run continues, or None to start a new one.
+
+    The proof is `resumeAfter`: the previous run of a session recorded
+    the timestamp it emitted, which is exactly what the agent is told
+    to pass back as --after. Matching it is what distinguishes the next
+    iteration of a loop from an unrelated watch starting in the gap —
+    and it is what makes a stop request left in that gap identifiable
+    as this session's.
+    """
+    if status is None or after is None:
+        return None
+    return (status["sessionStarted"]
+            if status.get("resumeAfter") == after else None)
+
+
+class WatchSlot:
+    """This run's hold on the watch slot, and how it gives it back.
+
+    A slot belongs to a *session*, which outlives the runs of a
+    single-shot loop. A run ends one of two ways: `hand_back` (another
+    run of this session is expected, so the session stays published
+    with a gap lease) or `release` (the session is over, so its files
+    go with it).
+    """
+
+    def __init__(self, source_dir, session):
+        # The session's `sessionStarted`, which is both when it began
+        # and what names it — in the status file, and in a stop request
+        # aimed at it.
+        self.session = session
+        self.status_path = os.path.join(source_dir, STATUS_FILE)
+        self.pidfile = os.path.join(source_dir, PID_FILE)
+
+    def _still_ours(self):
+        """Whether the status file still names this run of this session.
+
+        False means another run has taken the slot, and neither leasing
+        nor deleting is ours to do any more.
+        """
+        status = read_status(self.status_path)
+        return (status is not None
+                and status.get("sessionStarted") == self.session
+                and valid_pid(status.get("pid")) == os.getpid())
+
+    def beat(self):
+        """Push the lease out, from the poll loop."""
+        write_status(self.status_path, self.session, os.getpid(),
+                     LIVE_LEASE_SECONDS)
+
+    def hand_back(self, resume_after):
+        """End this run, leaving the session for the next one."""
+        if read_pid(self.pidfile) == os.getpid():
+            remove_quietly(self.pidfile)
+        if self._still_ours():
+            write_status(self.status_path, self.session, None,
+                         GAP_GRACE_SECONDS, resume_after)
+
+    def release(self, *_args):
+        """End the session: drop everything that stands for it."""
+        if read_pid(self.pidfile) == os.getpid():
+            remove_quietly(self.pidfile)
+        if self._still_ours():
+            remove_quietly(self.status_path)
+
+
+def claim_watch_slot(opts, source_dir):
+    """Take the watch slot, and arrange to give it back however we exit.
+
+    `opts.after` decides whether this run continues the published
+    session or starts a new one; see `adopted_session`.
+    """
+    status_path = os.path.join(source_dir, STATUS_FILE)
+    status = read_status(status_path)
+    session = adopted_session(status, opts.after) or iso_now(precise=True)
+    # Displace whatever is still running — including a run of the
+    # session we just adopted, which means the previous one never
+    # exited. Adopting a session is not permission to share it with a
+    # second process.
     previous = watcher_pid(source_dir)
     kill_pid(previous, TAKEOVER_SIGNAL)
-    clear_watch_files(source_dir, previous)
     # `write_status` unlinks its own temp file when the write fails,
-    # but a watcher killed mid-write leaves one behind for good. We
-    # have just stopped whoever held the slot, so any that remain are
+    # but a run killed mid-write leaves one behind for good. We have
+    # just stopped whoever held the slot, so any that remain are
     # nobody's.
     clear_status_temps(source_dir)
-    # Any stop request predates us, so it was never aimed at us.
-    remove_quietly(os.path.join(source_dir, STOP_FILE))
+    slot = WatchSlot(source_dir, session)
     # Pidfile before status file, deliberately: an older --stop reads
     # only the pidfile, so that is the one that must never be missing
     # while we hold the slot.
-    with open(pidfile, "w", encoding="utf-8") as handle:
+    with open(slot.pidfile, "w", encoding="utf-8") as handle:
         handle.write("%d\n" % os.getpid())
-    started = iso_now()
-    write_status(status_path, started)
-
-    def release(*_args):
-        # Only remove if they still name us; another instance may have
-        # overwritten them in a race.
-        if read_pid(pidfile) == os.getpid():
-            remove_quietly(pidfile)
-        if status_pid(status_path) == os.getpid():
-            remove_quietly(status_path)
+    slot.beat()
 
     def terminate(*_args):
-        release()
+        slot.release()
         # 143 = 128 + SIGTERM, the shell's convention, which the skills
         # and their tests already expect from the previous bash version.
         os._exit(143)
@@ -1090,22 +1280,24 @@ def claim_watch_slot(source_dir, loop):
         # A stop asked for by another copy of this script, so it gets
         # the clean exit a `watch-stop.json` request gets, not a
         # signalled 143 the agent would read as a crash.
-        release()
+        slot.release()
         print("Stopping: %s" % ("replaced by a new watcher"
                                 if signum == TAKEOVER_SIGNAL
                                 else "stop requested"), file=sys.stderr)
         sys.stderr.flush()
         # `os._exit`, like `terminate`: the handler can land mid-write
         # of the status temp file, and `release` has already run.
-        os._exit(0 if loop else EXIT_STOPPED)
+        os._exit(0 if opts.loop else EXIT_STOPPED)
 
     import atexit
-    atexit.register(release)
+    # An exit nobody explained ends the session: a run that died is one
+    # the agent is told not to re-invoke.
+    atexit.register(slot.release)
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
     signal.signal(STOP_SIGNAL, requested_stop)
     signal.signal(TAKEOVER_SIGNAL, requested_stop)
-    return started
+    return slot
 
 
 def log_mtime(log_path):
@@ -1197,14 +1389,40 @@ def watch(opts, emitter, source_dir, log_path):
     except OSError:
         die("Error: cannot create watch directory: %s" % source_dir)
 
-    # The stop protocol rides on the pid lock: only a watcher that
-    # claimed the slot publishes a status file, and only that watcher
-    # answers a stop request.
-    status_path = os.path.join(source_dir, STATUS_FILE)
+    # The stop protocol rides on the pid lock: only a run that claimed
+    # the slot publishes a session, and only that run answers a stop
+    # request.
     stop_path = os.path.join(source_dir, STOP_FILE)
-    started = (claim_watch_slot(source_dir, opts.loop)
-               if opts.pid_lockfile else None)
+    slot = claim_watch_slot(opts, source_dir) if opts.pid_lockfile else None
     last_beat = time.monotonic()
+
+    def stopped(reason):
+        """Answer a stop request: the session ends here."""
+        remove_quietly(stop_path)
+        slot.release()
+        # On stderr, not stdout: stdout is the record stream.
+        print("Stopping: %s" % reason, file=sys.stderr)
+        # A single-shot run is one iteration of a loop the agent
+        # re-runs, so exiting 0 with nothing on stdout would just start
+        # the next one.
+        if not opts.loop:
+            sys.exit(EXIT_STOPPED)
+
+    def hand_back():
+        """End a single-shot run with the session left for the next."""
+        if slot is not None:
+            slot.hand_back(emitter.last_timestamp)
+
+    # A request already on disk when we start is either this session's
+    # — written while it was between runs — or a leftover from a watch
+    # that is over. The first stops us before we ever wait for a
+    # capture; the second is swept, including one naming no session at
+    # all, which nobody can ever act on.
+    if slot is not None:
+        if stop_request_session(stop_path) == slot.session:
+            stopped("stop requested from the extension")
+            return
+        remove_quietly(stop_path)
 
     # Don't emit the current contents on poll-loop entry — only changes
     # from this point. (--get-latest already handled "current".)
@@ -1217,27 +1435,25 @@ def watch(opts, emitter, source_dir, log_path):
     cursor = lines[-1] if lines else None
 
     if opts.after is not None and catch_up(opts, emitter, log_path, lines):
+        hand_back()
         return
 
     while True:
-        if started is not None:
-            if os.path.exists(stop_path):
-                # The Capture page's Stop button. Take the request with
-                # us; the atexit release deletes the pid and status files.
-                # On stderr, not stdout: stdout is the record stream.
-                remove_quietly(stop_path)
-                print("Stopping: stop requested from the extension",
-                      file=sys.stderr)
-                # A single-shot run is one iteration of a loop the agent
-                # re-runs, so exiting 0 with nothing on stdout would
-                # just start the next one.
-                if not opts.loop:
-                    sys.exit(EXIT_STOPPED)
+        if slot is not None:
+            stop_target = stop_request_session(stop_path)
+            if stop_target == slot.session:
+                # The Capture page's Stop button, or a `--stop` that
+                # found this session between runs.
+                stopped("stop requested from the extension")
                 return
+            if stop_target is not None:
+                # A leftover aimed at a watch that is over. Nobody else
+                # can answer it, so clearing it is ours to do.
+                remove_quietly(stop_path)
             now = time.monotonic()
             if now - last_beat >= HEARTBEAT_SECONDS:
                 last_beat = now
-                write_status(status_path, started)
+                slot.beat()
 
         current = log_mtime(log_path)
         if current is not None and current != last_mtime:
@@ -1262,6 +1478,12 @@ def watch(opts, emitter, source_dir, log_path):
                     cursor = line
                 emitter.emit(record, raw=line)
                 if not opts.loop:
+                    # Only a record that parsed can be handed on: its
+                    # timestamp is what the next run passes as --after,
+                    # and publishing a stale one (or none) would leave
+                    # a session nothing can adopt.
+                    if record is not None:
+                        hand_back()
                     return
         time.sleep(POLL_SECONDS)
 
@@ -1302,10 +1524,14 @@ def main(argv):
     emitter = Emitter(opts, source_dir)
 
     if opts.stop:
-        if stop_watcher(source_dir):
+        result = stop_watcher(source_dir, queue=not opts.watch)
+        if result == STOP_SIGNALLED:
             print("Stopping existing watcher on %s" % source_dir)
+        elif result == STOP_QUEUED:
+            print("The watch on %s will stop when the agent next runs it"
+                  % source_dir)
         else:
-            print("No existing watcher to stop")
+            print("No watch to stop")
 
     if opts.get_latest:
         get_latest(opts, emitter, log_path)

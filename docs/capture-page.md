@@ -488,7 +488,8 @@ as the prompt textarea:
 
 The tail of the button row, after the Ask buttons: a *Watcher
 running* label and a power-symbol Stop button, boxed together, shown
-only while a stoppable watch script is running.
+while a stoppable watch session is live — including the gaps between
+the runs of a single-shot agent loop.
 
 - The box uses the same panel chrome as the captured-page card
   (`--panel-bg` / `--panel-border`), so it reads as a grouped state
@@ -497,11 +498,17 @@ only while a stoppable watch script is running.
   Stop button inside is sized down instead.
 - The label carries a tooltip saying what a watcher is and that
   `/see-what-i-see-watch` starts one; the button's says what it stops.
-- Hidden whenever no watcher is visible, which is also the whole
-  success story for Stop — the watcher exits, its status file goes
-  with it, and the block disappears with no message.
-- A stop that doesn't take effect within 5s reports `Failed to stop
-  watch script` in the status line above, leaving the block up.
+- Hidden whenever no watch is visible, which is also the whole success
+  story for Stop — the session record goes, and the block disappears
+  with no message.
+- A single-shot loop between two captures still counts as running: the
+  session is published with a lease across that gap, so the indicator
+  stays put instead of blinking out while the agent works.
+- Stopping such a gap hides the block at once — the request waits on
+  disk for the loop's next run, and nobody is there to answer sooner.
+- A stop aimed at a *running* watcher that doesn't take effect within
+  5s reports `Failed to stop watch script` in the status line above,
+  leaving the block up.
 - Needs "Allow access to file URLs"; without it nothing is ever shown.
 - Showing or hiding the block can wrap the row, so both re-fit the
   image — see § Vertical layout contract.

@@ -1,19 +1,25 @@
-// Capture-page "a watch script is running" indicator and its Stop
-// button — the UI half of `src/capture/watch-status.ts`.
+// Capture-page "a watch is running" indicator and its Stop button —
+// the UI half of `src/capture/watch-status.ts`.
 //
 // It sits at the right end of `.button-row`, after the Ask buttons,
-// and is hidden whenever no watcher is visible. That is the whole
-// success story for Stop as well: the watcher exits, the status file
-// goes with it, and the block disappears. Nothing is announced —
-// stopping something you asked to stop needs no confirmation.
+// and is hidden whenever no watch is visible. That is the whole
+// success story for Stop as well: the session record goes (or the
+// request we just wrote makes it read as over), and the block
+// disappears. Nothing is announced — stopping something you asked to
+// stop needs no confirmation.
+//
+// What is shown is a *session*, which spans the gaps between the runs
+// of a single-shot agent loop, so "no run in flight" is not "no
+// watch". See `docs/watch-protocol.md`.
 //
 // State is re-read on load and whenever the page is brought back to
-// the front, not on a timer: a watcher starts or stops in another
+// the front, not on a timer: a watch starts or stops in another
 // window, and the moment the user looks at this page again is when the
 // answer has to be right.
 
 import {
   type WatchStatus,
+  readPublishedSession,
   readWatchStatus,
   requestWatchStop,
 } from '../capture/watch-status.js';
@@ -32,7 +38,7 @@ export interface WatchStatusCtx {
 /** Shortest gap between refreshes, so alt-tabbing doesn't spam reads. */
 const REFRESH_THROTTLE_MS = 2_000;
 
-/** How long the watcher gets to notice `watch-stop.json` and exit. */
+/** How long a *running* watcher gets to notice `watch-stop.json` and exit. */
 const STOP_TIMEOUT_MS = 5_000;
 
 /** How often we re-check for the status file while waiting on a stop. */
@@ -96,18 +102,35 @@ export function initWatchStatus(ctx: WatchStatusCtx): void {
     ctx.stopBtn.disabled = true;
     try {
       await requestWatchStop(target);
+      // No run in flight: the session is between two iterations of an
+      // agent loop, and the request waits on disk for the next one.
+      // Nobody can answer within a timeout, and the watch is over as
+      // far as the user is concerned, so say so now.
+      if (target.pid === null) {
+        show(null);
+        return;
+      }
       const deadline = Date.now() + STOP_TIMEOUT_MS;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, STOP_POLL_MS));
-        if ((await readWatchStatus()) === null) {
+        // The published record, not `readWatchStatus`: that one now
+        // reads our own pending request as "no watch", which would
+        // report success the moment we asked for it.
+        const published = await readPublishedSession();
+        // Gone, replaced, or handed on between runs — the last of
+        // those is a click that landed while the run was emitting its
+        // capture, and the request is waiting for the next run.
+        if (published === null
+            || published.pid === null
+            || published.sessionStarted !== target.sessionStarted) {
           show(null);
           return;
         }
       }
-      // Either nothing was listening (a watcher killed in a way that
-      // left its files behind, its heartbeat not yet stale) or it is
-      // wedged. Leave the block up: it still reflects what we can see,
-      // and the user can try again or stop it from their agent.
+      // Either nothing was listening (a run killed in a way that left
+      // its files behind, its lease not yet expired) or it is wedged.
+      // Leave the block up: it still reflects what we can see, and the
+      // user can try again or stop it from their agent.
       reportFailure();
     } catch (err) {
       console.info('[SeeWhatISee] watch stop request failed:', err);

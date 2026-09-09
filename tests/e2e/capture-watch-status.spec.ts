@@ -14,10 +14,23 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/extension';
 import { findCapturedDownload, openDetailsFlow } from './details-helpers';
 
-/** The status file a live watcher would be publishing right now. */
-function liveStatus(pid: number): string {
-  const now = new Date().toISOString();
-  return `${JSON.stringify({ pid, started: now, heartbeat: now })}\n`;
+/** The status file a live run of a watch session would be publishing. */
+function liveStatus(pid: number, session = new Date().toISOString()): string {
+  const expires = new Date(Date.now() + 90_000).toISOString();
+  return `${JSON.stringify({ sessionStarted: session, pid, expires })}\n`;
+}
+
+/**
+ * The status file a single-shot loop leaves while the agent works
+ * through the capture it was just handed: no run in flight, a long
+ * lease, and the `--after` its next run will carry.
+ */
+function gapStatus(session: string): string {
+  const expires = new Date(Date.now() + 300_000).toISOString();
+  return `${JSON.stringify({
+    sessionStarted: session, pid: null, expires,
+    resumeAfter: '2026-08-30T11:59:00.000Z',
+  })}\n`;
 }
 
 /**
@@ -54,6 +67,7 @@ test('shows a running watch script, and its Stop button stops it', async ({
   const sw = await getServiceWorker();
   const dir = path.dirname(await findCapturedDownload(sw, 'log.json'));
   const statusFile = path.join(dir, '.watch-status.json');
+  const SESSION = '2026-08-30T12:00:00.123456Z';
   const stopFile = path.join(dir, 'watch-stop.json');
   fs.rmSync(stopFile, { force: true });
 
@@ -70,7 +84,7 @@ test('shows a running watch script, and its Stop button stops it', async ({
     // Nothing running: no indicator, and nothing to stop.
     await expect(capturePage.locator('#watch-status')).toBeHidden();
 
-    fs.writeFileSync(statusFile, liveStatus(424242));
+    fs.writeFileSync(statusFile, liveStatus(424242, SESSION));
     await waitForWatchBlock(capturePage, true);
     // The row's tail, after the Ask buttons, with the Stop button
     // grouped inside the box rather than loose in the row.
@@ -96,8 +110,11 @@ test('shows a running watch script, and its Stop button stops it', async ({
     // slower than that, the page would already have reported failure
     // and the assertions below would fail for a confusing reason.
     await expect.poll(() => fs.existsSync(stopFile), { timeout: 3_000 }).toBe(true);
-    // The request names the watcher it was aimed at.
-    expect(JSON.parse(fs.readFileSync(stopFile, 'utf8')).pid).toBe(424242);
+    // The request names the session it was aimed at, which is what a
+    // run compares against to know the request is its own.
+    const request = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
+    expect(request.pid).toBe(424242);
+    expect(request.sessionStarted).toBe(SESSION);
 
     // The watcher answering: it clears both files on its way out, and
     // the indicator goes with them — silently, no status message.
@@ -118,7 +135,24 @@ test('shows a running watch script, and its Stop button stops it', async ({
     // The complaint doesn't outlive its subject: once the watcher is
     // gone, the status line clears itself.
     fs.rmSync(statusFile);
+    fs.rmSync(stopFile, { force: true });
     await waitForWatchBlock(capturePage, false);
+    await expect(capturePage.locator('#ask-status')).toHaveText('');
+
+    // A single-shot loop between two captures is still a watch: the
+    // indicator stays up with no run in flight, and Stop leaves a
+    // request for the next run rather than waiting for an answer
+    // nobody is there to give.
+    const gapSession = '2026-08-30T11:00:00.123456Z';
+    fs.writeFileSync(statusFile, gapStatus(gapSession));
+    await waitForWatchBlock(capturePage, true);
+    await capturePage.locator('#watch-stop-btn').click();
+    await expect.poll(() => fs.existsSync(stopFile), { timeout: 3_000 }).toBe(true);
+    expect(JSON.parse(fs.readFileSync(stopFile, 'utf8')).sessionStarted)
+      .toBe(gapSession);
+    // No "Failed to stop", and the indicator goes at once — the watch
+    // is over as far as the user is concerned.
+    await expect(capturePage.locator('#watch-status')).toBeHidden({ timeout: 10_000 });
     await expect(capturePage.locator('#ask-status')).toHaveText('');
   } finally {
     fs.rmSync(statusFile, { force: true });

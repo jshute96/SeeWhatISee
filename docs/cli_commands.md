@@ -151,11 +151,14 @@ field on the record. See
   per invocation (unlike Claude's multi-record default), because the
   agent processes one record per tool call. Multiple pending
   captures are drained by successive iterations.
-- `--pid-lockfile` covers each iteration while it blocks, which is
-  nearly all of the loop's life: the watch shows up on the Capture
-  page and can be stopped from there or with `/see-what-i-see-stop`.
-  Between two iterations nobody is running and nothing is published —
-  see [watch-protocol.md](watch-protocol.md).
+- `--pid-lockfile` publishes the watch *session*, which spans the gaps
+  between iterations as well as the iterations themselves: it shows up
+  on the Capture page and can be stopped from there or with
+  `/see-what-i-see-stop` even while the agent is busy with the capture
+  it was just handed. A stop landing in a gap is answered by the next
+  iteration, on entry — see [watch-protocol.md](watch-protocol.md).
+- The gap stays published for 5 minutes, which is how long an agent's
+  turn may take before the watch stops advertising itself.
 - A stopped iteration exits non-zero — 3 when the stop was asked for
   (Capture page, `--stop`, or a replacement watcher), something else
   when it was killed or errored — and the skill tells the agent not to
@@ -401,13 +404,15 @@ the candidates.
 
 - Calls the bundle's `see-what-i-see-stop/scripts/stop.sh`,
   a thin wrapper that `exec`s `SeeWhatISee.py --stop`. The unified
-  script resolves the watch directory the same way the watcher does,
-  kills the pid named by `$DIR/.watch-status.json` (falling back to the
+  script resolves the watch directory the same way the watcher does and
+  ends the watch *session* named by `$DIR/.watch-status.json`: it
+  signals the run in flight if there is one (falling back to the
   deprecated `$DIR/.watch.pid` for a watcher an older version started),
-  and clears all three files of the
-  [watch protocol](watch-protocol.md). (`watch.sh --stop`
-  reaches the same backend code path, since the watch wrapper
-  forwards arbitrary flags through.)
+  and otherwise — between two runs of a single-shot loop — leaves a
+  stop request the session's next run answers on entry. Either way it
+  clears the files of the [watch protocol](watch-protocol.md).
+  (`watch.sh --stop` reaches the same backend code path, since the
+  watch wrapper forwards arbitrary flags through.)
 - Present in every bundle. On the single-shot loops (Gemini,
   Antigravity) it stops the iteration a `/see-what-i-see-watch` loop is
   currently waiting in; that iteration's non-zero exit is what stops the

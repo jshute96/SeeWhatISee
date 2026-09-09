@@ -136,6 +136,10 @@ What it costs:
   * README's Gemini section needs the new command, and its
     `settings.json` allow-list needs
     `.../skills/see-what-i-see-stop/scripts/stop.sh`.
+  * The watch now stays visible and stoppable *between* captures too,
+    while the agent works through the one it was just handed — so the
+    README wording shouldn't tie the indicator to "a script is
+    blocked right now".
 
 * **Google Antigravity plugin** — a fourth client bundle at
   `skills/antigravity-plugin/` (`plugin.json` plus the skills),

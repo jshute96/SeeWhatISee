@@ -2,10 +2,16 @@
 //
 // A `/see-what-i-see-watch` loop (`SeeWhatISee.py --watch
 // --pid-lockfile`) publishes `.watch-status.json` in the capture
-// directory while it runs, and exits when a `watch-stop.json` file
-// appears beside it. This module reads the first and writes the
-// second; the Capture page's UI on top of it lives in
-// `src/capture-page/watch-status.ts`. See `docs/watch-protocol.md`.
+// directory, and exits when a `watch-stop.json` file appears beside
+// it. This module reads the first and writes the second; the Capture
+// page's UI on top of it lives in `src/capture-page/watch-status.ts`.
+// See `docs/watch-protocol.md`.
+//
+// The status file describes a watch *session*, not a process. A
+// single-shot loop is a series of runs with gaps between them — the
+// agent describing the capture it was just handed — and the session
+// stays published across those gaps, leased. So there is no "is a
+// process alive" question here: `expires` is the whole test.
 //
 // Two deliberate limits:
 //
@@ -28,7 +34,10 @@ import {
   waitForDownloadComplete,
 } from './downloads.js';
 
-/** Published by a running watcher; absent when none is running. */
+/**
+ * The watch session: published across the gaps between runs, and left
+ * behind with a spent lease once the watch is over.
+ */
 export const WATCH_STATUS_FILE = '.watch-status.json';
 
 /**
@@ -40,39 +49,71 @@ export const WATCH_STATUS_FILE = '.watch-status.json';
  */
 export const WATCH_STOP_FILE = 'watch-stop.json';
 
-/**
- * How long a `heartbeat` may go quiet before we stop believing it.
- * The script refreshes it every 30s, so this is three missed beats —
- * long enough to ride out a busy machine, short enough that the files
- * a SIGKILLed watcher stranded don't advertise it for long.
- */
-const HEARTBEAT_STALE_MS = 90_000;
-
-/** What `.watch-status.json` says about the running watcher. */
+/** What `.watch-status.json` says about the watch session. */
 export interface WatchStatus {
-  pid: number;
-  /** ISO 8601 (UTC) instant the watcher claimed the slot. */
-  started: string;
+  /**
+   * ISO 8601 (UTC) instant the session began — and its identity. Sent
+   * back verbatim in a stop request, never re-parsed and re-serialized:
+   * `Date` would truncate the microseconds the script writes.
+   */
+  sessionStarted: string;
+  /** The run in flight, or `null` between two runs of a loop. */
+  pid: number | null;
 }
 
 /**
- * The running watcher, or `null` if there isn't one we can see.
+ * The watch to show, or `null` if there isn't one we can see.
  *
  * `null` folds together every "no" — file reads off, directory
- * unknown, no status file, unreadable or unparseable contents, a
- * heartbeat that has gone quiet — because the caller does the same
- * thing with all of them: show nothing.
+ * unknown, no status file, unreadable or unparseable contents, a lease
+ * that has run out, a stop already requested — because the caller does
+ * the same thing with all of them: show nothing.
  *
  * `peekCaptureDirectory` rather than `getCaptureDirectory`: this runs
- * on a timer, and a passive check must never write a probe file to
- * find out where to look.
+ * whenever the page comes back to the front, and a passive check must
+ * never write a probe file to find out where to look.
  */
 export async function readWatchStatus(): Promise<WatchStatus | null> {
+  const status = await readPublishedSession();
+  if (status === null) return null;
+  // A request naming this session means the watch is over, however
+  // much of its lease is left: it is either being answered by the run
+  // in flight, or waiting on disk for the next one. Either way there
+  // is nothing left to offer a Stop button for.
+  return (await readStopRequestSession()) === status.sessionStarted
+    ? null
+    : status;
+}
+
+/**
+ * The session the status file publishes, ignoring any stop request.
+ *
+ * `readWatchStatus` is the question the UI asks ("is there a watch to
+ * show?"); this is the narrower one a stop needs ("is the record still
+ * there?"), where a request we just wrote must not count as an answer.
+ */
+export async function readPublishedSession(): Promise<WatchStatus | null> {
   if (!(await canReadFiles())) return null;
   const directory = await peekCaptureDirectory();
   if (!directory) return null;
   const text = await readCaptureFileText(directory, WATCH_STATUS_FILE);
   return text === null ? null : parseWatchStatus(text, Date.now());
+}
+
+/** The session a pending stop request names, or `null` if there is none. */
+async function readStopRequestSession(): Promise<string | null> {
+  const directory = await peekCaptureDirectory();
+  if (!directory) return null;
+  const text = await readCaptureFileText(directory, WATCH_STOP_FILE);
+  if (text === null) return null;
+  try {
+    const data: unknown = JSON.parse(text);
+    if (!data || typeof data !== 'object') return null;
+    const { sessionStarted } = data as Record<string, unknown>;
+    return typeof sessionStarted === 'string' ? sessionStarted : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -94,30 +135,33 @@ export function parseWatchStatus(text: string, now: number): WatchStatus | null 
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const { pid, started, heartbeat } = data as Record<string, unknown>;
-  if (typeof pid !== 'number' || typeof started !== 'string') return null;
-  // An unparseable or missing heartbeat reads as stale, not as fresh:
-  // the Stop button is only worth offering when we can tell someone is
-  // still there to answer it.
-  const beat = typeof heartbeat === 'string' ? Date.parse(heartbeat) : NaN;
-  if (!(now - beat < HEARTBEAT_STALE_MS)) return null;
-  return { pid, started };
+  const { sessionStarted, pid, expires } = data as Record<string, unknown>;
+  if (typeof sessionStarted !== 'string') return null;
+  // A lease we can't read has expired, not "hasn't yet": the Stop
+  // button is only worth offering for a watch we believe is there.
+  const deadline = typeof expires === 'string' ? Date.parse(expires) : NaN;
+  if (!(deadline > now)) return null;
+  // `pid` is absent between two runs of a single-shot loop. Anything
+  // that isn't a number is that gap as far as we're concerned — we
+  // only ever pass it back for diagnostics.
+  return { sessionStarted, pid: typeof pid === 'number' ? pid : null };
 }
 
 /**
- * Ask the running watcher to exit, by downloading `watch-stop.json`
- * into the capture directory.
+ * Ask a watch session to end, by downloading `watch-stop.json` into
+ * the capture directory.
  *
- * The contents say which watcher we meant — the script ignores them
- * today (any stop request is for whoever is watching now, and it
- * clears requests that predate it), but a stale request is far easier
- * to explain when the file says what it was aimed at.
+ * `sessionStarted` is the part the script acts on: a run honors a
+ * request naming the session it belongs to and deletes one naming any
+ * other. That is what lets a click land while no run is in flight —
+ * the next run of the session finds the request and stops on entry
+ * instead of waiting for a capture.
  */
 export async function requestWatchStop(status: WatchStatus): Promise<void> {
   const payload = `${JSON.stringify({
-    pid: status.pid,
-    started: status.started,
+    sessionStarted: status.sessionStarted,
     requestedAt: new Date().toISOString(),
+    pid: status.pid,
   })}\n`;
   const id = await downloadArtifact(
     WATCH_STOP_FILE,

@@ -13,10 +13,11 @@
 # read (see ../../see-what-i-see/scripts/copy-last-snapshot.sh for
 # the why).
 #
-# --pid-lockfile makes each blocked iteration visible to the
+# --pid-lockfile publishes the watch session, making it visible to the
 # extension's Capture page and stoppable — from there, or with
-# /see-what-i-see-stop. Stopped that way the run exits non-zero, which
-# is the loop's signal not to run again.
+# /see-what-i-see-stop — between two iterations as well as during one.
+# Stopped that way the run exits non-zero, which is the loop's signal
+# not to run again.
 
 set -euo pipefail
 

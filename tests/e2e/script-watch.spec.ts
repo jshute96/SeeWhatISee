@@ -877,7 +877,7 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
 
   test('--stop with no watcher reports nothing to stop', () => {
     const stop = runAction(['--stop', '--directory', tmpDir]);
-    expect(stop.stdout).toContain('No existing watcher to stop');
+    expect(stop.stdout).toContain('No watch to stop');
   });
 });
 
@@ -889,18 +889,29 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
 test.describe('SeeWhatISee.py --watch stop protocol', () => {
   test.setTimeout(30_000);
 
+  interface Status {
+    sessionStarted: string;
+    pid: number | null;
+    expires: string;
+    resumeAfter?: string;
+  }
+
   /** Read `.watch-status.json`, or null if there isn't one. */
-  function readStatus(): { pid: number; started: string; heartbeat: string } | null {
+  function readStatus(): Status | null {
     const file = path.join(tmpDir, '.watch-status.json');
     if (!fs.existsSync(file)) return null;
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   }
 
-  /** Write the file the Capture page's Stop button downloads. */
-  function requestStop(): void {
+  /**
+   * Write the file the Capture page's Stop button downloads, aimed at
+   * the session currently published (which is what the page does: it
+   * copies the id out of the status file it just read).
+   */
+  function requestStop(session = readStatus()?.sessionStarted): void {
     fs.writeFileSync(
       path.join(tmpDir, 'watch-stop.json'),
-      JSON.stringify({ pid: 0, requestedAt: new Date().toISOString() }) + '\n',
+      JSON.stringify({ sessionStarted: session, requestedAt: new Date().toISOString() }) + '\n',
     );
   }
 
@@ -911,9 +922,10 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     const status = readStatus();
     expect(status?.pid).toBe(watch.proc.pid);
     // Both stamps are ISO 8601 in UTC, which is what the extension's
-    // `Date.parse` freshness check assumes.
-    expect(Date.parse(status!.started)).toBeGreaterThan(0);
-    expect(Date.parse(status!.heartbeat)).toBeGreaterThan(0);
+    // `Date.parse` freshness check assumes, and the lease is still
+    // running.
+    expect(Date.parse(status!.sessionStarted)).toBeGreaterThan(0);
+    expect(Date.parse(status!.expires)).toBeGreaterThan(Date.now());
 
     watch.kill();
     await waitForExit(watch.proc, 3_000);
@@ -1017,9 +1029,14 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
   });
 
   test('a leftover stop file does not stop the next watcher', async () => {
-    // Nobody answered this one — the watcher it was aimed at was
-    // already gone by the time it landed.
-    requestStop();
+    // Nobody answered this one — the watch it was aimed at was already
+    // over by the time it landed. A request naming no session at all
+    // (an older extension, or one caught mid-write) is the same kind
+    // of leftover: unanswerable, so swept rather than obeyed.
+    fs.writeFileSync(
+      path.join(tmpDir, 'watch-stop.json'),
+      JSON.stringify({ requestedAt: new Date().toISOString() }) + '\n',
+    );
 
     const watch = startWatch(['--directory', tmpDir]);
     await new Promise((r) => setTimeout(r, 1_000));
@@ -1110,7 +1127,7 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     const sleeper = spawn('sleep', ['300'], { stdio: 'ignore' });
     fs.writeFileSync(
       path.join(tmpDir, '.watch-status.json'),
-      JSON.stringify({ pid: 999999999, started: 'x', heartbeat: 'x' }) + '\n',
+      JSON.stringify({ sessionStarted: 'x', pid: 999999999, expires: 'x' }) + '\n',
     );
     fs.writeFileSync(path.join(tmpDir, '.watch.pid'), `${sleeper.pid}\n`);
 
@@ -1130,13 +1147,13 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     // never reach it. This test would kill its own runner if it did.
     fs.writeFileSync(
       path.join(tmpDir, '.watch-status.json'),
-      JSON.stringify({ pid: 0, started: 'x', heartbeat: 'x' }) + '\n',
+      JSON.stringify({ sessionStarted: 'x', pid: 0, expires: 'x' }) + '\n',
     );
     fs.writeFileSync(path.join(tmpDir, '.watch.pid'), '0\n');
 
     const stop = runAction(['--stop', '--directory', tmpDir]);
     expect(stop.exitCode).toBe(0);
-    expect(stop.stdout).toContain('No existing watcher to stop');
+    expect(stop.stdout).toContain('No watch to stop');
     expect(readStatus()).toBeNull();
     expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
   });
@@ -1160,15 +1177,177 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
     fs.writeFileSync(path.join(tmpDir, '.watch.pid'), '999999999\n');
     fs.writeFileSync(
       path.join(tmpDir, '.watch-status.json'),
-      JSON.stringify({ pid: 999999999, started: 'x', heartbeat: 'x' }) + '\n',
+      JSON.stringify({ sessionStarted: 'x', pid: 999999999, expires: 'x' }) + '\n',
     );
     requestStop();
 
     const stop = runAction(['--stop', '--directory', tmpDir]);
-    expect(stop.stdout).toContain('No existing watcher to stop');
+    expect(stop.stdout).toContain('No watch to stop');
     expect(readStatus()).toBeNull();
     expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  // ---- The gap between two runs of a single-shot loop ---------------------
+  //
+  // The agent's turn: it has a record to describe, and no run of the
+  // script is alive. The session stays published across it, leased,
+  // which is what keeps the watch visible and stoppable. See
+  // docs/watch-protocol.md.
+
+  test('a single-shot run hands the session on instead of ending it', async () => {
+    const watch = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const session = readStatus()?.sessionStarted;
+    expect(session).toBeTruthy();
+
+    const capture = simulateCapture(tmpDir, 1);
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+
+    // Same session, no run in flight, and the --after the next run is
+    // expected to carry.
+    const gap = readStatus();
+    expect(gap?.sessionStarted).toBe(session);
+    expect(gap?.pid).toBeNull();
+    expect(gap?.resumeAfter).toBe(capture.timestamp);
+    expect(Date.parse(gap!.expires)).toBeGreaterThan(Date.now());
+    // The pidfile is the run's, not the session's.
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+  });
+
+  test('the next run of the loop resumes the same session', async () => {
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const session = readStatus()?.sessionStarted;
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+
+    const next = startWatch(['--catch-up-one', '--after', capture.timestamp,
+                             '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(readStatus()?.sessionStarted).toBe(session);
+    expect(readStatus()?.pid).toBe(next.proc.pid);
+
+    next.kill();
+    await waitForExit(next.proc, 3_000);
+  });
+
+  test('a watch started fresh in the gap is a new session', async () => {
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const session = readStatus()?.sessionStarted;
+    simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+
+    // No --after: this is a user starting a watch, not the loop coming
+    // back for its next capture.
+    const fresh = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(readStatus()?.sessionStarted).not.toBe(session);
+
+    fresh.kill();
+    await waitForExit(fresh.proc, 3_000);
+  });
+
+  test('a stop clicked in the gap stops the next run on entry', async () => {
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+
+    // The Capture page's button, landing while the agent is busy.
+    requestStop();
+
+    // No capture is simulated: the run must not wait for one.
+    const next = runWatch(['--catch-up-one', '--after', capture.timestamp,
+                           '--directory', tmpDir]);
+    expect(next.exitCode).toBe(3);
+    expect(next.stderr).toContain('stop requested from the extension');
+    expect(readStatus()).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+  });
+
+  test('a stop aimed at another session does not stop this one', async () => {
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+
+    // A request left over from a watch that is long over.
+    requestStop('1999-01-01T00:00:00.000000Z');
+
+    const next = startWatch(['--catch-up-one', '--after', capture.timestamp,
+                             '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(next.proc.exitCode).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'watch-stop.json'))).toBe(false);
+
+    next.kill();
+    await waitForExit(next.proc, 3_000);
+  });
+
+  test('--stop in the gap queues a request for the next run', async () => {
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const session = readStatus()?.sessionStarted;
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('will stop when the agent next runs it');
+
+    // The request names the session, and the record survives — it is
+    // the only thing that lets the next run recognize the request as
+    // its own — but its lease is spent, so the page stops showing it.
+    const request = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, 'watch-stop.json'), 'utf8'));
+    expect(request.sessionStarted).toBe(session);
+    expect(readStatus()?.sessionStarted).toBe(session);
+    expect(Date.parse(readStatus()!.expires)).toBeLessThanOrEqual(Date.now());
+
+    const next = runWatch(['--catch-up-one', '--after', capture.timestamp,
+                           '--directory', tmpDir]);
+    expect(next.exitCode).toBe(3);
+    expect(readStatus()).toBeNull();
+  });
+
+  test('--stop still queues after the gap lease has run out', async () => {
+    // An agent turn longer than the gap lease: the watch stops being
+    // advertised, but the loop is still going to come back. Refusing
+    // to queue there would lose the stop rather than defer it — the
+    // next run would mint a new session and carry on watching.
+    const first = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForExit(first.proc, 5_000);
+    // Age the lease rather than waiting out the real one.
+    const stale = { ...readStatus()!, expires: '2020-01-01T00:00:00Z' };
+    fs.writeFileSync(
+      path.join(tmpDir, '.watch-status.json'), JSON.stringify(stale) + '\n');
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('will stop when the agent next runs it');
+
+    const next = runWatch(['--catch-up-one', '--after', capture.timestamp,
+                           '--directory', tmpDir]);
+    expect(next.exitCode).toBe(3);
+    expect(readStatus()).toBeNull();
+  });
+
+  test('a --loop watcher never leaves a gap lease behind', async () => {
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    simulateCapture(tmpDir, 1);
+    await waitForPattern(watch.output, 'page1', 1);
+
+    // It emitted without exiting, so it still holds the slot itself.
+    expect(readStatus()?.pid).toBe(watch.proc.pid);
+    expect(readStatus()?.resumeAfter).toBeUndefined();
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(readStatus()).toBeNull();
   });
 });
 

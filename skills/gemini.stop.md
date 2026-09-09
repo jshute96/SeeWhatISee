@@ -12,4 +12,4 @@ The watch loop is a series of blocking runs, one per capture. This stops the run
 ## Steps
 
 1. Run `./scripts/stop.sh` (relative to this skill's directory).
-2. Relay the script's output to the user (it will say either "Stopping existing watcher" or "No existing watcher to stop").
+2. Relay the script's output to the user. It says what it found and what it did.
