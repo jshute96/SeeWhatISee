@@ -447,9 +447,12 @@ claude --plugin-dir $(pwd)/skills/claude-plugin
 scripts/SeeWhatISee.py                          # print the latest capture record
 scripts/SeeWhatISee.py --watch                  # wait for the next capture, print it, exit
 scripts/SeeWhatISee.py --watch --loop           # keep printing captures until ^C
-scripts/SeeWhatISee.py --watch --pid-lockfile   # killable from another shell via --stop
-scripts/SeeWhatISee.py --stop                   # stop a watcher running with --pid-lockfile
+scripts/SeeWhatISee.py --stop                   # stop a watcher started from another shell
 ```
+
+A second `--watch` on the same directory takes over from the first — so
+starting one from a shell stops an agent's `/see-what-i-see-watch` loop.
+Add `--no-pid-lockfile` to watch alongside it instead.
 
 The capture history — `log.json` plus the older `history-*.json`
 files — can be listed and filtered too:

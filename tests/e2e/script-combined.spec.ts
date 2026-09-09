@@ -233,7 +233,7 @@ test.describe('SeeWhatISee.py combined actions', () => {
       }) + '\n',
     );
     const w = startProc([
-      '--stop', '--watch', '--pid-lockfile', '--directory', tmpDir,
+      '--stop', '--watch', '--directory', tmpDir,
     ]);
 
     // --stop runs first and reports nothing-to-stop.

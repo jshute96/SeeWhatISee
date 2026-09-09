@@ -21,12 +21,14 @@ Code: `skills/SeeWhatISee.py` (script side),
 | `.watch-status.json` | watch script, `--stop` | the watch session: who it is, and whether it is live |
 | `watch-stop.json` | extension, `--stop` | please exit |
 
-Only a watcher started with `--pid-lockfile` takes part. Every
-`/see-what-i-see-watch` wrapper passes it, streaming and single-shot
-alike; a `--watch` run without it publishes nothing and can't be
-stopped this way, and neither can the MCP server's `watch` — it holds
-its subscription in-process, with no pid lock and nothing on disk (see
-[mcp-server.md](mcp-server.md)).
+Every `--watch` run takes part, streaming and single-shot alike.
+
+- `--no-pid-lockfile` is the opt-out, for running watchers in parallel
+  on one directory. Such a run publishes nothing and can't be stopped
+  this way.
+- Neither can the MCP server's `watch` — it holds its subscription
+  in-process, with no pid lock and nothing on disk (see
+  [mcp-server.md](mcp-server.md)).
 
 ### `.watch-status.json`
 

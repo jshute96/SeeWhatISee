@@ -413,7 +413,7 @@ Layout:
   symlink, `scripts/SeeWhatISee.py -> ../skills/SeeWhatISee.py`,
   for direct dev-time and e2e-test invocation of the unified
   backend. The per-skill wrappers' install-time defaults
-  (`--watch --pid-lockfile`, `--copy-to-dir <tmp>`, etc.) are
+  (`--watch --loop`, `--copy-to-dir <tmp>`, etc.) are
   inlined into the test calls instead of going through the
   wrapper scripts, so we don't need a separate dev-tree wrapper
   per skill.
@@ -431,7 +431,7 @@ The scripts:
   installs by copying files). Actions
   (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
   combinable; options (`--directory`, `--copy-to-dir`,
-  `--pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
+  `--no-pid-lockfile`, `--loop`, `--after`, `--catch-up-one`,
   `--print_selection`, and `--search` / `--filter_site` /
   `--filter_time` for the history listing) tune behavior.
   Handles directory resolution (config file / `--directory` /
@@ -443,16 +443,15 @@ The scripts:
   — `exec`s `SeeWhatISee.py --get-latest`. Reads the last line of
   `log.json` and prints a single JSON record with absolute paths.
 - `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`
-  — `exec`s `SeeWhatISee.py --watch --pid-lockfile` and forwards
-  the watcher flags (`--loop`, `--after`, `--print_selection`,
-  `--stop`, `--directory`). The backend polls `log.json`'s mtime
+  — `exec`s `SeeWhatISee.py --watch --loop` and forwards
+  the watcher flags (`--after`, `--print_selection`, `--stop`,
+  `--directory`). The backend polls `log.json`'s mtime
   every 0.5s and emits records with absolute paths to stdout;
   status messages go to stderr. Each change emits *every* record
   past the last one it emitted, since a burst of captures can add
   several between two polls.
 - `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
-  — `exec`s `SeeWhatISee.py --stop` (which auto-implies
-  `--pid-lockfile`). Used by `/see-what-i-see-stop`.
+  — `exec`s `SeeWhatISee.py --stop`. Used by `/see-what-i-see-stop`.
 - `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`
   — `exec`s `SeeWhatISee.py` with the caller's history flags and no
   forced action, so the skill picks `--limit` / `--all` and the

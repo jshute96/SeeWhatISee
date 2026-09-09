@@ -130,9 +130,9 @@ What it costs:
     buys.
 
 * **Single-shot watch loops are stoppable too** — the Gemini and
-  generic polling wrappers now pass `--pid-lockfile`, so the iteration
-  they're blocked in shows on the Capture page and answers Stop /
-  `--stop`; Gemini gained a `/see-what-i-see-stop` command for it.
+  generic polling wrappers now take part in the stop protocol, so the
+  iteration they're blocked in shows on the Capture page and answers
+  Stop / `--stop`; Gemini gained a `/see-what-i-see-stop` command for it.
   * README's Gemini section needs the new command, and its
     `settings.json` allow-list needs
     `.../skills/see-what-i-see-stop/scripts/stop.sh`.
@@ -140,6 +140,9 @@ What it costs:
     while the agent works through the one it was just handed — so the
     README wording shouldn't tie the indicator to "a script is
     blocked right now".
+  * Taking part is now the default for any `--watch` run, with
+    `--no-pid-lockfile` as the opt-out for parallel watchers — worth a
+    line wherever README describes running the script by hand.
 
 * **Google Antigravity plugin** — a fourth client bundle at
   `skills/antigravity-plugin/` (`plugin.json` plus the skills),

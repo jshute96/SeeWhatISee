@@ -38,7 +38,7 @@ SeeWhatISee-claude/                  # release repo
         │       └── get-latest.sh     # wrapper → SeeWhatISee.py --get-latest
         ├── see-what-i-see-watch/
         │   ├── SKILL.md
-        │   └── scripts/watch.sh      # wrapper → SeeWhatISee.py --watch --pid-lockfile
+        │   └── scripts/watch.sh      # wrapper → SeeWhatISee.py --watch --loop
         ├── see-what-i-see-stop/
         │   ├── SKILL.md
         │   └── scripts/stop.sh       # wrapper → SeeWhatISee.py --stop
@@ -441,7 +441,7 @@ check — run it before committing any manifest changes.
     tests and ad-hoc CLI use can hit the unified backend at a
     stable path. There is no per-skill dev wrapper — tests
     inline the install-time wrapper flags themselves
-    (`--watch --pid-lockfile`, `--copy-to-dir <tmp>`, etc.).
+    (`--watch --loop`, `--copy-to-dir <tmp>`, etc.).
     Local-dev / test convenience only, not part of the plugin
     payload. The shipped per-skill wrappers continue to use
     plain `$(dirname "${BASH_SOURCE[0]}")` (no `readlink -f`,

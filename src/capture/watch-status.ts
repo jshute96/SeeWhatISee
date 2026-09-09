@@ -1,9 +1,8 @@
 // The extension's half of the watch-script stop protocol.
 //
-// A `/see-what-i-see-watch` loop (`SeeWhatISee.py --watch
-// --pid-lockfile`) publishes `.watch-status.json` in the capture
-// directory, and exits when a `watch-stop.json` file appears beside
-// it. This module reads the first and writes the second; the Capture
+// A `/see-what-i-see-watch` loop (`SeeWhatISee.py --watch`) publishes
+// `.watch-status.json` in the capture directory, and exits when a
+// `watch-stop.json` file appears beside it. This module reads the first and writes the second; the Capture
 // page's UI on top of it lives in `src/capture-page/watch-status.ts`.
 // See `docs/watch-protocol.md`.
 //

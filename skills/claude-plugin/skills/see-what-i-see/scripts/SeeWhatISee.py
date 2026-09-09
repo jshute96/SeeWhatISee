@@ -2,7 +2,7 @@
 """SeeWhatISee.py — single backend script for all see-what-i-see skills.
 
 All actions a skill can take collapse to flags on this one script:
-  --stop                   Kill any existing watcher (implies --pid-lockfile).
+  --stop                   Kill any existing watcher.
   --get-latest (default)   Emit the current last record from log.json.
   --all / --limit N        Emit records from the whole capture history.
   --watch                  Watch log.json and emit new records.
@@ -20,8 +20,9 @@ stream is in capture order, oldest first. --search / --filter_site /
 history; records that arrive later under --watch are emitted
 regardless.
 
-A --pid-lockfile watcher also publishes its presence to the extension
-and can be stopped from the Capture page; see docs/watch-protocol.md.
+A watcher also publishes its presence to the extension and can be
+stopped from the Capture page; see docs/watch-protocol.md.
+--no-pid-lockfile opts out, for running watchers in parallel.
 
 Source-dir resolution (used for both reading log.json and writing the
 pidfile) is the same regardless of action:
@@ -131,7 +132,7 @@ USAGE = """\
 Usage: SeeWhatISee.py [ACTIONS] [OPTIONS]
 
 Actions (combinable; run in this order):
-  --stop               Kill any existing watcher (implies --pid-lockfile).
+  --stop               Kill any existing watcher.
   --get-latest         Emit the current last record (default if no action
                        given). Cannot be combined with the history actions
                        below.
@@ -179,15 +180,10 @@ General options:
   --help               Show this help and exit.
 
 Options for --watch:
-  --pid-lockfile       Write $SOURCE_DIR/{.watch-status.json, .watch.pid} so
-                       --stop or a subsequent --watch can find and replace
-                       this watcher. Also exits when watch-stop.json appears
-                       beside them, which is how the extension's Capture page
-                       stops this watcher. --stop and a replacement watcher
-                       ask by signal instead. A watcher stopped any of those
-                       ways exits 0 with --loop, and 3 without it (where
-                       exiting 0 would look like "here is your capture" to
-                       the caller).
+  --no-pid-lockfile    Skip the files in $SOURCE_DIR that keep one watcher
+                       running at a time and let other tools stop it
+                       (.watch-status.json, .watch.pid, watch-stop.json).
+                       Then multiple watchers can run in parallel.
   --loop               Keep polling after each emission; default is to exit
                        after the first.
   --after TIMESTAMP    Before polling, emit the record(s) that follow the last
@@ -227,7 +223,7 @@ class Options:
         self.time_span = None      # Span, set by validate()
         self.directory = None
         self.copy_to_dir = None
-        self.pid_lockfile = False
+        self.pid_lockfile = True   # --no-pid-lockfile opts out
         self.loop = False
         self.after = None
         self.catch_up_one = False
@@ -278,13 +274,18 @@ def parse_args(argv):
         elif arg == "--watch":
             opts.watch = any_action = True
         elif arg == "--stop":
-            opts.stop = opts.pid_lockfile = any_action = True
+            opts.stop = any_action = True
         elif arg == "--directory":
             opts.directory = value(arg, rest)
         elif arg == "--copy-to-dir":
             opts.copy_to_dir = value(arg, rest)
         elif arg == "--pid-lockfile":
+            # Now the default. Still accepted for a bundle whose watch
+            # wrapper was installed before the see-what-i-see skill
+            # holding this script was updated.
             opts.pid_lockfile = True
+        elif arg == "--no-pid-lockfile":
+            opts.pid_lockfile = False
         elif arg == "--loop":
             opts.loop = True
         elif arg == "--after":
@@ -331,6 +332,8 @@ def validate(opts):
             die("Error: --loop only applies with --watch", 2)
         if opts.catch_up_one:
             die("Error: --catch-up-one only applies with --watch", 2)
+        if not opts.pid_lockfile:
+            die("Error: --no-pid-lockfile only applies with --watch", 2)
     # --catch-up-one is the Gemini single-shot pattern ("emit at most
     # one then exit"); --loop says "keep polling forever".
     if opts.catch_up_one and opts.loop:

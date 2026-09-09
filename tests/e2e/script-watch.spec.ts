@@ -7,12 +7,13 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(__dirname, '../../scripts/SeeWhatISee.py');
-// The Claude /see-what-i-see-watch wrapper was a thin
-// `exec SeeWhatISee.py --watch --pid-lockfile "$@"` script. These
-// tests inline that prefix so they exercise the unified backend
-// directly. The single exception is --help, which doesn't combine
-// with an action, so we drop the prefix in that one test below.
-const WATCH_PREFIX = ['--watch', '--pid-lockfile'];
+// The Claude /see-what-i-see-watch wrapper is a thin
+// `exec SeeWhatISee.py --watch --loop "$@"` script. These tests inline
+// just the --watch action so they exercise the unified backend
+// directly; --loop is added per test. The single exception is --help,
+// which doesn't combine with an action, so we drop the prefix in that
+// one test below.
+const WATCH_PREFIX = ['--watch'];
 
 // These tests are standalone — they create a temp directory with a fake
 // log.json file and simulate captures by appending to it, then verify
@@ -878,6 +879,53 @@ test.describe('SeeWhatISee.py --watch concurrency', () => {
   test('--stop with no watcher reports nothing to stop', () => {
     const stop = runAction(['--stop', '--directory', tmpDir]);
     expect(stop.stdout).toContain('No watch to stop');
+  });
+
+  // The stop protocol is on by default; --no-pid-lockfile is the
+  // opt-out for running watchers in parallel on one directory.
+  test('--no-pid-lockfile publishes nothing and is not stoppable', async () => {
+    const watch = startWatch(['--no-pid-lockfile', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.watch-status.json'))).toBe(false);
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('No watch to stop');
+    expect(watch.proc.exitCode).toBeNull();
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
+  });
+
+  test('two --no-pid-lockfile watchers coexist and both see a capture', async () => {
+    const watch1 = startWatch(['--no-pid-lockfile', '--loop', '--directory', tmpDir]);
+    const watch2 = startWatch(['--no-pid-lockfile', '--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+    // Neither took the slot from the other.
+    expect(watch1.proc.exitCode).toBeNull();
+    expect(watch2.proc.exitCode).toBeNull();
+
+    const capture = simulateCapture(tmpDir, 1);
+    await waitForPattern(watch1.output, capture.timestamp, 1);
+    await waitForPattern(watch2.output, capture.timestamp, 1);
+
+    watch1.kill();
+    watch2.kill();
+    await waitForExit(watch1.proc, 3_000);
+    await waitForExit(watch2.proc, 3_000);
+  });
+
+  // The old opt-in flag still turns the protocol on, for a bundle whose
+  // watch wrapper predates this script.
+  test('--pid-lockfile still publishes the session', async () => {
+    const watch = startWatch(['--pid-lockfile', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(fs.existsSync(path.join(tmpDir, '.watch.pid'))).toBe(true);
+
+    watch.kill();
+    await waitForExit(watch.proc, 3_000);
   });
 });
 

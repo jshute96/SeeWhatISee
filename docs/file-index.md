@@ -83,11 +83,11 @@ because they compute Gemini's workspace tmp dir and pass `--copy-to-dir`.
 |------|-------------|
 | `skills/wrappers/get-latest.sh` | `exec`s sibling `SeeWhatISee.py --get-latest` |
 | `skills/wrappers/stop.sh` | `exec`s `SeeWhatISee.py --stop` |
-| `skills/wrappers/watch.sh` | `exec`s `SeeWhatISee.py --watch --loop --pid-lockfile` — streaming watcher |
-| `skills/wrappers/watch-once.sh` | `exec`s `SeeWhatISee.py --watch --catch-up-one --pid-lockfile` — one record per run |
+| `skills/wrappers/watch.sh` | `exec`s `SeeWhatISee.py --watch --loop` — streaming watcher |
+| `skills/wrappers/watch-once.sh` | `exec`s `SeeWhatISee.py --watch --catch-up-one` — one record per run |
 | `skills/wrappers/history.sh` | Forwards history flags to `SeeWhatISee.py`; refuses a run with no count or filter |
 | `skills/wrappers/copy-last-snapshot.gemini.sh` | Computes the Gemini workspace tmp dir then `exec`s `SeeWhatISee.py --get-latest --copy-to-dir <dir>` |
-| `skills/wrappers/watch-and-copy.gemini.sh` | `exec`s `SeeWhatISee.py --watch --catch-up-one --pid-lockfile --copy-to-dir <dir>` (one record per invocation) |
+| `skills/wrappers/watch-and-copy.gemini.sh` | `exec`s `SeeWhatISee.py --watch --catch-up-one --copy-to-dir <dir>` (one record per invocation) |
 | `skills/wrappers/history.gemini.sh` | Gemini's history wrapper — turns `--copy` into `--copy-to-dir <workspace tmp dir>`, refuses a run with no count or filter |
 | `skills/wrappers/xtract-copy-last-snapshot.gemini.sh` | `exec`s the sibling `see-what-i-see` skill's `copy-last-snapshot.sh` so the xtract alias shares one implementation |
 
@@ -327,7 +327,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
 | `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + history files, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
-| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch --pid-lockfile` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, config file, concurrency) |
+| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, config file, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |

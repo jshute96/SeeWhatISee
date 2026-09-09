@@ -101,8 +101,9 @@ than the streaming `watch.sh` the generic and Claude bundles use:
 - The skill re-runs it with `--after <last timestamp>`, which returns
   immediately if a capture landed while the previous one was being
   processed.
-- `--pid-lockfile` keeps the waiting run visible to the extension's
-  Capture page and stoppable from there or from `/see-what-i-see-stop`.
+- The published watch session keeps the waiting run visible to the
+  extension's Capture page and stoppable from there or from
+  `/see-what-i-see-stop`.
 - Antigravity runs the script in the background, so the conversation
   stays live while a run waits — unlike the Gemini CLI bundle, which
   uses the same single-shot loop but parks the conversation on it.

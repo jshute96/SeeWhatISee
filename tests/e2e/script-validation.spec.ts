@@ -69,6 +69,26 @@ test.describe('SeeWhatISee.py flag-combo validation', () => {
     expect(r.stderr).toContain('--catch-up-one only applies with --watch');
   });
 
+  test('--get-latest --no-pid-lockfile errors out', () => {
+    const r = run(['--get-latest', '--no-pid-lockfile']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('--no-pid-lockfile only applies with --watch');
+  });
+
+  // The stop protocol used to be opt-in. Wrappers from an already
+  // installed bundle still pass the old flag, so it stays accepted.
+  // That it still turns the protocol on is covered in script-watch.
+  test('--get-latest --pid-lockfile is accepted', () => {
+    const r = run(['--get-latest', '--pid-lockfile', '--directory', '/nonexistent']);
+    expect(r.stderr).not.toContain('Unknown option');
+  });
+
+  test('--no-pid-lockfile rejects an inline value', () => {
+    const r = run(['--watch', '--no-pid-lockfile=1']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('--no-pid-lockfile takes no value');
+  });
+
   test('--watch --catch-up-one --loop errors as mutually exclusive', () => {
     const r = run(['--watch', '--catch-up-one', '--loop']);
     expect(r.exitCode).toBe(2);
