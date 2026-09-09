@@ -105,6 +105,19 @@ HEARTBEAT_SECONDS = 30
 # process ending is itself the end of the watch.
 EXIT_STOPPED = 3
 
+# "Please exit" signals, sent by one copy of this script to another —
+# SIGUSR1 for a stop request (`--stop`, i.e. /see-what-i-see-stop),
+# SIGUSR2 when a new watcher takes the slot. A watcher catches them and
+# shuts down the same way it answers `watch-stop.json`: files released,
+# a message saying which happened, EXIT_STOPPED.
+#
+# Both were picked because their *default* disposition is to terminate
+# the process, so a watcher from an older bundle — which installs no
+# handler — still dies. See docs/watch-protocol.md for the rest of the
+# reasoning.
+STOP_SIGNAL = signal.SIGUSR1
+TAKEOVER_SIGNAL = signal.SIGUSR2
+
 USAGE = """\
 Usage: SeeWhatISee.py [ACTIONS] [OPTIONS]
 
@@ -161,9 +174,11 @@ Options for --watch:
                        --stop or a subsequent --watch can find and replace
                        this watcher. Also exits when watch-stop.json appears
                        beside them, which is how the extension's Capture page
-                       stops this watcher. A watcher stopped that way exits 0
-                       with --loop, and 3 without it (where exiting 0 would
-                       look like "here is your capture" to the caller).
+                       stops this watcher. --stop and a replacement watcher
+                       ask by signal instead. A watcher stopped any of those
+                       ways exits 0 with --loop, and 3 without it (where
+                       exiting 0 would look like "here is your capture" to
+                       the caller).
   --loop               Keep polling after each emission; default is to exit
                        after the first.
   --after TIMESTAMP    Before polling, emit the record(s) that follow the last
@@ -875,22 +890,38 @@ def pid_alive(pid):
         return False
 
 
-def kill_pid(pid):
-    """SIGTERM a watcher and wait briefly for it to go.
+def kill_pid(pid, request):
+    """Ask a watcher to exit, escalating until it does.
+
+    `request` is the polite signal — STOP_SIGNAL or TAKEOVER_SIGNAL —
+    which a current watcher turns into a clean shutdown and an older
+    one dies of anyway. SIGTERM then SIGKILL follow for a watcher
+    wedged somewhere its handler can't run. The request gets the
+    longest wait, being the only stage that ends in a clean exit code.
 
     True if it was alive to be signalled, False if there was nothing
     there — a pid nobody is using any more reads as "already stopped".
     """
     if pid is None or not pid_alive(pid):
         return False
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        pass
-    for _ in range(5):
-        if not pid_alive(pid):
-            break
-        time.sleep(0.1)
+    for sig, patience in ((request, 2.0),
+                          (signal.SIGTERM, 0.5),
+                          (signal.SIGKILL, 0.5)):
+        try:
+            os.kill(pid, sig)
+        except OSError as error:
+            # ESRCH is the one that means "gone", i.e. stopped. Anything
+            # else (EPERM, against a pid that is now someone else's)
+            # leaves something running that we have not stopped, and
+            # escalating would only aim more signals at a stranger.
+            return error.errno == errno.ESRCH
+        deadline = time.monotonic() + patience
+        while pid_alive(pid):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        else:
+            return True
     return True
 
 
@@ -1001,23 +1032,30 @@ def stop_watcher(source_dir):
     True if a live watcher was found, False if not.
     """
     pid = watcher_pid(source_dir)
-    stopped = kill_pid(pid)
+    stopped = kill_pid(pid, STOP_SIGNAL)
     clear_watch_files(source_dir, pid)
+    # SIGKILLing a watcher mid-write is one of the two ways an orphaned
+    # temp file appears, and this is the path that does it.
+    clear_status_temps(source_dir)
     # Whatever the Capture page asked for, this satisfies it — and a
     # request nobody answered must not stop the *next* watcher.
     remove_quietly(os.path.join(source_dir, STOP_FILE))
     return stopped
 
 
-def claim_watch_slot(source_dir):
+def claim_watch_slot(source_dir, loop):
     """Take over the watcher slot, and give it back however we exit.
+
+    `loop` is the watcher's own --loop setting, which decides the exit
+    code a stop request gets — the same split the `watch-stop.json`
+    path makes.
 
     Returns the start timestamp to stamp the status file with.
     """
     pidfile = os.path.join(source_dir, PID_FILE)
     status_path = os.path.join(source_dir, STATUS_FILE)
     previous = watcher_pid(source_dir)
-    kill_pid(previous)
+    kill_pid(previous, TAKEOVER_SIGNAL)
     clear_watch_files(source_dir, previous)
     # `write_status` unlinks its own temp file when the write fails,
     # but a watcher killed mid-write leaves one behind for good. We
@@ -1048,10 +1086,25 @@ def claim_watch_slot(source_dir):
         # and their tests already expect from the previous bash version.
         os._exit(143)
 
+    def requested_stop(signum, _frame):
+        # A stop asked for by another copy of this script, so it gets
+        # the clean exit a `watch-stop.json` request gets, not a
+        # signalled 143 the agent would read as a crash.
+        release()
+        print("Stopping: %s" % ("replaced by a new watcher"
+                                if signum == TAKEOVER_SIGNAL
+                                else "stop requested"), file=sys.stderr)
+        sys.stderr.flush()
+        # `os._exit`, like `terminate`: the handler can land mid-write
+        # of the status temp file, and `release` has already run.
+        os._exit(0 if loop else EXIT_STOPPED)
+
     import atexit
     atexit.register(release)
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
+    signal.signal(STOP_SIGNAL, requested_stop)
+    signal.signal(TAKEOVER_SIGNAL, requested_stop)
     return started
 
 
@@ -1149,7 +1202,8 @@ def watch(opts, emitter, source_dir, log_path):
     # answers a stop request.
     status_path = os.path.join(source_dir, STATUS_FILE)
     stop_path = os.path.join(source_dir, STOP_FILE)
-    started = claim_watch_slot(source_dir) if opts.pid_lockfile else None
+    started = (claim_watch_slot(source_dir, opts.loop)
+               if opts.pid_lockfile else None)
     last_beat = time.monotonic()
 
     # Don't emit the current contents on poll-loop entry — only changes

@@ -962,10 +962,58 @@ test.describe('SeeWhatISee.py --watch stop protocol', () => {
 
     const stop = runAction(['--stop', '--directory', tmpDir]);
     expect(stop.stdout).toContain('Stopping existing watcher');
-    // Signalled, so the shell's 128 + SIGTERM. Non-zero either way,
-    // which is what the skill tells the agent means "don't re-run".
-    expect(await waitForExit(watch.proc, 5_000)).toBe(143);
+    // Asked for with SIGUSR1, so it is a clean 3 like a Capture-page
+    // request — not a signalled 143 the agent would read as a crash.
+    expect(await waitForExit(watch.proc, 5_000)).toBe(3);
+    expect(watch.output()).toContain('Stopping: stop requested');
     expect(readStatus()).toBeNull();
+  });
+
+  test('a takeover stops the replaced watcher cleanly', async () => {
+    const watch1 = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 500));
+
+    const watch2 = startWatch(['--catch-up-one', '--directory', tmpDir]);
+    // SIGUSR2 rather than SIGUSR1, so the outgoing watcher can say
+    // which of the two happened.
+    expect(await waitForExit(watch1.proc, 5_000)).toBe(3);
+    expect(watch1.output()).toContain('Stopping: replaced by a new watcher');
+    // The point is the handoff, not just the death: the incoming
+    // watcher holds the slot afterwards.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(readStatus()?.pid).toBe(watch2.proc.pid);
+
+    watch2.kill();
+    await waitForExit(watch2.proc, 3_000);
+  });
+
+  test('a watcher that ignores the stop signal is killed anyway', async () => {
+    // The escalation path: SIGUSR1, then SIGTERM, then SIGKILL. Stand
+    // in for a wedged watcher with a process that ignores the first
+    // two, and claim the slot on its behalf.
+    const deaf = spawn('python3', [
+      '-c',
+      'import signal, time\n'
+      + 'signal.signal(signal.SIGUSR1, signal.SIG_IGN)\n'
+      + 'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+      // Short-lived, so a failed assertion can't leave it running for
+      // the rest of the suite.
+      + 'time.sleep(15)\n',
+    ], { stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 300));
+    fs.writeFileSync(path.join(tmpDir, '.watch.pid'), `${deaf.pid}\n`);
+    // Its own deadline, so a regression reads as "never signalled"
+    // rather than an opaque test timeout.
+    const signalled = Promise.race([
+      new Promise<string | null>((resolve) => {
+        deaf.on('exit', (_code, sig) => resolve(sig));
+      }),
+      new Promise<string>((resolve) => setTimeout(() => resolve('none'), 10_000)),
+    ]);
+
+    const stop = runAction(['--stop', '--directory', tmpDir]);
+    expect(stop.stdout).toContain('Stopping existing watcher');
+    expect(await signalled).toBe('SIGKILL');
   });
 
   test('a leftover stop file does not stop the next watcher', async () => {

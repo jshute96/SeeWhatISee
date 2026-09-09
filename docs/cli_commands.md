@@ -126,12 +126,13 @@ field on the record. See
   per capture without exiting, so the agent gets a notification
   per capture without relaunching the watcher.
 - `--pid-lockfile` makes the watcher publish `.watch-status.json` (and
-  the deprecated `.watch.pid`) so a second invocation auto-kills the
-  first. `/see-what-i-see-stop` runs the
+  the deprecated `.watch.pid`) so a second invocation takes the slot
+  from the first. `/see-what-i-see-stop` runs the
   dedicated `stop.sh` wrapper (sibling skill, which `exec`s
-  `SeeWhatISee.py --stop`) to terminate; the previous `Monitor`
+  `SeeWhatISee.py --stop`) to stop it; the previous `Monitor`
   observes the script exit and notifies the agent that the watcher
-  stopped.
+  stopped. Both ask by signal, and a `--loop` watcher answers by
+  exiting 0.
 - Such a watcher also exits when `watch-stop.json` appears in that
   directory, which is how the extension's Capture page shows a running
   watcher and stops it. See [watch-protocol.md](watch-protocol.md).
@@ -155,10 +156,11 @@ field on the record. See
   page and can be stopped from there or with `/see-what-i-see-stop`.
   Between two iterations nobody is running and nothing is published —
   see [watch-protocol.md](watch-protocol.md).
-- A stopped iteration exits non-zero (3 for a Capture-page request,
-  143 for a signal), and the skill tells the agent not to re-invoke
-  after a non-zero exit. Interrupting Gemini, or telling the agent to
-  stop, still works too.
+- A stopped iteration exits non-zero — 3 when the stop was asked for
+  (Capture page, `--stop`, or a replacement watcher), something else
+  when it was killed or errored — and the skill tells the agent not to
+  re-invoke after a non-zero exit. Interrupting the blocked tool call,
+  or just telling the agent to stop, still works too.
 
 ### Antigravity (backgrounded single-shot loop)
 
@@ -478,7 +480,7 @@ the see-what-i-see skill's `scripts/` dir for the backend via
 | Wrapper | Forwards to `SeeWhatISee.py` flags | Source → Target | Emits |
 |---------|------------------------------------|------------------|-------|
 | `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`        | `--get-latest`                                  | `$DIR` (in place) | last record |
-| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | one JSON record per capture, streaming until killed |
+| `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`       | `--watch --loop --pid-lockfile` (forwards `--after`, `--print_selection`, `--stop`, `--directory`) | `$DIR` (in place) | one JSON record per capture, streaming until stopped |
 | `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`         | `--stop`                                        | `$DIR` (in place) | none (just stops the watcher) |
 | `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`   | none forced — forwards the caller's history flags; refuses a run with no count or filter | `$DIR` (in place) | one JSON record per match |
 | `skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh`   | `--get-latest --copy-to-dir <tmp>`              | `$SRC_DIR` → `$TARGET_DIR` (copied) | last record |
@@ -499,7 +501,7 @@ Key differences come from the wrapper-supplied defaults:
   sandbox).
 - **Loop vs single-emit.** Claude `watch.sh` passes `--loop`, so
   the script stays alive and streams every new record as a
-  separate JSON line until killed. Gemini `watch-and-copy.sh` and
+  separate JSON line until stopped. Gemini `watch-and-copy.sh` and
   Antigravity `watch-once.sh` pass `--catch-up-one` instead (mutually
   exclusive with `--loop`): each invocation emits at most one record
   and exits, so the agent loops externally.
@@ -572,7 +574,8 @@ contain `[[ ... ]]` that must not be read as a placeholder.
 Platform-specific differences live in the top-level templates:
 
 - Claude `watch.md` uses the `Monitor` tool with `persistent: true` +
-  `--loop` (one notification per capture) + auto-kill-via-pidfile;
+  `--loop` (one notification per capture) + slot takeover via the
+  pidfile;
   Gemini's is a blocking single-shot loop + `--after` re-run;
   Antigravity's is the same single-shot loop, backgrounded.
 - Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses

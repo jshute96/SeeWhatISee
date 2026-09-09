@@ -1,9 +1,13 @@
 # Watch protocol — showing and stopping a watch script
 
 How the Capture page knows a `/see-what-i-see-watch` loop is running,
-and how its Stop button ends one. Three files in the capture directory
-(`~/Downloads/SeeWhatISee` by default) are the whole protocol; the two
-sides never talk any other way.
+and how its Stop button ends one.
+
+- The extension and the script talk only through files in the capture
+  directory (`~/Downloads/SeeWhatISee` by default) — no ports, no
+  native messaging.
+- Script to script — `--stop`, or one watcher replacing another — the
+  request goes by signal instead; see [below](#asking-by-signal--stop-and-takeovers).
 
 Code: `skills/SeeWhatISee.py` (script side),
 `src/capture/watch-status.ts` (protocol),
@@ -36,9 +40,13 @@ its subscription in-process, with no pid lock and nothing on disk (see
 - Stopping such a run stops the *run*. The loop stays stopped because
   the run exits non-zero, which the skill tells the agent means "do
   not restart":
-  - **3** — a `watch-stop.json` request, i.e. the Capture page's Stop
-    button.
-  - **143** — signalled, which is what `--stop` does.
+  - **3** — stopped on request: a `watch-stop.json` file (the Capture
+    page's Stop button), a `--stop`, or a replacement watcher. All
+    three print a `Stopping: ...` line on stderr saying which.
+  - **Any other non-zero** — killed or errored. The script's own error
+    exits are 1 and 2; a signal it doesn't handle shows up as 128 + the
+    signal number. SIGTERM and SIGINT it *does* handle, and both exit
+    143 after releasing its files.
   - A `--loop` watcher exits **0** on a stop request instead: the
     process ending is itself the end of the watch, with nobody left to
     misread the code.
@@ -110,6 +118,41 @@ its subscription in-process, with no pid lock and nothing on disk (see
   extension's only way to write a file, and it rejects leading dots
   outright with `Error: Invalid filename`.
 
+## Asking by signal — `--stop` and takeovers
+
+The stop file is the extension's channel. Between two copies of the
+script — `--stop`, or a new watcher taking the slot — the request goes
+by signal instead:
+
+- **SIGUSR1** — please stop (`--stop`, i.e. `/see-what-i-see-stop`).
+- **SIGUSR2** — a new watcher is taking the slot.
+
+The watcher catches both and shuts down exactly as it answers a stop
+file: files released, `Stopping: stop requested` or `Stopping: replaced
+by a new watcher` on stderr, then exit 3 (0 with `--loop`).
+
+Why these two signals:
+
+- Their default disposition is *terminate*, so a watcher from an older
+  bundle — no handler installed — still dies. Takeover can't be left
+  to the outgoing watcher's cooperation.
+- Nothing else sends them: terminals send SIGINT, supervisors and
+  `timeout` send SIGTERM. So receiving one can only mean this script
+  asked, which is what makes the clean exit code trustworthy.
+- SIGTERM and SIGINT keep their old meaning — killed — and still exit
+  143 after releasing the files.
+
+The escalation, in `kill_pid`:
+
+- SIGUSR1/2 first, with a couple of seconds' patience — it is the only
+  stage that ends in a clean exit code, so it is worth waiting on.
+- Then SIGTERM, then SIGKILL, half a second apart, for a watcher wedged
+  somewhere its handler can't run.
+
+So the clean exit code is best-effort. A watcher blocked writing to a
+stdout nobody is draining doesn't reach its handler in time and takes
+the SIGTERM instead, exiting 143 like any other kill.
+
 ## Who cleans up what
 
 The extension deletes no files here. (It erases the *download record*
@@ -125,8 +168,11 @@ removal is the script's:
 - **Startup** (`--pid-lockfile`): clears a stale status file — one
   naming the watcher it just replaced, or a pid that is no longer
   alive — and any `watch-stop.json`, which by definition predates it.
-- **`--stop`**: kills the watcher, then clears both files the same way,
+- **`--stop`**: stops the watcher, then clears both files the same way,
   including after a watcher that died without cleaning up.
+- **Orphaned `.watch-status.json.<pid>.tmp`**: swept by both startup
+  and `--stop`, the two paths that can SIGKILL a watcher mid-write and
+  leave one behind for good.
 
 ## The Capture page's side
 
@@ -173,3 +219,14 @@ removal is the script's:
 An old watcher is invisible to the Capture page rather than showing a
 Stop button that silently does nothing. `--stop` by pid keeps working
 in every combination, because nothing about `.watch.pid` changed.
+
+Signals cross versions too, in both directions, at the cost of the
+clean exit code:
+
+- An old watcher has no SIGUSR1/2 handler, so it dies of the default
+  disposition. The skills still read that non-zero exit as "stopped,
+  don't re-run".
+- An old `--stop`, or an old watcher taking the slot, sends SIGTERM. A
+  new watcher handles that as a kill and exits 143 without a
+  `Stopping: ...` line, so a routine replacement is reported to the
+  user as an unexpected stop.

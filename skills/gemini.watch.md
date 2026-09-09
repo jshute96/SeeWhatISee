@@ -18,7 +18,8 @@ This is a **foreground loop: each iteration blocks** on a shell command that doe
 1. **Wait for the next capture.** Run `./scripts/watch-and-copy.sh` with no timeout. This blocks until there's a capture to process, then prints a JSON record to stdout.  **Block until it completes.**
 
 2. **Check the exit code:**
-  - **Non-zero exit (stopped / killed / error):** Tell the user the watcher stopped and do NOT restart.
+  - **Exit 3 (stopped on request):** Tell the user the watch was stopped — it says on stderr whether that was a stop request or another watcher taking over — and do NOT restart.
+  - **Other non-zero (killed or error):** Tell the user the watcher stopped unexpectedly and do NOT restart.
   - **Exit 0 (success — a capture arrived):**
 
 3. **Read captured stdout to get the JSON record(s).** 

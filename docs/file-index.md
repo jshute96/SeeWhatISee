@@ -397,7 +397,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `antigravity-plugin.md` | Notes on the Google Antigravity plugin (manifest, install paths, pinned single-shot watch loop, release-repo mirror) |
 | `claude-plugin.md` | Notes on the Claude Code plugin (marketplace/plugin manifests, install flow, `${CLAUDE_SKILL_DIR}` script references, local-dev shim) |
 | `cli_commands.md` | Per-client command inventory, their backing wrapper scripts, and the unified `SeeWhatISee.py` backend |
-| `watch-protocol.md` | The three files behind showing / stopping a watch script from the Capture page, and their version compatibility |
+| `watch-protocol.md` | The files and signals behind showing / stopping a watch script, and their version compatibility |
 | `mcp-server.md` | Design doc for the `mcp-server/` MCP server — TS, single-bundled-file, mirrors `SeeWhatISee.py` plus a subscription stream |
 | `images/copy-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Copy button |
 | `images/edit-icon.png` | Inline icon image referenced from the README's Capture-page bullet for the Edit button |

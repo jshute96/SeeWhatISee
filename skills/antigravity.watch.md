@@ -20,7 +20,8 @@ The run happens in the background, so the user can keep prompting you while it w
 1. **Wait for the next capture.** Run `./scripts/watch-once.sh` (relative to this skill's directory), with no timeout. It waits until a capture arrives, then prints one JSON record to stdout and exits. **Wait for it to complete before going on to step 2** — but keep answering the user in the meantime.
 
 2. **Check the exit code.**
-   - **Non-zero (stopped, killed, or errored):** tell the user the watcher stopped and do NOT restart. It was likely stopped on purpose, via `/see-what-i-see-stop` or by another watcher replacing it.
+   - **3 (stopped on request):** tell the user the watch was stopped — stderr says whether that was a stop request or another watcher taking over — and do NOT restart.
+   - **Other non-zero (killed or errored):** tell the user the watcher stopped unexpectedly and do NOT restart.
    - **Zero:** a capture arrived — continue.
 
 3. **Process the record** it printed (see below).

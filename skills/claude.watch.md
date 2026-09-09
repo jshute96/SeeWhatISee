@@ -21,7 +21,7 @@ To look for older captures (the last few, by date or time, by site, or by text),
 
 2. **Process each notification as it arrives.** Each notification carries one JSON record — process it as described in the section below.
 
-3. **When the monitor reports the script exited:** Tell the user the watcher stopped and do NOT restart. The watcher was likely killed intentionally by `/see-what-i-see-stop` or by another watcher replacing it.
+3. **When the monitor reports the script exited:** Tell the user the watcher stopped and do NOT restart. **Exit 0** means it was stopped on request — a `Stopping: ...` line says whether that was a stop request or another watcher taking over. **Non-zero** means it was killed or errored.
 
 ## Process each snapshot
 

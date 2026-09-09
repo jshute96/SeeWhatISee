@@ -23,7 +23,7 @@ Pick the approach that fits your tool. It comes down to two independent question
 1. **Start the watcher.** Run `./scripts/watch.sh` (relative to this skill's directory) and leave it running. It prints one capture record per line as each capture arrives, and runs until stopped. It writes a pidfile, so `/see-what-i-see-stop` (or a later watcher) can replace it.
    - Run it in the **background** if your tool supports that, so you stay responsive to the user while it waits.
 2. **Process each line as it arrives** — each line of stdout is one JSON record (see below).
-3. **When the watcher exits:** tell the user it stopped and do NOT restart. It was likely stopped on purpose (via `/see-what-i-see-stop` or by another watcher replacing it).
+3. **When the watcher exits:** tell the user it stopped and do NOT restart. **Exit 0** means it was stopped on request — stderr says whether that was a stop request or another watcher taking over. **Non-zero** means it was killed or errored.
 
 ### Otherwise — single-shot watcher, run in a loop
 
@@ -37,7 +37,7 @@ Each run of `./scripts/watch-once.sh` (no timeout) blocks until the next capture
 
 Always pass `--after <timestamp of the last record you processed>` on the follow-up runs. That makes each run emit the single next capture after that timestamp — returning immediately if one was already waiting.
 
-**On a non-zero exit** (the watcher was stopped, killed, or errored): tell the user it stopped and do NOT restart.
+**On a non-zero exit:** tell the user the watch stopped and do NOT restart. Exit **3** means it was stopped on request, with the reason on stderr; any other non-zero means it was killed or errored.
 
 ## Process each snapshot
 
