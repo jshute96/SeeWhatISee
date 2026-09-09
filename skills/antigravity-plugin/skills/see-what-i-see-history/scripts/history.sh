@@ -11,12 +11,6 @@
 # listing anything. Fail loudly rather than answer a different
 # question.
 #
-# Nothing here copies capture files: Antigravity reads the capture dir
-# in place. If that ever stops being true, add a flag that translates
-# into --copy-to-dir <dir> and tell the skill to pass it when it
-# fetches files — the Gemini bundle in the SeeWhatISee dev repo has a
-# worked version of that.
-#
 # SeeWhatISee.py lives in the see-what-i-see skill's scripts/ dir;
 # reach across sibling-relative.
 

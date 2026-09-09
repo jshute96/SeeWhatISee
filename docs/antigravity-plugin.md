@@ -55,9 +55,10 @@ but it only owns the templates that actually differ:
 | `stop`    | `antigravity.stop.md`   |
 | `history` | `generic.history.md`    |
 
-- Where nothing client-specific is needed, `PAIRS` in
-  `skills/generate-skills.py` points the Antigravity target straight at
-  the generic template.
+- Where nothing client-specific is needed, the `PAIRS` table in
+  `skills/generate-skills.py` — the source-to-target map the generator
+  works from — points the Antigravity target straight at the generic
+  template.
 - That avoids a second identical file that would have to be updated by
   hand every time the generic one changes.
 - If Antigravity later needs its own wording for one of those, add an

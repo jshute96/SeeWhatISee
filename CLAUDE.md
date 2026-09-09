@@ -82,58 +82,25 @@ references its own location must use the *release-repo* path
 
 ## Keep the skill files in sync
 
-Every client's skills describe the same `log.json` outputs
-and the same steps to take for each. To keep them consistent, they are
-**generated from shared templates** in `skills/` — never edit the
-generated files directly.
+Under `skills/<bundle>/`, the only file edited in place is the bundle's
+manifest. Every SKILL.md, wrapper script and `SeeWhatISee.py` there is
+**generated** — never edit one directly.
 
-The same generator also propagates `skills/SeeWhatISee.py` (the
-unified Python backend behind every per-skill wrapper) into each
-release bundle's `scripts/` dir as a verbatim byte-for-byte copy.
-Edit the canonical `skills/SeeWhatISee.py` and re-run the generator —
-do not edit the per-bundle copies.
+Edit the source in `skills/` instead, then re-run the generator:
 
-- Templates live in `skills/`, plus shared blocks like
-  `json-record.template.md` and `process.template.md` which are embedded
-  via `[[filename]]` placeholders.
-  - Usually one template per generated target, but a template can feed
-    several: where a client needs nothing of its own, its target reuses
-    another client's template rather than duplicating it. The Antigravity
-    `see` / `history` skills come from `generic.see.md` /
-    `generic.history.md` that way.
-- The generator is `skills/generate-skills.py`:
-  - `skills/generate-skills.py` — validate that each target matches the
-    template output (exits non-zero if any differ). Also wired up as
-    `pnpm run test:skills` and runs as part of `pnpm test`, so `pnpm test` will
-    fail if the generated files have drifted from the templates.
-  - `skills/generate-skills.py --diff` — same validation, but also
-    prints a unified diff for each mismatching file.
-  - `skills/generate-skills.py --update` — regenerate the target files
-    from the templates.
-- Generated targets (do not edit these directly):
-  - `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md`
-  - `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
-  - `skills/mcp/see-what-i-see/SKILL.md` (also read by `mcp-server/build-prompts.mjs` for the MCP prompt body)
-  - `skills/mcp/see-what-i-see-watch/SKILL.md` (also read by `mcp-server/build-prompts.mjs` for the MCP prompt body)
-  - `skills/generic-skills/see-what-i-see/SKILL.md`
-  - `skills/generic-skills/see-what-i-see-watch/SKILL.md`
-  - `skills/generic-skills/see-what-i-see-stop/SKILL.md`
-  - `skills/generic-skills/see-what-i-see-history/SKILL.md`
-  - `skills/antigravity-plugin/skills/see-what-i-see/SKILL.md`
-  - `skills/antigravity-plugin/skills/see-what-i-see-watch/SKILL.md`
-  - `skills/antigravity-plugin/skills/see-what-i-see-stop/SKILL.md`
-  - `skills/antigravity-plugin/skills/see-what-i-see-history/SKILL.md`
-  - `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
-  - `skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
-  - `skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
-  - `skills/antigravity-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py` (verbatim copy)
-- When updating behavior shared across skills (e.g. the JSON record shape or
-  the processing rules), edit the relevant template in `skills/` and
-  re-run the generator so every target picks up the change.
+- `skills/<client>.<skill>.md` — a skill's prompt.
+  - `<client>`: `claude`, `gemini`, `generic`, `antigravity`, `mcp-server`
+  - `<skill>`: `see`, `watch`, `stop`, `history`
+- `skills/wrappers/<name>.sh` — a wrapper script.
+- `skills/SeeWhatISee.py` — the Python backend behind every wrapper.
+
+One source can feed several targets. The `PAIRS` table at the top of
+`skills/generate-skills.py` maps each source to the targets it
+generates; read it there rather than looking for a list in the docs.
+
+- `skills/generate-skills.py --update` — regenerate after an edit.
+- `skills/generate-skills.py` — validate. Runs as part of `pnpm test`,
+  so drift fails the suite.
+
+For how the templating works — shared `[[...]]` blocks, which clients
+differ and why — see `docs/cli_commands.md` → "Skill prompts".

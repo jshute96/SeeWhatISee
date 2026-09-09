@@ -80,6 +80,36 @@ PAIRS = [
     ("SeeWhatISee.py",   "skills/dot-gemini/skills/see-what-i-see/scripts/SeeWhatISee.py",    "verbatim"),
     ("SeeWhatISee.py",   "skills/generic-skills/see-what-i-see/scripts/SeeWhatISee.py",       "verbatim"),
     ("SeeWhatISee.py",   "skills/antigravity-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py", "verbatim"),
+    # Wrapper scripts. Every bundle that can use a wrapper unchanged gets
+    # a verbatim copy from skills/wrappers/, so the one implementation is
+    # the only thing to edit. The bodies were identical across bundles
+    # already; only the comments had drifted apart, so the shared copies
+    # are worded client-neutrally.
+    #
+    # Gemini's wrappers can't be shared — they compute the workspace tmp
+    # dir and pass --copy-to-dir, which no other client needs — but they
+    # live in skills/wrappers/ too, named *.gemini.sh, so that every
+    # wrapper under a bundle dir is a generated copy and none is edited
+    # in place. Gemini shares only stop.sh with the others.
+    ("wrappers/get-latest.sh",  "skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh",      "verbatim"),
+    ("wrappers/get-latest.sh",  "skills/generic-skills/see-what-i-see/scripts/get-latest.sh",            "verbatim"),
+    ("wrappers/get-latest.sh",  "skills/antigravity-plugin/skills/see-what-i-see/scripts/get-latest.sh", "verbatim"),
+    ("wrappers/stop.sh",        "skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh",       "verbatim"),
+    ("wrappers/stop.sh",        "skills/dot-gemini/skills/see-what-i-see-stop/scripts/stop.sh",          "verbatim"),
+    ("wrappers/stop.sh",        "skills/generic-skills/see-what-i-see-stop/scripts/stop.sh",             "verbatim"),
+    ("wrappers/stop.sh",        "skills/antigravity-plugin/skills/see-what-i-see-stop/scripts/stop.sh",  "verbatim"),
+    ("wrappers/watch.sh",       "skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh",     "verbatim"),
+    ("wrappers/watch.sh",       "skills/generic-skills/see-what-i-see-watch/scripts/watch.sh",           "verbatim"),
+    ("wrappers/watch-once.sh",  "skills/generic-skills/see-what-i-see-watch/scripts/watch-once.sh",      "verbatim"),
+    ("wrappers/watch-once.sh",  "skills/antigravity-plugin/skills/see-what-i-see-watch/scripts/watch-once.sh", "verbatim"),
+    ("wrappers/history.sh",     "skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh", "verbatim"),
+    ("wrappers/history.sh",     "skills/generic-skills/see-what-i-see-history/scripts/history.sh",       "verbatim"),
+    ("wrappers/history.sh",     "skills/antigravity-plugin/skills/see-what-i-see-history/scripts/history.sh", "verbatim"),
+    ("wrappers/copy-last-snapshot.gemini.sh", "skills/dot-gemini/skills/see-what-i-see/scripts/copy-last-snapshot.sh",        "verbatim"),
+    ("wrappers/watch-and-copy.gemini.sh",     "skills/dot-gemini/skills/see-what-i-see-watch/scripts/watch-and-copy.sh",      "verbatim"),
+    ("wrappers/history.gemini.sh",            "skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh",           "verbatim"),
+    ("wrappers/xtract-copy-last-snapshot.gemini.sh",
+                                              "skills/dot-gemini/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh", "verbatim"),
 ]
 
 PLACEHOLDER_RE = re.compile(r"\[\[([^\[\]]+)\]\]")

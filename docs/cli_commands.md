@@ -452,7 +452,12 @@ skills/antigravity-plugin/           ← Antigravity plugin tree (mirrored into 
 
 Each install tree is self-contained: each tree carries its own
 verbatim copy of `SeeWhatISee.py` next to its `see-what-i-see`
-skill's `scripts/` dir. The plugin tree ships as part of the
+skill's `scripts/` dir, and its own copy of each wrapper.
+Self-contained does not mean hand-maintained — the wrappers whose
+bodies are the same everywhere live once in `skills/wrappers/` and are
+propagated verbatim, so only Gemini's copying wrappers
+(`copy-last-snapshot.sh`, `watch-and-copy.sh`, its `history.sh`) are
+edited per bundle. The plugin tree ships as part of the
 Claude Code plugin (mirrored into `../SeeWhatISee-claude` by
 `skills/copy-claude-plugin-release.sh`); the Gemini tree is
 mirrored into `../SeeWhatISee-gemini` (Gemini extension install)
@@ -523,29 +528,33 @@ Gemini's tmp dir lives wherever Gemini puts it.
 
 ## Skill prompts
 
-Several files drive the prompts:
+Every SKILL.md under a bundle is **generated**, along with the wrapper
+scripts and the `SeeWhatISee.py` copy beside them. Only the bundle's
+manifest is edited in place.
 
-- `skills/claude-plugin/skills/see-what-i-see/SKILL.md`
-- `skills/claude-plugin/skills/see-what-i-see-watch/SKILL.md`
-- `skills/claude-plugin/skills/see-what-i-see-stop/SKILL.md`
-- `skills/claude-plugin/skills/see-what-i-see-history/SKILL.md`
-- `skills/dot-gemini/skills/see-what-i-see/SKILL.md`
-- `skills/dot-gemini/skills/see-what-i-see-watch/SKILL.md`
-- `skills/dot-gemini/skills/see-what-i-see-stop/SKILL.md`
-- `skills/dot-gemini/skills/see-what-i-see-history/SKILL.md`
-- `skills/dot-gemini/skills/see-what-i-see-xtract/SKILL.md` (alias of `see-what-i-see` — surfaces first in Gemini's autocomplete)
-- `skills/antigravity-plugin/skills/see-what-i-see/SKILL.md`
-- `skills/antigravity-plugin/skills/see-what-i-see-watch/SKILL.md`
-- `skills/antigravity-plugin/skills/see-what-i-see-stop/SKILL.md`
-- `skills/antigravity-plugin/skills/see-what-i-see-history/SKILL.md`
+Sources all live in `skills/`:
 
-All skill prompts are **generated from templates** in `skills/`,
-which are themselves written in SKILL.md format (YAML frontmatter
-+ markdown body) for every client.
+| Source | Feeds |
+|--------|-------|
+| `<client>.<skill>.md` | that client's `<skill>` SKILL.md |
+| `wrappers/<name>.sh` | the wrapper of that name, in each bundle that uses it |
+| `SeeWhatISee.py` | every bundle's copy of the backend |
 
-Shared blocks live as their own files and get inlined into each
-top-level template via `[[filename]]` placeholders, which keeps them
-identical across all generated files:
+- `<client>` is `claude`, `gemini`, `generic`, `antigravity` or
+  `mcp-server`; `<skill>` is `see`, `watch`, `stop` or `history`.
+  Gemini also has `xtract`, an alias of `see`.
+- A source can feed several targets. Antigravity's `see` and `history`
+  come from `generic.see.md` / `generic.history.md`, and most wrappers
+  are shared outright — only Gemini's copying wrappers (`*.gemini.sh`)
+  go to a single bundle.
+- The `PAIRS` table at the top of `skills/generate-skills.py` is the
+  authoritative source-to-target map.
+
+### Shared blocks
+
+Blocks common to every client live as their own files and are inlined
+into each top-level template via `[[filename]]` placeholders, which
+keeps them identical across all generated files:
 
 - `json-record.template.md` — the JSON-record block.
 - `process.template.md` — the "Process the capture:" block.
@@ -553,19 +562,32 @@ identical across all generated files:
   narrow / act phases. Used by the history skills only, but by all of
   them.
 
-Platform-specific differences stay in the top-level templates:
+Placeholders are expanded recursively, and a missing one is a hard
+error. The wrapper scripts and `SeeWhatISee.py` are copied byte-for-byte
+instead (the generator's "verbatim" mode) — shell and Python can
+contain `[[ ... ]]` that must not be read as a placeholder.
+
+### What stays per-client
+
+Platform-specific differences live in the top-level templates:
 
 - Claude `watch.md` uses the `Monitor` tool with `persistent: true` +
   `--loop` (one notification per capture) + auto-kill-via-pidfile;
-  Gemini `watch.md` is a blocking single-shot loop + `--after` re-run.
+  Gemini's is a blocking single-shot loop + `--after` re-run;
+  Antigravity's is the same single-shot loop, backgrounded.
 - Claude `see.md` calls `get-latest.sh`; Gemini `see.md` uses
   `copy-last-snapshot.sh` via `!{...}`.
 - Every `history.md` calls `history.sh`, but only Gemini's tells the
   agent about `--copy` (see [The `--copy` flag
   (Gemini only)](#the---copy-flag-gemini-only)).
+- The Gemini and Antigravity templates carry an explicit "do not read
+  the script" line; agents on those clients otherwise open and study
+  the wrappers before running them, at a large cost per invocation.
 
-The generator `skills/generate-skills.py` runs in validate
-mode by default (exit 1 on drift), is wired into `pnpm test` via
-`pnpm run test:skills`, and has `--diff` / `--update` flags. See
-`CLAUDE.md` → "Keep the skill files in sync" for the full
-workflow.
+### Running the generator
+
+- `skills/generate-skills.py` — validate; exits non-zero on drift.
+  Wired into `pnpm test` via `pnpm run test:skills`.
+- `skills/generate-skills.py --diff` — same, plus a unified diff per
+  mismatching file.
+- `skills/generate-skills.py --update` — regenerate the targets.
