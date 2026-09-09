@@ -10,6 +10,8 @@ To look for older captures (the last few, by date or time, by site, or by text),
 
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
+**Do not read the script.** Just run it, following the instructions below.
+
 1. Read this JSON object:
 !{./scripts/copy-last-snapshot.sh}
 

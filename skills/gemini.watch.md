@@ -7,6 +7,8 @@ To look for older captures (the last few, by date or time, by site, or by text),
 
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
+**Do not read the script.** Just run it, following the instructions below.
+
 Watch for new captures from the SeeWhatISee Chrome extension. Each time a capture arrives, process it as described below, then watch for the next one. Keep looping until the user tells you to stop, or until a failure.
 
 This is a **foreground loop: each iteration blocks** on a shell command that doesn't return until the next capture lands.

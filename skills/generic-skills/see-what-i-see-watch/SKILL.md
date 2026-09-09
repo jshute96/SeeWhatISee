@@ -9,6 +9,8 @@ To look for older captures (the last few, by date or time, by site, or by text),
 
 **If anything fails, do not try to debug or fix anything. Just report the failure.**
 
+**Do not read the scripts.** Pick the appropriate one and run it.
+
 ## Getting captures in a loop
 
 Pick the approach that fits your tool. It comes down to two independent questions:

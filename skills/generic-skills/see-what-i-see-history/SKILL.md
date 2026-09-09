@@ -9,6 +9,8 @@ Unlike `see-what-i-see`, this doesn't need the user to have just clicked the ext
 
 **If anything fails, just report it. Don't try to debug or find another solution.**
 
+**Do not read the script.** Just run it, following the instructions below.
+
 ## Running it
 
 `./scripts/history.sh [FLAGS]` (relative to this skill's directory)

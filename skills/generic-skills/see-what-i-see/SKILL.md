@@ -11,6 +11,8 @@ To look for older captures (the last few, by date or time, by site, or by text),
 
 **If anything fails, just report it. Don't try to debug or find another solution.**
 
+**Do not read the script.** Just run it, following the instructions below.
+
 ## Steps
 
 1. Run `./scripts/get-latest.sh` (relative to this skill's directory) and parse its JSON output.
