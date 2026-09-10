@@ -56,7 +56,8 @@ In **this** repo, the whole release repo is imaged under
 `skills/release-claude/`, entry for entry:
 
 - The two plugin subtrees, plus `README.md`, `LICENSE`, `.gitignore`,
-  `CLAUDE.md`, `GEMINI.md` and the release repo's own `.claude/` shim.
+  `AGENTS.md` (with `CLAUDE.md` symlinked to it) and the release
+  repo's own `.claude/` shim.
 - Nesting the image under `skills/` keeps its dotfiles from colliding
   with the dev repo's own `.claude/` and `.gitignore`.
 

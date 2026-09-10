@@ -12,8 +12,9 @@ SeeWhatISee is the ultimate Chrome extension screenshot tool for vibe-coding: Sh
 > Pin the extension on your toolbar using **Pin to toolbar** on the **Manage extension** page, or using the "Extensions" (puzzle piece) toolbar icon.
 
 Learn more at https://github.com/jshute96/SeeWhatISee.
+Development happens in that repository.  Issues and PRs should be filed in that repository.
 
-This GitHub project is the released version of the Claude CLI plugin for SeeWhatISee.
+This GitHub project is the released version of the Claude Code plugin for SeeWhatISee.
 
 ## Claude Code skills
 
@@ -57,9 +58,9 @@ Add this to `$HOME/.claude/settings.json` to avoid those prompts.
 
 ## Development
 
-This GitHub project stores the released version of the Claude plugin.
-
-The development project is https://github.com/jshute96/SeeWhatISee.
+This GitHub project stores the released version of the Claude Code plugin.
+It is a mirror: every file here is copied out of `skills/release-claude/` in the
+development project, https://github.com/jshute96/SeeWhatISee, so edit it there.
 
 This project can be used alone for experimentation.
 
@@ -82,7 +83,7 @@ claude --plugin-dir $(pwd)/plugin
 
 The plugin won't update if the version is the same.
 
-To make an update possible, bump `plugins[0].version` in `.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
+To make an update possible, bump `plugins[0].version` in `.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See [docs/claude-plugin.md](https://github.com/jshute96/SeeWhatISee/blob/main/docs/claude-plugin.md) in the development repo for the full story.
 
 Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
 

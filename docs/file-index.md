@@ -121,13 +121,11 @@ The hand-written files each image carries alongside its skill bundle:
 | `skills/release-*/README.md` | The release repo's user-facing README — install and usage for that client |
 | `skills/release-*/LICENSE` | MIT license text, same in every image |
 | `skills/release-*/.gitignore` | The release repo's ignore rules (not the dev repo's) |
-| `skills/release-claude/CLAUDE.md` | Release-repo agent notes — it's a mirror, don't edit there, file issues upstream |
-| `skills/release-gemini/GEMINI.md` | Same notes for the Gemini release repo |
-| `skills/release-claude/GEMINI.md` | Symlink to `CLAUDE.md`, so the Gemini CLI reads the same notes |
+| `skills/release-*/AGENTS.md` | Release-repo agent notes — it's a mirror, don't edit there, file issues upstream, plus that client's specifics |
+| `skills/release-*/CLAUDE.md` | Symlink to that image's `AGENTS.md` — Claude Code doesn't read `AGENTS.md`, other agents do |
 | `skills/release-claude/.claude/settings.json` | Release repo's local-dev shim — bypasses the installed plugin, allows the skill scripts |
 | `skills/release-claude/.claude/skills` | Symlinks to `plugin/skills/*`, so a clone of the release repo loads the local skills |
 | `skills/release-gemini/install-skills.sh` | Release repo's installer for users who copy skills in by hand |
-| `skills/release-antigravity/AGENTS.md` | Release-repo agent notes, same role as the Claude one |
 
 Every skill bundle has the same shape, and **everything in it except
 the manifest and the files above is generated**:

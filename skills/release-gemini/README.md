@@ -65,9 +65,9 @@ gemini extension install SeeWhatISee-gemini
 
 ## Development
 
-This GitHub project stores the released version of the Gemini extension.
-
-The development project is https://github.com/jshute96/SeeWhatISee.
+This GitHub project stores the released version of the Gemini CLI extension.
+It is a mirror: every file here is copied out of `skills/release-gemini/` in the
+development project, https://github.com/jshute96/SeeWhatISee, so edit it there.
 
 This project can be used alone for experimentation.
 

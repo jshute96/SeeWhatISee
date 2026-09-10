@@ -66,7 +66,7 @@ onto the root of `../SeeWhatISee-<client>`:
 
 - The image is the **source of truth for everything in the release
   repo** — not just the skill bundle but `README.md`, `LICENSE`,
-  `.gitignore`, `CLAUDE.md`/`AGENTS.md` and so on. Edit them here.
+  `.gitignore`, `AGENTS.md` and so on. Edit them here.
 - Never edit a release repo directly: the next mirror overwrites it.
 - Keeping the images side by side is deliberate — it makes the three
   READMEs and skill sets comparable, and lets one change be applied
