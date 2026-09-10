@@ -7,9 +7,10 @@ MCP-aware client can call.
 
 ## Why
 
-- **Reach beyond Claude Code and Gemini CLI.** Claude Desktop, Cursor,
-  Zed, Continue and other MCP clients can use SeeWhatISee without each
-  one needing its own per-tool skill wrapper.
+- **Reach beyond the bundled clients** — Claude Code, Antigravity and
+  Gemini CLI. Claude Desktop, Cursor, Zed, Continue and other MCP
+  clients can use SeeWhatISee without each one needing its own per-tool
+  skill wrapper.
 - **Structured I/O.** Typed tool schemas instead of stdout-line parsing
   of a shell script.
 - **Real push notifications for watch.** Subscriptions replace the

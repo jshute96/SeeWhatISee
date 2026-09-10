@@ -120,6 +120,15 @@ What it costs:
 
 ### Pending docs for features not released yet
 
+* **README's unified skills section documents the whole command set** —
+  "Coding agent skills" now says every agent gets `see`, `watch`,
+  `stop` and `history`. That's true of the dev tree and of the
+  Antigravity release, but not yet of what's published:
+  * `SeeWhatISee-claude` has no `see-what-i-see-history` skill.
+  * `SeeWhatISee-gemini` has neither `-history` nor `-stop`.
+  * Both go out with the next `skills/copy-*-release.sh` mirror and
+    push; until then the README is ahead of the released plugins.
+
 * **See what a watch script is running, and stop it, from the Capture page** — when
   `/see-what-i-see-watch` is running, the Capture page's button row
   shows it with a Stop button; both sides need the updated script
@@ -162,20 +171,6 @@ What it costs:
     indicator is described.
   * Needs both sides: an older installed watch script or MCP server
     ignores the flag and hands the capture over as usual.
-
-* **Google Antigravity plugin** — a fourth client bundle at
-  `skills/release-antigravity/` (`plugin.json` plus the skills),
-  generated from the `antigravity.*.md` templates and mirrored to the
-  root of `../SeeWhatISee-antigravity`. See `docs/antigravity-plugin.md`.
-  * README needs an "Antigravity commands" section (the same
-    commands as the other clients; the watch loop runs one
-    backgrounded script per capture, so the conversation stays
-    live) and an install section: `agy plugin install
-    https://github.com/jshute96/SeeWhatISee-antigravity` (re-run it to
-    update — `agy` has no plugin update mechanism), or clone the
-    release repo and copy or symlink it to
-    `~/.gemini/config/plugins/see-what-i-see/` or a workspace
-    `.agents/plugins/`.
 
 * **Convert last drawn box** — a More-menu item that retargets the
   last drawn box / redaction / crop to another of those kinds, for

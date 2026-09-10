@@ -8,12 +8,12 @@ or add a prompt, and ship it to a web chatbot, a CLI agent, or other
 tools using the MCP server.
 
 - **Web targets** — *Claude*, *ChatGPT*, *Gemini*, *Google*.
-- **CLI targets** — *Claude Code* and *Gemini CLI*, via bundled
-  `/see-what-i-see` skills that read captures saved to
-  `~/Downloads/SeeWhatISee/`.
+- **Agent targets** — *Claude Code*, *Google Antigravity* and
+  *Gemini CLI*, via bundled `/see-what-i-see` skills that read captures
+  saved to `~/Downloads/SeeWhatISee/`.
 - **MCP targets** (*Experimental*) — Claude Desktop, Cursor, Zed, Continue, etc.
 
-See [Usage](#usage) for the full feature tour, CLI [Skills](#claude-code-skills), or [Installation](#installation).
+See [Usage](#usage) for the full feature tour, agent [Skills](#coding-agent-skills-for-claude-code-etc), or [Installation](#installation).
 
 See a [demo video here](https://youtu.be/X97j29qx2mU).
 
@@ -153,33 +153,49 @@ You can configure:
   - Default actions for *Click* and *Double-click*
   - Hotkeys (set on the Chrome settings page chrome://extensions/shortcuts)
 
-### Claude Code skills
+### Coding agent skills (for Claude Code, etc.)
 
-- `/see-what-i-see` — read the latest snapshot and describe it
-- `/see-what-i-see-watch` — watch for new snapshots to appear in the background, and then look at them when they appear
+These skills read captures straight from `~/Downloads/SeeWhatISee/`.
+Install them for
+[Claude Code](#claude-code-plugin),
+[Google Antigravity](#antigravity-plugin) or
+[Gemini CLI](#gemini-cli-extension). For other tools, start from the
+[generic skills](#generic-skills-for-other-tools) below.
+
+Every agent gets the same commands:
+
+- `/see-what-i-see` — read the latest capture and describe it
+- `/see-what-i-see-watch` — watch for new captures in the background, and look at each one as it appears
 - `/see-what-i-see-stop` — stop a running watch loop
+- `/see-what-i-see-history` — find and analyze past captures
 
-If you've added a prompt with the snapshot, Claude will follow it.
+If you've added a prompt with the capture, the agent will follow it.
 
-You can also add prompts after the commands above and they'll be applied
-on each snapshot. For example,
+You can also add a prompt after any command above and it'll also be applied
+on each capture. For example,
 
 - `/see-what-i-see` `What font is the heading on this page?`
-- `/see-what-i-see-watch` `Just report the snapshot filenames`
+- `/see-what-i-see-watch` `Just report the capture filenames`
 
-### Gemini CLI commands
+#### Per-agent differences
 
-- `/see-what-i-see` `[prompt]` — read the latest capture.
-- `/see-what-i-see-watch` `[prompt]` — watch for new captures and
-  describe each one.
-  - Runs in the foreground. (Gemini has no async background worker with a completion callback)
-  - The conversation stays paused on a blocking shell call between captures. 
-  - Stop it by pressing *Escape*.
-- `/see-what-i-see-xtract` `[prompt]` — alias for `/see-what-i-see`. Useful because Gemini shows auto-completes in reverse alphabetical order, so this name surfaces first.
+- **Gemini CLI** can't run scripts in the background, so watching
+  runs in the foreground.  Stop it by pressing *Escape*. Gemini also has a
+  `/see-what-i-see-xtract` alias for `/see-what-i-see`. Gemini shows
+  auto-completes in reverse alphabetical order, so this name surfaces first.
+- Claude Code and Antigravity read capture files in place. Gemini copies
+  them to a tmp directory first, to avoid permission issues reading
+  files outside the workspace.
+
+#### Generic skills for other tools
+
+For other agentic tools that run skills, a client-agnostic set lives under [`skills/generic-skills/`](skills/generic-skills/). They're a hybrid of the per-client skills above that try to work generically for multiple tools.
+
+These can be customized to make skills optimized for other tools.
 
 ### MCP server (*Experimental*)
 
-The MCP server [`@see-what-i-see/mcp-server`](https://www.npmjs.com/package/@see-what-i-see/mcp-server) exposes the same operations as the skills above, so they work in any MCP-aware client (Claude Desktop, Cursor, Zed, Continue, etc.) — not just Claude Code and Gemini CLI.
+The MCP server [`@see-what-i-see/mcp-server`](https://www.npmjs.com/package/@see-what-i-see/mcp-server) exposes the same operations as the skills above, so they work in any MCP-aware client (Claude Desktop, Cursor, Zed, Continue, etc.) — not just Claude Code, Antigravity and Gemini CLI.
 
 Same two prompts:
 
@@ -191,12 +207,6 @@ How the prompts surface depends on the client. Claude Code exposes them as `/mcp
 Some clients support an MCP server's tools but not its prompts. If your client doesn't support these prompts automatically from the MCP server, they are also available as plain skills under [`skills/mcp/`](skills/mcp/) — install those skills and they'll drive the `see-what-i-see` MCP server's tools directly.
 
 See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for details.
-
-### Generic skills for other tools
-
-For other agentic tools that run skills, a client-agnostic set lives under [`skills/generic-skills/`](skills/generic-skills/). They're a hybrid of the Claude and Gemini skills with the client-specific bits removed — `see-what-i-see`, `see-what-i-see-watch`, and `see-what-i-see-stop`, each wrapping the shared backend script. The watch skill adapts to what your tool can do — a streaming watcher if it can read a command's output as it arrives, otherwise a single-shot loop run either in the background (waking on completion) or in the blocking foreground. Copy them into your tool and adapt as needed.
-
-These are a good starting point if you want to try making skills (using CLI scripts) work in other tools.
 
 ## Installation
 
@@ -233,6 +243,22 @@ Add this to `$HOME/.claude/settings.json` to avoid those prompts.
   }
 }
 ```
+
+### Antigravity plugin
+
+Install straight from the release repo with the `agy` CLI:
+
+```bash
+agy plugin install https://github.com/jshute96/SeeWhatISee-antigravity
+```
+
+Antigravity has no plugin update mechanism — run that same command again to
+update, and `agy plugin uninstall see-what-i-see` to remove it.
+
+Antigravity also discovers plugins by directory, so you can instead clone
+[SeeWhatISee-antigravity](https://github.com/jshute96/SeeWhatISee-antigravity)
+and symlink the clone to `~/.gemini/config/plugins/see-what-i-see` (all
+workspaces) or `<workspace>/.agents/plugins/see-what-i-see` (one workspace).
 
 ### Gemini CLI extension
 
@@ -290,12 +316,12 @@ See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for
 
 ### Skills for other coding agents
 
-The release has skill plugins for Claude and Gemini so far.
-These skills and scripts may work for other coding agents too.
+The release has skill plugins for Claude Code, Antigravity and Gemini
+CLI so far. These skills and scripts may work for other coding agents too.
 
-The released Claude skills are in [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude), under `plugin/skills`.
-
-The released Gemini skills are in [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini), under `skills/`.
+- Claude Code — [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude), under `plugin/skills/`.
+- Antigravity — [SeeWhatISee-antigravity](https://github.com/jshute96/SeeWhatISee-antigravity), under `skills/`.
+- Gemini CLI — [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini), under `skills/`.
 
 See [Developing skills](#developing-skills) below for more details.
 
@@ -374,12 +400,10 @@ lockfile can't drift.
 
 The `skills/` directory in this repository uses templates to generate similar skills tuned for different coding agents, and packaged for their plugin mechanisms. Adding more variations is possible.
 
-The released skills are [linked above](#skills-for-other-coding-agents).
-These may work for other coding agents too.
-
-Differences:
-* Claude scripts read the screenshot files in place. Gemini scripts copy them to a tmp directory first to avoid permission issues reading external files.
-* The Claude `/see-what-i-see-watch` skill runs in the background. The Gemini version runs in the foreground.
+The released skills are [linked above](#skills-for-other-coding-agents),
+and how they differ per agent is under
+[Per-agent differences](#per-agent-differences). These may work for
+other coding agents too.
 
 Send a PR if you get skills working for another tool.
 
@@ -429,7 +453,7 @@ Users still need to run `/plugin marketplace update` followed by `/plugin` to pi
 
 Release new versions to users by running `skills/copy-claude-plugin-release.sh`, which mirrors `skills/release-claude/` — the plugin, the marketplace catalog, and the release repo's README and other files — into the sibling [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo. Commit and push that repo to publish.
 
-The Gemini extension has the equivalent `skills/copy-gemini-extension-release.sh` for the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo.
+The other clients have the equivalent scripts: `skills/copy-antigravity-plugin-release.sh` for [SeeWhatISee-antigravity](https://github.com/jshute96/SeeWhatISee-antigravity), and `skills/copy-gemini-extension-release.sh` for [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini).
 
 ### Running the Claude plugin locally
 

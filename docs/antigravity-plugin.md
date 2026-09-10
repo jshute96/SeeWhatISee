@@ -1,8 +1,7 @@
 # Antigravity plugin notes
 
-Notes on the SeeWhatISee plugin for **Google Antigravity** — Google's
-agent-first IDE (a VS Code fork) and its companion `agy` CLI. Official
-references:
+Notes on the SeeWhatISee plugin for **Google Antigravity** and its
+`agy` CLI. Official references:
 
 - <https://antigravity.google/docs/ide/plugins/>
 - <https://antigravity.google/docs/ide/skills/>
