@@ -151,7 +151,17 @@ export interface CaptureRecord {
   url?: string;
   title?: string;
   imageUrl?: string;
+  skipInWatcher?: true;
   [key: string]: unknown;
+}
+
+/**
+ * Captures the user paused on the Capture page: watching passes them
+ * over, everything else (`get_latest`, the file resources) treats them
+ * as ordinary records. See `docs/watch-protocol.md`.
+ */
+function watchable(records: CaptureRecord[]): CaptureRecord[] {
+  return records.filter((r) => r.skipInWatcher !== true);
 }
 
 function readAllRecords(logPath: string): CaptureRecord[] {
@@ -582,6 +592,23 @@ export function createServer(opts: ServerOpts): Server {
   let streamSubscribers = 0;
   let streamListener: ChangeListener | null = null;
   let streamStopUnsubscribe: (() => void) | null = null;
+  /**
+   * The last record a subscriber was rung about — see `latestWatchable`.
+   * Null both for an empty log and for one holding nothing a watcher may
+   * have; the two are the same thing to a subscriber.
+   */
+  let lastRung: string | null = null;
+
+  /**
+   * The last record in the log a watcher may be handed, in log order.
+   * Compared against itself across a change to tell "a capture arrived"
+   * from "a capture the user paused arrived", which is the whole of what
+   * the subscriber doorbell needs to know.
+   */
+  function latestWatchable(): string | null {
+    const rows = watchable(readAllRecords(logPath));
+    return rows.length ? rows[rows.length - 1].timestamp : null;
+  }
 
   const server = new Server(
     { name: 'seewhatisee', version: SERVER_VERSION },
@@ -719,8 +746,13 @@ export function createServer(opts: ServerOpts): Server {
     // `''`, so it falls through to the wait's compare and drains from the start.
     // Drain before reporting a stop: captures that landed in the gap are the
     // client's whether or not the watch ended while they were waiting.
+    // Paused captures drop out here, so a drain holding nothing else
+    // falls through to the wait instead of ending the call on records
+    // the user asked this watcher not to see.
     const pending =
-      after === undefined ? [] : recordsAfterCursor(readAllRecords(logPath), after) ?? [];
+      after === undefined
+        ? []
+        : watchable(recordsAfterCursor(readAllRecords(logPath), after) ?? []);
     if (stop.reason !== null) return finishWatch(pending);
     if (pending.length > 0) return finishWatch(pending);
 
@@ -852,8 +884,13 @@ export function createServer(opts: ServerOpts): Server {
         // are fixed-width, so `>` compares chronologically, and it drops no-op
         // changes (the baseline's own record is not `>` itself) and skips a
         // truncated log until real records return.
-        const fresh = recordsAfterCursor(all, baseline)
-          ?? all.filter((r) => r.timestamp > baseline);
+        // Paused captures don't end the wait. The baseline stays where
+        // it is, so the same record is re-read and re-dropped on the
+        // next change — cheap, and it keeps the cursor honest about
+        // what the client has actually been handed.
+        const fresh = watchable(
+          recordsAfterCursor(all, baseline) ?? all.filter((r) => r.timestamp > baseline),
+        );
         if (fresh.length === 0) return;
         finish(fresh);
       };
@@ -923,7 +960,17 @@ export function createServer(opts: ServerOpts): Server {
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     const uri = req.params.uri;
     if (uri === STREAM_URI || uri.startsWith(STREAM_URI + '?')) {
-      const records = readAllRecords(logPath);
+      // The stream is a watch surface, so captures the user paused on the
+      // Capture page are not in it at all — including in the no-cursor
+      // bootstrap read, which is what a subscriber without a cursor wakes
+      // up and reads. `get_latest` is the surface that still shows them.
+      //
+      // Filtered after the cursor lookup, never before: a client that
+      // seeded its cursor from `get_latest` can be holding a paused
+      // record's timestamp, and looking that up in a list it was filtered
+      // out of would drop the read to the chronological fallback.
+      const all = readAllRecords(logPath);
+      const records = watchable(all);
       const qIndex = uri.indexOf('?');
       const afterRaw =
         qIndex >= 0 ? new URLSearchParams(uri.slice(qIndex + 1)).get('after') : null;
@@ -958,8 +1005,8 @@ export function createServer(opts: ServerOpts): Server {
       const payload =
         after !== null
           ? {
-              records: (recordsAfterCursor(records, after)
-                ?? records.filter((r) => r.timestamp > after)
+              records: watchable(
+                recordsAfterCursor(all, after) ?? all.filter((r) => r.timestamp > after),
               ).map((r) => toResourceRecord(r, sourceDir)),
             }
           : records.length === 0
@@ -1000,7 +1047,16 @@ export function createServer(opts: ServerOpts): Server {
     }
     streamSubscribers += 1;
     if (streamSubscribers === 1) {
+      lastRung = latestWatchable();
       streamListener = () => {
+        const latest = latestWatchable();
+        // A `log.json` change that added nothing the subscriber may have
+        // — a capture the user paused — doesn't ring. Pause means the
+        // watcher doesn't react, and waking an agent to hand it an empty
+        // read is a reaction. The doorbell carries no payload, so one
+        // ring still covers however many captures arrived behind it.
+        if (latest === lastRung) return;
+        lastRung = latest;
         // Best-effort: if the transport is gone the notify fails silently.
         server.sendResourceUpdated({ uri: STREAM_URI }).catch(() => {});
       };

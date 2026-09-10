@@ -394,6 +394,44 @@ and renamed into place, so a reader never catches it half-written. Same
 directory (the rename is only atomic within a filesystem) and
 pid-suffixed, so two runs racing for the slot can't collide on it.
 
+## Pausing — captures a watcher passes over
+
+The **Pause** button in the Capture page's watcher box doesn't touch
+the watch. It marks the *capture*, so a user can save one for the
+history, or to hand to some other agent, without interrupting the
+watch or stopping it.
+
+### The flag
+
+- A save made while Pause is armed carries `skipInWatcher: true` in
+  its `log.json` record. Nothing else in the record changes.
+- Only watching honours it. `--get-latest`, `--all` / `--limit`, the
+  MCP `get_latest` tool and the History page all show the record like
+  any other.
+- Pause is armed per Capture page and sticky: it means "skip the next
+  capture", whoever is watching, so a watch replaced by another one
+  doesn't clear it.
+- It clears when nothing is watching at all — the box goes with the
+  watch, and armed state the user can't see or click off is worse than
+  re-arming.
+
+### What a watcher does with one
+
+- Passes it over and keeps waiting. A single-shot run does **not**
+  exit on one — it goes back to waiting, so the agent's turn is not
+  spent on a capture it was asked not to see.
+- `--after` catch-up drops them from the pending batch. A batch that
+  is left empty falls through to the poll loop rather than returning.
+- The script's cursor advances past a skipped record, so it is never
+  re-offered. `resumeAfter` still names the last record actually
+  emitted — a run that has emitted nothing hands the session back
+  unchanged, since it only hands back on the way out with a capture.
+- The MCP server filters `watch` results and every read of
+  `seewhatisee://captures/stream`, bootstrap read included, and doesn't
+  ring a subscriber's doorbell for one. The client's cursor stays where
+  it is — the record is simply not in any read, so nothing lies about
+  what the client has been handed.
+
 ## The Capture page's side
 
 - **Needs "Allow access to file URLs"** (off by default, in
@@ -417,6 +455,8 @@ pid-suffixed, so two runs racing for the slot can't collide on it.
   buttons, and is hidden whenever no watch is visible. Its tooltip
   names what is watching, from `kind`: a watch script, or an MCP
   server.
+- **Pause** sits beside Stop and changes nothing on disk — it arms the
+  `skipInWatcher` flag for the next save from that page. See § Pausing.
 - **Stop** writes the request carrying the session id it is showing,
   then hides the indicator. Success is no longer inferred from an
   absent file, so a stop in a gap is reported honestly rather than as

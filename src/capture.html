@@ -520,12 +520,13 @@
   button.ask-row,
   button.ask-caret-btn,
   button.ask-provider-btn,
-  button#watch-stop-btn {
+  button#watch-stop-btn,
+  button#watch-pause-btn {
     /* One height for every action button so the row stays flush after
      * wrapping; flex-centring makes vertical padding unnecessary.
-     * (`#watch-stop-btn` overrides the height below — it sits inside
-     * the watcher box, so it is smaller than the row's buttons, but
-     * everything else about it stays identical.) */
+     * (The watcher-box buttons override the height below — they sit
+     * inside the watcher box, so they are smaller than the row's
+     * buttons, but everything else about them stays identical.) */
     height: var(--ask-btn-h);
     border: 1px solid #555;
     background: #f5f5f5;
@@ -614,11 +615,31 @@
   .watch-status-label {
     font-size: 14px;
     white-space: nowrap;
+    /* Both readings occupy the one cell, so the label is always as wide
+     * as the longer of them and pausing swaps the text without moving
+     * the buttons beside it. The unshown one is hidden with
+     * `visibility`, not `display: none`, which would take it out of the
+     * sizing too and defeat the whole arrangement. Either way it stays
+     * out of the accessibility tree, so only the active reading is
+     * announced. */
+    display: grid;
+  }
+  .watch-status-label > span {
+    grid-area: 1 / 1;
+  }
+  .watch-status-label > .watch-label-paused,
+  .watch-status.is-paused .watch-label-running {
+    visibility: hidden;
+  }
+  .watch-status.is-paused .watch-label-paused {
+    visibility: visible;
   }
   /* Same chrome as every other button in the row — border, background
    * and `.btn`'s raised / pressed feedback — but sized down to fit
-   * inside the watcher box. The power symbol is just its icon. */
-  button#watch-stop-btn {
+   * inside the watcher box. The power / pause symbols are just their
+   * icons. */
+  button#watch-stop-btn,
+  button#watch-pause-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -628,13 +649,34 @@
     border-radius: 4px;
     color: #333;
   }
-  button#watch-stop-btn svg {
+  button#watch-stop-btn svg,
+  button#watch-pause-btn svg {
     width: 17px;
     height: 17px;
     display: block;
   }
   button#watch-stop-btn:disabled {
     cursor: not-allowed;
+  }
+  /* Armed Pause. The inset shadow + darker face are the page's shared
+   * pressed / selected vocabulary (`.btn.pressed`, `.tool-btn.selected`);
+   * the amber says it's a mode that stays on, not a click landing. */
+  button#watch-pause-btn[aria-pressed="true"] {
+    background: #f6e2c4;
+    border-color: #8a5a12;
+    color: #6b4109;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
+  }
+  /* Armed feedback, restated: the rule above outranks `.btn`'s shared
+   * hover / press rules on specificity, so without these the one
+   * control the user is about to click back off is the one that stops
+   * responding to the pointer. */
+  button#watch-pause-btn[aria-pressed="true"]:hover:not(:disabled) {
+    background: #edd0a4;
+    border-color: #6b4109;
+  }
+  button#watch-pause-btn[aria-pressed="true"]:active:not(:disabled) {
+    background: #e0bd8a;
   }
   .ask-row-label {
     /* Inline-block so the hotkey letter's underline renders cleanly. */
@@ -1172,6 +1214,11 @@
         <path d="M6.9 6.9a7.2 7.2 0 1 0 10.2 0" fill="none" stroke="currentColor"
               stroke-width="2" stroke-linecap="round"></path>
       </symbol>
+      <!-- Two bars — the watcher-pause action. -->
+      <symbol id="pause-icon" viewBox="0 0 24 24">
+        <path d="M9 5v14M15 5v14" fill="none" stroke="currentColor"
+              stroke-width="2.4" stroke-linecap="round"></path>
+      </symbol>
       <!-- Pencil — the edit action. -->
       <symbol id="edit-icon" viewBox="0 0 24 24">
         <path d="M4 20h4L19 9l-4-4L4 16v4z"
@@ -1465,8 +1512,20 @@
         <div id="watch-status" class="watch-status" hidden>
           <!-- The label's tooltip says what is watching, so it depends on
                the session and is set in `src/capture-page/watch-status.ts`
-               rather than here. -->
-          <span class="watch-status-label">Watcher running</span>
+               rather than here.
+
+               Both readings are in the markup and share one grid cell, so
+               the box is as wide as the longer of them and arming Pause
+               can't reflow the button row. -->
+          <span class="watch-status-label">
+            <span class="watch-label-running">Watcher running</span>
+            <span class="watch-label-paused">Watcher paused</span>
+          </span>
+          <button id="watch-pause-btn" type="button" class="btn"
+                  title="Pause the watcher. Ignore the next capture."
+                  aria-label="Pause watcher" aria-pressed="false">
+            <svg aria-hidden="true"><use href="#pause-icon"></use></svg>
+          </button>
           <button id="watch-stop-btn" type="button" class="btn"
                   title="Stop the running watcher" aria-label="Stop watcher">
             <svg aria-hidden="true"><use href="#power-icon"></use></svg>

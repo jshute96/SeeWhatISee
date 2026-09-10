@@ -1624,6 +1624,11 @@ captureBtn.addEventListener('click', (e) => {
             highlights: flags.hasHighlights,
             hasRedactions: flags.hasRedactions,
             isCropped: flags.isCropped,
+            // Read at save time, not at click time: Pause is a mode the
+            // user can turn on or off right up to the save — including
+            // while the out-of-sync log dialog is open, whose Retry /
+            // Overwrite re-enters here and picks up the current value.
+            skipInWatcher: watchStatus.isPaused(),
             editVersion: getEditVersion(),
             screenshotOverride,
             closeAfter,
@@ -1830,9 +1835,10 @@ initSaveAs({
 // a `?logsync=` payload, opens it for the stranded capture.
 initLogSync();
 
-initWatchStatus({
+const watchStatus = initWatchStatus({
   container: document.getElementById('watch-status') as HTMLElement,
   stopBtn: document.getElementById('watch-stop-btn') as HTMLButtonElement,
+  pauseBtn: document.getElementById('watch-pause-btn') as HTMLButtonElement,
   setStatusMessage,
   statusText: () => pageStatus.textContent ?? '',
   refit: fitImage,

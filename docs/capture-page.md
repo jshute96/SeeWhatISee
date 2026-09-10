@@ -487,9 +487,9 @@ as the prompt textarea:
 ### Running watch script (`#watch-status`)
 
 The tail of the button row, after the Ask buttons: a *Watcher
-running* label and a power-symbol Stop button, boxed together, shown
-while a stoppable watch session is live — including the gaps between
-the runs of a single-shot agent loop.
+running* label, a Pause button and a power-symbol Stop button, boxed
+together, shown while a stoppable watch session is live — including
+the gaps between the runs of a single-shot agent loop.
 
 - The box uses the same panel chrome as the captured-page card
   (`--panel-bg` / `--panel-border`), so it reads as a grouped state
@@ -497,7 +497,15 @@ the runs of a single-shot agent loop.
   row's buttons, so showing it can't change the row's height — the
   Stop button inside is sized down instead.
 - The label carries a tooltip saying what a watcher is and that
-  `/see-what-i-see-watch` starts one; the button's says what it stops.
+  `/see-what-i-see-watch` starts one; the buttons' say what they do.
+- **Pause** doesn't touch the watch: it marks the captures saved from
+  this page with `skipInWatcher`, so the watcher passes them over and
+  keeps waiting. Sticky until clicked off, or until nothing is
+  watching and the box goes away. See
+  [watch-protocol.md → Pausing](watch-protocol.md#pausing--captures-a-watcher-passes-over).
+- Armed, the button takes the page's pressed / selected look in amber
+  and the label reads *Watcher paused*. Both readings share one grid
+  cell, so the swap can't re-flow the row.
 - Hidden whenever no watch is visible, which is also the whole success
   story for Stop — the session record goes, and the block disappears
   with no message.

@@ -409,6 +409,20 @@ What the client sees, since MCP has no exit codes:
 - A subscriber gets a `resources/updated` notification, and the next
   stream read carries `"stopped": true`.
 
+### Paused captures
+
+- A record carrying `skipInWatcher` never reaches a watching client:
+  it is filtered out of `watch` results and of every read of
+  `seewhatisee://captures/stream`, the no-cursor bootstrap included.
+- A `watch` call whose whole drain was paused captures keeps waiting
+  for the timeout rather than returning them.
+- The subscriber doorbell doesn't ring for one. It fires on a
+  `log.json` change, but only when the last record a watcher may be
+  handed has changed — so a paused capture wakes nobody, and the next
+  real capture still rings whether or not paused ones landed behind it.
+- `get_latest` and the `file://` resources are unaffected — the
+  capture is still there for a user who asks for it by hand.
+
 ### Coexisting with a CLI watch
 
 - One watch per capture directory is the protocol's rule, so

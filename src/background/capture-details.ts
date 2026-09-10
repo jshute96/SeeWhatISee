@@ -1311,6 +1311,13 @@ interface SaveDetailsMessage {
    * `isCropped: true` (only when `screenshot` is also true).
    */
   isCropped: boolean;
+  /**
+   * True when the Capture page's Pause button was armed for this
+   * save. Sets `skipInWatcher: true` on the log record so watchers
+   * pass the capture over. Absent on every other save path — the
+   * button only exists on the Capture page.
+   */
+  skipInWatcher?: boolean;
   /** Edit counter — same meaning as on `EnsureDownloadedMessage`. */
   editVersion?: number;
   /**
@@ -2378,6 +2385,7 @@ export function installDetailsMessageHandlers(): void {
             hasHighlights: msg.highlights,
             hasRedactions: msg.hasRedactions,
             isCropped: msg.isCropped,
+            skipInWatcher: msg.skipInWatcher === true,
             htmlEdited: postEnsure.htmlEdited,
             // Only the chosen selection format's edit flag matters
             // for the log record — edits to other formats stay on

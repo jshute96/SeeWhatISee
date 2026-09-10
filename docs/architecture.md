@@ -208,6 +208,10 @@ Every record has `timestamp` and `url`, plus optional fields:
   Screenshot in the Capture page.
 - `prompt` — user-entered text from the Capture page, omitted
   when empty.
+- `skipInWatcher` — `true` iff the user armed Pause in the Capture
+  page's watcher box before saving. Watchers pass the record over;
+  every other reader treats it normally. Omitted when not paused. See
+  [`watch-protocol.md` → Pausing](watch-protocol.md#pausing--captures-a-watcher-passes-over).
 
 ### Record shapes by trigger
 

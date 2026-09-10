@@ -1437,3 +1437,153 @@ test('--no-lockfiles keeps the watch private', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Paused captures (`skipInWatcher`)
+// ---------------------------------------------------------------------------
+
+test('watch drops paused records from the drain and keeps waiting', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', skipInWatcher: true }),
+    ],
+    watchDefaultTimeoutMs: 150,
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:00.000Z' },
+    });
+    assert.deepEqual(watchRecords(res), []);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a paused capture does not end a blocking watch; the next one does', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+    watchDefaultTimeoutMs: 3_000,
+  });
+  try {
+    const watchPromise = ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:00.000Z' },
+    });
+    setTimeout(() => appendRecord(ctx.dir, record({
+      timestamp: '2026-04-08T20:30:05.000Z',
+      screenshot: { filename: 'paused.png' },
+      skipInWatcher: true,
+    })), 80);
+    setTimeout(() => appendRecord(ctx.dir, record({
+      timestamp: '2026-04-08T20:30:06.000Z',
+      screenshot: { filename: 'wanted.png' },
+    })), 300);
+    const records = watchRecords(await watchPromise);
+    assert.deepEqual(records.map((r) => r.timestamp), ['2026-04-08T20:30:06.000Z']);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('the capture stream excludes paused records, cursored and bootstrap alike', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'a.png' } }),
+      record({
+        timestamp: '2026-04-08T20:30:05.000Z',
+        screenshot: { filename: 'paused.png' },
+        skipInWatcher: true,
+      }),
+    ],
+  });
+  try {
+    // The bootstrap read is what a subscriber without a cursor wakes up
+    // and reads, so the paused record must not be its "latest" either.
+    const latest = JSON.parse(
+      (await ctx.client.readResource({ uri: STREAM_URI })).contents[0].text,
+    );
+    assert.equal(latest.timestamp, '2026-04-08T20:30:00.000Z');
+
+    const drained = JSON.parse(
+      (await ctx.client.readResource({
+        uri: STREAM_URI + '?after=2026-04-08T20:30:00.000Z',
+      })).contents[0].text,
+    );
+    assert.deepEqual(drained.records, []);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('get_latest still returns a paused capture', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({
+        timestamp: '2026-04-08T20:30:05.000Z',
+        screenshot: { filename: 'paused.png' },
+        skipInWatcher: true,
+      }),
+    ],
+  });
+  try {
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(metaRecord(res).timestamp, '2026-04-08T20:30:05.000Z');
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'paused.png'));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a cursor naming a paused record still resolves positionally', async () => {
+  // A client can hold one: `get_latest` still hands paused records out.
+  // The record after it carries an *earlier* timestamp, so only the
+  // positional lookup can find it — a chronological fallback returns
+  // nothing, which is what looking the cursor up in the filtered list
+  // would have degraded to.
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      record({ timestamp: '2026-04-08T20:30:09.000Z', skipInWatcher: true }),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'slow.png' } }),
+    ],
+  });
+  try {
+    const payload = JSON.parse(
+      (await ctx.client.readResource({
+        uri: STREAM_URI + '?after=2026-04-08T20:30:09.000Z',
+      })).contents[0].text,
+    );
+    assert.deepEqual(payload.records.map((r) => r.timestamp), ['2026-04-08T20:30:05.000Z']);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a paused capture does not ring the subscriber doorbell', async () => {
+  const ctx = await setup({ records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })] });
+  try {
+    let count = 0;
+    ctx.client.setNotificationHandler(ResourceUpdatedNotificationSchema, () => { count += 1; });
+    await ctx.client.subscribeResource({ uri: STREAM_URI });
+    await sleep(50);
+
+    // Waking an agent to hand it an empty read is a reaction, and Pause
+    // means the watcher doesn't react.
+    appendRecord(ctx.dir, record({
+      timestamp: '2026-04-08T20:30:05.000Z',
+      skipInWatcher: true,
+    }));
+    await sleep(400);
+    assert.equal(count, 0);
+
+    // The next real capture still rings, paused record behind it or not.
+    appendRecord(ctx.dir, record({ timestamp: '2026-04-08T20:30:06.000Z' }));
+    await sleep(400);
+    assert.equal(count, 1);
+  } finally {
+    await ctx.cleanup();
+  }
+});

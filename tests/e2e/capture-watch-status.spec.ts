@@ -159,3 +159,94 @@ test('shows a running watch script, and its Stop button stops it', async ({
     fs.rmSync(stopFile, { force: true });
   }
 });
+
+test('Pause marks the next capture for the watcher to skip', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  test.setTimeout(90_000);
+
+  const first = await openDetailsFlow(extensionContext, fixtureServer, getServiceWorker);
+  await Promise.all([
+    first.capturePage.waitForEvent('close'),
+    first.capturePage.locator('#capture').click(),
+  ]);
+  const sw = await getServiceWorker();
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const dir = path.dirname(logPath);
+  const statusFile = path.join(dir, '.watch-status.json');
+
+  /** The record the last save appended to `log.json`. */
+  const lastRecord = (): Record<string, unknown> => {
+    const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n');
+    return JSON.parse(lines[lines.length - 1]);
+  };
+
+  // That save was made with no watcher in sight, so the flag is absent
+  // entirely — it is never written as `false`.
+  expect('skipInWatcher' in lastRecord()).toBe(false);
+
+  try {
+    const { capturePage } = await openDetailsFlow(
+      extensionContext, fixtureServer, getServiceWorker,
+    );
+    await sw.evaluate((d) => chrome.storage.local.set({ captureDirectory: d }), dir);
+
+    fs.writeFileSync(statusFile, liveStatus(424242, '2026-08-30T12:00:00.123456Z'));
+    await waitForWatchBlock(capturePage, true);
+
+    const pause = capturePage.locator('#watch-pause-btn');
+    const box = capturePage.locator('#watch-status');
+    await expect(pause).toHaveAttribute('aria-pressed', 'false');
+    await expect(capturePage.locator('.watch-label-running')).toBeVisible();
+    await expect(capturePage.locator('.watch-label-paused')).toBeHidden();
+    const widthBefore = (await box.boundingBox())!.width;
+
+    await pause.click();
+    await expect(pause).toHaveAttribute('aria-pressed', 'true');
+    // The label says which of the two states we are in, and swapping it
+    // must not move the buttons beside it.
+    await expect(capturePage.locator('.watch-label-paused')).toBeVisible();
+    await expect(capturePage.locator('.watch-label-running')).toBeHidden();
+    expect((await box.boundingBox())!.width).toBeCloseTo(widthBefore, 1);
+
+    // A different watch taking over is still "whoever is watching", so
+    // the arming stays: it is about the capture, not about that watcher.
+    // The replacement is a server session, whose tooltip differs — that
+    // is what shows the page really re-read the file, rather than the
+    // assertion passing because nothing happened at all.
+    fs.writeFileSync(statusFile, `${JSON.stringify({
+      sessionStarted: '2026-08-30T13:00:00.123456Z',
+      pid: null,
+      kind: 'server',
+      expires: new Date(Date.now() + 90_000).toISOString(),
+    })}\n`);
+    await expect.poll(async () => {
+      await capturePage.evaluate(() => window.dispatchEvent(new Event('focus')));
+      return await capturePage.locator('.watch-status-label').getAttribute('title');
+    }, { timeout: 15_000 }).toContain('MCP server');
+    await expect(pause).toHaveAttribute('aria-pressed', 'true');
+
+    // Nothing watching at all does clear it — the box goes away, and
+    // armed state behind a hidden box is state the user can't cancel.
+    fs.rmSync(statusFile);
+    await waitForWatchBlock(capturePage, false);
+    fs.writeFileSync(statusFile, liveStatus(424245, '2026-08-30T14:00:00.123456Z'));
+    await waitForWatchBlock(capturePage, true);
+    await expect(pause).toHaveAttribute('aria-pressed', 'false');
+
+    await pause.click();
+    await expect(pause).toHaveAttribute('aria-pressed', 'true');
+    await Promise.all([
+      capturePage.waitForEvent('close'),
+      capturePage.locator('#capture').click(),
+    ]);
+
+    // The whole point: the record a watcher reads carries the flag.
+    await expect.poll(() => lastRecord().skipInWatcher ?? false,
+                      { timeout: 10_000 }).toBe(true);
+  } finally {
+    fs.rmSync(statusFile, { force: true });
+  }
+});

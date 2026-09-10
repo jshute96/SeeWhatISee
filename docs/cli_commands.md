@@ -99,6 +99,11 @@ field on the record. See
     would replay the rest of the run on every call and never advance.
   - A timestamp that isn't in `log.json` (typically aged out into a
     history file) warns and falls through to plain watching.
+- **Paused captures are stepped over.** A record carrying
+  `skipInWatcher` (the Capture page's Pause button) is never emitted:
+  the cursor advances past it and the run keeps waiting, so a
+  single-shot iteration doesn't end on one. See
+  [`watch-protocol.md` → Pausing](watch-protocol.md#pausing--captures-a-watcher-passes-over).
 - **The poll loop carries the same cursor.** It wakes on an mtime
   change and emits every line past the last one it emitted.
   - Shift-clicking Capture writes several records well inside one

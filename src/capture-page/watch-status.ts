@@ -8,6 +8,12 @@
 // disappears. Nothing is announced — stopping something you asked to
 // stop needs no confirmation.
 //
+// Pause sits beside Stop and is a different kind of thing: it doesn't
+// touch the watch at all, it marks the captures saved from this page
+// (`skipInWatcher`) so the watcher passes them over. It lives here
+// because it is armed from this box and is only meaningful while a
+// watch is showing.
+//
 // What is shown is a *session*, which spans the gaps between the runs
 // of a single-shot agent loop, so "no run in flight" is not "no
 // watch". See `docs/watch-protocol.md`.
@@ -28,6 +34,7 @@ export interface WatchStatusCtx {
   /** `#watch-status` — the label + Stop button wrapper. */
   container: HTMLElement;
   stopBtn: HTMLButtonElement;
+  pauseBtn: HTMLButtonElement;
   setStatusMessage(text: string, kind: 'ok' | 'error' | 'info'): void;
   /** What the shared status line reads right now. */
   statusText(): string;
@@ -46,11 +53,20 @@ const STOP_POLL_MS = 250;
 
 const STOP_FAILED_MESSAGE = 'Failed to stop watch script';
 
-export function initWatchStatus(ctx: WatchStatusCtx): void {
+export interface WatchStatusHandle {
+  /**
+   * Whether Pause is armed right now — read by the save path, which
+   * stamps `skipInWatcher` on the record it sends to the SW.
+   */
+  isPaused(): boolean;
+}
+
+export function initWatchStatus(ctx: WatchStatusCtx): WatchStatusHandle {
   let current: WatchStatus | null = null;
   let lastRefresh = 0;
   let refreshing = false;
   let stopping = false;
+  let paused = false;
   /**
    * Drop our own "Failed to stop" message once the watcher is gone —
    * a stale complaint about something that has since happened would
@@ -65,7 +81,26 @@ export function initWatchStatus(ctx: WatchStatusCtx): void {
     ctx.setStatusMessage('', 'info');
   }
 
+  /**
+   * Arm / disarm Pause. Sticky: it stays on until the user turns it
+   * off, or the watch it is showing goes away. That is only visible on
+   * a save that keeps the page open (shift-click) — the ordinary
+   * Capture closes the tab, and the arming, deliberately unpersisted,
+   * goes with it.
+   */
+  function setPaused(next: boolean): void {
+    if (paused === next) return;
+    paused = next;
+    ctx.pauseBtn.setAttribute('aria-pressed', String(next));
+    ctx.container.classList.toggle('is-paused', next);
+  }
+
   function show(status: WatchStatus | null): void {
+    // Pause says "skip the next capture", whoever is watching — so a
+    // watch being replaced by another doesn't clear it. Nothing
+    // watching at all does: the box goes with it, and armed state the
+    // user can neither see nor click off is worse than re-arming.
+    if (status === null) setPaused(false);
     current = status;
     if (status === null) clearFailureMessage();
     if (status !== null) describeWatcher(status);
@@ -161,10 +196,13 @@ export function initWatchStatus(ctx: WatchStatusCtx): void {
     }
   }
 
+  ctx.pauseBtn.addEventListener('click', () => { setPaused(!paused); });
   ctx.stopBtn.addEventListener('click', () => { void stop(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void refresh();
   });
   window.addEventListener('focus', () => { void refresh(); });
   void refresh(true);
+
+  return { isPaused: () => paused };
 }

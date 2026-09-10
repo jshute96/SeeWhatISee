@@ -35,6 +35,7 @@ This is a **foreground loop: each iteration blocks** on a shell command that doe
     - `isEdited: true` — same as `contents.isEdited`.
   - `prompt` — the user's instruction for this capture.
   - `imageUrl` — URL of a specific image the user captured, inside the page.
+  - `skipInWatcher: true` means the user asked watchers to skip this capture.
 
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 

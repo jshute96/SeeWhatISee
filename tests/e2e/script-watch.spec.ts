@@ -195,6 +195,20 @@ function simulateCaptureWithSelection(
   return { timestamp, screenshot, selection };
 }
 
+/**
+ * Simulate a capture saved with the Capture page's Pause armed — the
+ * record carries `skipInWatcher`, which watchers pass over.
+ */
+function simulatePausedCapture(dir: string, index: number): {
+  timestamp: string;
+  screenshot: string;
+} {
+  const { json, timestamp, screenshot } = fakeRecord(index);
+  const record = { ...JSON.parse(json), skipInWatcher: true };
+  fs.appendFileSync(path.join(dir, 'log.json'), JSON.stringify(record) + '\n');
+  return { timestamp, screenshot };
+}
+
 // ---- Temp dir management ---------------------------------------------------
 
 let tmpDir: string;
@@ -1493,5 +1507,73 @@ test.describe('SeeWhatISee.py --watch config file', () => {
     const out = watch.output();
     const { screenshot } = fakeRecord(1);
     expect(out).toContain(screenshot);
+  });
+});
+
+test.describe('SeeWhatISee.py --watch paused captures', () => {
+  test.setTimeout(30_000);
+
+  test('--loop steps over a paused capture and emits the next one', async () => {
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const paused = simulatePausedCapture(tmpDir, 1);
+    await new Promise((r) => setTimeout(r, 1200));
+    const wanted = simulateCapture(tmpDir, 2);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const out = watch.output();
+    expect(out).toContain(wanted.screenshot);
+    expect(out).not.toContain(paused.screenshot);
+    watch.kill();
+  });
+
+  test('once mode keeps waiting through a paused capture', async () => {
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // The record the user paused: a single-shot run must not end on it,
+    // or the agent's turn is spent on a capture it was told to ignore.
+    const paused = simulatePausedCapture(tmpDir, 1);
+    expect(await waitForExit(watch.proc, 2_000)).toBeNull();
+    expect(watch.output()).not.toContain(paused.screenshot);
+
+    const wanted = simulateCapture(tmpDir, 2);
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    expect(watch.output()).toContain(wanted.screenshot);
+  });
+
+  test('--after catch-up drops paused records from the pending batch', async () => {
+    const r0 = fakeRecord(0);
+    const paused = simulatePausedCapture(tmpDir, 1);
+    const wanted = simulateCapture(tmpDir, 2);
+
+    const r = runWatch(['--after', r0.timestamp, '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('1 pending capture:');
+    expect(r.stdout).toContain(`${tmpDir}/${wanted.screenshot}`);
+    expect(r.stdout).not.toContain(paused.screenshot);
+  });
+
+  test('--after catch-up with only paused records goes back to waiting', async () => {
+    const r0 = fakeRecord(0);
+    simulatePausedCapture(tmpDir, 1);
+
+    // Nothing the watcher may have, so the run blocks rather than
+    // returning an empty batch to the agent.
+    const watch = startWatch(['--after', r0.timestamp, '--catch-up-one',
+                              '--directory', tmpDir]);
+    expect(await waitForExit(watch.proc, 2_000)).toBeNull();
+
+    const wanted = simulateCapture(tmpDir, 2);
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    expect(watch.output()).toContain(wanted.screenshot);
+  });
+
+  test('--get-latest still shows a paused capture', () => {
+    const paused = simulatePausedCapture(tmpDir, 1);
+    const r = runAction(['--get-latest', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(paused.screenshot);
   });
 });

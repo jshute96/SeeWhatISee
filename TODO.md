@@ -152,6 +152,17 @@ What it costs:
   * README's MCP section needs the new prompt and tool, and a line on
     one watch per directory (`--no-lockfiles` to run alongside).
 
+* **Pause the watcher for one capture** — a Pause button beside Stop in
+  the Capture page's watcher box marks the captures saved from that
+  page with `skipInWatcher`, so the watcher passes them over and keeps
+  waiting instead of handing them to the agent. For capturing something
+  into the history, or for another agent session, without stopping the
+  watch.
+  * README's Capture-page section needs it wherever the watcher
+    indicator is described.
+  * Needs both sides: an older installed watch script or MCP server
+    ignores the flag and hands the capture over as usual.
+
 * **Google Antigravity plugin** — a fourth client bundle at
   `skills/antigravity-plugin/` (`plugin.json` plus the skills),
   generated from the `antigravity.*.md` templates and mirrored to

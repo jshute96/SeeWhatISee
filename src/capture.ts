@@ -628,6 +628,9 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
   if (opts.prompt && opts.prompt.length > 0) {
     record.prompt = opts.prompt;
   }
+  if (opts.skipInWatcher) {
+    record.skipInWatcher = true;
+  }
 
   await recordCapture(record, { force: opts.forceLog });
 

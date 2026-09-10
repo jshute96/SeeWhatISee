@@ -245,7 +245,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
 | `src/capture-page/log-sync.ts` | The Capture page's out-of-sync log dialog — `showLogSyncDialog` for failed saves, plus the error page's `?logsync=` wiring |
 | `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` / `Ctrl+Y` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
-| `src/capture-page/watch-status.ts` | `initWatchStatus(ctx)` — the running-watch-script indicator and its Stop button, refreshed when the page comes back to the front |
+| `src/capture-page/watch-status.ts` | `initWatchStatus(ctx)` — the running-watch indicator with its Stop and Pause buttons, refreshed when the page comes back to the front |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
 | `src/capture-page/save-as.ts` | Capture-page per-row Save-as buttons + drawing-palette Copy-image / Save-image — `initSaveAs(ctx)`, plus `downloadEditableAs` shared with the in-dialog Download button in edit-dialog.ts |
 
@@ -303,7 +303,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-drawing-convert.spec.ts` | E2E for the Convert action — shared target rule (incl. buried-box resize, Crop-tool divergence), the kind submenu, geometry-preserving conversion, Undo, keyboard reach |
 | `tests/e2e/capture-drawing-snap.spec.ts` | E2E for snap-to behaviour — corners, edges, endpoints, axis-align, line projection, polyline loop close |
 | `tests/e2e/capture-status-layout.spec.ts` | E2E for the page's vertical layout contract — a status message must not raise a scrollbar, and the rule stays centred |
-| `tests/e2e/capture-watch-status.spec.ts` | E2E for the Capture page's watch indicator — planted session files (running and between runs), Stop writes the request, failure message |
+| `tests/e2e/capture-watch-status.spec.ts` | E2E for the Capture page's watch indicator — planted session files (running and between runs), Stop writes the request, failure message, Pause flags the capture |
 | `tests/e2e/capture-menu-keyboard.spec.ts` | E2E for keyboard use of the tool buttons (Space / Enter selects) and arrow navigation in the Zoom / More… / Ask menus |
 | `tests/e2e/capture-undo-key.spec.ts` | E2E for `Ctrl+Z` / `Ctrl+Y` routing between the image edit stack and the prompt's own text undo, and the redo stack's semantics |
 | `tests/e2e/capture-drawing-palette.spec.ts` | E2E for the palette Save / Copy buttons on the Capture page, with and without edits |
@@ -329,7 +329,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
 | `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + history files, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
-| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, config file, concurrency) |
+| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, paused captures, config file, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |

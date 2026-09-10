@@ -240,6 +240,18 @@ export interface CaptureRecord {
    * `"title": ""` in `log.json`.
    */
   title: string;
+  /**
+   * `true` when the user armed Pause on the Capture page before
+   * saving: watchers pass this capture over instead of handing it to
+   * their agent. Everything else — the History page, `--get-latest`,
+   * the MCP `get_latest` tool — treats the record as ordinary, so the
+   * capture is still there to find or hand over by hand.
+   *
+   * Only ever `true`; omitted (not `false`) when the user didn't
+   * pause, so the field's presence is the whole meaning. See
+   * `docs/watch-protocol.md`.
+   */
+  skipInWatcher?: true;
 }
 
 export interface CaptureResult extends CaptureRecord {
@@ -553,6 +565,12 @@ export interface SaveDetailedOptions {
    * also set.
    */
   selectionEdited?: boolean;
+  /**
+   * True when Pause was armed on the Capture page for this save.
+   * Sets `skipInWatcher: true` on the log record, which is what makes
+   * watchers pass the capture over.
+   */
+  skipInWatcher?: boolean;
   /**
    * True when this save is the out-of-sync dialog's **Overwrite**:
    * skip the `log.json` reconcile and replace the file with the

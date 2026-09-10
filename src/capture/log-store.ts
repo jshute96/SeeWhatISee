@@ -696,12 +696,16 @@ export function serializeRecord(r: CaptureRecord, indent = 0): string {
   // them the same way.
   if (r.url) ordered.url = r.url;
   if (r.title) ordered.title = r.title;
-  // `imageUrl` is the rightmost field, after `url` / `title`. Emitted
+  // `imageUrl` closes the metadata block, after `url` / `title`. Emitted
   // independently of `screenshot` so the source-image URL survives
   // even when the user unchecks Save Screenshot in the Capture page.
   // Sitting after `title` keeps the per-record metadata block (page
   // URL, page title, source image URL) visually grouped at the end.
   if (r.imageUrl) ordered.imageUrl = r.imageUrl;
+  // Last, after the metadata block: it says nothing about the capture,
+  // only who should act on it. Emitted only when true, so an ordinary
+  // capture's line is unchanged.
+  if (r.skipInWatcher) ordered.skipInWatcher = true;
   return JSON.stringify(ordered, null, indent);
 }
 

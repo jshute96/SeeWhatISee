@@ -1372,6 +1372,20 @@ def log_mtime(log_path):
         return None
 
 
+def skipped_in_watcher(record):
+    """True for a capture the user paused on the Capture page.
+
+    `skipInWatcher` means "watchers pass this one over": the user took
+    it for the history, or to hand to some other agent, without
+    interrupting the watch. Only watching honours it — --get-latest and
+    the history actions treat the record like any other.
+
+    A line that didn't parse is never skipped: we can't read a flag we
+    can't parse, and handing it over is what we do with those anyway.
+    """
+    return isinstance(record, dict) and record.get("skipInWatcher") is True
+
+
 def catch_up(opts, emitter, log_path, lines):
     """--after replay. Returns True if the caller should stop watching.
 
@@ -1408,8 +1422,15 @@ def catch_up(opts, emitter, log_path, lines):
               " as usual" % (opts.after, log_path), file=sys.stderr)
         return False
 
-    pending = records[index + 1:]
+    # Paused captures are behind the poll loop's cursor by the time we
+    # return, so dropping them here is the whole of it — they are never
+    # emitted and never seen again.
+    pending = [record for record in records[index + 1:]
+               if not skipped_in_watcher(record)]
     if not pending:
+        # Either nothing new, or nothing new the watcher may have. Fall
+        # through to the poll loop and keep waiting, which is what a
+        # single-shot run's agent is expecting either way.
         return False
     if opts.catch_up_one:
         emitter.emit(pending[0])
@@ -1541,6 +1562,12 @@ def watch(opts, emitter, source_dir, log_path):
                 # can't be found skips everything behind it.
                 if record is not None:
                     cursor = line
+                # Paused on the Capture page: step over it. The cursor
+                # has already moved past it, so a single-shot run goes
+                # back to waiting rather than ending on a capture its
+                # agent was told not to see.
+                if skipped_in_watcher(record):
+                    continue
                 emitter.emit(record, raw=line)
                 if not opts.loop:
                     # Only a record that parsed can be handed on: its
