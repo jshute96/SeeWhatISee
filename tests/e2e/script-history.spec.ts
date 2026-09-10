@@ -797,9 +797,9 @@ test.describe('SeeWhatISee.py --filter_time', () => {
  */
 test.describe('history.sh wrappers', () => {
   const ROOT = path.resolve(__dirname, '../..');
-  const CLAUDE = `${ROOT}/skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`;
+  const CLAUDE = `${ROOT}/skills/release-claude/plugin/skills/see-what-i-see-history/scripts/history.sh`;
   const GENERIC = `${ROOT}/skills/generic-skills/see-what-i-see-history/scripts/history.sh`;
-  const GEMINI = `${ROOT}/skills/dot-gemini/skills/see-what-i-see-history/scripts/history.sh`;
+  const GEMINI = `${ROOT}/skills/release-gemini/skills/see-what-i-see-history/scripts/history.sh`;
 
   function runWrapper(script: string, args: string[], env: NodeJS.ProcessEnv = {}) {
     const result = spawnSync(script, args, {

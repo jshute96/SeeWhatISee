@@ -1,69 +1,21 @@
 #!/usr/bin/env bash
-# Mirror the dev-repo Antigravity plugin sources into the release repo.
+# Publish skills/release-antigravity/ to ../SeeWhatISee-antigravity
+# (the Google Antigravity plugin repo).
 #
-# Layout mapping (source -> dest):
-#   skills/antigravity-plugin/<sub>/   -> <release>/<sub>/   (rsync -a --delete)
-#   skills/antigravity-plugin/<file>   -> <release>/<file>   (rsync -a)
-#
-# i.e. each top-level entry lands as a sibling at the release-repo
-# root, so `plugin.json` sits at the root of the release repo. That
-# makes the repo itself a plugin directory, which is what
-# `agy plugin install <github-url>` expects.
-#
-# The release repo is expected to live as a peer of this repo at
-# ../SeeWhatISee-antigravity. We do NOT create it — if it isn't there
-# already, bail.
-#
-# Subdirs get `rsync -a --delete` so files removed from the dev side
-# disappear on the release side too. Top-level files are copied
-# without --delete because the release-repo root also holds files we
-# don't manage (README, LICENSE, .git, etc.) — we can't safely delete
-# at that scope. If you remove a top-level file from the dev tree,
-# also delete it from the release repo by hand.
+# Thin wrapper around skills/copy-release.sh — see that script for the
+# layout mapping and what it will and won't delete.
 #
 # Usage:
 #   skills/copy-antigravity-plugin-release.sh [--dry-run]
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
-SRC_ROOT="$REPO_ROOT/skills/antigravity-plugin"
-RELEASE_DIR="$(cd "$REPO_ROOT/.." && pwd)/SeeWhatISee-antigravity"
+DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 
-DRY_RUN=()
 case "${1-}" in
-  "")        ;;
-  --dry-run) DRY_RUN=(--dry-run --itemize-changes) ;;
   --help|-h)
     sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0 ;;
-  *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac
 
-if [[ ! -d "$RELEASE_DIR" ]]; then
-  echo "Error: release repo not found at $RELEASE_DIR" >&2
-  echo "Clone https://github.com/jshute96/SeeWhatISee-antigravity.git as a peer of this repo first." >&2
-  exit 1
-fi
-
-# Iterate top-level entries of skills/antigravity-plugin/ so
-# newly-added subtrees and files are picked up without editing this
-# script.
-shopt -s nullglob
-entries=("$SRC_ROOT"/*)
-shopt -u nullglob
-if [[ ${#entries[@]} -eq 0 ]]; then
-  echo "Error: nothing to mirror under $SRC_ROOT" >&2
-  exit 1
-fi
-
-for entry in "${entries[@]}"; do
-  name=$(basename "$entry")
-  if [[ -d "$entry" ]]; then
-    rsync -a --delete "${DRY_RUN[@]}" "$entry/" "$RELEASE_DIR/$name/"
-    echo "Mirrored skills/antigravity-plugin/$name/  -> $RELEASE_DIR/$name/"
-  else
-    rsync -a "${DRY_RUN[@]}" "$entry" "$RELEASE_DIR/$name"
-    echo "Copied   skills/antigravity-plugin/$name   -> $RELEASE_DIR/$name"
-  fi
-done
+exec "$DIR/copy-release.sh" antigravity "$@"

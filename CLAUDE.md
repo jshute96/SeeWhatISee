@@ -54,30 +54,35 @@ user before elaborating further. Default to action over planning.
 ## Dev repo vs. release repos for skills
 
 This repo holds **development source**. Users install from separate
-release repos that live as siblings of this one:
+release repos that live as siblings of this one. Each has a full image
+under `skills/`, and `skills/release-<client>/` maps entry-for-entry
+onto the root of `../SeeWhatISee-<client>`:
 
-- `../SeeWhatISee-claude` — the Claude Code plugin marketplace.
-  - `skills/claude-plugin/` here → `plugin/` in the release repo.
-  - `skills/dot-claude-plugin/` here → `.claude-plugin/` in the release repo.
-- `../SeeWhatISee-gemini` — the Gemini CLI extension.
-  - Each top-level entry under `skills/dot-gemini/` lands as a
-    sibling at the release-repo root — `skills/`, plus top-level
-    files like `gemini-extension.json` — *not* nested under a
-    `.gemini/` directory.
-- `../SeeWhatISee-antigravity` — the Google Antigravity plugin.
-  - Each top-level entry under `skills/antigravity-plugin/` lands as
-    a sibling at the release-repo root — `plugin.json` and `skills/`.
-    The repo root *is* the plugin dir, so `agy plugin install
-    <git-url>` works.
-  - See `docs/antigravity-plugin.md`.
+| Image | Release repo | What users install |
+|-------|--------------|--------------------|
+| `skills/release-claude/` | `../SeeWhatISee-claude` | Claude Code plugin marketplace |
+| `skills/release-gemini/` | `../SeeWhatISee-gemini` | Gemini CLI extension |
+| `skills/release-antigravity/` | `../SeeWhatISee-antigravity` | Google Antigravity plugin (see `docs/antigravity-plugin.md`) |
+
+- The image is the **source of truth for everything in the release
+  repo** — not just the skill bundle but `README.md`, `LICENSE`,
+  `.gitignore`, `CLAUDE.md`/`AGENTS.md` and so on. Edit them here.
+- Never edit a release repo directly: the next mirror overwrites it.
+- Keeping the images side by side is deliberate — it makes the three
+  READMEs and skill sets comparable, and lets one change be applied
+  across all of them in one pass.
 
 Publish with the rsync mirror scripts:
 
-- `skills/copy-claude-plugin-release.sh`
-- `skills/copy-gemini-extension-release.sh`
-- `skills/copy-antigravity-plugin-release.sh`
+- `skills/copy-release.sh <client>` — the shared implementation.
+- `skills/copy-claude-plugin-release.sh`,
+  `skills/copy-gemini-extension-release.sh`,
+  `skills/copy-antigravity-plugin-release.sh` — one-word wrappers
+  around it.
 
-They bail if the release repo isn't cloned next to this one. Files are
+They bail if the release repo isn't cloned next to this one.
+Subdirectories are mirrored with `--delete`; top-level files are copied
+without it, since the release-repo root also holds `.git`. Files are
 copied verbatim (no path rewriting) — anything in the dev tree that
 references its own location must use the *release-repo* path
 (e.g. `marketplace.json` says `"source": "./plugin"`). See

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
+      "Bash(plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
+      "Bash(plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
+    ]
+  },
+  "enabledPlugins": {
+    "see-what-i-see@see-what-i-see-marketplace": false
+  }
+}

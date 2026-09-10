@@ -1,10 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-history/scripts/history.sh:*)",
       "Bash(pnpm run build:*)",
       "Bash(pnpm run test:*)",
       "Bash(pnpm run test:skills:*)",

@@ -1,0 +1,8 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+/tmp/
+
+# claude scratch files
+.claude/projects/
+.claude/worktrees/
+.claude/*.lock

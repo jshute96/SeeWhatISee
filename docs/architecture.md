@@ -403,12 +403,12 @@ A coding agent (Claude Code, etc.) reads the latest file from
 Layout:
 
 - Each skill that needs a script bundles it in its own
-  `skills/claude-plugin/skills/<name>/scripts/` directory. No
+  `skills/release-claude/plugin/skills/<name>/scripts/` directory. No
   plugin-root-level `scripts/` dir.
 - All per-skill scripts are thin wrappers around a single unified
   backend, `SeeWhatISee.py`. The backend lives next to its owning
   skill's wrapper at
-  `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`,
+  `skills/release-claude/plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`,
   and is a verbatim copy of the canonical `skills/SeeWhatISee.py`
   (propagated by `skills/generate-skills.py`). Sibling-skill
   wrappers reach across to it via
@@ -429,7 +429,7 @@ Layout:
 
 The scripts:
 
-- `skills/claude-plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`
+- `skills/release-claude/plugin/skills/see-what-i-see/scripts/SeeWhatISee.py`
   — unified backend with all the actual logic, written in
   stdlib-only Python 3 (no third-party packages, so a skill bundle
   installs by copying files). Actions
@@ -443,10 +443,10 @@ The scripts:
   sandbox-readable target dir, mtime polling, pidfile management,
   and `--after` catch-up. See `cli_commands.md` for the full
   flag inventory.
-- `skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh`
+- `skills/release-claude/plugin/skills/see-what-i-see/scripts/get-latest.sh`
   — `exec`s `SeeWhatISee.py --get-latest`. Reads the last line of
   `log.json` and prints a single JSON record with absolute paths.
-- `skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh`
+- `skills/release-claude/plugin/skills/see-what-i-see-watch/scripts/watch.sh`
   — `exec`s `SeeWhatISee.py --watch --loop` and forwards
   the watcher flags (`--after`, `--print_selection`, `--stop`,
   `--directory`). The backend polls `log.json`'s mtime
@@ -454,9 +454,9 @@ The scripts:
   status messages go to stderr. Each change emits *every* record
   past the last one it emitted, since a burst of captures can add
   several between two polls.
-- `skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh`
+- `skills/release-claude/plugin/skills/see-what-i-see-stop/scripts/stop.sh`
   — `exec`s `SeeWhatISee.py --stop`. Used by `/see-what-i-see-stop`.
-- `skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh`
+- `skills/release-claude/plugin/skills/see-what-i-see-history/scripts/history.sh`
   — `exec`s `SeeWhatISee.py` with the caller's history flags and no
   forced action, so the skill picks `--limit` / `--all` and the
   filters itself.

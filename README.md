@@ -423,11 +423,11 @@ on `self.SeeWhatISee` for test/console access.
 
 The plugin won't update if the version is the same.
 
-To make an update possible, bump `plugins[0].version` in `skills/dot-claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
+To make an update possible, bump `plugins[0].version` in `skills/release-claude/.claude-plugin/marketplace.json`. That's the field Claude Code uses for cache invalidation on this relative-path plugin; `plugin.json` intentionally has no `version` field. See `docs/claude-plugin.md` for the full story.
 
 Users still need to run `/plugin marketplace update` followed by `/plugin` to pick up the new version — third-party marketplaces do not auto-update on startup.
 
-Release new versions to users by running `skills/copy-claude-plugin-release.sh`, which mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into the sibling [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo. Commit and push that repo to publish.
+Release new versions to users by running `skills/copy-claude-plugin-release.sh`, which mirrors `skills/release-claude/` — the plugin, the marketplace catalog, and the release repo's README and other files — into the sibling [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo. Commit and push that repo to publish.
 
 The Gemini extension has the equivalent `skills/copy-gemini-extension-release.sh` for the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo.
 
@@ -436,7 +436,7 @@ The Gemini extension has the equivalent `skills/copy-gemini-extension-release.sh
 For local development, a plugin directory can be set manually:
 
 ```bash
-claude --plugin-dir $(pwd)/skills/claude-plugin
+claude --plugin-dir $(pwd)/skills/release-claude/plugin
 ```
 
 (The repo also auto-discovers the plugin via `.claude/skills/` symlinks, so running `claude` from inside this checkout normally works without the flag.)
@@ -553,10 +553,12 @@ GitHub UI.
 - `dist/` — built extension (gitignored, loaded unpacked into Chrome)
 - `scripts/build.mjs` — build script (cleans `dist/`, copies icons and
   manifest, runs `tsc`)
-- `skills/` — Common templates for Claude and Gemini skills, and update scripts. Subtrees:
-  - `skills/claude-plugin/` → `plugin/` in the [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude) release repo
-  - `skills/dot-claude-plugin/` → `.claude-plugin/` in that release repo
-  - `skills/dot-gemini/` → root of the [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini) release repo
+- `skills/` — Common templates for the per-client skills, and update
+  scripts. Each `skills/release-<client>/` is a complete image of a
+  release repo, copied out to it by `skills/copy-release.sh`:
+  - `skills/release-claude/` → [SeeWhatISee-claude](https://github.com/jshute96/SeeWhatISee-claude)
+  - `skills/release-gemini/` → [SeeWhatISee-gemini](https://github.com/jshute96/SeeWhatISee-gemini)
+  - `skills/release-antigravity/` → [SeeWhatISee-antigravity](https://github.com/jshute96/SeeWhatISee-antigravity)
 - `mcp-server/` — standalone TS MCP server (pnpm workspace) that exposes
   captures over the Model Context Protocol; bundled to a single
   `dist/seewhatisee-mcp.js` for distribution

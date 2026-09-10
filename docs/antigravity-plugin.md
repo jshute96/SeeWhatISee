@@ -113,8 +113,8 @@ top-level entry lands as a sibling at the release-repo root.
 
 | Dev path (this repo)                  | Release path (`SeeWhatISee-antigravity`) |
 |---------------------------------------|-------------------------------------------|
-| `skills/antigravity-plugin/plugin.json` | `plugin.json`                           |
-| `skills/antigravity-plugin/skills/`     | `skills/`                               |
+| `skills/release-antigravity/plugin.json` | `plugin.json`                           |
+| `skills/release-antigravity/skills/`     | `skills/`                               |
 
 - The plugin *is* the repo root — that's what `agy plugin install
   <git-url>` needs. There is no `plugin/` subdirectory, unlike the

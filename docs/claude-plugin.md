@@ -52,14 +52,12 @@ other skills' wrappers reach in sibling-relative via
 `../../see-what-i-see/scripts/SeeWhatISee.py`. No
 plugin-root-level `scripts/` dir.
 
-In **this** repo, those release directories are mirrored under
-`skills/` with prefixed names so they don't collide with the dev-repo's
-own `.claude/` and similar:
-
-| Dev path (this repo)            | Release path (`SeeWhatISee-claude`) |
-|---------------------------------|--------------------------------------|
-| `skills/claude-plugin/`         | `plugin/`                            |
-| `skills/dot-claude-plugin/`     | `.claude-plugin/`                    |
+In **this** repo, the whole release repo is imaged under
+`skills/release-claude/`, entry for entry — the two plugin subtrees
+plus `README.md`, `LICENSE`, `.gitignore`, `CLAUDE.md`, `GEMINI.md` and
+the release repo's own `.claude/` shim. Nesting it under `skills/`
+keeps its dotfiles from colliding with the dev repo's own `.claude/`
+and `.gitignore`.
 
 Publishing a release is a verbatim copy:
 
@@ -68,20 +66,24 @@ skills/copy-claude-plugin-release.sh
 ```
 
 It expects the release repo to already exist as a sibling of this one
-(`../SeeWhatISee-claude`), bails otherwise, and `rsync -a --delete`s the
-two subtrees into place. Because the contents are mirrored verbatim, the
-release-repo paths above are also what `marketplace.json` references —
-e.g. `"source": "./plugin"` — and what gets baked into the plugin cache.
+(`../SeeWhatISee-claude`) and bails otherwise. Subtrees go out with
+`rsync -a --delete`; top-level files are copied without `--delete`, so
+the release repo's `.git` survives. Because the contents are mirrored
+verbatim, the release-repo paths are also what `marketplace.json`
+references — e.g. `"source": "./plugin"` — and what gets baked into
+the plugin cache.
 
-Beyond the mirrored subtrees, this dev repo also keeps a **local-dev
+Beyond the mirrored image, this dev repo also keeps a **local-dev
 shim** at `.claude/` so the plugin works when running Claude Code
 directly from this checkout, without going through the marketplace
-install path:
+install path. (The release repo has a shim of its own, imaged at
+`skills/release-claude/.claude/`, for running Claude Code inside a
+clone of *that* repo.)
 
 ```
 .claude/
 ├── settings.json                 # local-dev: bash permissions for plugin scripts + pnpm tests
-└── skills -> ../skills/claude-plugin/skills/   # local-dev: every plugin skill
+└── skills -> ../skills/release-claude/plugin/skills/   # local-dev: every plugin skill
 ```
 
 
@@ -91,7 +93,7 @@ The marketplace is the catalog a user adds with
 `/plugin marketplace add jshute96/SeeWhatISee-claude`. It declares the
 marketplace identity (`name`, `owner`) and lists one or more plugins.
 The dev-repo source-of-truth lives at
-`skills/dot-claude-plugin/marketplace.json` and gets mirrored into the
+`skills/release-claude/.claude-plugin/marketplace.json` and gets mirrored into the
 release repo's `.claude-plugin/marketplace.json` by the copy script —
 so the paths the file references (e.g. `source`) are written from the
 release-repo's perspective.
@@ -154,7 +156,7 @@ The other two are optional and can be dropped or left to rot. We keep
 ## SKILL.md frontmatter
 
 Each skill is a directory under `plugin/skills/<name>/` (in the release
-repo; `skills/claude-plugin/skills/<name>/` in this dev repo) containing a
+repo; `skills/release-claude/plugin/skills/<name>/` in this dev repo) containing a
 `SKILL.md` with YAML frontmatter at the top:
 
 ```markdown
@@ -251,7 +253,7 @@ two are relevant here.
 - This is what our SKILL.md bodies reference: e.g. the watcher skill runs
   `${CLAUDE_SKILL_DIR}/scripts/watch.sh`. Each skill bundles its own
   `scripts/` dir under `plugin/skills/<name>/scripts/` (release-repo
-  path; dev-repo equivalent under `skills/claude-plugin/skills/<name>/scripts/`).
+  path; dev-repo equivalent under `skills/release-claude/plugin/skills/<name>/scripts/`).
   The unified `SeeWhatISee.py` backend lives next to the
   `see-what-i-see` skill's wrapper; the other skills' wrappers reach it
   via a sibling-relative `../../see-what-i-see/scripts/SeeWhatISee.py`
@@ -288,10 +290,10 @@ Two pieces of glue make it work, plus the publishing step:
 {
   "permissions": {
     "allow": [
-      "Bash(skills/claude-plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
-      "Bash(skills/claude-plugin/skills/see-what-i-see-history/scripts/history.sh:*)"
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
+      "Bash(skills/release-claude/plugin/skills/see-what-i-see-history/scripts/history.sh:*)"
     ]
   }
 }
@@ -316,10 +318,10 @@ the installed plugin would use — and a skill added to the plugin shows
 up locally with no extra symlink:
 
 ```
-.claude/skills -> ../skills/claude-plugin/skills/
+.claude/skills -> ../skills/release-claude/plugin/skills/
 ```
 
-This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/claude-plugin` for
+This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/release-claude/plugin` for
 this project, but automatic — you don't have to remember the flag.
 
 ### Iterating on skills
@@ -336,8 +338,8 @@ Once the dev-repo plugin sources are ready to ship to users, run:
 skills/copy-claude-plugin-release.sh
 ```
 
-It mirrors `skills/claude-plugin/` into `../SeeWhatISee-claude/plugin/`
-and `skills/dot-claude-plugin/` into
+It mirrors `skills/release-claude/plugin/` into `../SeeWhatISee-claude/plugin/`
+and `skills/release-claude/.claude-plugin/` into
 `../SeeWhatISee-claude/.claude-plugin/` (both with `rsync -a --delete`),
 and bails if the release repo isn't already cloned as a sibling. The
 release repo's other contents (README, LICENSE, `.git`, etc.) are left

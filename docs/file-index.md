@@ -24,7 +24,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `.claude/settings.json` | Local dev settings — Bash permissions for the plugin scripts and `pnpm test` commands |
-| `.claude/skills` | Symlink to `skills/claude-plugin/skills/`, so every plugin skill loads in this repo |
+| `.claude/skills` | Symlink to `skills/release-claude/plugin/skills/`, so every plugin skill loads in this repo |
 
 ## Claude Commands (`.claude/commands/`)
 
@@ -69,9 +69,10 @@ bundle dir is generated from them, except the bundle's own manifest.
 | `skills/antigravity.stop.md` | Antigravity's `see-what-i-see-stop` |
 | `skills/diff-skills-templates.sh` | Dev helper — opens `meld` on the see/watch/stop/history template pairs for two named clients |
 | `skills/diff-claude-gemini.sh` | Dev helper — shorthand for `diff-skills-templates.sh claude gemini` |
-| `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
-| `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
-| `skills/copy-antigravity-plugin-release.sh` | Mirrors `skills/antigravity-plugin/` entries to the `../SeeWhatISee-antigravity` root (rsync --delete; bails if release repo missing) |
+| `skills/copy-release.sh` | Mirrors `skills/release-<client>/` entry-for-entry onto `../SeeWhatISee-<client>/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
+| `skills/copy-claude-plugin-release.sh` | Wrapper — `copy-release.sh claude` |
+| `skills/copy-gemini-extension-release.sh` | Wrapper — `copy-release.sh gemini` |
+| `skills/copy-antigravity-plugin-release.sh` | Wrapper — `copy-release.sh antigravity` |
 
 ## Shared Wrapper Scripts (`skills/wrappers/`)
 
@@ -92,21 +93,22 @@ because they compute Gemini's workspace tmp dir and pass `--copy-to-dir`.
 | `skills/wrappers/history.gemini.sh` | Gemini's history wrapper — turns `--copy` into `--copy-to-dir <workspace tmp dir>`, refuses a run with no count or filter |
 | `skills/wrappers/xtract-copy-last-snapshot.gemini.sh` | `exec`s the sibling `see-what-i-see` skill's `copy-last-snapshot.sh` so the xtract alias shares one implementation |
 
-## Skill Bundles (`skills/<bundle>/`)
+## Release Images (`skills/release-<client>/`)
 
-One install tree per client. Each is mirrored verbatim into a release
-repo by its `skills/copy-*-release.sh` script.
+One directory per release repo, each a complete image of it — mirrored
+entry-for-entry onto the release-repo root by
+`skills/copy-release.sh`. The image is the source of truth for
+*everything* in the release repo, hand-written files included.
 
-| Bundle | Manifest (the only file edited in place) | Release path |
-|--------|------------------------------------------|--------------|
-| `skills/claude-plugin/` | `.claude-plugin/plugin.json` — name and repository URL | `SeeWhatISee-claude` → `plugin/` |
-| `skills/dot-claude-plugin/` | `marketplace.json` — catalog users install from (`source: "./plugin"`) | `SeeWhatISee-claude` → `.claude-plugin/` |
-| `skills/dot-gemini/` | `gemini-extension.json` | `SeeWhatISee-gemini` → repo root |
-| `skills/antigravity-plugin/` | `plugin.json` | `SeeWhatISee-antigravity` → repo root |
-| `skills/generic-skills/` | none — reference-only, not released | — |
+| Image | Release repo | Manifest | Hand-written files |
+|-------|--------------|----------|--------------------|
+| `skills/release-claude/` | `SeeWhatISee-claude` | `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` | `README.md`, `LICENSE`, `.gitignore`, `CLAUDE.md`, `GEMINI.md`, `.claude/` (local-dev shim) |
+| `skills/release-gemini/` | `SeeWhatISee-gemini` | `gemini-extension.json` | `README.md`, `LICENSE`, `.gitignore`, `install-skills.sh` |
+| `skills/release-antigravity/` | `SeeWhatISee-antigravity` | `plugin.json` | `README.md`, `LICENSE`, `.gitignore`, `AGENTS.md` |
+| `skills/generic-skills/` | none — reference-only, not released | — | — |
 
-Every bundle has the same shape, and **everything in it except the
-manifest is generated**:
+Every skill bundle has the same shape, and **everything in it except
+the manifest and the files above is generated**:
 
 ```
 <manifest>

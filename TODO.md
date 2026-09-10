@@ -164,7 +164,7 @@ What it costs:
     ignores the flag and hands the capture over as usual.
 
 * **Google Antigravity plugin** — a fourth client bundle at
-  `skills/antigravity-plugin/` (`plugin.json` plus the skills),
+  `skills/release-antigravity/` (`plugin.json` plus the skills),
   generated from the `antigravity.*.md` templates and mirrored to the
   root of `../SeeWhatISee-antigravity`. See `docs/antigravity-plugin.md`.
   * README needs an "Antigravity commands" section (the same
