@@ -3,7 +3,8 @@
     "allow": [
       "Bash(plugin/skills/see-what-i-see/scripts/get-latest.sh:*)",
       "Bash(plugin/skills/see-what-i-see-watch/scripts/watch.sh:*)",
-      "Bash(plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)"
+      "Bash(plugin/skills/see-what-i-see-stop/scripts/stop.sh:*)",
+      "Bash(plugin/skills/see-what-i-see-history/scripts/history.sh:*)"
     ]
   },
   "enabledPlugins": {

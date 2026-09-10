@@ -26,6 +26,12 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/settings.json` | Local dev settings — Bash permissions for the plugin scripts and `pnpm test` commands |
 | `.claude/skills` | Symlink to `skills/release-claude/plugin/skills/`, so every plugin skill loads in this repo |
 
+## Local Gemini Config (`.gemini/`)
+
+| File | Description |
+|------|-------------|
+| `.gemini/skills` | Symlink to `skills/release-gemini/skills/`, so the Gemini CLI loads them in this repo |
+
 ## Claude Commands (`.claude/commands/`)
 
 | File | Description |
@@ -67,6 +73,7 @@ bundle dir is generated from them, except the bundle's own manifest.
 | `skills/generic.history.md` | Client-agnostic `see-what-i-see-history`; also used by Antigravity |
 | `skills/antigravity.watch.md` | Antigravity's `see-what-i-see-watch` — single-shot loop, each run backgrounded |
 | `skills/antigravity.stop.md` | Antigravity's `see-what-i-see-stop` |
+| `skills/README.md` | Orientation for this directory — what each subdir is, the file-name patterns, and the generate/publish commands |
 | `skills/diff-skills-templates.sh` | Dev helper — opens `meld` on the see/watch/stop/history template pairs for two named clients |
 | `skills/diff-claude-gemini.sh` | Dev helper — shorthand for `diff-skills-templates.sh claude gemini` |
 | `skills/copy-release.sh` | Mirrors `skills/release-<client>/` entry-for-entry onto `../SeeWhatISee-<client>/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
@@ -100,12 +107,27 @@ entry-for-entry onto the release-repo root by
 `skills/copy-release.sh`. The image is the source of truth for
 *everything* in the release repo, hand-written files included.
 
-| Image | Release repo | Manifest | Hand-written files |
-|-------|--------------|----------|--------------------|
-| `skills/release-claude/` | `SeeWhatISee-claude` | `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` | `README.md`, `LICENSE`, `.gitignore`, `CLAUDE.md`, `GEMINI.md`, `.claude/` (local-dev shim) |
-| `skills/release-gemini/` | `SeeWhatISee-gemini` | `gemini-extension.json` | `README.md`, `LICENSE`, `.gitignore`, `install-skills.sh` |
-| `skills/release-antigravity/` | `SeeWhatISee-antigravity` | `plugin.json` | `README.md`, `LICENSE`, `.gitignore`, `AGENTS.md` |
-| `skills/generic-skills/` | none — reference-only, not released | — | — |
+| Image | Release repo | Manifest |
+|-------|--------------|----------|
+| `skills/release-claude/` | `SeeWhatISee-claude` | `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` |
+| `skills/release-gemini/` | `SeeWhatISee-gemini` | `gemini-extension.json` |
+| `skills/release-antigravity/` | `SeeWhatISee-antigravity` | `plugin.json` |
+| `skills/generic-skills/` | none — reference-only, not released | — |
+
+The hand-written files each image carries alongside its skill bundle:
+
+| File | Description |
+|------|-------------|
+| `skills/release-*/README.md` | The release repo's user-facing README — install and usage for that client |
+| `skills/release-*/LICENSE` | MIT license text, same in every image |
+| `skills/release-*/.gitignore` | The release repo's ignore rules (not the dev repo's) |
+| `skills/release-claude/CLAUDE.md` | Release-repo agent notes — it's a mirror, don't edit there, file issues upstream |
+| `skills/release-gemini/GEMINI.md` | Same notes for the Gemini release repo |
+| `skills/release-claude/GEMINI.md` | Symlink to `CLAUDE.md`, so the Gemini CLI reads the same notes |
+| `skills/release-claude/.claude/settings.json` | Release repo's local-dev shim — bypasses the installed plugin, allows the skill scripts |
+| `skills/release-claude/.claude/skills` | Symlinks to `plugin/skills/*`, so a clone of the release repo loads the local skills |
+| `skills/release-gemini/install-skills.sh` | Release repo's installer for users who copy skills in by hand |
+| `skills/release-antigravity/AGENTS.md` | Release-repo agent notes, same role as the Claude one |
 
 Every skill bundle has the same shape, and **everything in it except
 the manifest and the files above is generated**:

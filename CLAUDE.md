@@ -80,13 +80,13 @@ Publish with the rsync mirror scripts:
   `skills/copy-antigravity-plugin-release.sh` — one-word wrappers
   around it.
 
-They bail if the release repo isn't cloned next to this one.
-Subdirectories are mirrored with `--delete`; top-level files are copied
-without it, since the release-repo root also holds `.git`. Files are
-copied verbatim (no path rewriting) — anything in the dev tree that
-references its own location must use the *release-repo* path
-(e.g. `marketplace.json` says `"source": "./plugin"`). See
-`docs/claude-plugin.md` for the full story.
+- They bail if the release repo isn't cloned next to this one.
+- Subdirectories are mirrored with `--delete`; top-level files are
+  copied without it, since the release-repo root also holds `.git`.
+- Files are copied verbatim — no path rewriting. Anything in the dev
+  tree that references its own location must use the *release-repo*
+  path (e.g. `marketplace.json` says `"source": "./plugin"`).
+- `docs/claude-plugin.md` has the full story.
 
 ## Keep the skill files in sync
 

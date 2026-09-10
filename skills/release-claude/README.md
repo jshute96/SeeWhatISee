@@ -20,6 +20,7 @@ This GitHub project is the released version of the Claude CLI plugin for SeeWhat
 - `/see-what-i-see` — read the latest snapshot and describe it
 - `/see-what-i-see-watch` — watch for new snapshots to appear in the background, and then look at them when they appear
 - `/see-what-i-see-stop` — stop a running watch loop
+- `/see-what-i-see-history` — find and analyze past snapshots
 
 If you've added a prompt with the snapshot, Claude will follow it.
 

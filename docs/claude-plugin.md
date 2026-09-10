@@ -53,11 +53,12 @@ other skills' wrappers reach in sibling-relative via
 plugin-root-level `scripts/` dir.
 
 In **this** repo, the whole release repo is imaged under
-`skills/release-claude/`, entry for entry — the two plugin subtrees
-plus `README.md`, `LICENSE`, `.gitignore`, `CLAUDE.md`, `GEMINI.md` and
-the release repo's own `.claude/` shim. Nesting it under `skills/`
-keeps its dotfiles from colliding with the dev repo's own `.claude/`
-and `.gitignore`.
+`skills/release-claude/`, entry for entry:
+
+- The two plugin subtrees, plus `README.md`, `LICENSE`, `.gitignore`,
+  `CLAUDE.md`, `GEMINI.md` and the release repo's own `.claude/` shim.
+- Nesting the image under `skills/` keeps its dotfiles from colliding
+  with the dev repo's own `.claude/` and `.gitignore`.
 
 Publishing a release is a verbatim copy:
 
@@ -65,13 +66,13 @@ Publishing a release is a verbatim copy:
 skills/copy-claude-plugin-release.sh
 ```
 
-It expects the release repo to already exist as a sibling of this one
-(`../SeeWhatISee-claude`) and bails otherwise. Subtrees go out with
-`rsync -a --delete`; top-level files are copied without `--delete`, so
-the release repo's `.git` survives. Because the contents are mirrored
-verbatim, the release-repo paths are also what `marketplace.json`
-references — e.g. `"source": "./plugin"` — and what gets baked into
-the plugin cache.
+- It expects the release repo to already exist as a sibling of this
+  one (`../SeeWhatISee-claude`), and bails otherwise.
+- Subtrees go out with `rsync -a --delete`; top-level files are copied
+  without `--delete`, so the release repo's `.git` survives.
+- Because the copy is verbatim, the release-repo paths are also what
+  `marketplace.json` references — e.g. `"source": "./plugin"` — and
+  what gets baked into the plugin cache.
 
 Beyond the mirrored image, this dev repo also keeps a **local-dev
 shim** at `.claude/` so the plugin works when running Claude Code
@@ -318,7 +319,7 @@ the installed plugin would use — and a skill added to the plugin shows
 up locally with no extra symlink:
 
 ```
-.claude/skills -> ../skills/release-claude/plugin/skills/
+.claude/skills -> ../skills/release-claude/plugin/skills
 ```
 
 This is equivalent to `claude --plugin-dir ~/dev/SeeWhatISee/skills/release-claude/plugin` for
@@ -338,14 +339,15 @@ Once the dev-repo plugin sources are ready to ship to users, run:
 skills/copy-claude-plugin-release.sh
 ```
 
-It mirrors `skills/release-claude/plugin/` into `../SeeWhatISee-claude/plugin/`
-and `skills/release-claude/.claude-plugin/` into
-`../SeeWhatISee-claude/.claude-plugin/` (both with `rsync -a --delete`),
-and bails if the release repo isn't already cloned as a sibling. The
-release repo's other contents (README, LICENSE, `.git`, etc.) are left
-alone. Commit + push the release repo to publish — bumping
-`plugins[0].version` in `marketplace.json` is what actually triggers an
-update on installed clients (see "Where `version` lives" above).
+- It mirrors every top-level entry of `skills/release-claude/` onto
+  the release-repo root — the plugin and marketplace subtrees, and
+  `README.md`, `LICENSE` and the rest with them.
+- It bails if the release repo isn't already cloned as a sibling.
+- Only the release repo's `.git` (and the local Claude scratch under
+  `.claude/`) is left alone; everything else comes from the image.
+- Commit + push the release repo to publish. Bumping
+  `plugins[0].version` in `marketplace.json` is what actually triggers
+  an update on installed clients (see "Where `version` lives" above).
 
 ## Validating the manifests
 
@@ -356,12 +358,15 @@ their schemas is `claude plugin validate <dir>` (or `/plugin validate
 automatically (preferring the marketplace file if both exist). It also
 validates SKILL.md frontmatter and `hooks/hooks.json`.
 
-Validate against the **release repo**, where the layout is conventional
-(`.claude-plugin/marketplace.json` and `plugin/.claude-plugin/plugin.json`
-both auto-discover). The dev repo's mirrored copies under `skills/` use
-non-standard names (`dot-claude-plugin/`, `claude-plugin/`) precisely to
-stay out of `claude plugin validate`'s discovery path here, so just run
-the copy script and validate from the release-repo side.
+Either side works, because the image now uses the same conventional
+layout as the release repo:
+
+- `claude plugin validate skills/release-claude` auto-discovers
+  `.claude-plugin/marketplace.json` here in the dev repo.
+- `claude plugin validate skills/release-claude/plugin` checks the
+  plugin manifest.
+- Validating the release repo itself, after running the copy script,
+  checks exactly what users will clone — do that before publishing.
 
 There's no publicly hosted JSON Schema file you can wire into an IDE
 for inline validation. The docs reference a schema URL at

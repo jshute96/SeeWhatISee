@@ -20,6 +20,8 @@ This GitHub project is the released version of the Gemini extension for SeeWhatI
 
 - `/see-what-i-see` — read the latest snapshot and describe it
 - `/see-what-i-see-watch` — watch for new snapshots to appear, and then look at them when they appear
+- `/see-what-i-see-stop` — stop a running watch loop
+- `/see-what-i-see-history` — find and analyze past snapshots
 - `/see-what-i-see-xtract` — alias for `/see-what-i-see` (useful because Gemini shows auto-completes in reverse alphabetical order)
 
 If you've added a prompt with the snapshot, Gemini will follow it.

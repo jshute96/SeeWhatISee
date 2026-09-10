@@ -16,11 +16,13 @@
 # NOT create it — if it isn't there already, bail.
 #
 # Subdirs get `rsync -a --delete` so files removed from the dev side
-# disappear on the release side too. Top-level files are copied
-# without --delete because the release-repo root also holds things we
-# don't manage (.git above all) — we can't safely delete at that
-# scope. If you remove a top-level file from the dev tree, also delete
-# it from the release repo by hand.
+# disappear on the release side too — dotted ones like `.claude/`
+# included, so local scratch under them is protected by name (see
+# KEEP below). A top-level `.git` is never mirrored at all. Top-level
+# files are copied without --delete because the release-repo root also
+# holds things we don't manage — we can't safely delete at that scope.
+# If you remove a top-level file from the dev tree, also delete it
+# from the release repo by hand.
 #
 # Usage:
 #   skills/copy-release.sh <client> [--dry-run]
@@ -30,22 +32,31 @@
 
 set -euo pipefail
 
-CLIENT="${1-}"
+usage() { echo "Usage: skills/copy-release.sh <client> [--dry-run]"; }
+
+CLIENT=""
+DRY_RUN=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=(--dry-run --itemize-changes) ;;
+    --help|-h) usage; exit 0 ;;
+    -*)        echo "Unknown option: $arg" >&2; usage >&2; exit 2 ;;
+    *)
+      if [[ -n "$CLIENT" ]]; then
+        echo "Unexpected argument: $arg" >&2; usage >&2; exit 2
+      fi
+      CLIENT="$arg" ;;
+  esac
+done
+
 if [[ -z "$CLIENT" ]]; then
-  echo "Usage: skills/copy-release.sh <client> [--dry-run]" >&2
+  usage >&2
   exit 2
 fi
 
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 SRC_ROOT="$REPO_ROOT/skills/release-$CLIENT"
 RELEASE_DIR="$(cd "$REPO_ROOT/.." && pwd)/SeeWhatISee-$CLIENT"
-
-DRY_RUN=()
-case "${2-}" in
-  "")        ;;
-  --dry-run) DRY_RUN=(--dry-run --itemize-changes) ;;
-  *) echo "Unknown option: $2" >&2; exit 2 ;;
-esac
 
 if [[ ! -d "$SRC_ROOT" ]]; then
   echo "Error: no release image at $SRC_ROOT" >&2
@@ -70,8 +81,30 @@ fi
 
 for entry in "${entries[@]}"; do
   name=$(basename "$entry")
-  if [[ -d "$entry" ]]; then
-    rsync -a --delete "${DRY_RUN[@]}" "$entry/" "$RELEASE_DIR/$name/"
+
+  # Never mirror a VCS directory. If a clone ever lands inside an image
+  # (someone comparing against the release repo, say), `--delete` would
+  # otherwise overwrite the release repo's own .git and destroy its
+  # history.
+  if [[ "$name" == ".git" ]]; then
+    echo "Skipped  skills/release-$CLIENT/$name (never mirrored)"
+    continue
+  fi
+
+  # Directories the release repo also writes to itself need their local
+  # scratch protected from --delete. `.claude/` is the case today: a
+  # clone of the release repo accumulates Claude session state there,
+  # which its own .gitignore anticipates.
+  KEEP=()
+  if [[ "$name" == ".claude" ]]; then
+    KEEP=(--exclude=/projects/ --exclude=/worktrees/ --exclude='*.lock')
+  fi
+
+  # -d follows symlinks, so a top-level symlink *to* a directory would
+  # be materialized as a real directory in the release repo. There is
+  # no such entry today; -L keeps it a symlink if one ever appears.
+  if [[ -d "$entry" && ! -L "$entry" ]]; then
+    rsync -a --delete "${KEEP[@]}" "${DRY_RUN[@]}" "$entry/" "$RELEASE_DIR/$name/"
     echo "Mirrored skills/release-$CLIENT/$name/  -> $RELEASE_DIR/$name/"
   else
     rsync -a "${DRY_RUN[@]}" "$entry" "$RELEASE_DIR/$name"
