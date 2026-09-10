@@ -2,19 +2,24 @@
 # Mirror the dev-repo Antigravity plugin sources into the release repo.
 #
 # Layout mapping (source -> dest):
-#   skills/antigravity-plugin/  -> <release>/plugin/
+#   skills/antigravity-plugin/<sub>/   -> <release>/<sub>/   (rsync -a --delete)
+#   skills/antigravity-plugin/<file>   -> <release>/<file>   (rsync -a)
+#
+# i.e. each top-level entry lands as a sibling at the release-repo
+# root, so `plugin.json` sits at the root of the release repo. That
+# makes the repo itself a plugin directory, which is what
+# `agy plugin install <github-url>` expects.
 #
 # The release repo is expected to live as a peer of this repo at
 # ../SeeWhatISee-antigravity. We do NOT create it — if it isn't there
-# already, bail. Users install from it by pointing Antigravity at the
-# cloned repo's `plugin/` dir — copying or symlinking it to
-# ~/.gemini/config/plugins/see-what-i-see (global), or to
-# <workspace>/.agents/plugins/see-what-i-see (one workspace), or via
-# `agy plugin install <clone>/plugin` for the CLI.
+# already, bail.
 #
-# The subtree is mirrored with `rsync -a --delete` so files removed
-# from the dev side disappear on the release side too. Anything else
-# in the release repo (README, LICENSE, .git, etc.) is untouched.
+# Subdirs get `rsync -a --delete` so files removed from the dev side
+# disappear on the release side too. Top-level files are copied
+# without --delete because the release-repo root also holds files we
+# don't manage (README, LICENSE, .git, etc.) — we can't safely delete
+# at that scope. If you remove a top-level file from the dev tree,
+# also delete it from the release repo by hand.
 #
 # Usage:
 #   skills/copy-antigravity-plugin-release.sh [--dry-run]
@@ -22,6 +27,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SRC_ROOT="$REPO_ROOT/skills/antigravity-plugin"
 RELEASE_DIR="$(cd "$REPO_ROOT/.." && pwd)/SeeWhatISee-antigravity"
 
 DRY_RUN=()
@@ -40,10 +46,24 @@ if [[ ! -d "$RELEASE_DIR" ]]; then
   exit 1
 fi
 
-# Trailing slashes matter: rsync src/ dst/ copies *contents* of src
-# into dst, which is exactly what we want here (mirror).
-rsync -a --delete "${DRY_RUN[@]}" \
-  "$REPO_ROOT/skills/antigravity-plugin/" \
-  "$RELEASE_DIR/plugin/"
+# Iterate top-level entries of skills/antigravity-plugin/ so
+# newly-added subtrees and files are picked up without editing this
+# script.
+shopt -s nullglob
+entries=("$SRC_ROOT"/*)
+shopt -u nullglob
+if [[ ${#entries[@]} -eq 0 ]]; then
+  echo "Error: nothing to mirror under $SRC_ROOT" >&2
+  exit 1
+fi
 
-echo "Mirrored skills/antigravity-plugin/  -> $RELEASE_DIR/plugin/"
+for entry in "${entries[@]}"; do
+  name=$(basename "$entry")
+  if [[ -d "$entry" ]]; then
+    rsync -a --delete "${DRY_RUN[@]}" "$entry/" "$RELEASE_DIR/$name/"
+    echo "Mirrored skills/antigravity-plugin/$name/  -> $RELEASE_DIR/$name/"
+  else
+    rsync -a "${DRY_RUN[@]}" "$entry" "$RELEASE_DIR/$name"
+    echo "Copied   skills/antigravity-plugin/$name   -> $RELEASE_DIR/$name"
+  fi
+done

@@ -66,8 +66,23 @@ but it only owns the templates that actually differ:
 
 ## Install locations
 
-Antigravity discovers plugins by directory, with no marketplace or
-git-URL install:
+The easy path is the `agy` CLI, which accepts a git URL — it shallow-clones
+the repo into `~/.gemini/config/plugins/<plugin-name>/`:
+
+```bash
+agy plugin install https://github.com/jshute96/SeeWhatISee-antigravity
+```
+
+- This is undocumented in Antigravity's own plugin docs, which only show
+  a local path, but it works.
+- It requires `plugin.json` at the *repo root*, which is why the release
+  repo is laid out that way (see below).
+- There is no update mechanism: `agy` never re-fetches an installed
+  plugin, so the only way to pick up a new version is to run the install
+  again (a symlinked clone, below, updates with `git pull` instead).
+- Uninstall with `agy plugin uninstall see-what-i-see`.
+
+Otherwise Antigravity discovers plugins by directory:
 
 | Scope             | Path                                          |
 |-------------------|-----------------------------------------------|
@@ -75,22 +90,43 @@ git-URL install:
 | Single workspace  | `<workspace>/.agents/plugins/<plugin-name>/`   |
 | `agy` CLI         | `agy plugin install <path-to-plugin-dir>`      |
 
-So installing means copying or symlinking the release repo's `plugin/`
-dir into one of those paths.
+So a manual install means copying or symlinking a clone of the release
+repo into one of those paths.
+
+### Marketplaces are not usable yet
+
+`agy plugin install` also accepts `<plugin>@<marketplace>`, but there's
+no way to register a marketplace:
+
+- A marketplace is a `marketplace.json` catalog whose entries carry a
+  `url` to a plugin *archive*, fetched and unzipped into a local cache.
+- No catalog is registered by default and none is baked into the `agy`
+  binary, so any `foo@bar` fails with `unknown marketplace: bar`.
+- The related "skill marketplace link" RPC refuses with *"only available
+  in Google environments"* — this looks like plumbing for Google's own
+  bundled catalog, not opened up yet.
 
 ## Dev repo vs. release repo
 
-Same pattern as the Claude plugin (see `docs/claude-plugin.md`):
+Same pattern as the Gemini extension (see `docs/cli_commands.md`): each
+top-level entry lands as a sibling at the release-repo root.
 
-| Dev path (this repo)         | Release path (`SeeWhatISee-antigravity`) |
-|------------------------------|-------------------------------------------|
-| `skills/antigravity-plugin/` | `plugin/`                                 |
+| Dev path (this repo)                  | Release path (`SeeWhatISee-antigravity`) |
+|---------------------------------------|-------------------------------------------|
+| `skills/antigravity-plugin/plugin.json` | `plugin.json`                           |
+| `skills/antigravity-plugin/skills/`     | `skills/`                               |
 
+- The plugin *is* the repo root — that's what `agy plugin install
+  <git-url>` needs. There is no `plugin/` subdirectory, unlike the
+  Claude release repo.
 - Publish with `skills/copy-antigravity-plugin-release.sh`.
 - It bails unless `../SeeWhatISee-antigravity` already exists as a
   sibling clone.
-- The copy is verbatim `rsync -a --delete`, so anything in the dev tree
-  that references its own location must use the *release* path.
+- Subdirectories are mirrored with `rsync -a --delete`; top-level files
+  are copied without `--delete`, since the release root also holds
+  README, LICENSE and other files the dev tree doesn't manage.
+- The copy is verbatim, so anything in the dev tree that references its
+  own location must use the *release* path.
 
 ## The watch loop
 

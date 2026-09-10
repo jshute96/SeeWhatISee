@@ -454,7 +454,7 @@ skills/dot-gemini/                   ← Gemini extension tree (mirrored into ..
   skills/see-what-i-see-history/scripts/history.sh        ← see-what-i-see-history   → SeeWhatISee.py + the caller's history flags (--copy → --copy-to-dir <tmp>)
   skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh
                                                           ← /see-what-i-see-xtract (wrapper → see-what-i-see's copy-last-snapshot.sh)
-skills/antigravity-plugin/           ← Antigravity plugin tree (mirrored into ../SeeWhatISee-antigravity/plugin/)
+skills/antigravity-plugin/           ← Antigravity plugin tree (mirrored into ../SeeWhatISee-antigravity/ root)
   skills/see-what-i-see/scripts/SeeWhatISee.py            ← unified backend (verbatim copy of skills/SeeWhatISee.py)
   skills/see-what-i-see/scripts/get-latest.sh             ← /see-what-i-see          → SeeWhatISee.py --get-latest
   skills/see-what-i-see-watch/scripts/watch-once.sh       ← /see-what-i-see-watch    → SeeWhatISee.py --watch --catch-up-one
@@ -474,7 +474,7 @@ Claude Code plugin (mirrored into `../SeeWhatISee-claude` by
 `skills/copy-claude-plugin-release.sh`); the Gemini tree is
 mirrored into `../SeeWhatISee-gemini` (Gemini extension install)
 by `skills/copy-gemini-extension-release.sh`; the Antigravity tree
-into `../SeeWhatISee-antigravity/plugin/` by
+into the root of `../SeeWhatISee-antigravity` by
 `skills/copy-antigravity-plugin-release.sh`. The
 `SeeWhatISee.py` copies are kept byte-identical by
 `skills/generate-skills.py`, which propagates the canonical

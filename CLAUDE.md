@@ -65,7 +65,10 @@ release repos that live as siblings of this one:
     files like `gemini-extension.json` — *not* nested under a
     `.gemini/` directory.
 - `../SeeWhatISee-antigravity` — the Google Antigravity plugin.
-  - `skills/antigravity-plugin/` here → `plugin/` in the release repo.
+  - Each top-level entry under `skills/antigravity-plugin/` lands as
+    a sibling at the release-repo root — `plugin.json` and `skills/`.
+    The repo root *is* the plugin dir, so `agy plugin install
+    <git-url>` works.
   - See `docs/antigravity-plugin.md`.
 
 Publish with the rsync mirror scripts:

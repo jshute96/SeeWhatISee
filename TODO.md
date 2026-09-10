@@ -165,16 +165,17 @@ What it costs:
 
 * **Google Antigravity plugin** — a fourth client bundle at
   `skills/antigravity-plugin/` (`plugin.json` plus the skills),
-  generated from the `antigravity.*.md` templates and mirrored to
-  `../SeeWhatISee-antigravity/plugin/`. See `docs/antigravity-plugin.md`.
-  * Blocked on creating the `SeeWhatISee-antigravity` release repo —
-    the mirror script bails without it.
+  generated from the `antigravity.*.md` templates and mirrored to the
+  root of `../SeeWhatISee-antigravity`. See `docs/antigravity-plugin.md`.
   * README needs an "Antigravity commands" section (the same
     commands as the other clients; the watch loop runs one
     backgrounded script per capture, so the conversation stays
-    live) and an install section: clone the release repo, then copy or symlink its
-    `plugin/` to `~/.gemini/config/plugins/see-what-i-see/`, or a
-    workspace `.agents/plugins/`, or `agy plugin install <clone>/plugin`.
+    live) and an install section: `agy plugin install
+    https://github.com/jshute96/SeeWhatISee-antigravity` (re-run it to
+    update — `agy` has no plugin update mechanism), or clone the
+    release repo and copy or symlink it to
+    `~/.gemini/config/plugins/see-what-i-see/` or a workspace
+    `.agents/plugins/`.
 
 * **Convert last drawn box** — a More-menu item that retargets the
   last drawn box / redaction / crop to another of those kinds, for

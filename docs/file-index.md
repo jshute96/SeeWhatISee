@@ -71,7 +71,7 @@ bundle dir is generated from them, except the bundle's own manifest.
 | `skills/diff-claude-gemini.sh` | Dev helper — shorthand for `diff-skills-templates.sh claude gemini` |
 | `skills/copy-claude-plugin-release.sh` | Mirrors `skills/claude-plugin/` and `skills/dot-claude-plugin/` into `../SeeWhatISee-claude/plugin/` and `../SeeWhatISee-claude/.claude-plugin/` (rsync --delete; bails if release repo missing) |
 | `skills/copy-gemini-extension-release.sh` | Mirrors each top-level entry under `skills/dot-gemini/` into the matching path at `../SeeWhatISee-gemini/` (subdirs rsync --delete; top-level files copy without --delete; bails if release repo missing) |
-| `skills/copy-antigravity-plugin-release.sh` | Mirrors `skills/antigravity-plugin/` into `../SeeWhatISee-antigravity/plugin/` (rsync --delete; bails if release repo missing) |
+| `skills/copy-antigravity-plugin-release.sh` | Mirrors `skills/antigravity-plugin/` entries to the `../SeeWhatISee-antigravity` root (rsync --delete; bails if release repo missing) |
 
 ## Shared Wrapper Scripts (`skills/wrappers/`)
 
@@ -102,7 +102,7 @@ repo by its `skills/copy-*-release.sh` script.
 | `skills/claude-plugin/` | `.claude-plugin/plugin.json` — name and repository URL | `SeeWhatISee-claude` → `plugin/` |
 | `skills/dot-claude-plugin/` | `marketplace.json` — catalog users install from (`source: "./plugin"`) | `SeeWhatISee-claude` → `.claude-plugin/` |
 | `skills/dot-gemini/` | `gemini-extension.json` | `SeeWhatISee-gemini` → repo root |
-| `skills/antigravity-plugin/` | `plugin.json` | `SeeWhatISee-antigravity` → `plugin/` |
+| `skills/antigravity-plugin/` | `plugin.json` | `SeeWhatISee-antigravity` → repo root |
 | `skills/generic-skills/` | none — reference-only, not released | — |
 
 Every bundle has the same shape, and **everything in it except the
