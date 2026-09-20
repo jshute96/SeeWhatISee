@@ -1536,7 +1536,7 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
     getCachedPath: (session: DetailsSession) => string | undefined;
     /** Throws if the session state can't support this artifact. */
     precondition?: (session: DetailsSession) => void;
-    /** Start the actual download. */
+    /** Write the file, resolving once it has landed. */
     startDownload: (capture: InMemoryCapture) => Promise<number>;
     /** Build the cache entry object for the downloaded file. */
     makeCacheEntry: (downloadId: number, path: string) => T;
@@ -1568,6 +1568,9 @@ async function ensureArtifactDownloaded<T extends { downloadId: number; path: st
   if (cachedPath !== undefined) return cachedPath;
 
   const downloadId = await options.startDownload(session.capture);
+  // The writer has already waited the download out (and thrown, with
+  // the file named, if it failed), so this is just the path lookup:
+  // one `search` that returns on its first poll.
   const path = await waitForDownloadComplete(downloadId);
 
   const fresh = await requireDetailsSession(tabId);

@@ -37,7 +37,7 @@ import { selectionMarkdownBody } from './markdown.js';
 import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-state.js';
 import { maybeRecompressLargeScreenshot } from './capture/recompress.js';
 import {
-  downloadArtifact,
+  downloadArtifactComplete,
   downloadSelection,
   htmlDataUrl,
 } from './capture/downloads.js';
@@ -198,9 +198,10 @@ export async function savePageContents(
     title: active.title ?? '',
   };
 
-  // Save the HTML first. The metadata files are downstream and
-  // shouldn't be written if the content itself failed to save.
-  const downloadId = await downloadArtifact(filename, htmlDataUrl(html));
+  // Save the HTML first, and wait for it to land: the log record is
+  // downstream and shouldn't be written if the content itself failed
+  // to save.
+  const downloadId = await downloadArtifactComplete(filename, htmlDataUrl(html));
 
   const logDownloadId = await recordCapture(record);
 
@@ -662,17 +663,10 @@ export async function saveCapture(
   };
   if (imageUrl) record.imageUrl = imageUrl;
 
-  // Save the screenshot first. The metadata files are downstream and
-  // shouldn't be written if the image itself failed to save.
-  //
-  // Note: chrome.downloads.download resolves as soon as the download
-  // *starts*, not when the file is fully on disk. For our tiny PNG /
-  // JSON payloads via data: URLs that's effectively immediate, but
-  // strictly speaking we never observe the completion event. If we ever
-  // see partial files or interleaving in log.json, the fix is to wait
-  // on chrome.downloads.onChanged for state === 'complete' before
-  // returning. Overkill for v1.
-  const downloadId = await downloadArtifact(filename, dataUrl);
+  // Save the screenshot first, and wait for it to land: the log
+  // record is downstream and shouldn't be written if the image itself
+  // failed to save.
+  const downloadId = await downloadArtifactComplete(filename, dataUrl);
 
   const logDownloadId = await recordCapture(record);
 

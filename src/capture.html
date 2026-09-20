@@ -318,6 +318,12 @@
   .log-sync-dialog p {
     margin: 0 0 12px 0;
   }
+  /* The one line saying what went wrong — the same red as the
+   * checkbox-row error icon, so it reads as the error among the
+   * explanatory lines around it. */
+  .log-sync-reason {
+    color: #c0392b;
+  }
   /* Paths and filenames render in the mono face. `anywhere` because
    * the full path can be long and an overflow would widen the dialog
    * past its cap. */
@@ -351,6 +357,15 @@
   }
   .log-sync-steps > li {
     margin: 4px 0 0 0;
+  }
+  /* Option A collapsed to just its Retry button (file reads are
+   * already on, so there is no toggle to send the user to): the
+   * intro and step 1 are hidden by log-sync.ts, and the lone
+   * remaining step drops its "2." numbering and indent. */
+  .log-sync-retry-only .log-sync-steps {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
   }
   /* Sizing/border per call site, like every other button here; `.btn`
    * only supplies the raised/pressed feedback layer. Inline in the
@@ -1702,17 +1717,18 @@
        with that one capture, right then: Retry re-runs the write,
        Overwrite forces it, Cancel abandons the record. The structure
        is fixed here; `capture-page/log-sync.ts` fills the path and the
-       reason line, and swaps option A's intro and first step for the
-       corrupt-file reason (where file reads are already on, so
-       "enable them" would be the wrong advice). -->
+       reason line, and picks option A's shape: "enable file reads"
+       when the toggle is off, "fix the file" for the corrupt-file
+       reason, and just the Retry button when reads are already on
+       and there is nothing else to send the user to. -->
   <dialog id="log-sync-dialog" class="log-sync-dialog"
           aria-labelledby="log-sync-title">
-    <h2 id="log-sync-title">Capture log is out of sync</h2>
+    <h2 id="log-sync-title">Error while writing capture log</h2>
     <p>Capture records are written in <code id="log-sync-path"></code>.</p>
     <!-- One span per reason; log-sync.ts unhides the one that
          applies. Markup rather than set text so the filename can
          render in the code font. -->
-    <p>
+    <p class="log-sync-reason">
       <span id="log-sync-reason-unknown-file" hidden><code>log.json</code>
         already exists, but this browser has no record of writing
         it.</span>
@@ -1727,7 +1743,7 @@
     </p>
     <p><b>Options:</b></p>
     <ol class="log-sync-options">
-      <li>
+      <li id="log-sync-option-a">
         <span id="log-sync-fix-access">
           <b>Enable local file reads</b> <i>(Recommended)</i><br>
           Then SeeWhatISee can append to the log without overwriting it.

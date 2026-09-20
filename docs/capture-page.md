@@ -2993,14 +2993,16 @@ open/close, so it wires the nav itself).
   nothing is stored behind it. Cancel (the button or Esc) abandons the
   record — the capture's files stay on disk but it isn't logged, and a
   later capture that hits the same condition asks again.
-- Layout: one line naming the log file (path in a code font), one line
-  saying what's wrong with it, then lettered options under
-  **Options:** with the buttons inline:
+- Layout: the title "Error while writing capture log", one line
+  naming the log file (path in a code font), one red line saying
+  what's wrong with it, then lettered options under **Options:** with
+  the buttons inline:
   - (A) **Enable local file reads** *(Recommended)*, as two numbered
     steps: turn on the toggle via **Extension settings** (opens
-    `chrome://extensions` in a background tab so this page stays put),
-    then click **Retry**. Swapped for **Fix the file** on the
-    `corrupt-file` reason, where file reads are already on.
+    `chrome://extensions` as the active tab), then click **Retry**.
+    Shown only while the toggle is off. With it on, the option is
+    **Fix the file** for the `corrupt-file` reason and just the
+    **Retry** button for any other.
   - (B) **Overwrite log.json**. External edits will be lost.
   - (C) **Cancel** (button only, no explainer).
 - On this page, Retry / Overwrite re-run the whole save — idempotent,

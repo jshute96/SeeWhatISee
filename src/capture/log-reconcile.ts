@@ -66,6 +66,25 @@ export class LogWriteBlockedError extends Error {
   }
 }
 
+/**
+ * Thrown by `recordCapture` when the reconcile allowed the write but
+ * Chrome couldn't complete it — the target is a directory, the disk is
+ * full, and so on. Chrome's download bubble shows a bare "Something
+ * went wrong"; this is what tells the user it was their capture log.
+ *
+ * Like `LogWriteBlockedError`, nothing is stored — but this isn't a
+ * decision for the user to make, so it reports as a plain capture
+ * failure rather than opening the Retry / Overwrite prompt: there is
+ * nothing to overwrite *with*. The record is dropped with it; the
+ * capture's files stay on disk, unreferenced.
+ */
+export class LogWriteFailedError extends Error {
+  constructor(reason: string) {
+    super(`Saved this capture's files, but couldn't write log.json: ${reason}.`);
+    this.name = 'LogWriteFailedError';
+  }
+}
+
 /** What the reconcile decided about the file on disk. */
 export type LogFileState =
   /** We read it. Its contents replace the in-storage log. */

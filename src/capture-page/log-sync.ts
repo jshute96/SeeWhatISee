@@ -18,6 +18,7 @@
 
 import { type CaptureRecord } from '../capture/types.js';
 import { type LogSyncBlockedReason } from '../capture/log-reconcile.js';
+import { canReadFiles } from '../capture/downloads.js';
 import {
   type LogSyncPrompt,
   fileAccessUrl,
@@ -37,6 +38,7 @@ let dialog: HTMLDialogElement;
 let pathEl: HTMLElement;
 /** One hidden <span> per reason; `show` unhides the one that applies. */
 let reasonEls: Record<LogSyncBlockedReason, HTMLElement>;
+let optionAEl: HTMLElement;
 let fixAccessEl: HTMLElement;
 let fixFileEl: HTMLElement;
 let stepAccessEl: HTMLElement;
@@ -56,22 +58,38 @@ const SHOW_RETRY_LIMIT = 100; // ~10s at 100ms
  * Open the dialog for `prompt`, with the buttons wired to `h`.
  * Re-renders in place if the dialog is already open (a Retry that
  * came back still blocked, possibly with an updated directory).
+ *
+ * Async only for the file-access check that shapes option A; callers
+ * fire and forget.
  */
-export function showLogSyncDialog(prompt: LogSyncPrompt, h: LogSyncHandlers, attempt = 0): void {
+export async function showLogSyncDialog(
+  prompt: LogSyncPrompt,
+  h: LogSyncHandlers,
+  attempt = 0,
+): Promise<void> {
   handlers = h;
   pathEl.textContent = logSyncPathText(prompt.directory);
   for (const [reason, el] of Object.entries(reasonEls)) {
     el.hidden = reason !== prompt.reason;
   }
-  // Option A is "enable file reads" — except for the corrupt-file
-  // reason, which is only reachable with them already on; there its
-  // intro and first step become "fix the file". The rest of the list
-  // is static markup.
+  // Option A takes one of three shapes. "Enable file reads" is the
+  // advice when the toggle is off, since reading the file resolves
+  // every reason but corrupt-file. With the toggle already on that
+  // advice would be wrong, so: the corrupt-file reason asks for the
+  // file to be fixed, and any other reason (an unreadable file, or a
+  // Retry that landed here after the user enabled reads) collapses to
+  // the bare Retry button. The rest of the list is static markup.
+  const readsOn = await canReadFiles();
   const corrupt = prompt.reason === 'corrupt-file';
-  fixAccessEl.hidden = corrupt;
-  stepAccessEl.hidden = corrupt;
+  const retryOnly = readsOn && !corrupt;
+  // `|| corrupt`: the reason itself proves reads were on when it was
+  // computed, so even a failed toggle check (which reads as off)
+  // mustn't show "enable reads" beside "fix the file".
+  fixAccessEl.hidden = readsOn || corrupt;
+  stepAccessEl.hidden = readsOn || corrupt;
   fixFileEl.hidden = !corrupt;
   stepFileEl.hidden = !corrupt;
+  optionAEl.classList.toggle('log-sync-retry-only', retryOnly);
   if (dialog.open) return;
   // The page starts `visibility: hidden` until `loadData` finishes.
   // A modal opened before that is invisible but still traps clicks
@@ -81,7 +99,7 @@ export function showLogSyncDialog(prompt: LogSyncPrompt, h: LogSyncHandlers, att
   // succeeded or threw).
   if (document.body.style.visibility !== 'visible') {
     if (attempt >= SHOW_RETRY_LIMIT) return;
-    setTimeout(() => showLogSyncDialog(prompt, h, attempt + 1), 100);
+    setTimeout(() => void showLogSyncDialog(prompt, h, attempt + 1), 100);
     return;
   }
   dialog.showModal();
@@ -100,6 +118,7 @@ export function initLogSync(): void {
     'unreadable': document.getElementById('log-sync-reason-unreadable') as HTMLElement,
     'corrupt-file': document.getElementById('log-sync-reason-corrupt-file') as HTMLElement,
   };
+  optionAEl = document.getElementById('log-sync-option-a') as HTMLElement;
   fixAccessEl = document.getElementById('log-sync-fix-access') as HTMLElement;
   fixFileEl = document.getElementById('log-sync-fix-file') as HTMLElement;
   stepAccessEl = document.getElementById('log-sync-step-access') as HTMLElement;
@@ -176,7 +195,7 @@ function initFromErrorUrl(): void {
     if (result.kind === 'blocked') {
       // Usually Retry before anything actually changed. Reopen,
       // re-rendered — the path or reason may have been learned.
-      showLogSyncDialog(result.prompt, dialogHandlers);
+      void showLogSyncDialog(result.prompt, dialogHandlers);
       return;
     }
     // The round-trip itself failed. The record is abandoned with the
@@ -184,7 +203,7 @@ function initFromErrorUrl(): void {
     setErrorPaneMessage(result.message);
   };
 
-  showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
+  void showLogSyncDialog({ reason, directory: payload.directory }, dialogHandlers);
 }
 
 /**

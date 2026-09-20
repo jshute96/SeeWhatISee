@@ -431,19 +431,21 @@ test('a stamp far ahead of the clock is ignored rather than followed', async () 
     `${stamp} should come off the clock, not from ${bogus}`);
 });
 
-test('a failed log.json write keeps the pins so the retry still reuses them', async () => {
+test('a failed log.json write fails the capture, stores nothing, and keeps the pins', async () => {
   // The other half of the crash window: the history file lands, but
   // `log.json` is never trimmed. Disk is authoritative, so the next
   // capture adopts the untrimmed log and re-derives the same batch —
   // which means the pin has to survive even though the batch *did*
-  // leave storage on this pass.
+  // leave the kept list on this pass.
   //
   // Injected at `waitForDownloadComplete`, not at `download`: the
   // download itself starting is what `writeJsonFile` awaits, and a
-  // throw there propagates out of `recordCapture` (so the cleanup
-  // never runs and there is nothing to test). The window that matters
-  // is the write *completing* — `recordCapture` swallows that failure
-  // and carries on.
+  // throw there propagates out of `recordCapture` before any of the
+  // cleanup runs. The window that matters is the write *completing*
+  // — a failure there must reach the user as a capture failure
+  // naming the file, and must leave storage matching the file on
+  // disk (untrimmed, without this record) rather than running ahead
+  // of it.
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
   const realSearch = chrome.downloads.search;
@@ -463,9 +465,14 @@ test('a failed log.json write keeps the pins so the retry still reuses them', as
     }
     return realSearch(query);
   };
-  await recordCapture(rec(100));
+  await assert.rejects(recordCapture(rec(100)), (err) => {
+    assert.equal(err.name, 'LogWriteFailedError');
+    assert.match(err.message, /couldn't write log\.json: download failed \(FILE_FAILED\)/);
+    return true;
+  });
   chrome.downloads.download = realDownload;
   chrome.downloads.search = realSearch;
+  assert.equal(store.captureLog.length, 100, 'storage must not run ahead of the file');
   const firstName = historyFileWrites()[0].filename;
   const pins = Object.values(store.pendingHistoryFiles ?? {});
   assert.equal(pins.length, 1, 'the pin must survive an unwritten log.json');

@@ -88,6 +88,64 @@ export async function downloadArtifact(filename: string, url: string): Promise<n
   });
 }
 
+/**
+ * `downloadArtifact`, but resolving only once the bytes are on disk —
+ * and throwing, with a message naming the file, if they never get
+ * there.
+ *
+ * `chrome.downloads.download` resolves the moment the download
+ * *starts*, so a write Chrome then fails (the target is a directory,
+ * the disk is full, a permission problem) would otherwise go
+ * unnoticed: the capture would report success and log a record
+ * pointing at a file that doesn't exist. Every capture-file write
+ * goes through here so that can't happen. Chrome's own download
+ * bubble shows the failure too, but it doesn't say which extension
+ * write it was.
+ *
+ * The message carries Chrome's `DownloadItem.error` code
+ * (`FILE_FAILED`, `FILE_NO_SPACE`, …) rather than a translation:
+ * they're rare, the code is what to search for, and the `?error=`
+ * page shows it as-is.
+ */
+export async function downloadArtifactComplete(filename: string, url: string): Promise<number> {
+  const id = await downloadArtifact(filename, url);
+  try {
+    await waitForDownloadComplete(id);
+  } catch (err) {
+    throw new ArtifactWriteError(filename, downloadFailureReason(err));
+  }
+  return id;
+}
+
+/**
+ * A capture-file write Chrome couldn't finish. `reason` is kept
+ * separately from the message so a caller that reports the failure
+ * under its own heading (`recordCapture`, for `log.json`) can reuse it
+ * without re-parsing the text.
+ */
+export class ArtifactWriteError extends Error {
+  constructor(
+    readonly filename: string,
+    readonly reason: string,
+  ) {
+    super(`Couldn't write ${DOWNLOAD_SUBDIR}/${filename}: ${reason}`);
+    this.name = 'ArtifactWriteError';
+  }
+}
+
+/**
+ * The part of a `waitForDownloadComplete` failure worth showing a
+ * user: Chrome's error code from an interrupted download, or the
+ * timeout. Its messages are written for the developer console.
+ */
+function downloadFailureReason(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const interrupted = /interrupted: (.+)$/.exec(raw);
+  if (interrupted) return `download failed (${interrupted[1]})`;
+  if (/did not complete within/.test(raw)) return 'the download did not finish';
+  return raw;
+}
+
 /** Build a `data:` URL for an HTML body, percent-encoded. Exported
  *  so the SW-side HTML-only save paths (`savePageContents`) can
  *  produce the same URL shape as `downloadHtml`. */
@@ -96,22 +154,26 @@ export function htmlDataUrl(body: string): string {
 }
 
 /**
- * Start a screenshot download. `screenshotOverride` is an optional
+ * Write the screenshot file. `screenshotOverride` is an optional
  * replacement data URL with the user's red highlights baked into
  * the PNG bytes; when omitted we write the original screenshot.
+ *
+ * This and the two writers below resolve once the file is on disk
+ * and throw if Chrome couldn't write it — see
+ * `downloadArtifactComplete`.
  */
 export async function downloadScreenshot(
   capture: InMemoryCapture,
   screenshotOverride?: string,
 ): Promise<number> {
-  return downloadArtifact(
+  return downloadArtifactComplete(
     capture.screenshotFilename,
     screenshotOverride ?? capture.screenshotDataUrl,
   );
 }
 
 /**
- * Start an HTML download. The body is stable for the session unless
+ * Write the HTML file. The body is stable for the session unless
  * the user saves an edit in the Edit HTML dialog — callers cache the
  * result and rely on the `updateArtifact` handler to drop the cache
  * when the body changes (see `ensureHtmlDownloaded`).
@@ -123,7 +185,7 @@ export async function downloadScreenshot(
  */
 export async function downloadHtml(capture: InMemoryCapture): Promise<number> {
   const html = await unpackText(capture.html);
-  return downloadArtifact(capture.contentsFilename, htmlDataUrl(html));
+  return downloadArtifactComplete(capture.contentsFilename, htmlDataUrl(html));
 }
 
 /**
@@ -139,7 +201,7 @@ const SELECTION_DATA_URL_MIME: Record<SelectionFormat, string> = {
 };
 
 /**
- * Start a selection download in a specific format. Throws when the
+ * Write the selection file in a specific format. Throws when the
  * capture doesn't carry a selection of that format — callers must
  * ensure `capture.selections` and `capture.selectionFilenames` are
  * populated first, and that the chosen format's body is non-empty.
@@ -165,7 +227,7 @@ export async function downloadSelection(
   const withNewline = body.endsWith('\n') ? body : `${body}\n`;
   const mime = SELECTION_DATA_URL_MIME[format];
   const url = `data:${mime};charset=utf-8,${encodeURIComponent(withNewline)}`;
-  return downloadArtifact(capture.selectionFilenames[format], url);
+  return downloadArtifactComplete(capture.selectionFilenames[format], url);
 }
 
 /**

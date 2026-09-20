@@ -10,7 +10,8 @@
 // rather than being undone by the next capture, and hand-edited rows
 // survive wherever we can read the file. When we can't tell what is on
 // disk, the capture fails with `LogWriteBlockedError` and the user is
-// asked — see `docs/log-consistency.md`.
+// asked; when Chrome can't finish the write, it fails with
+// `LogWriteFailedError` — see `docs/log-consistency.md`.
 //
 // Entries that age out of that buffer aren't lost: they're flushed
 // in batches to `history-<timestamp>.json` history files beside
@@ -25,12 +26,12 @@ import { type CaptureRecord } from './types.js';
 import {
   HISTORY_FILE_PREFIX,
   LOG_FILE_NAME,
-  downloadArtifact,
+  ArtifactWriteError,
+  downloadArtifactComplete,
   getHistoryFilePaths,
   pruneOldLogRecords,
-  waitForDownloadComplete,
 } from './downloads.js';
-import { LogWriteBlockedError, inspectLogFile } from './log-reconcile.js';
+import { LogWriteBlockedError, LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
 
 export const LOG_STORAGE_KEY = 'captureLog';
 /**
@@ -383,6 +384,19 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * log. The only path that clobbers a file we couldn't read, and only
  * ever on an explicit click.
  *
+ * ## Failed write
+ *
+ * A `log.json` write the reconcile allowed but Chrome couldn't finish
+ * (the target is a directory, the disk is full) **throws
+ * `LogWriteFailedError`** with Chrome's reason. Storage is left alone:
+ * the file is the log and doesn't hold this record, so the browser
+ * copy mustn't either — a copy that ran ahead of the file would only
+ * trip the next capture's size check and blame an edit nobody made.
+ * The record is dropped; its artifacts stay on disk, unreferenced,
+ * the same residue a cancelled prompt leaves. History files flushed
+ * before it stay put with their names still pinned, so the next
+ * capture's drain overwrites rather than duplicates them.
+ *
  * ## Ordering
  *
  * History files, then `log.json`, then storage. Every step depends on the
@@ -580,35 +594,35 @@ export async function recordCapture(
     // is real: `chrome.downloads.download` resolves the moment the
     // write begins, which would leave storage able to land first after
     // all.
-    const downloadId = await writeJsonFile(LOG_FILE_NAME, serializeLog(kept));
-    let logWritten = true;
+    //
+    // **A write that doesn't land fails the capture** — see "Failed
+    // write" above.
+    let downloadId: number;
     try {
-      await waitForDownloadComplete(downloadId);
+      downloadId = await writeJsonFileComplete(LOG_FILE_NAME, serializeLog(kept));
     } catch (err) {
-      // The record still belongs in storage: its artifacts are on
-      // disk, and the next capture reconciles against whatever the
-      // file turned out to be.
-      logWritten = false;
-      console.info('[SeeWhatISee] log.json write did not complete:', err);
+      const reason = err instanceof ArtifactWriteError
+        ? err.reason
+        : err instanceof Error ? err.message : String(err);
+      throw new LogWriteFailedError(reason);
     }
     await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
     // This write is now the one true `log.json` record, so the rows
     // every earlier capture left behind — all naming this same file —
-    // can go. Skipped when the write didn't land: then an older record
-    // is still the newest one describing the file on disk.
-    if (logWritten) await pruneOldLogRecords(downloadId);
+    // can go.
+    await pruneOldLogRecords(downloadId);
     // The trimmed log is now both on disk and in storage, so the
     // batches in `settledKeys` are gone for good and nothing can
     // re-derive them — their pinned names can go.
     //
-    // **Only once the file actually landed.** An interrupted write
-    // leaves the untrimmed log on disk, and disk is authoritative, so
-    // the next capture re-derives the same batch — which with the pins
-    // dropped would mint a second name for it.
+    // Only reached once the file actually landed: an interrupted write
+    // threw above, leaving the untrimmed log on disk — and disk is
+    // authoritative, so the next capture re-derives the same batch,
+    // which with the pins dropped would mint a second name for it.
     //
-    // Swallowed for the same reason: the cost is a stale entry, which
-    // the next clean drain collects.
-    if (logWritten && settledKeys.length > 0) {
+    // Swallowed: the cost is a stale entry, which the next clean drain
+    // collects.
+    if (settledKeys.length > 0) {
       try {
         if (drainClean) {
           await chrome.storage.local.remove(PENDING_HISTORY_STORAGE_KEY);
@@ -626,36 +640,24 @@ export async function recordCapture(
 
 /**
  * Write a JSON log file — `log.json` or a `history-*.json` — to the
- * download dir, overwriting any existing file.
- * `text` is the pre-formatted JSON to write (callers use serializeRecord
- * to guarantee canonical key order). Returns the chrome.downloads
- * download id, which tests use to resolve the on-disk path.
+ * download dir, overwriting any existing file, resolving only once the
+ * bytes are on disk and throwing, with a message naming the file, if
+ * they never get there (`downloadArtifactComplete`).
+ *
+ * `text` is the pre-formatted JSON to write (callers use
+ * `serializeLog` for canonical key order). Returns the download id,
+ * which tests resolve to an on-disk path.
+ *
+ * Every log write goes through here: the history-file writes, where
+ * the next step (rewriting `log.json` without those records) must not
+ * happen until the file carrying them has landed, and `log.json`
+ * itself.
  */
-export async function writeJsonFile(name: string, text: string): Promise<number> {
-  return downloadArtifact(
+async function writeJsonFileComplete(name: string, text: string): Promise<number> {
+  return downloadArtifactComplete(
     name,
     `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
   );
-}
-
-/**
- * `writeJsonFile`, but resolving only once the bytes are on disk —
- * and throwing if they never get there.
- *
- * `chrome.downloads.download` resolves when the download *starts*, so
- * anything that depends on the file actually existing has to wait for
- * the completion event too. Used by the history-file writes, where the
- * next step (rewriting `log.json` without those records) must not
- * happen until the file carrying them has landed.
- *
- * `log.json`'s own write doesn't use this: it needs the download id
- * even when the wait fails, because the record still belongs in
- * storage. See `recordCapture`.
- */
-async function writeJsonFileComplete(name: string, text: string): Promise<number> {
-  const downloadId = await writeJsonFile(name, text);
-  await waitForDownloadComplete(downloadId);
-  return downloadId;
 }
 
 /**

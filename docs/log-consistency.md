@@ -122,21 +122,34 @@ landed.
   running ahead of the browser copy is the recoverable direction**:
   the next capture reads the file and the copy catches up. The
   reverse — a record in the browser that reached no file — is what
-  the ordering avoids (the interrupted-write case under
-  [Where the principles bend](#where-the-principles-bend) is the
-  residue).
+  the ordering avoids; a write Chrome can't finish fails the capture
+  instead (below).
 - **Every write is awaited to *completion*, not merely to the download
   starting.** `chrome.downloads.download` resolves the moment the write
   begins, so without the wait the ordering would be nominal only.
-  `writeJsonFileComplete` in `log-store.ts` is the shared shape.
+  `downloadArtifactComplete` in `downloads.ts` is the shared shape;
+  `writeJsonFileComplete` in `log-store.ts` wraps it for the log files.
 - History files go first, and are waited out the same way: a record
   must not leave `log.json` before the history file carrying it exists.
   A worker killed in that window would otherwise drop the whole batch
   from the file that is authoritative.
-- `log.json`'s own write is the one that doesn't abort on a failed
-  wait — the record still belongs in the browser copy, since its
-  artifacts are on disk and the next capture reconciles against
-  whatever the file turned out to be.
+- **A `log.json` write that doesn't land fails the capture**
+  (`LogWriteFailedError`, message naming the file and Chrome's error
+  code).
+  - Storage is left alone: the file doesn't hold the record, so the
+    browser copy mustn't either — a copy that ran ahead would only
+    trip the next capture's size check and blame an edit nobody made.
+  - The record is dropped with the error; the capture's files stay on
+    disk, unreferenced.
+  - Not a prompt: unlike a blocked write there is no decision to
+    make, so it reports as a plain capture failure on the usual
+    surfaces (the Capture page's status line, or the error page).
+  - Chrome's download bubble shows the same failure as a bare
+    "Something went wrong"; this is what says it was the log.
+- **Capture-file writes (screenshot / HTML / selection) wait the same
+  way** (`downloadArtifactComplete`, `downloads.ts`), and a failure
+  there fails the capture *before* the log is touched — so a record
+  never points at a file Chrome didn't write.
 
 ### Pruning the older `log.json` records
 
@@ -372,23 +385,33 @@ failure like any other.
 
 ### The answers offered
 
-The dialog names the file (path in a code font), says in one line
-what's wrong with it, and lists the fixes as lettered options —
-"(A)", "(B)", "(C)" — under **Options:**
+The dialog — titled "Error while writing capture log", since the
+reasons range wider than "out of sync" — names the file (path in a
+code font), says in one red line what's wrong with it, and lists the
+fixes as lettered options — "(A)", "(B)", "(C)" — under **Options:**
 
-- **(A) Enable local file reads** *(Recommended)*, so the file can be
-  read and appended to without overwriting it. Done as two numbered
-  steps inline in the option: 1. turn on "Allow access to file URLs"
-  via the **Extension settings** button (opened in a background tab,
-  since Chrome won't link straight to the toggle); 2. click **Retry**.
-  Retry runs the same append again from the top (reconcile, then
-  write), so it also lands after any other fix, such as deleting
-  `log.json` — with the file gone there's nothing left to preserve, so
-  a fresh log starts from this capture. With nothing changed it lands
-  back on the same prompt.
-  - For the `corrupt-file` reason, file reads are already on, so the
-    option reads **Fix the file** instead and step 1 becomes "Repair
-    or delete the file."
+- **(A)** takes one of three shapes, chosen by whether "Allow access
+  to file URLs" is on (checked from the page) and by the reason:
+  - Toggle off: **Enable local file reads** *(Recommended)*, so the
+    file can be read and appended to without overwriting it.
+    - Two numbered steps inline in the option: 1. turn on the toggle
+      via the **Extension settings** button (opened as the active
+      tab, since Chrome won't link straight to the toggle); 2. click
+      **Retry**.
+    - Flipping the toggle reloads the extension, which closes its
+      pages — this dialog included. So in practice the user captures
+      again after enabling reads rather than clicking Retry here;
+      the steps still describe the fix.
+  - Toggle on, `corrupt-file`: **Fix the file** *(Recommended)*, with
+    step 1 "Repair or delete the file."
+  - Toggle on, any other reason (`unreadable`, or a Retry that landed
+    here after enabling reads): just the **Retry** button — there is
+    no toggle to send the user to.
+  - Retry runs the same append again from the top (reconcile, then
+    write), so it also lands after any other fix, such as deleting
+    `log.json` — with the file gone there's nothing left to preserve,
+    so a fresh log starts from this capture. With nothing changed it
+    lands back on the same prompt.
 - **(B) Overwrite log.json.** The same append with the reconcile
   skipped: the file is replaced with the browser's copy of the log
   plus this capture, and external edits are lost (the option says so).
@@ -525,11 +548,10 @@ here or it belongs fixed.
 - **A cancelled prompt is a capture outside the log.** Its files are
   on disk, but no record points at them. That is the deal the prompt
   states: Retry or Overwrite to log it, Cancel to let it go.
-- **An interrupted `log.json` write can drop its record.** The record
-  still enters the browser copy, but the next reconcile rebuilds from
-  the file — which never got it. The files stay on disk,
-  unreferenced. Rare (the write is a tiny local `data:` download) and
-  additive-only in effect.
+- **An interrupted `log.json` write is a capture outside the log.**
+  The capture fails with the reason, and the record is stored nowhere
+  — its files stay on disk, unreferenced, the same residue a cancelled
+  prompt leaves. Rare (the write is a tiny local `data:` download).
 - **Duplicate records in a history file.** A service worker killed
   after a flush batch lands but before `log.json` is rewritten
   leaves the batch both in the new history file and still in the log;
@@ -594,6 +616,10 @@ Without file reads:
     a real test rather than a restatement of the code.
   - The `corrupt-file` block and `parseLogLines`' skip count are
     covered here too.
+- `tests/unit/log-history-files.test.mjs` covers the failed `log.json`
+  write: the capture rejects with `LogWriteFailedError`, storage is
+  untouched, and the flushed batch's pinned name survives for the
+  retry.
 - `tests/e2e/screenshot.spec.ts` covers the two headline behaviors
   end-to-end: deleting `log.json` starts a fresh log instead of
   bringing the old records back, and a browser copy that has lost its

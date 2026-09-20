@@ -59,11 +59,13 @@ export async function requestLogSyncWrite(
  * a link's `href` is only good for hover and copy-link — the actual
  * open has to go through `chrome.tabs.create`.
  *
- * Opened in a background tab so the page that offered the link (and
- * its prompt) stays in front of the user for the follow-up Retry.
+ * Opened in the foreground: the user is going there to flip the
+ * toggle, and a tab that opens behind the prompt looks like nothing
+ * happened. The prompt is still waiting when they come back for the
+ * follow-up Retry.
  */
 export function openFileAccessSettings(): void {
-  void chrome.tabs.create({ url: fileAccessUrl(), active: false });
+  void chrome.tabs.create({ url: fileAccessUrl(), active: true });
 }
 
 /** The extension's own details page — the toggle's home. */
