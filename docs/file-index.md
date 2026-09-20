@@ -200,7 +200,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
 | `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus older history files |
-| `src/history.ts` | Controller for `history.html`: reads the on-disk log and history files (cache fallback), renders rows, search, Restore / Reopen row actions, toolbar actions |
+| `src/history.ts` | Controller for `history.html`: reads the on-disk log and history files, renders rows, search, Restore / Reopen row actions, toolbar actions |
 | `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
@@ -247,7 +247,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
-| `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes; the blocked / failed write errors |
+| `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; the blocked / failed write errors |
 | `src/capture/file-access.ts` | The required "Allow access to file URLs" toggle — `requireFileAccess` gate, its error, and the settings-page opener |
 | `src/capture/file-access-dialog.ts` | The "file access required" dialog the Capture and History pages open when the toggle is off |
 | `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip |
@@ -389,9 +389,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback, probe last resort |
-| `tests/unit/history-file-paths.test.mjs` | Unit tests for `getHistoryFilePaths` — the download-record index of `history-*.json` files |
 | `tests/unit/list-history-files.test.mjs` | Unit tests for `listHistoryFiles` — parsing Chrome's `file://` directory listing for `history-*.json` names |
-| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the stale-`exists` re-check, and the Retry / Overwrite flush |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the directory probe, the stale-`exists` re-check, and the Retry / Overwrite flush |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
@@ -416,7 +415,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `testing.md` | Playwright + devtools-console patterns for testing the extension |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `history-page.md` | History page — data source, columns, `file://` link degradations, search |
-| `log-consistency.md` | Disk-authoritative capture log — reconcile states, uniquify probes, out-of-sync prompt |
+| `log-consistency.md` | Disk-authoritative capture log — reconcile states, the directory probe, out-of-sync prompt |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |

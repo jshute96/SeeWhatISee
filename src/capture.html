@@ -295,8 +295,7 @@
   }
   /* Out-of-sync log prompt. Narrower than the edit dialogs — it's a
    * few lines of explanation and a short numbered list of fixes, not
-   * an editor. Wide enough that the longest reason line (the
-   * size-mismatch one) doesn't wrap. */
+   * an editor. */
   dialog.log-sync-dialog {
     width: min(640px, 90vw);
     padding: 16px;
@@ -358,10 +357,9 @@
   .log-sync-steps > li {
     margin: 4px 0 0 0;
   }
-  /* Option A collapsed to just its Retry button (file reads are
-   * already on, so there is no toggle to send the user to): the
-   * intro and step 1 are hidden by log-sync.ts, and the lone
-   * remaining step drops its "2." numbering and indent. */
+  /* Option A collapsed to just its Retry button (every reason but
+   * corrupt-file): the intro and step 1 are hidden by log-sync.ts,
+   * and the lone remaining step drops its "2." numbering and indent. */
   .log-sync-retry-only .log-sync-steps {
     margin: 0;
     padding-left: 0;
@@ -1717,10 +1715,8 @@
        with that one capture, right then: Retry re-runs the write,
        Overwrite forces it, Cancel abandons the record. The structure
        is fixed here; `capture-page/log-sync.ts` fills the path and the
-       reason line, and picks option A's shape: "enable file reads"
-       when the toggle is off, "fix the file" for the corrupt-file
-       reason, and just the Retry button when reads are already on
-       and there is nothing else to send the user to. -->
+       reason line, and picks option A's shape: "fix the file" for the
+       corrupt-file reason, just the Retry button otherwise. -->
   <dialog id="log-sync-dialog" class="log-sync-dialog"
           aria-labelledby="log-sync-title">
     <h2 id="log-sync-title">Error while writing capture log</h2>
@@ -1729,12 +1725,6 @@
          applies. Markup rather than set text so the filename can
          render in the code font. -->
     <p class="log-sync-reason">
-      <span id="log-sync-reason-unknown-file" hidden><code>log.json</code>
-        already exists, but this browser has no record of writing
-        it.</span>
-      <span id="log-sync-reason-size-mismatch" hidden><code>log.json</code>
-        was modified outside SeeWhatISee. Writing now will overwrite
-        external edits.</span>
       <span id="log-sync-reason-unreadable" hidden><code>log.json</code>
         exists but couldn&rsquo;t be read.</span>
       <span id="log-sync-reason-corrupt-file" hidden><code>log.json</code>
@@ -1744,24 +1734,10 @@
     <p><b>Options:</b></p>
     <ol class="log-sync-options">
       <li id="log-sync-option-a">
-        <span id="log-sync-fix-access">
-          <b>Enable local file reads</b> <i>(Recommended)</i><br>
-          Then SeeWhatISee can append to the log without overwriting it.
-        </span>
         <span id="log-sync-fix-file" hidden>
           <b>Fix the file</b> <i>(Recommended)</i>
         </span>
-        <!-- Step 2 is shared; only step 1 swaps with the variant. -->
         <ol class="log-sync-steps">
-          <li id="log-sync-step-access">
-            Turn on <b>Allow access to file URLs</b> in
-            <!-- Real `href` so hover / copy-link work, but the click
-                 is intercepted: Chrome blocks page-initiated
-                 `chrome://` navigation, so log-sync.ts opens it via
-                 `chrome.tabs.create`. -->
-            <a id="log-sync-settings" class="btn" href="chrome://extensions/">Extension
-              settings</a>
-          </li>
           <li id="log-sync-step-file" hidden>
             Repair or delete the file
           </li>

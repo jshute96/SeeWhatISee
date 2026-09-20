@@ -28,10 +28,16 @@ import {
   LOG_FILE_NAME,
   ArtifactWriteError,
   downloadArtifactComplete,
-  getHistoryFilePaths,
+  listHistoryFiles,
+  peekCaptureDirectory,
   pruneOldLogRecords,
 } from './downloads.js';
-import { LogWriteBlockedError, LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
+import {
+  type LogFileState,
+  LogWriteBlockedError,
+  LogWriteFailedError,
+  inspectLogFile,
+} from './log-reconcile.js';
 
 export const LOG_STORAGE_KEY = 'captureLog';
 /**
@@ -354,15 +360,14 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  *
  * - **contents** — we read the file, so it replaces the buffer.
  *   Rows the user deleted by hand stay deleted, and edits survive.
- * - **fresh** — the file is gone or empty, so the log starts over at
- *   this capture and the buffer is discarded. This is what stops a
- *   deleted log from being resurrected.
- * - **insync** — the file still matches what we last wrote; append to
- *   the buffer as usual. The steady-state case.
- * - **written** — there was no file and no record of one, so the
- *   existence probe already wrote a one-record log. Nothing left to do
- *   but record it.
+ *   The steady-state case.
+ * - **fresh** — the file is gone, so the log starts over at this
+ *   capture and the buffer is discarded. This is what stops a deleted
+ *   log from being resurrected.
  * - **blocked** — see below.
+ *
+ * The storage buffer is only ever *written*, never appended to on
+ * its own: what's on disk decides. `opts.force` is the one exception.
  *
  * ## Out of sync
  *
@@ -390,8 +395,8 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * (the target is a directory, the disk is full) **throws
  * `LogWriteFailedError`** with Chrome's reason. Storage is left alone:
  * the file is the log and doesn't hold this record, so the browser
- * copy mustn't either — a copy that ran ahead of the file would only
- * trip the next capture's size check and blame an edit nobody made.
+ * copy mustn't either — the next capture reads the file back and
+ * would drop it anyway.
  * The record is dropped; its artifacts stay on disk, unreferenced,
  * the same residue a cancelled prompt leaves. History files flushed
  * before it stay put with their names still pinned, so the next
@@ -444,24 +449,15 @@ export async function recordCapture(
     const stored: CaptureRecord[] = data[LOG_STORAGE_KEY] ?? [];
     // Force appends to the buffer as though the file still matched it
     // — that is what "replace the file with the browser's copy" means.
-    const state = opts?.force
-      ? { kind: 'insync' as const }
-      : await inspectLogFile({
-          expectedText: serializeLog(stored),
-          freshPayload: serializeLog([record]),
-        });
+    const state: LogFileState | { kind: 'force' } = opts?.force
+      ? { kind: 'force' }
+      : await inspectLogFile();
     // Nothing written, nothing stored — see "Out of sync" above.
     if (state.kind === 'blocked') {
       throw new LogWriteBlockedError(state.reason, record, state.directory);
     }
-    // The probe already wrote the file it was probing, so the log is
-    // exactly what we handed it and there is nothing to move out.
-    if (state.kind === 'written') {
-      await chrome.storage.local.set({ [LOG_STORAGE_KEY]: [record] });
-      return state.downloadId;
-    }
-    // What we're appending to. `stored` only wins in the steady state;
-    // otherwise the file (or the absence of one) decides.
+    // What we're appending to: the file, or nothing if it's gone.
+    // `stored` only wins on Overwrite.
     let base: CaptureRecord[];
     if (state.kind === 'contents') {
       // Adopting the file means re-serializing it back over itself, so
@@ -496,12 +492,11 @@ export async function recordCapture(
     // but didn't get to finish. Empty in the steady state; see
     // `PENDING_HISTORY_STORAGE_KEY`.
     let pendingNames: Record<string, string> = {};
-    // Seeded with the history files already on disk, so a flush can't land
-    // on top of one. Only paid when a flush is actually about to
-    // happen — once per 50 captures, not once per capture. History files
-    // Chrome has lost track of (download history cleared) are
-    // invisible here, which is the residual case noted in
-    // `docs/log-consistency.md`.
+    // Seeded with the history files already on disk — the directory
+    // listed over `file://`, the same index the History page uses, so
+    // it sees every file present rather than only the ones Chrome
+    // still has download records for. Only paid when a flush is
+    // actually about to happen — once per batch, not once per capture.
     //
     // Its own try/catch, *outside* the write loop's: this listing is
     // only a collision guard, so failing it must not skip the drain.
@@ -510,8 +505,16 @@ export async function recordCapture(
     // `log.json` growing without bound.
     if (kept.length > LOG_MAX_ENTRIES) {
       try {
-        for (const path of await getHistoryFilePaths()) {
-          usedNames.add(path.replace(/^.*[/\\]/, ''));
+        // The reconcile found the directory when it read the file;
+        // Overwrite skipped it, so look it up. (`fresh` has no file
+        // and never flushes: `kept` is one record.)
+        const directory = state.kind === 'contents'
+          ? state.directory
+          : await peekCaptureDirectory();
+        if (directory) {
+          for (const path of await listHistoryFiles(directory)) {
+            usedNames.add(path.replace(/^.*[/\\]/, ''));
+          }
         }
       } catch (err) {
         console.info('[SeeWhatISee] could not list existing history files; names unseeded:', err);

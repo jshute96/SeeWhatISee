@@ -114,7 +114,8 @@ install, and there is no API to request it — the user flips it.
   appending to it means reading it first (`docs/log-consistency.md`).
   The History page reads the same files to show thumbnails and link
   to captures, and the watch indicator reads the watcher's status
-  file.
+  file. There is no fallback mode: without reads, an edit to
+  `log.json` can't be seen and would be overwritten.
 - Enforced in one place per side:
   - Service worker: `runWithErrorReporting` calls
     `requireFileAccess()` (`src/capture/file-access.ts`) before the
@@ -139,9 +140,8 @@ install, and there is no API to request it — the user flips it.
   or flips the toggle, and flipping it restarts the extension, which
   closes the page anyway.
 - Built in TypeScript rather than page markup so both pages share
-  one dialog; styles in `shared-styles.css`. Its settings link, the
-  History banner's and the log-sync dialog's are all wired by
-  `wireFileAccessLink`.
+  one dialog; styles in `shared-styles.css`. Its settings link is
+  wired by `wireFileAccessLink`.
 - The Capture page's shortcut handlers suspend on any open modal
   (`anyModalDialogOpen`), so Alt+C can't start a save from behind it.
 - Unpacked extensions get the toggle on by default, so development

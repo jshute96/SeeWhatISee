@@ -19,14 +19,11 @@
 // and every file-backed cell renders its no-directory fallback (bare
 // filename / unlinked label), which is what these tests assert. For
 // the same reason `chrome.downloads` knows nothing about the seeded
-// filenames, so the `(deleted)` markers never fire and the file-access
-// banner stays hidden.
+// filenames, so the `(deleted)` markers never fire.
 //
 // *Load older captures* with something to load is out of reach for the
 // same reason: with no capture there is no directory for
-// `listHistoryFiles()` to read and no download record for the
-// `getHistoryFilePaths()` fallback, so both discovery routes come up
-// empty. Both the flushing and loading the flushed file back are
+// `listHistoryFiles()` to read. Both the flushing and loading the flushed file back are
 // covered by `log-history-files.spec.ts` (which does run a capture)
 // and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
 // control hidden, and the plain empty-log notice — is covered below.
@@ -572,10 +569,6 @@ test('a long URL scrolls inside the Page cell instead of stretching the row', as
   const heights = await rows.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
   expect(Math.max(...heights)).toBeLessThan(size.cap + 40);
 
-  // No capture directory in this harness, so flipping the file-URL
-  // toggle would change nothing — the banner stays hidden.
-  await expect(page.locator('#file-access-hint')).toBeHidden();
-
   await page.close();
 });
 
@@ -786,10 +779,6 @@ test('Reopen keeps the baked-in flags and reuses files until they are edited', a
   });
   const original = (await readLog())[0];
   expect(original.screenshot?.hasHighlights).toBe(true);
-  // Both tests here need "Allow access to file URLs", which Reopen
-  // reads the saved artifacts with. The harness profile has it on; a
-  // profile without it would flash the page's banner instead of
-  // opening anything.
   const fileSize = async (name: string): Promise<number> => {
     // Resolved through the download record rather than a fixed path:
     // the harness gives each run its own temp downloads directory.

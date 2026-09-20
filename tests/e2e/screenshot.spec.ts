@@ -265,11 +265,8 @@ test('a storage wipe is healed from log.json rather than truncating it', async (
   // is what puts them back — the next capture must not truncate
   // log.json to the one record storage still knows about.
   //
-  // This exercises the read path, which is the branch this harness can
-  // reach: Chrome grants file access to a `--load-extension` build, so
-  // `log.json` is readable. The no-read branches — where a size
-  // mismatch blocks the write and the user is prompted — are covered
-  // in tests/unit/log-reconcile.test.mjs.
+  // Chrome grants file access to a `--load-extension` build, so the
+  // reconcile reads `log.json` back here just as it does for a user.
   const sw0 = await getServiceWorker();
   await resetCaptureState(sw0);
 

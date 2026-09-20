@@ -288,63 +288,6 @@
     max-width: 60ch;
     line-height: 1.5;
   }
-  /* Standing condition rather than an empty state: it sits under the
-     toolbar (outside the scrolling <main>) so it can't scroll out of
-     view while the rows it explains are on screen. Amber rather than
-     the `.notice` grey because it's actionable — something is missing
-     and the user can fix it.
-
-     `width: fit-content` shrink-wraps the box to its own text (the
-     line break in the markup is deliberate, so this ends up as wide as
-     the longer of the two lines) instead of letting a block-level <p>
-     stretch the full page and trail a wide band of empty yellow. It
-     still wraps normally once the window is narrower than the text. */
-  .banner {
-    flex: none;
-    width: fit-content;
-    margin: 0 24px 12px 24px;
-    padding: 8px 12px;
-    background: #fff8e1;
-    border: 1px solid #ffca28;
-    border-radius: 4px;
-    font-size: 14px;
-    color: #5d4037;
-    line-height: 1.5;
-  }
-  /* Same blue as the table's URL links so it reads as a link, and
-     `nowrap` keeps "extension settings" from splitting across lines. */
-  .banner a {
-    color: #1a5fb4;
-    white-space: nowrap;
-  }
-  /* Clicking a file link or the Snapshots-directory button while
-     "Allow access to file URLs" is off does nothing — we suppress the
-     navigation rather than let Chrome refuse it (see history.ts). A
-     silent no-op reads as a broken page, so the banner that explains
-     why flashes instead. It's already pinned above the scroller, so
-     scrolling it into view would be a no-op; this has to be a visual
-     change to be noticed at all.
-
-     Deeper amber plus a ring, and the ring is on `box-shadow` rather
-     than `border` so the banner doesn't change size and shove the
-     table down mid-flash. Two pulses, because a single one is easy to
-     miss if the eye is on the row that was clicked. */
-  @keyframes banner-flash {
-    0%, 100% { background: #fff8e1; box-shadow: none; }
-    25%, 75% { background: #ffe9a8; box-shadow: 0 0 0 3px #ffca28; }
-  }
-  .banner.flash {
-    animation: banner-flash 0.6s ease-in-out 2;
-  }
-  /* Respect the OS "reduce motion" setting: keep the emphasis, drop
-     the pulsing. The class is still added and removed the same way. */
-  @media (prefers-reduced-motion: reduce) {
-    .banner.flash {
-      animation: none;
-      background: #ffe9a8;
-      box-shadow: 0 0 0 3px #ffca28;
-    }
-  }
 </style>
 </head>
 <body>
@@ -365,12 +308,10 @@
          autocomplete="off" spellcheck="false">
   <span class="count" id="count"></span>
   <!-- Older captures live in `history-*.json` files on disk rather
-       than in storage, so they're loaded on demand — reading them
-       means a file:// fetch, which the same "Allow access to file
-       URLs" toggle gates. Next to the capture count because that
-       count is what it changes, and because under the table it was
-       a scroll away from the number it explains. Hidden unless there
-       is something left to load. -->
+       than in storage, so they're loaded on demand. Next to the
+       capture count because that count is what it changes, and
+       because under the table it was a scroll away from the number
+       it explains. Hidden unless there is something left to load. -->
   <span class="older" id="older" hidden>
     <button type="button" id="load-older" class="btn">Load older captures</button>
     <!-- Read failures only. `role="status"` so the failure is
@@ -389,19 +330,6 @@
     <button type="button" id="snapshots-dir" class="btn" disabled>Snapshots directory</button>
   </span>
 </div>
-
-<!-- Sits outside <main> so it stays pinned under the search box
-     instead of scrolling away with the table. -->
-<p class="banner" id="file-access-hint" hidden>
-  Image thumbnails and file links are served from local disk, which
-  Chrome only allows if <b>Allow access to file URLs</b> is enabled.<br/>
-  Enable that permission in
-  <!-- Real `href` so the target is visible on hover and right-click →
-       Copy link address works, but the click is intercepted: Chrome
-       blocks a page-initiated navigation to `chrome://`, so the actual
-       open goes through `chrome.tabs.create` in history.ts. -->
-  <a href="chrome://extensions/" id="file-access-btn">extension settings</a>.
-</p>
 
 <!-- `id` for history.ts, which scrolls this box in response to the
      keyboard — the table scrolls in here rather than on the document,

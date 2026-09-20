@@ -1677,7 +1677,7 @@ captureBtn.addEventListener('click', (e) => {
             setStatusMessage('Saving…', 'info');
             submitSave(force);
           };
-          void showLogSyncDialog(response.logBlocked, {
+          showLogSyncDialog(response.logBlocked, {
             onRetry: () => rerun(false),
             onOverwrite: () => rerun(true),
           });

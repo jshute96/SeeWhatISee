@@ -71,9 +71,6 @@ export function logSyncPathText(directory?: string): string {
  * empty explanation above live Retry / Overwrite buttons.
  */
 export function isLogSyncReason(value: unknown): value is LogSyncBlockedReason {
-  return value === 'unknown-file'
-    || value === 'size-mismatch'
-    || value === 'unreadable'
-    || value === 'corrupt-file';
+  return value === 'unreadable' || value === 'corrupt-file';
 }
 

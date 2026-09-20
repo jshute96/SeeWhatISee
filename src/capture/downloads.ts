@@ -417,10 +417,12 @@ export async function getCaptureFileExistence(): Promise<Map<string, boolean>> {
  * Whether `file://` reads are available. The toggle lives in
  * `chrome://extensions`, is off by default, and flipping it reloads
  * the extension — so this is a fresh answer every service-worker life.
+ * The extension requires it (`file-access.ts`); this is what every
+ * entry point's check reads.
  *
  * Guarded rather than called bare: `chrome.extension` is a legacy
- * namespace, and a missing method should degrade to the no-reads path
- * instead of failing whatever asked.
+ * namespace, and a missing method should read as "off" — the dialog
+ * that explains the toggle — instead of failing whatever asked.
  */
 export async function canReadFiles(): Promise<boolean> {
   try {
@@ -472,10 +474,9 @@ export async function readCaptureFileText(
 
 /**
  * Absolute paths of the `history-*.json` history files, newest first,
- * found by reading the capture directory itself over `file://`. Needs
- * "Allow access to file URLs" — the same toggle reading the files
- * takes, so the caller (the History page) gates the whole
- * history-loading feature on it and only calls this when reads work.
+ * found by reading the capture directory itself over `file://`. Used
+ * by the History page and by the flush's collision guard in
+ * `log-store.ts`.
  *
  * Fetching a directory URL returns the HTML listing Chrome generates
  * for `file://` directories. Its markup is a browser internal, so the
@@ -498,14 +499,14 @@ export async function readCaptureFileText(
  *   rejects the fetch instead, which the caller treats as "nothing to
  *   offer".
  *
- * Unlike the `chrome.downloads`-based `getHistoryFilePaths` below,
- * this sees every file actually present *in the given directory*:
- * files whose download records were cleared, and files past
- * `DownloadQuery`'s 1000-record default limit. And a deleted file
- * simply isn't listed, so the stale `DownloadItem.exists` flag never
- * misleads it. The trade: it can only look where the caller points
- * it, so files stranded in an old downloads location are out of view
- * (download records knew their absolute paths). Matching every
+ * Listing the directory, rather than asking `chrome.downloads` for
+ * the files we wrote, sees every file actually present: files whose
+ * download records were cleared, files past `DownloadQuery`'s
+ * 1000-record default limit, and files another profile or a script
+ * put there. And a deleted file simply isn't listed, so the stale
+ * `DownloadItem.exists` flag never misleads it. The trade: it can only
+ * look where the caller points it, so files stranded in an old
+ * downloads location are out of view. Matching every
  * `history-*.json` in the directory — not just ones we wrote — is the
  * same rule the skills' Python backend uses (`skills/SeeWhatISee.py`),
  * so the page and the scripts agree on what the history is.
@@ -540,50 +541,6 @@ const HISTORY_FILE_TOKEN = new RegExp(
 );
 
 /**
- * Absolute paths of the `history-*.json` files according to
- * `chrome.downloads` records, newest first.
- *
- * Two callers, neither of which uses the directory listing above:
- *
- * - The flush's filename-collision guard (`log-store.ts`), which runs
- *   during a capture with or without file reads and is best-effort
- *   anyway: the names it protects are millisecond timestamps, so the
- *   gaps below are acceptable there.
- * - The History page with the file-access toggle off, where this is
- *   the only index — enough to keep the Load-older button on screen
- *   as a pointer at the feature, even though the reads themselves
- *   will wait for the toggle.
- *
- * With file reads available, the History page uses `listHistoryFiles`
- * instead, which doesn't depend on download history surviving.
- *
- * - Clearing download history hides files that are still on disk.
- * - `DownloadQuery.limit` defaults to 1000 records, and every capture
- *   file (not just history files) counts toward it; overflow drops
- *   the *oldest* records first.
- *
- * Records for files Chrome knows are deleted are skipped — nothing on
- * disk to collide with — as are duplicates from a re-written name,
- * keeping the newest record per path.
- */
-export async function getHistoryFilePaths(): Promise<string[]> {
-  const items = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${HISTORY_FILE_PREFIX}[^/\\\\]*\\.json$`,
-    orderBy: ['-startTime'],
-  });
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  for (const item of items) {
-    if (item.byExtensionId !== chrome.runtime.id || !item.filename) continue;
-    if (item.state !== 'complete' || item.exists === false) continue;
-    if (seen.has(item.filename)) continue;
-    seen.add(item.filename);
-    paths.push(item.filename);
-  }
-  return paths;
-}
-
-/**
  * Join `dir` and `name` using whichever separator `dir` already uses.
  * `chrome.downloads.search` returns OS-native paths — backslashes on
  * Windows, forward slashes elsewhere — so reusing the existing
@@ -611,16 +568,15 @@ export function pathToFileUrl(path: string): string {
  * The newest **completed** `log.json` download record written by this
  * extension, or `null` when there is none.
  *
- * This record is our only memory of the log file that survives
- * `chrome.storage.local` being wiped, so the reconcile in
- * `log-reconcile.ts` leans on it for both "is the file still there"
- * (`exists`) and "how big was it when we wrote it" (`logRecordSize`).
+ * The reconcile in `log-reconcile.ts` leans on it for the file's
+ * path, and — when a read fails — for whether the file is still there
+ * (`exists`, re-checked on demand), which is what tells a deleted log
+ * from an unreadable one.
  *
  * Records from a *different* extension id are skipped, same as
  * everywhere else here. That hides the log file written by a previous
  * unpacked load of this extension (whose id changes on every reload)
- * — those fall through to the existence probe instead, which is the
- * conservative answer.
+ * — the cached capture directory answers for those instead.
  */
 export async function getLogFileRecord(): Promise<LogFileRecordLookup> {
   // Started *before* the search, because the search is what triggers
@@ -653,11 +609,10 @@ export async function getLogFileRecord(): Promise<LogFileRecordLookup> {
  * *really* still there.
  *
  * Split in two because the answer is expensive and usually irrelevant.
- * `exists` only decides anything on the paths that can't read the file
- * — so a capture that reads `log.json` successfully (the permission is
- * on, which is also how the e2e harness runs) never pays for the
- * re-check at all. Call `release()` when done; `confirmExists()` is
- * meaningless afterwards.
+ * `exists` only decides anything after a failed read — so a capture
+ * that reads `log.json` successfully, the common case, never pays for
+ * the re-check at all. Call `release()` when done; `confirmExists()`
+ * is meaningless afterwards.
  */
 export interface LogFileRecordLookup {
   record: chrome.downloads.DownloadItem | null;
@@ -694,11 +649,9 @@ async function readLogFileRecord(): Promise<chrome.downloads.DownloadItem | null
   // **A write still in flight has to be waited out, not skipped.**
   // `chrome.downloads.download` resolves when the download *starts*,
   // so a capture can return before its `log.json` is on disk — and
-  // two captures in quick succession put us here mid-write. Answering
-  // from the previous completed record would describe the file as it
-  // was *before* that write: its size no longer matches the log, which
-  // reads as tampering, and a `file://` read of the same moment can
-  // catch a half-written file and be adopted as the truth.
+  // two captures in quick succession put us here mid-write. A
+  // `file://` read of that moment can catch a half-written file and
+  // adopt it as the truth.
   if (ours[0] && ours[0].state === 'in_progress') {
     try {
       await waitForDownloadComplete(ours[0].id);
@@ -722,11 +675,10 @@ async function readLogFileRecord(): Promise<chrome.downloads.DownloadItem | null
  * one arrives afterwards as a `downloads.onChanged` delta.
  *
  * Reading `exists` straight off a search result therefore reports a
- * `log.json` the user deleted this session as still present. The
- * capture then reads `insync`, rewrites the file from the browser copy,
- * and the deletion is undone — and because the file is back, the *next*
- * capture sees nothing wrong either. The damage is self-concealing,
- * which is why this waits rather than leaving it to the next capture.
+ * `log.json` the user deleted this session as still present. A failed
+ * read would then be blamed on the file rather than its absence, and
+ * the user prompted over a log they deleted on purpose — so the
+ * reconcile waits for the re-check instead.
  *
  * Start the watch before the triggering `search()`, then `settle()` on
  * the id you care about.
@@ -841,22 +793,6 @@ export async function pruneOldLogRecords(keepId: number): Promise<void> {
   }
 }
 
-/**
- * Byte size of the file a download record wrote.
- *
- * **This is the size at download time.** Chrome re-checks `exists` on
- * demand but never re-stats the file, so this says what *we* last
- * wrote — it cannot detect a user's edit to `log.json`. The reconcile
- * uses it to spot storage that has lost its contents, not tampering.
- *
- * `fileSize` is the authoritative field but reads `-1` (or 0) while
- * unknown, in which case the received-byte count is the best answer
- * available.
- */
-export function logRecordSize(item: chrome.downloads.DownloadItem): number {
-  return item.fileSize > 0 ? item.fileSize : item.bytesReceived;
-}
-
 /** Strip the basename from an absolute path, leaving its directory. */
 export function parentDirectory(path: string): string {
   return path.replace(/[/\\][^/\\]+$/, '');
@@ -899,22 +835,19 @@ export async function eraseDownloadRecord(downloadId: number): Promise<void> {
  * captures land, then delete it. The last resort when nothing else
  * knows the directory — no cached answer, no usable download record.
  * Used by `getCaptureDirectory` and by the reconcile in
- * `log-reconcile.ts`, where knowing the directory upgrades us to
- * reading the real `log.json`.
+ * `log-reconcile.ts`, which needs the directory to read `log.json`.
  *
  * Deliberately *not* a zero-byte `log.json`: writing that when no file
- * existed would leave an empty log file behind, and an empty file we
- * wrote is exactly what the reconcile reads as "this log was cleared,
- * start over" — the probe would manufacture the state it is trying to
- * observe. A unique throwaway name can't collide with anything, so it
- * observes without disturbing.
+ * existed would leave an empty log file behind, which the reconcile
+ * would then read as the log. A unique throwaway name can't collide
+ * with anything, so it observes without disturbing.
  *
  * The name matches neither `log.json` nor the `history-*.json` glob,
  * so nothing else in the extension (or in `SeeWhatISee.py`) reads it
  * even in the window before it is deleted, or if the delete fails.
  *
- * Returns `null` if anything goes wrong; the caller falls back to the
- * record-only path.
+ * Returns `null` if anything goes wrong; the reconcile then treats
+ * the log as not existing yet, since the directory doesn't either.
  */
 export async function probeCaptureDirectory(): Promise<string | null> {
   try {
@@ -931,49 +864,3 @@ export async function probeCaptureDirectory(): Promise<string | null> {
   }
 }
 
-/** Outcome of `probeLogFile`. */
-export interface LogFileProbe {
-  /** True when a file already occupied `log.json`, so ours was renamed. */
-  collided: boolean;
-  /** The capture directory, learned from wherever the write landed. */
-  directory: string;
-  /** Download id of the write — only meaningful when it did not collide. */
-  downloadId: number;
-}
-
-/**
- * **Existence probe.** Write `payload` with `conflictAction:
- * 'uniquify'` to discover whether `log.json` already exists, without
- * being able to read it.
- *
- * Used only when we have no `log.json` download record *and* can't
- * read files — with read access, a failed `fetch` is a better
- * existence test and costs no file churn.
- *
- * - **No collision:** nothing was there, so `payload` is exactly what
- *   should be in the file and the write is already done.
- * - **Collision:** Chrome renames ours to `log (1).json`. That file is
- *   deleted and the caller prompts the user, so `payload` never lands
- *   — which is why the caller can pass the fresh-start payload
- *   unconditionally.
- *
- * Collision is detected by comparing the resolved basename to
- * `log.json` rather than by parsing a ` (1)` suffix, whose format
- * isn't contractual.
- *
- * Never used for `history-*.json`: those names are unique by
- * timestamp, so they have nothing to discover.
- */
-export async function probeLogFile(payload: string): Promise<LogFileProbe> {
-  const id = await chrome.downloads.download({
-    url: `data:application/json;charset=utf-8,${encodeURIComponent(payload)}`,
-    filename: `${DOWNLOAD_SUBDIR}/${LOG_FILE_NAME}`,
-    saveAs: false,
-    conflictAction: 'uniquify',
-  });
-  const path = await waitForDownloadComplete(id);
-  const directory = parentDirectory(path);
-  const collided = path.slice(directory.length + 1) !== LOG_FILE_NAME;
-  if (collided) await discardDownload(id);
-  return { collided, directory, downloadId: id };
-}

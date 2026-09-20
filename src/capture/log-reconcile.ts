@@ -2,21 +2,22 @@
 //
 // The rule this module implements: **disk is authoritative, and
 // `chrome.storage.local` is a cache**. Before any capture overwrites
-// `log.json`, we work out what is actually on disk and let that decide
+// `log.json`, we read what is actually on disk and let that decide
 // what the log should be — so deleting or hand-editing the file is a
 // supported gesture rather than something a later capture silently
 // undoes.
 //
+// Reading needs the user's "Allow access to file URLs" toggle, which
+// the extension requires (`file-access.ts`): every entry point checks
+// it before getting here, so this module treats reads as available and
+// only re-checks as a backstop.
+//
 // What we can and can't see:
 //
-//   - The download record tells us the path, whether the file still
-//     `exists`, and how big it was **when we wrote it**.
-//   - `fetch('file://…')` gives us the real current contents, but only
-//     when the user has enabled "Allow access to file URLs".
-//   - A `uniquify` probe write tells us whether *some* file occupies a
-//     path, with no permission at all.
-//   - Nothing tells us about a user edit that leaves the file in
-//     place: Chrome re-checks `exists` but never re-stats size.
+//   - `fetch('file://…')` gives us the file's real current contents.
+//   - The download record tells us the path, and whether the file
+//     still `exists` — which is how a failed read is told apart from a
+//     deleted file.
 //
 // When we can't tell what is on disk, we refuse to write and hand the
 // decision to the user (`LogWriteBlockedError`) rather than
@@ -27,20 +28,15 @@ import {
   type LogFileRecordLookup,
   canReadFiles,
   getLogFileRecord,
-  logRecordSize,
   parentDirectory,
   peekCaptureDirectory,
   probeCaptureDirectory,
-  probeLogFile,
   readLogText,
 } from './downloads.js';
+import { FileAccessRequiredError } from './file-access.js';
 
 /** Why we declined to write `log.json`. */
 export type LogSyncBlockedReason =
-  /** A file occupies `log.json`, we have no record of it, and can't read it. */
-  | 'unknown-file'
-  /** The file is a different size than the log we last wrote. */
-  | 'size-mismatch'
   /** The record says the file is there, but reading it failed. */
   | 'unreadable'
   /** We read it, but some of its lines aren't records we can rewrite. */
@@ -89,12 +85,8 @@ export class LogWriteFailedError extends Error {
 export type LogFileState =
   /** We read it. Its contents replace the in-storage log. */
   | { kind: 'contents'; text: string; directory: string }
-  /** No file (or an empty one). Start a new log from this capture. */
+  /** No file. Start a new log from this capture. */
   | { kind: 'fresh' }
-  /** The file matches the log we last wrote. Append to storage as usual. */
-  | { kind: 'insync' }
-  /** The existence probe already wrote the fresh payload. */
-  | { kind: 'written'; downloadId: number }
   /** We can't tell what's on disk — don't write; ask the user. */
   | { kind: 'blocked'; reason: LogSyncBlockedReason; directory?: string };
 
@@ -102,113 +94,59 @@ export type LogFileState =
  * Work out what `log.json` holds, so the caller knows what to append
  * to and whether it may write at all.
  *
- * `expectedText` is what the file would contain if it still matched
- * the in-storage log; `freshPayload` is what a brand-new log should
- * contain (just the capture being recorded).
- *
- * The order of the checks is the whole design:
- *
- * 1. **Read the file if we possibly can.** Its contents beat every
- *    inference we could make from a download record — that is what
- *    makes hand-deleted rows stay deleted.
- * 2. **Probe for the directory** when reading is available but no
- *    record tells us where to read from. Upgrades case 3 to case 1.
- * 3. **Fall back to the record**, which can still distinguish "gone"
- *    and "unchanged since we wrote it" from "something happened here
- *    and we can't see what".
- * 4. **Probe for existence** when there is no record at all, since a
- *    first write must not clobber a file we've never seen.
+ * 1. **Find the directory.** Reading needs a path, and the user's
+ *    download directory isn't exposed by any API — so it comes from
+ *    the `log.json` download record, the cached capture directory, or
+ *    as a last resort a throwaway probe write. If even that fails, the
+ *    capture fails: a probe that timed out says nothing about whether
+ *    a log is there, and guessing "no" would overwrite one.
+ * 2. **Read the file.** Its contents beat every inference we could
+ *    make from a download record — that is what makes hand-deleted
+ *    rows stay deleted.
+ * 3. **A failed read** is either a deleted file (start fresh) or
+ *    something in the way (block); the download record's re-checked
+ *    `exists` tells the two apart.
  */
-export async function inspectLogFile(opts: {
-  expectedText: string;
-  freshPayload: string;
-}): Promise<LogFileState> {
+export async function inspectLogFile(): Promise<LogFileState> {
+  // Backstop: every entry point has already checked, and flipping the
+  // toggle restarts the extension, so this shouldn't fire — but a
+  // `fetch` refused for lack of the toggle would otherwise read as a
+  // deleted log and start a new one over the user's history.
+  if (!(await canReadFiles())) throw new FileAccessRequiredError();
   const lookup = await getLogFileRecord();
   try {
-    return await decideLogFileState(opts, lookup);
+    return await decideLogFileState(lookup);
   } finally {
     // Drops the `onChanged` listener whichever branch we left by.
     lookup.release();
   }
 }
 
-async function decideLogFileState(
-  opts: { expectedText: string; freshPayload: string },
-  lookup: LogFileRecordLookup,
-): Promise<LogFileState> {
+async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileState> {
   const record = lookup.record;
   // Swallow lookup failures: an unknown directory degrades to the
-  // record-only / probe paths below, and must never fail the capture.
+  // probe below, and must never fail the capture.
   let directory = record?.filename
     ? parentDirectory(record.filename)
     : await peekCaptureDirectory().catch(() => null);
-
-  if (await canReadFiles()) {
-    // Reading is possible but we don't know where — worth one
-    // throwaway write to find out, because it upgrades us to the
-    // read path for this capture and every one after it.
-    if (!directory) directory = await probeCaptureDirectory();
-    if (directory) {
-      const text = await readLogText(directory);
-      // Whether its lines are all round-trippable is checked by the
-      // caller, which already parses this text — keeping the parser
-      // dependency pointing log-store → log-reconcile, not both ways.
-      if (text !== null) return { kind: 'contents', text, directory };
-      // The read failed. If the file is really gone (or there is no
-      // record), that *is* the answer: start fresh. Otherwise something
-      // we can't explain is in the way. Worth confirming rather than
-      // trusting the record here — prompting a user who simply deleted
-      // their log would be a poor answer.
-      if (!await lookup.confirmExists()) return { kind: 'fresh' };
-      return { kind: 'blocked', reason: 'unreadable', directory };
-    }
-  }
-
-  if (!record) {
-    // No record and no read access: the only way to learn whether a
-    // file is there is to try to write one that won't clobber it.
-    try {
-      const probe = await probeLogFile(opts.freshPayload);
-      if (!probe.collided) return { kind: 'written', downloadId: probe.downloadId };
-      return { kind: 'blocked', reason: 'unknown-file', directory: probe.directory };
-    } catch (err) {
-      // A probe that won't start or won't settle leaves us knowing
-      // nothing, which is the same position as a collision — and a
-      // failed reconcile must never fail the capture around it, whose
-      // files are already on disk.
-      console.info('[SeeWhatISee] log.json existence probe failed:', err);
-      return { kind: 'blocked', reason: 'unknown-file', directory: directory ?? undefined };
-    }
-  }
-
-  // The record-only route: `exists` is the *only* thing here that can
-  // reveal a deletion, so this is where waiting out Chrome's re-check
-  // earns its cost. See `docs/log-consistency.md`.
+  // Nothing knows where the files go — the first capture on a profile
+  // with no download records, and one that wrote no files of its own.
+  // Worth one throwaway write to find out. If even that fails we know
+  // nothing, and a `log.json` write would most likely fail the same
+  // way — so fail now, before deciding anything about the log
+  // (principle 4: when we can't tell what's on disk, we don't write).
+  if (!directory) directory = await probeCaptureDirectory();
+  if (!directory) throw new LogWriteFailedError("couldn't find the capture directory");
+  const text = await readLogText(directory);
+  // Whether its lines are all round-trippable is checked by the
+  // caller, which already parses this text — keeping the parser
+  // dependency pointing log-store → log-reconcile, not both ways.
+  if (text !== null) return { kind: 'contents', text, directory };
+  // The read failed. If the file is really gone (or there is no
+  // record), that *is* the answer: start fresh. Otherwise something we
+  // can't explain is in the way. Worth confirming rather than trusting
+  // the record's stale `exists` — prompting a user who simply deleted
+  // their log would be a poor answer.
   if (!await lookup.confirmExists()) return { kind: 'fresh' };
-  const size = logRecordSize(record);
-  // **Both sides of the comparison below are ours.** `size` is what we
-  // wrote and Chrome never re-measures it; `expectedText` is what the
-  // browser copy would serialize to. So this detects the *browser
-  // copy* drifting — storage wiped by a reinstall, a write interrupted
-  // half-way — and not anything done to the file. Without the read
-  // permission the file's contents are simply unknowable, and only its
-  // deletion (`exists`, re-checked on demand) is visible at all.
-  //
-  // Zero therefore means the last thing *we* wrote was an empty file
-  // (the pre-reconcile "Clear log history" menu entry truncated
-  // `log.json` to zero). Nothing in it to preserve, so the log starts
-  // over.
-  if (size === 0) return { kind: 'fresh' };
-  if (size === utf8Length(opts.expectedText)) return { kind: 'insync' };
-  return { kind: 'blocked', reason: 'size-mismatch', directory: directory ?? undefined };
-}
-
-/**
- * Byte length of `text` as UTF-8 — what actually lands on disk, and
- * therefore what a download record's size is comparable to. String
- * `.length` counts UTF-16 units and would mis-compare any log holding
- * a non-ASCII page title.
- */
-export function utf8Length(text: string): number {
-  return new TextEncoder().encode(text).length;
+  return { kind: 'blocked', reason: 'unreadable', directory };
 }

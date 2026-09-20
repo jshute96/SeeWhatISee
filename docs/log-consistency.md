@@ -34,9 +34,10 @@ distinction:
     abandoned attempt left behind (see
     [architecture.md → History files](architecture.md#history-files)).
 - **The browser copy** — the same records cached in
-  `chrome.storage.local`. It exists because a Chrome extension can't
-  read its own files without a permission the user has to grant, and
-  can only write whole files, never append to one.
+  `chrome.storage.local`. It exists because an extension can only
+  write whole files, never append to one, and because the History
+  page and the Copy-last-filename actions want the recent records
+  without a file read.
 
 ## Principles
 
@@ -60,12 +61,10 @@ removed that way never come back.
 
 - Deleting `log.json` therefore *starts a new log*. It doesn't get
   refilled from the browser copy.
-- **Edits to a file need the file-read permission to be honored.**
-  Without it we can't see inside `log.json` at all, and nothing else
-  Chrome offers reveals a change to a file's contents — so an edit is
-  overwritten by the next capture. Deletion is honored either way.
-  This is the one principle that isn't unconditional, and the prompt
-  says so where it matters.
+- Honoring an edit means reading the file, which is why "Allow
+  access to file URLs" is required
+  (`docs/chrome-extension.md` → "Allow access to file URLs" is
+  required). Without it there is no way to see inside a file.
 
 **4. When we can't tell what's in the files, we don't write them.**
 The capture still succeeds — its screenshot / HTML are saved and its
@@ -82,34 +81,27 @@ The exceptions are all deliberate, and all listed under
 
 ## What we can find out about the files
 
-A Chrome extension has no filesystem access. It can't list a
-directory, stat a file, or read one back — the only things it has are
-the records Chrome keeps of downloads it performed, and (with a
-permission) `fetch` on a `file://` URL.
+A Chrome extension has no filesystem API. It can't stat a file or
+list a directory the ordinary way — what it has is `fetch` on a
+`file://` URL (with the required toggle) and the records Chrome keeps
+of downloads it performed.
 
-| How | Needs | Tells us |
-|---|---|---|
-| The download record for `log.json` (`chrome.downloads.search`) | nothing | its path, whether it still exists, and the byte size **we last wrote** |
-| `fetch('file://…')` on that path | the user's "Allow access to file URLs" toggle | the file's actual current contents |
-| A `uniquify` write, which Chrome renames rather than overwriting | nothing | whether *some* file already occupies that name, plus the directory |
+| How | Tells us |
+|---|---|
+| `fetch('file://…/log.json')` | the file's actual current contents |
+| `fetch('file://…/')` on the directory | Chrome's generated listing — how the history files are found |
+| The download record for `log.json` (`chrome.downloads.search`) | its path, and whether it still exists (re-checked on demand) |
 
 A file picker (`<input type="file">`) would also hand us the contents
-with no standing permission, and is deliberately not offered: the
-`File` it returns carries no path, so we could not tell our `log.json`
-from one in a backup or another Chrome profile — and adopting the
-wrong one means writing it back over the real one.
+and is deliberately not offered: the `File` it returns carries no
+path, so we could not tell our `log.json` from one in a backup or
+another Chrome profile — and adopting the wrong one means writing it
+back over the real one.
 
-Two things nothing here can tell us, which the prompt text has to be
-honest about:
-
-- **Anything about a file's *current* contents or size.** The recorded
-  size is captured when the file is written and never re-measured;
-  Chrome re-checks whether a file still exists, but not what's in it.
-  So an edit — even one that empties the file — is only ever visible
-  as "the size we recorded no longer matches", never as what actually
-  happened.
-- **Why a download record is missing.** A cleared download history and
-  a fresh install look identical from in here.
+One thing nothing here can tell us: **why a download record is
+missing.** A cleared download history and a fresh install look
+identical from in here — which is why the directory, not the record,
+is what a read is keyed on.
 
 ## Write ordering
 
@@ -137,8 +129,8 @@ landed.
   (`LogWriteFailedError`, message naming the file and Chrome's error
   code).
   - Storage is left alone: the file doesn't hold the record, so the
-    browser copy mustn't either — a copy that ran ahead would only
-    trip the next capture's size check and blame an edit nobody made.
+    browser copy mustn't either — the next capture reads the file
+    back and would drop it anyway.
   - The record is dropped with the error; the capture's files stay on
     disk, unreferenced.
   - Not a prompt: unlike a blocked write there is no decision to
@@ -165,7 +157,7 @@ the one just written.
   been overwritten many times since.
 - Runs only once the new write has landed. Pruning around a write that
   failed would throw away the last record describing what is actually
-  on disk, which is what the record-only route reads.
+  on disk — the record a failed read consults for `exists`.
 - Strictly *older* records. Every log write is serialized in the
   service worker, so a newer row shouldn't exist here — but should one
   ever appear, it describes the file next, and is left alone.
@@ -179,28 +171,20 @@ the one just written.
 Every capture does this before it writes anything, at the top of
 `recordCapture` (`inspectLogFile` in `log-reconcile.ts`).
 
-Whether we can **read the file** picks between the two sections
-below:
+Reading needs "Allow access to file URLs", which the extension
+requires: every entry point checks it before doing anything
+(`docs/chrome-extension.md` → "Allow access to file URLs" is
+required). `inspectLogFile` re-checks as a backstop and throws
+`FileAccessRequiredError` rather than guess — a `fetch` refused for
+lack of the toggle looks exactly like a deleted log.
 
-- Reading needs the user's "Allow access to file URLs" toggle, which
-  is off by default (`chrome.extension.isAllowedFileSchemeAccess`).
-- **The toggle is now required**: every entry point checks it before
-  doing anything (`docs/chrome-extension.md` → "Allow access to file
-  URLs" is required), so the record-only route below is unreachable
-  in practice — flipping the toggle restarts the extension. It is
-  slated for removal.
-- Reading beats every inference, so it's used whenever available.
-
-One guard is shared by both routes: **a `log.json` write still in
-flight is waited out, not skipped** (`getLogFileRecord`).
+**A `log.json` write still in flight is waited out, not read around**
+(`getLogFileRecord`).
 
 - `chrome.downloads.download` resolves when the download *starts*, so
   a capture can return before its `log.json` is on disk — and a
   second capture right behind it arrives mid-write.
-- Answering from the record of the write *before* that one would
-  report a size that no longer matches, i.e. a spurious block.
-- Worse with file reads: the `fetch` could catch a half-written file
-  and adopt it.
+- The `fetch` could catch a half-written file and adopt it as the log.
 
 ### Waiting for the existence re-check
 
@@ -211,13 +195,9 @@ is how a deleted log came back.
   existence re-check, and the refreshed value arrives afterwards as a
   `downloads.onChanged` delta — the search that triggered it still
   returns the old one.
-- So a `log.json` deleted this session reads as present. The capture
-  concludes `insync`, rewrites the file from the browser copy, and the
-  deletion is undone.
-- **The damage hides itself.** The rewrite puts the file back, so the
-  next capture sees a real file matching storage and finds nothing
-  wrong. Leaving this to "the next capture will notice" doesn't work —
-  by then there is nothing left to notice.
+- So a `log.json` deleted this session reads as present. A failed
+  read would then be blamed on the file rather than on its absence,
+  and the user prompted for a log they deleted on purpose.
 
 `startExistsWatch` (`capture/downloads.ts`) closes it: the listener is
 registered *before* the search that triggers the re-check, and
@@ -230,13 +210,10 @@ trusting `exists`.
   positive confirmation to wait for; that cost is unavoidable.
 - So `getLogFileRecord` hands back the record and `confirmExists()`
   *separately*, and the reconcile calls it only where `exists` decides
-  something:
-  - the record-only route, where it's the sole way to see a deletion;
-  - a failed read, where the alternative is prompting someone who
-    simply deleted their log.
-  - **Not** on a successful read, which is the common case with the
-    permission on — the file's contents have already answered
-    everything.
+  something — a failed read, where the alternative is prompting
+  someone who simply deleted their log. **Not** on a successful read,
+  the common case: the file's contents have already answered
+  everything.
 - Skipping it there isn't just an optimization: paying it on every
   capture put a 200ms-delay capture over the 500ms bound in
   `html-snapshot.spec.ts`.
@@ -244,15 +221,15 @@ trusting `exists`.
   re-confirm.
 - `_setExistsRecheckTimeoutForTest` keeps the unit tests off the clock.
 
-### With file reads — the file's contents decide
+### Finding the file, then reading it
 
-Reading also needs to know *where* the file is. The user's download
-directory isn't exposed by any API, so the path has to come from a
-download record of something we wrote there — and normally one
-exists: this capture's own screenshot / HTML were written moments
-ago.
+Reading needs to know *where* the file is. The user's download
+directory isn't exposed by any API, so the path comes from the
+`log.json` download record, else the cached capture directory
+(`peekCaptureDirectory`) — and normally one of those knows: this
+capture's own screenshot / HTML were written moments ago.
 
-Failing that, one throwaway write answers it — the **directory
+Failing both, one throwaway write answers it — the **directory
 probe**:
 
 - Writes a throwaway `probe-<epoch-ms>.json`, takes the completed
@@ -261,14 +238,14 @@ probe**:
 - The name can't collide with anything, matches neither `log.json` nor
   the `history-*.json` pattern any reader looks for, and is never
   displayed — so even a failed cleanup is inert.
-- Deliberately *not* a zero-byte `log.json`. If no file were there,
-  that would leave an empty one behind — and an empty file we wrote is
-  exactly what the fallback route reads as "this log was cleared,
-  start over". The probe would manufacture the very state it's trying
-  to observe.
+- Deliberately *not* a zero-byte `log.json`: if no file were there,
+  that would leave an empty log behind, which the next read would
+  adopt.
 - Needing it is rare: only a capture that writes no files of its own
-  (a URL-only capture) on a profile with no download records at all.
-  If the probe itself fails, fall through to the fallback route.
+  (a URL-only capture) on a profile with no download records and no
+  cached directory. If the probe itself fails, the capture fails
+  (`LogWriteFailedError`): a probe that timed out says nothing about
+  whether a log is there, and guessing "no" would overwrite one.
 
 Then the read decides everything:
 
@@ -291,88 +268,10 @@ adopting the file means re-serializing it back over itself.
 - The reconcile is a writer. Skipping the line and writing the rest
   deletes it from the user's file for good, which principle 4 forbids:
   we couldn't account for it, so we don't write.
-- Reachable only with the read permission on, since it takes reading
-  the file to notice. `parseLogLines` is the counting variant behind
-  it; `parseLogText` stays lenient for the display paths.
+- `parseLogLines` is the counting variant behind it; `parseLogText`
+  stays lenient for the display paths.
 - Overwrite is still offered, for a user who doesn't want the
   unparseable lines kept.
-
-### Without file reads — the download record decides
-
-This is the fallback mode, and Chrome's default. We can't open
-`log.json`, but Chrome still remembers writing it. Every download it
-has ever performed has a record (`chrome.downloads.search`), and ours
-for `log.json` carries three useful fields:
-
-- **`state`** — `in_progress` while the write is still happening,
-  `complete` once the bytes are on disk, `interrupted` if it failed.
-  Only a `complete` record describes a file that exists.
-- **`exists`** — whether the file is *still* there. It is how a
-  deletion becomes visible to us at all, and it is **stale on read**;
-  see [Waiting for the existence re-check](#waiting-for-the-existence-re-check).
-- **`fileSize`** — how many bytes were written. **At write time**: it
-  is never re-measured, so it says what *we* last wrote, not what the
-  file holds now.
-
-Every capture rewrites `log.json` from the browser copy, so the size
-we recorded should equal the size that copy would serialize to now:
-
-| Download record | What it means | Action |
-|---|---|---|
-| `exists` is false | The user deleted the file | Start a new log from this capture |
-| complete, size 0 | The last thing *we* wrote was an empty file | Start a new log from this capture |
-| complete, size == the browser copy's size | They still agree | Append this capture and write |
-| complete, size differs | The **browser copy** drifted from what we wrote | **Don't write — prompt** |
-| no record at all | Chrome has forgotten, or never knew | Run the existence probe below |
-
-**Read that mismatch row carefully — both sides of it are ours.**
-
-- The recorded size is what we wrote, and the browser copy is our own
-  cache. Nothing here measures the file.
-- So the mismatch means the *browser copy* changed unexpectedly —
-  storage wiped by a reinstall or by clearing site data, or a write
-  interrupted half-way — and never that the file changed.
-
-Sizes are compared as UTF-8 bytes (`utf8Length`), because that's what
-lands on disk — a page title with an accent in it counts for more than
-one.
-
-The size-0 row is the same story: the recorded size never changes
-after a write, so it can only be zero if *we* wrote an empty file —
-which the old *Clear log history* menu entry did, and a Retry or
-Overwrite with nothing to write still does.
-
-**In this mode, an edit to `log.json` is not detectable.** A deleted
-row, an edited row, even emptying the whole file — none of it changes
-anything this route can see, so the next capture rewrites the file
-from the browser copy and the edit is gone. Only *deleting* the file
-is honored, because file existence is the one thing Chrome does
-re-check. Turning on the file-read permission is what makes edits
-stick; see
-[Where the principles bend](#where-the-principles-bend).
-
-**The existence probe** answers the table's last row — is there
-already a `log.json`? — when Chrome has no record of ours. It has to
-target `log.json` itself, because that file's existence is the
-unknown.
-
-- Writes with `conflictAction: 'uniquify'`, so Chrome renames *our*
-  file rather than overwriting anything: if something is already
-  there, ours lands as `log (1).json`.
-- **Nothing was there** (the name came back as `log.json`) — then a
-  new log is exactly what should be written, and it already has been.
-- **Something was there** (`log (1).json`) — delete our probe file and
-  ask the user. Nothing on disk was touched.
-- What we put *in* the probe only matters in the first case, since the
-  second deletes it. So it always carries the fresh-start payload: a
-  one-record log holding just this capture.
-- Collision is detected by comparing the resulting name to `log.json`,
-  not by looking for a ` (1)` suffix — that renaming pattern isn't a
-  documented format.
-- Either way, the completed write's path names the capture directory
-  (refreshing the cached one), which the prompt's remedy text uses.
-- Never used for the history files, whose timestamped names are
-  unique by construction.
 
 ## Asking the user
 
@@ -393,23 +292,11 @@ reasons range wider than "out of sync" — names the file (path in a
 code font), says in one red line what's wrong with it, and lists the
 fixes as lettered options — "(A)", "(B)", "(C)" — under **Options:**
 
-- **(A)** takes one of three shapes, chosen by whether "Allow access
-  to file URLs" is on (checked from the page) and by the reason:
-  - Toggle off: **Enable local file reads** *(Recommended)*, so the
-    file can be read and appended to without overwriting it.
-    - Two numbered steps inline in the option: 1. turn on the toggle
-      via the **Extension settings** button (opened as the active
-      tab, since Chrome won't link straight to the toggle); 2. click
-      **Retry**.
-    - Flipping the toggle reloads the extension, which closes its
-      pages — this dialog included. So in practice the user captures
-      again after enabling reads rather than clicking Retry here;
-      the steps still describe the fix.
-  - Toggle on, `corrupt-file`: **Fix the file** *(Recommended)*, with
-    step 1 "Repair or delete the file."
-  - Toggle on, any other reason (`unreadable`, or a Retry that landed
-    here after enabling reads): just the **Retry** button — there is
-    no toggle to send the user to.
+- **(A)** takes one of two shapes, by reason:
+  - `corrupt-file`: **Fix the file** *(Recommended)*, with step 1
+    "Repair or delete the file" and step 2 **Retry**.
+  - `unreadable`: just the **Retry** button — there is no step we can
+    name.
   - Retry runs the same append again from the top (reconcile, then
     write), so it also lands after any other fix, such as deleting
     `log.json` — with the file gone there's nothing left to preserve,
@@ -419,9 +306,7 @@ fixes as lettered options — "(A)", "(B)", "(C)" — under **Options:**
   skipped: the file is replaced with the browser's copy of the log
   plus this capture, and external edits are lost (the option says so).
   The one place anything on disk is knowingly discarded, so it takes
-  an explicit click. Usually the right call when the cause is a
-  cleared download history, where the file and the browser copy
-  actually agree.
+  an explicit click.
 - **(C) Cancel** (the button, Esc, or just closing the page). Abandons
   the record: the capture's files stay on disk, but it is not in the
   log.
@@ -464,9 +349,8 @@ Reusing the failure surface is deliberate:
   - `peekCaptureDirectory()` checks the `chrome.storage.local` cache
     (key `captureDirectory`), then download history; it never writes a
     file, and returns `null` when neither knows. Used by the History
-    page load and by the reconcile — where the answer names the
-    directory `log.json` is *read* from, as well as feeding
-    blocked-write error reporting.
+    page load, the watch indicator, and the reconcile — where the
+    answer names the directory `log.json` is *read* from.
   - `getCaptureDirectory()` adds a throwaway probe download as a last
     resort, so it can answer — and create the directory — even after
     download history is cleared. It throws only when that probe fails.
@@ -483,8 +367,12 @@ Reusing the failure surface is deliberate:
 - **`refreshLogFileExistence`** (`src/background/log-sync.ts`) runs a
   `downloads.search` for `log.json` on every service-worker load, which
   gets Chrome re-checking early rather than leaving it to the first
-  capture. The reconcile no longer depends on it having finished; see
+  failed read. The reconcile doesn't depend on it having finished; see
   [Waiting for the existence re-check](#waiting-for-the-existence-re-check).
+- **The flush's collision guard** (`recordCapture`, `log-store.ts`)
+  seeds the names already taken by listing the capture directory over
+  `file://` — the same index the History page uses — so a history
+  file Chrome has no download record for is still seen.
 - **The toolbar's More submenu used to carry a *Clear log history*
   entry**, which wiped the browser copy and truncated `log.json` to
   zero bytes. It was removed with this change: under principle 1 that
@@ -521,30 +409,18 @@ here or it belongs fixed.
 
 ### Blind spots we accept
 
-- **Any edit to `log.json`, with the file-read permission off.** Not
-  just one that preserves the byte count: nothing available to us
-  measures the file, so a deleted row, an edited row and an emptied
-  file all look identical to an untouched one, and the next capture
-  rewrites over them. Chrome re-checks whether a file still exists but
-  never what's in it, so no amount of care closes this — only granting
-  the read permission does. Deleting the file *is* honored, which is
-  why that's the documented way to clear the log.
-- **History files Chrome has forgotten.** A new history file takes a
-  name no history file on disk is using — but the flush's collision
-  guard can only see the ones Chrome still has download records for.
-  If the user cleared their download history, an existing file is
-  invisible to that guard and could be overwritten.
-  - Vanishingly unlikely: a history file is named for the millisecond
-    it is written, so the new flush would have to land on the exact
-    millisecond an existing file was written on.
-  - (With file reads on, the History page doesn't share this blind
-    spot at all: it finds history files by listing the directory
-    itself — see `docs/history-page.md`.)
-- **A capture directory that isn't ours.** Everything is keyed on the
-  download records, so pointing Chrome's download directory somewhere
-  that already contains a `SeeWhatISee/log.json` written by another
-  profile reads as a file we can't account for — which prompts, rather
-  than clobbers, so this one fails safe.
+- **An unreadable `log.json` with no download record.** A failed read
+  consults the record's `exists` to tell "deleted" from "in the way";
+  with the record gone (download history cleared) there is nothing to
+  ask, and the read failure reads as a deleted file — the capture
+  starts a fresh log over one that may still be there. Needs both a
+  cleared download history and a file that exists but can't be read;
+  the History page would show the same file as unreadable.
+- **A capture directory that isn't ours.** Pointing Chrome's download
+  directory somewhere that already contains a `SeeWhatISee/log.json`
+  written by another profile or a script reads as *the* log: its
+  records are adopted and appended to. Additive, never lossy — and
+  what a user who moved their directory on purpose would want.
 
 ### Costs of failing safe
 
@@ -560,63 +436,41 @@ here or it belongs fixed.
   leaves the batch both in the new history file and still in the log;
   the retried flush writes it again under a new name. Additive,
   never lossy, and the History page's exact-match dedupe hides it.
-- **A stray probe file.** The existence probe's `log (1).json` is
+- **A stray probe file.** The directory probe's `probe-*.json` is
   deleted immediately, but if that delete fails the file stays. It
   matches nothing any reader looks for.
-- **A probe that starts but doesn't settle can leave a file behind.**
-  If the uniquify write begins and then times out, we report `blocked`
-  and touch nothing — but the fresh payload may still land as
-  `log.json`. The following Retry then sees a record whose size
-  disagrees with the browser copy and blocks again, and Overwrite
-  discards the record that just landed. Rare, and never lossy beyond
-  that one capture.
-- **A capture whose reconcile waits out the re-check timeout.** Paid
-  only on the routes that consult `exists` (see
+- **A failed read waits out the re-check timeout.** The only route
+  that consults `exists` (see
   [Waiting for the existence re-check](#waiting-for-the-existence-re-check)),
-  which is the no-permission default. Latency, not correctness, and
-  captures are user-initiated.
+  so a healthy capture never pays it. Latency, not correctness.
 
 ## Resulting behaviors worth knowing
 
-In either mode:
-
 - Deleting `log.json` starts a clean log. The history files stay on
   disk and the History page still reads them, so the older history is
-  still there — deleting the whole directory is what
-  clears everything. (With reads on, the History page shows the
-  deletion immediately: it opens from the file itself, not the
-  browser copy — see `docs/history-page.md` → Data source.)
+  still there — deleting the whole directory is what clears
+  everything. The History page shows the deletion immediately: it
+  opens from the file itself, not the browser copy — see
+  `docs/history-page.md` → Data source.
 - Deleting `log.json` also drops whatever the browser copy still held
   that the file had. Correct: those records were in the file the user
-  deleted. Captures that never made it into any file are the exception
-  and are written to the new log.
-
-With file reads:
-
+  deleted.
 - Deleting individual rows sticks — they are not brought back. Edits
   to rows stick the same way.
-
-Without file reads:
-
-- An edit inside the file can't be seen at all and the next capture
-  overwrites it, which is why deleting the whole file is the gesture
-  we document for clearing the log.
-- With no download record either, the first capture after clearing
-  download history prompts once; answering it puts us back on known
-  ground.
+- Clearing Chrome's download history changes nothing: the cached
+  directory still says where to read, and the file is what's read.
 
 ## Testing
 
-- `tests/unit/log-reconcile.test.mjs` covers each row of the tables
-  above, plus the prompt's Retry / Overwrite paths (`recordCapture`
-  re-run, with and without `force`), driving a faked
-  `chrome.downloads.search` / `fetch` / probe write. This is where the
-  no-read branches are covered, since the e2e harness always has file
-  access.
+- `tests/unit/log-reconcile.test.mjs` covers each row of the table
+  above, the directory probe, the file-access backstop, and the
+  prompt's Retry / Overwrite paths (`recordCapture` re-run, with and
+  without `force`), driving a faked `chrome.downloads.search` /
+  `fetch` / probe write.
   - Its stub reproduces the **stale `exists`** contract: a `search()`
     returns the old value and fires the `onChanged` delta afterwards.
-    That's what makes "a log deleted this session is not resurrected"
-    a real test rather than a restatement of the code.
+    That's what makes "a log deleted this session starts fresh, not a
+    prompt" a real test rather than a restatement of the code.
   - The `corrupt-file` block and `parseLogLines`' skip count are
     covered here too.
 - `tests/unit/log-history-files.test.mjs` covers the failed `log.json`

@@ -86,8 +86,8 @@ Finding that tab is less obvious than it looks:
   - The page never writes the repaired truth back to storage —
     repairing the cache stays with the capture path's reconcile, so
     there is no second writer to race it.
-- With file reads off, or no known directory, the cache is the best
-  available view and the page uses it as before.
+- With no known directory the cache is the best available view and
+  the page uses it as before.
 - Loaded as a **module** script (unlike `options.ts`, a classic
   script) so it can import the storage key from `capture/log-store.js`
   and the directory / path helpers from `capture/downloads.js` instead
@@ -109,8 +109,6 @@ Finding that tab is less obvious than it looks:
     the next capture's reconcile rebuilds from the file.)
   - An event also disowns any page-open disk read still in flight
     (`recordsGeneration`) — the event's cache is the fresher state.
-  - With reads off, a deleted `log.json` still shows up this way one
-    capture later, when the reconcile starts the log over.
 - The log `log-store.ts` writes is capped at 100 entries, so the live
   view never has to paginate (a hand-edited `log.json` can exceed the
   cap; the page just renders it all). Older captures are loaded on
@@ -142,25 +140,16 @@ Finding that tab is less obvious than it looks:
     depending on where the flush cycle is, so any single number would
     be wrong half the time.
   - The text next to it is failure-only ("Could not read N history
-    files.", plus a pointer at the file-access banner when that's the
-    cause), in error red and `role="status"` so it doesn't read as
+    files."), in error red and `role="status"` so it doesn't read as
     more grey metadata next to the capture count.
-  - Opt-in rather than automatic: reading them is a `file://` fetch,
-    which is gated by the same **Allow access to file URLs** toggle as
-    the thumbnails, and a long history is a lot of rows to render for a
-    user who only wanted the recent ones.
+  - Opt-in rather than automatic: a long history is a lot of rows to
+    render for a user who only wanted the recent ones.
   - One click loads *all* remaining files. A batch is 50 captures, so
     paging 50 at a time would be tedious; the search box is the tool
     for narrowing what's on screen.
 - `listHistoryFiles()` (`capture/downloads.ts`) finds the files by
   fetching the capture directory's `file://` URL and scanning Chrome's
   generated listing page for `history-….json` names.
-  - Needs the file-access toggle, same as reading the files. With it
-    off, discovery falls back to `getHistoryFilePaths()` (download
-    records) so the button still appears and points at the feature —
-    clicking it flashes the file-access banner. That index can
-    undercount (cleared download history, the 1000-record limit), but
-    an undercounted offer beats hiding the feature.
   - Sees every file actually present in the capture directory:
     unaffected by cleared download history and by `DownloadQuery`'s
     1000-record default limit, both of which used to silently shrink
@@ -183,10 +172,6 @@ Finding that tab is less obvious than it looks:
     in the toolbar.
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
-  - With the toggle off this rides on the download-record fallback, so
-    it can miss files whose records were cleared — the plain notice
-    shows then. Accepted: without a read, that state can't be told
-    apart from a genuinely empty history.
 - Merging is a plain concatenation: the storage log, then each history
   file's records, files in `listHistoryFiles()` order (newest first
   by the timestamp in each filename, which is the moment that file was
@@ -231,9 +216,6 @@ Finding that tab is less obvious than it looks:
   - All-or-nothing would let one dead file — deleted between the
     listing and the read — veto every other history file, permanently,
     since retrying wouldn't heal it.
-  - The transient case still retries in full: with the file-URL toggle
-    off *every* read fails without being attempted, so nothing is
-    marked read and the toggle coming on retries the whole set.
   - `res.ok` is checked. A missing file can resolve non-ok, which would
     otherwise pass as a successful read of an empty history file and drop 50
     captures off the page with no error.
@@ -499,13 +481,8 @@ never touched.
 
 ### Degradations
 
-- Needs **Allow access to file URLs** — every artifact is read back
-  over `file://` (SW-side, so the page doesn't ship megabytes over the
-  message channel).
-  - With the toggle off the button doesn't fire at all: it flashes the
-    file-access banner, the same as the Snapshots-directory button.
-    Opening a Capture page with nothing in it would be worse, and it
-    would navigate away from the banner that explains why.
+- Every artifact is read back over `file://` (SW-side, so the page
+  doesn't ship megabytes over the message channel).
 - Failures are **per artifact**, so a reopen degrades one row at a
   time rather than failing outright.
   - A reopen is never a *total* capture failure, even with every file
@@ -559,43 +536,16 @@ never touched.
   no size limit to worry about and `loading="lazy"` keeps offscreen
   rows free.
 - Chrome blocks `file://` loads unless the user enables **Allow access
-  to file URLs** for the extension. The page still renders every row —
-  the rest of each row is useful either way — but with the toggle off
-  it never *starts* a load it knows will be refused. See
-  [Not starting blocked loads](#not-starting-blocked-loads).
+  to file URLs** for the extension. The extension requires that
+  toggle (`docs/chrome-extension.md`); with it off the page loads
+  nothing and shows the shared "file access required" dialog.
+  - Loading anyway would start `file://` loads Chrome refuses, and
+    each refusal lands on the extension's `chrome://extensions`
+    Errors list as *Not allowed to load local resource* — a
+    renderer-level refusal no `catch` can suppress.
 
-### The file-access banner
+### Degradations
 
-**Superseded:** the toggle is required, and with it off the page
-loads nothing and opens the shared "file access required" dialog
-(`docs/chrome-extension.md`) over the empty page. The banner and the
-degraded mode below are unreachable, pending removal.
-
-- Amber banner under the search box (outside the scrolling `<main>`,
-  so it can't scroll away from the rows it explains), shrink-wrapped
-  to its own text with `width: fit-content`.
-- Shown only when all of: the toggle is off
-  (`chrome.extension.isAllowedFileSchemeAccess()`), the capture
-  directory resolved, and some record references a file. Any of those
-  missing means flipping the toggle would change nothing.
-- Keyed off the whole log, not the search-filtered subset — it
-  describes a standing browser setting, so blinking in and out while
-  typing would read as a glitch.
-- The *extension settings* link opens `chrome://extensions/?id=<runtime.id>`,
-  the details page that actually carries the toggle (our own Options
-  page does not).
-  - It's a real `<a href>` — hover shows the destination and
-    right-click → Copy link address works — but the click is
-    intercepted: Chrome blocks page-initiated `chrome://` navigation,
-    so the open runs through `chrome.tabs.create`, the same call the
-    Options page's *Edit shortcuts* button makes.
-  - `history.ts` assigns the `href` from the same constant it passes
-    to `tabs.create`, so the two can't drift.
-  - Looking like a real link invites real-link gestures, and the ones
-    that skip `click` would hit the blocked href and do nothing. So
-    `auxclick` is handled too (middle-click → background tab), and
-    ctrl/⌘-click opens in the background rather than stealing focus.
-    Enter/Space fire `click`, so keyboard needs nothing extra.
 - Two graceful degradations, and the Screenshot and Files columns
   must agree on both — they fail for the same reasons, so a filename
   in one column beside a live link in the other just looks broken:
@@ -604,89 +554,12 @@ degraded mode below are unreachable, pending removal.
     label (filename / "HTML" / "Selection (md)").
   - Thumbnail fails to load anyway — the download records don't know
     the file, or it won't decode (deletion is caught earlier, see
-    below; the toggle is caught before the `<img>` is built at all).
-    The `<img>` is swapped for the filename **inside the surviving
-    `<a>`**, so there's no unexplained broken-image icon.
+    below). The `<img>` is swapped for the filename **inside the
+    surviving `<a>`**, so there's no unexplained broken-image icon.
   - The `<a>` stays because its href is the last useful thing on the
     row: right-click → Copy link address still works. Files-column
     links stay links for the same reason — and they have no load event
     to react to anyway.
-
-### Not starting blocked loads
-
-With **Allow access to file URLs** off, every `file://` open from this
-page fails — and each one lands on the extension's
-`chrome://extensions` **Errors** list, where it reads as a broken
-extension. Same concern as the `console.warn`/`error` rule in
-`CLAUDE.md`, and the same remedy: don't emit it.
-
-The failures look different, and **catching the error is not enough**
-for two of the three:
-
-- **A page-initiated load** (an `<img src>`, a link navigation) is
-  refused by the renderer with *Not allowed to load local resource*.
-  That is **not a JS exception** — no `try`/`catch`, `onerror`, or
-  promise rejection sees it.
-- **`fetch('file://…')`** rejects, *and* logs the same *Not allowed to
-  load local resource*. Catching the rejection — which the history file
-  reads already did — does nothing about the console message.
-- **`chrome.tabs.create`** rejects with *Cannot navigate to a file URL
-  without local file access*, and logs nothing of its own. This one a
-  `.catch()` really does handle; an uncaught rejection in an extension
-  page reaches the Errors list just the same.
-
-For the first two the only remedy is not to start the load. So with
-the toggle off:
-
-- **Thumbnails** skip `img.src` entirely and go straight to the
-  filename fallback. This is the bulk of the noise — one refusal per
-  screenshot row, needing no user action.
-- **Row file links** (both columns) keep their `href` but intercept
-  `click` and `auxclick` (`captureFileLink` in `history.ts`), the same
-  shape as the banner's *extension settings* link.
-- **Snapshots directory** doesn't call `tabs.create` at all. The call
-  is still `.catch()`-ed for the case where the toggle is flipped off
-  after page load.
-- **Load older captures** doesn't `fetch` the `history-*.json` files.
-  `loadHistoryFiles()` reports them all as failed without reading —
-  the outcome the reads would produce anyway, minus the per-file
-  renderer errors — so the toolbar message points at the banner, and
-  nothing is marked read, so the button still works once the toggle is
-  on. (Discovery runs on download records in this state; the directory
-  listing is itself a `file://` read.)
-
-The `href` is deliberately left in place: hover still shows the
-destination and right-click → Copy link address still works. Only the
-navigation is suppressed.
-
-With the toggle **on**, none of this applies — links navigate,
-thumbnails load, and the button opens the directory as before.
-
-#### Flashing the banner
-
-A suppressed click that does nothing visible reads as a broken page, so
-each one flashes the file-access banner (`flashFileAccessHint()`,
-`.banner.flash` in `history.html`).
-
-- **Not** a scroll-into-view: the banner is pinned above the scrolling
-  `<main>` and is already on screen whenever this can happen, so
-  scrolling would be a no-op. It has to be a visual change.
-- Two pulses of deeper amber plus a ring. The ring is a `box-shadow`,
-  not a `border`, so the banner doesn't change size and shove the table
-  down mid-flash.
-- Removed on a timer, not `animationend` — under
-  `prefers-reduced-motion` the animation is replaced by a static
-  highlight and that event never fires.
-- The class is removed and re-added around a reflow read, so clicking a
-  second link restarts the flash instead of being swallowed as a
-  no-change class add.
-- **Snapshots directory stays enabled** with the toggle off, even
-  though its open won't happen: the click is what triggers the flash,
-  and a disabled button swallows clicks. Its tooltip says what's
-  needed and still names the path.
-- **Load older captures** flashes too. Its own failure message lands in
-  the toolbar, but that's small next to a button that visibly did
-  nothing.
 
 ### Deleted files
 
@@ -695,9 +568,9 @@ each one flashes the file-access banner (`flashFileAccessHint()`,
   giving a bare-filename → still-there map. Chrome's query caps at its
   default 1000 newest records, so a very long history truncates — into
   *unknown*, which renders normally.
-- Needed because an `<img>` error carries no reason (deleted? toggle
-  off?) and the Files-column links have no load event at all. This is
-  the only signal that works for both columns.
+- Needed because an `<img>` error carries no reason and the
+  Files-column links have no load event at all. This is the only
+  signal that works for both columns.
 - A filename **absent** from the map is *unknown*, not deleted — the
   user can clear their download history without touching the files.
   Those render as normal links.

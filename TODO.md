@@ -196,7 +196,8 @@ What it costs:
   and extension page checks the toggle first and shows a dialog
   explaining how to enable it and what it grants (read-only file
   access; used to append to `log.json` and to show past captures on
-  the History page).
+  the History page). Nothing works without it any more: the History
+  page's degraded no-access mode and its banner are gone.
   * README's install steps need this as a required step.
   * `privacy_policy.md` should say what is read (files in the capture
     directory only).
@@ -231,9 +232,6 @@ What it costs:
     right-click menu, or the **History** button in the header of the
     Capture and Options pages.
   * The search box filters on URL, title, or prompt text.
-  * Thumbnails and file links need "Allow access to file URLs"
-    enabled for the extension; the page says so, with a link to the
-    settings page carrying the toggle.
   * **Load older captures**, next to the capture count, pulls in
     captures older than the most recent 100, which move into
     `history-<timestamp>.json` files next to `log.json` instead of
@@ -262,10 +260,7 @@ What it costs:
     * Saving adds a new capture and leaves the original alone. An
       artifact you didn't edit keeps pointing at the file it came
       from, so reopening just to add a prompt doesn't duplicate it.
-    * Needs "Allow access to file URLs", since it reads the saved
-      files back — with the toggle off the button points at the
-      file-access banner instead. Anything it can't read is left out,
-      and the rest still opens.
+    * Anything it can't read is left out, and the rest still opens.
 
 ### Not documented
 

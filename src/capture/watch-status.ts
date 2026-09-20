@@ -25,7 +25,6 @@
 //     request's *download record* is erased — see `requestWatchStop`.)
 
 import {
-  canReadFiles,
   downloadArtifact,
   eraseDownloadRecord,
   peekCaptureDirectory,
@@ -69,10 +68,10 @@ export interface WatchStatus {
 /**
  * The watch to show, or `null` if there isn't one we can see.
  *
- * `null` folds together every "no" — file reads off, directory
- * unknown, no status file, unreadable or unparseable contents, a lease
- * that has run out, a stop already requested — because the caller does
- * the same thing with all of them: show nothing.
+ * `null` folds together every "no" — directory unknown, no status
+ * file, unreadable or unparseable contents, a lease that has run out,
+ * a stop already requested — because the caller does the same thing
+ * with all of them: show nothing.
  *
  * `peekCaptureDirectory` rather than `getCaptureDirectory`: this runs
  * whenever the page comes back to the front, and a passive check must
@@ -98,7 +97,6 @@ export async function readWatchStatus(): Promise<WatchStatus | null> {
  * there?"), where a request we just wrote must not count as an answer.
  */
 export async function readPublishedSession(): Promise<WatchStatus | null> {
-  if (!(await canReadFiles())) return null;
   const directory = await peekCaptureDirectory();
   if (!directory) return null;
   const text = await readCaptureFileText(directory, WATCH_STATUS_FILE);

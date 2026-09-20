@@ -247,14 +247,13 @@ Every record has `timestamp` and `url`, plus optional fields:
   capture still rewrites the file — but it reconciles against what is
   there first. See [log-consistency.md](log-consistency.md) for the
   full state table.
-- Deleting `log.json` starts a new log. The next capture notices (via
-  the download record's `exists`, or a failed read) and drops the
-  buffer instead of putting the old records back.
-  - Deleting or editing individual rows sticks too — but only when
-    the extension can read the file. Without the "Allow access to file
-    URLs" permission nothing reveals a change to a file's contents, so
-    an edit is overwritten by the next capture; deletion of the whole
-    file is honored either way.
+- Deleting `log.json` starts a new log. The next capture notices (the
+  read fails, and the download record's re-checked `exists` confirms
+  the file is gone) and drops the buffer instead of putting the old
+  records back.
+  - Deleting or editing individual rows sticks too. Reading the file
+    is what makes that possible, which is why "Allow access to file
+    URLs" is required (`chrome-extension.md`).
   - The history files are untouched either way, and the History page
     still offers them.
 - A capture only ever **adds** one record to what's on disk (plus the

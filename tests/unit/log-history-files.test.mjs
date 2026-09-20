@@ -27,8 +27,14 @@ let writes = [];
  * Stub the two APIs the log store touches, starting from a stored log
  * of `existing` records. Returns a handle for reading back what the
  * store did. `historyFilesOnDisk` seeds absolute paths of
- * `history-*.json` files that already have download records — what
- * the flush's collision guard queries before naming a new one.
+ * `history-*.json` files already in the capture directory — what the
+ * flush's collision guard lists before naming a new one.
+ *
+ * The reconcile reads `log.json` back over `file://`, so `fetch` is
+ * stubbed too: the log URL answers with whatever was last written
+ * (the seeded storage before the first write), and any other URL —
+ * in practice the directory — with a listing naming the seeded
+ * history files.
  */
 function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   writes = [];
@@ -48,10 +54,7 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
         remove: async (key) => { delete store[key]; },
       },
     },
-    // File reads off: these tests are about flushing, and the
-    // record-only path is the one that appends without needing a
-    // `fetch` stub as well.
-    extension: { isAllowedFileSchemeAccess: async () => false },
+    extension: { isAllowedFileSchemeAccess: async () => true },
     downloads: {
       download: async ({ filename, url }) => {
         // Undo the `data:` wrapper `writeJsonFile` puts around the text.
@@ -61,28 +64,9 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
         if (filename.endsWith('log.json')) lastLogId = id;
         return id;
       },
-      search: async (query = {}) => {
-        // The history-file query (`getHistoryFilePaths`) gets the
-        // seeded on-disk files, run through the caller's own
-        // `filenameRegex` the way Chrome would apply it. The seeded
-        // paths are absolute, so the regex is exercised for real.
-        if (query.filenameRegex?.includes('history-')) {
-          const re = new RegExp(query.filenameRegex);
-          return historyFilesOnDisk.filter((f) => re.test(f)).map((filename, i) => ({
-            id: 100 + i,
-            filename,
-            byExtensionId: EXT_ID,
-            state: 'complete',
-            exists: true,
-          }));
-        }
-        // Every other query is the `log.json` lookup. Whatever we last
-        // wrote *is* what's on disk, so the log and the file agree and
-        // the append proceeds. Before the first write, the seeded
-        // storage is what the file would hold.
-        const last = lastLogWrite();
-        const body = last ? last.body : serializeLog(store.captureLog ?? []);
-        const size = new TextEncoder().encode(body).length;
+      search: async () => {
+        // Every query is the `log.json` lookup — the record that names
+        // the directory the reconcile reads from.
         return [{
           // The id of the write that produced it, so the post-write
           // prune recognizes this as the record it just created —
@@ -92,8 +76,6 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
           byExtensionId: EXT_ID,
           state: 'complete',
           exists: true,
-          fileSize: size,
-          bytesReceived: size,
         }];
       },
       // Every capture prunes the `log.json` rows older than its own
@@ -107,6 +89,18 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
       // just has to exist to be registered and removed.
       onChanged: { addListener: () => {}, removeListener: () => {} },
     },
+  };
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/log.json')) {
+      // Whatever we last wrote *is* what's on disk. Before the first
+      // write, the seeded storage is what the file would hold.
+      const last = lastLogWrite();
+      return { ok: true, text: async () => last ? last.body : serializeLog(store.captureLog ?? []) };
+    }
+    // The directory listing: Chrome's generated page names each file
+    // twice (display text and href); one mention is enough here.
+    const names = historyFilesOnDisk.map((f) => f.replace(/^.*[/\\]/, ''));
+    return { ok: false, text: async () => names.map((n) => `<a href="${n}">${n}</a>`).join('\n') };
   };
   return store;
 }
@@ -391,7 +385,7 @@ test('history files already on disk push the flush past every one of them', asyn
   // every millisecond from now to now+200 — so it can't land on a free
   // one by simply reading the clock a moment later. `conflictAction:
   // 'overwrite'` means reusing any of these would destroy a real file,
-  // so `getHistoryFilePaths` seeding plus `stampFloor` have to steer
+  // so the listing's seeding plus `stampFloor` have to steer
   // the flush past the lot.
   //
   // Seeding a whole window, rather than one name a second drain would

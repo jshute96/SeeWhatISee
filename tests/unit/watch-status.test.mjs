@@ -12,8 +12,7 @@ import assert from 'node:assert/strict';
 const DIR = '/home/user/Downloads/SeeWhatISee';
 const NOW = Date.parse('2026-08-30T12:00:00Z');
 
-/** Toggles for the two things `readWatchStatus` checks before reading. */
-let fileAccess = true;
+/** The directory `readWatchStatus` checks for before reading. */
 let storedDir = DIR;
 /** URLs passed to the stubbed `fetch`, oldest first. */
 let fetchedUrls = [];
@@ -22,7 +21,7 @@ const erased = [];
 
 globalThis.chrome = {
   runtime: { id: 'test' },
-  extension: { isAllowedFileSchemeAccess: async () => fileAccess },
+  extension: { isAllowedFileSchemeAccess: async () => true },
   storage: {
     local: {
       get: async () => (storedDir ? { captureDirectory: storedDir } : {}),
@@ -152,15 +151,12 @@ test('a missing status file is no watcher, not an error', async () => {
   assert.equal(await readWatchStatus(), null);
 });
 
-test('never reads without file access or a known directory', async () => {
+test('never reads without a known directory', async () => {
   stubFetch(liveStatusJson());
   fetchedUrls = [];
-  fileAccess = false;
-  assert.equal(await readWatchStatus(), null);
-  fileAccess = true;
   storedDir = null;
   assert.equal(await readWatchStatus(), null);
-  // Neither case may fall through to a probe write or a fetch.
+  // Must not fall through to a probe write or a fetch.
   assert.deepEqual(fetchedUrls, []);
   storedDir = DIR;
 });

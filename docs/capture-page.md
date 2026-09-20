@@ -3006,12 +3006,9 @@ open/close, so it wires the nav itself).
   naming the log file (path in a code font), one red line saying
   what's wrong with it, then lettered options under **Options:** with
   the buttons inline:
-  - (A) **Enable local file reads** *(Recommended)*, as two numbered
-    steps: turn on the toggle via **Extension settings** (opens
-    `chrome://extensions` as the active tab), then click **Retry**.
-    Shown only while the toggle is off. With it on, the option is
-    **Fix the file** for the `corrupt-file` reason and just the
-    **Retry** button for any other.
+  - (A) **Fix the file** *(Recommended)* for the `corrupt-file`
+    reason, as two numbered steps ("Repair or delete the file", then
+    **Retry**); just the **Retry** button for `unreadable`.
   - (B) **Overwrite log.json**. External edits will be lost.
   - (C) **Cancel** (button only, no explainer).
 - On this page, Retry / Overwrite re-run the whole save — idempotent,
