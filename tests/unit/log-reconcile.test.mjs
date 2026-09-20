@@ -148,7 +148,7 @@ function logRecord(_text, state = 'complete') {
 }
 
 stubChrome();
-const { inspectLogFile, LogWriteBlockedError } =
+const { inspectLogFile, LogWriteFailedError } =
   await import('../../dist/capture/log-reconcile.js');
 const { FileAccessRequiredError } = await import('../../dist/capture/file-access.js');
 const { recordCapture, serializeLog, parseLogLines, LOG_STORAGE_KEY } =
@@ -189,12 +189,13 @@ test('an unreadable file whose record says it is gone starts fresh', async () =>
   assert.equal((await inspectLogFile()).kind, 'fresh');
 });
 
-test('an unreadable file the record says is there blocks', async () => {
+test('an unreadable file the record says is there fails the capture', async () => {
   stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
-  const state = await inspectLogFile();
-  assert.equal(state.kind, 'blocked');
-  assert.equal(state.reason, 'unreadable');
-  assert.equal(state.directory, DIR);
+  await assert.rejects(inspectLogFile(), (err) => {
+    assert.ok(err instanceof LogWriteFailedError);
+    assert.match(err.message, /couldn't read log\.json\. Fix or delete the file/);
+    return true;
+  });
 });
 
 test('with no record to locate it, the directory is probed and the file read', async () => {
@@ -263,44 +264,19 @@ test('a deleted log.json makes the next capture start over, not resurrect', asyn
   assert.equal(log.body, serializeLog([rec(3)]));
 });
 
-test('a blocked capture throws and leaves everything untouched', async () => {
+test('a failed capture leaves everything untouched', async () => {
   const store = stubChrome({ record: logRecord(serializeLog([rec(1), rec(2)])), fileText: null });
   store[LOG_STORAGE_KEY] = [];
-  const err = await recordCapture(rec(3)).then(
-    () => assert.fail('expected a LogWriteBlockedError'),
-    (e) => e,
-  );
-  // The error carries everything the prompt needs — reason, directory,
-  // and the record itself, which lives nowhere else.
-  assert.ok(err instanceof LogWriteBlockedError);
-  assert.equal(err.reason, 'unreadable');
-  assert.equal(err.directory, DIR);
-  assert.deepEqual(err.record, rec(3));
+  await assert.rejects(recordCapture(rec(3)), LogWriteFailedError);
   // Point-in-time failure: no file written, no storage change, no
   // state left behind for anything to clean up later.
   assert.equal(writes.length, 0, 'log.json must not be overwritten');
   assert.deepEqual(store[LOG_STORAGE_KEY], []);
 });
 
-// ── the prompt's two buttons (both are recordCapture again) ─────────
-
-test('Overwrite appends to the buffer without consulting the file', async () => {
-  // A file we can't read — the state Overwrite exists to end.
-  const store = stubChrome({ record: logRecord('something else entirely'), fileText: null });
-  store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
-
-  await recordCapture(rec(3), { force: true });
-  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2), rec(3)]));
-  assert.deepEqual(
-    store[LOG_STORAGE_KEY].map((r) => r.screenshot.filename),
-    ['shot-1.png', 'shot-2.png', 'shot-3.png'],
-  );
-});
-
-test('Retry appends to the file, not the buffer', async () => {
-  // The record blocked earlier and rode along on the error; the user
-  // fixed the file and clicked Retry. The file decides — a buffer row
-  // the file doesn't have (rec(2)) stays gone.
+test('the file decides, not the buffer', async () => {
+  // A buffer row the file doesn't have (rec(2)) stays gone: the user
+  // deleted it from the file, and the file is the log.
   const store = stubChrome(onDisk([rec(1)]));
   store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
 
@@ -312,17 +288,9 @@ test('Retry appends to the file, not the buffer', async () => {
   );
 });
 
-test('Retry with nothing changed blocks again, file untouched', async () => {
-  const store = stubChrome({ record: logRecord(serializeLog([rec(1), rec(2)])), fileText: null });
-  store[LOG_STORAGE_KEY] = [rec(3)];
-  await assert.rejects(recordCapture(rec(4)), LogWriteBlockedError);
-  assert.equal(writes.length, 0);
-});
-
-test('Retry after the user deletes log.json starts a fresh log', async () => {
-  // The "delete it yourself, then Retry" remedy: with the file gone
-  // there is nothing left to preserve, so the retried record becomes
-  // the new log.
+test('capturing again after deleting log.json starts a fresh log', async () => {
+  // The "delete the file" remedy: with it gone there is nothing left
+  // to preserve, so the next capture becomes the new log.
   const store = stubChrome({ record: { ...logRecord('x'), exists: false } });
   store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
   await recordCapture(rec(3));
@@ -337,10 +305,10 @@ test('Retry after the user deletes log.json starts a fresh log', async () => {
 // refreshed one arriving as a `downloads.onChanged` delta. A failed
 // read is the one place the reconcile consults `exists`, to tell a
 // deleted log from an unreadable one — and taking the search result
-// at face value there would prompt a user who simply deleted their
-// log.
+// at face value there would fail a capture for a user who simply
+// deleted their log.
 
-test('a log.json deleted this session starts fresh, not a prompt', async () => {
+test('a log.json deleted this session starts fresh, not a failure', async () => {
   // The record still says `exists: true`; only the re-check knows the
   // file is gone.
   const stored = [rec(1), rec(2)];
@@ -359,37 +327,40 @@ test('a log.json deleted this session starts fresh, not a prompt', async () => {
 });
 
 test('no re-check delta leaves the record trusted', async () => {
-  // A failed read with the record standing: block, since the file is
+  // A failed read with the record standing: fail, since the file is
   // there and we can't see into it.
   const store = stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
   store[LOG_STORAGE_KEY] = [rec(1)];
-  await assert.rejects(recordCapture(rec(2)), (err) => err.reason === 'unreadable');
+  await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
 });
 
-test('a re-check confirming the file blocks the same way', async () => {
+test('a re-check confirming the file fails the same way', async () => {
   const store = stubChrome({
     record: logRecord(serializeLog([rec(1)])),
     fileText: null,
     existsAfterRecheck: true,
   });
   store[LOG_STORAGE_KEY] = [rec(1)];
-  await assert.rejects(recordCapture(rec(2)), (err) => err.reason === 'unreadable');
+  await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
 });
 
 // ── a file we can read but can't rewrite ─────────────────────────────
 
-test('parseLogLines counts what it had to drop', () => {
+test('parseLogLines counts what it had to drop, and names the first', () => {
   const good = serializeLog([rec(1)]);
   assert.deepEqual(parseLogLines(good).skipped, 0);
+  assert.equal(parseLogLines(good).firstBadLine, null);
   assert.equal(parseLogLines(good).records.length, 1);
   // Unparseable, and valid-JSON-but-not-a-record. Both are lines a
   // rewrite would destroy.
   assert.equal(parseLogLines(`${good}{"broken"\n`).skipped, 1);
   assert.equal(parseLogLines(`${good}"a string"\n`).skipped, 1);
   assert.equal(parseLogLines(`${good}[1,2]\n`).skipped, 1);
+  // 1-based, counting blank lines, so it matches an editor's gutter.
+  assert.equal(parseLogLines(`${good}\n{"broken"\n`).firstBadLine, 3);
 });
 
-test('a log.json with unparseable lines blocks instead of dropping them', async () => {
+test('a log.json with unparseable lines fails instead of dropping them', async () => {
   // Reading works, so the file would normally be adopted wholesale —
   // but adopting it means re-serializing it back over itself, which
   // would delete the line we couldn't parse.
@@ -398,20 +369,11 @@ test('a log.json with unparseable lines blocks instead of dropping them', async 
   store[LOG_STORAGE_KEY] = [rec(1)];
 
   await assert.rejects(recordCapture(rec(2)), (err) => {
-    assert.ok(err instanceof LogWriteBlockedError);
-    assert.equal(err.reason, 'corrupt-file');
+    assert.ok(err instanceof LogWriteFailedError);
+    assert.match(err.message, /isn't a capture record \(line 2\)\. Fix or delete the file/);
     return true;
   });
   // Nothing written and nothing stored — the bad line is still there.
   assert.equal(writes.length, 0);
   assert.deepEqual(store[LOG_STORAGE_KEY], [rec(1)]);
-});
-
-test('Overwrite past a corrupt file replaces it with the browser copy', async () => {
-  const onDisk = `${serializeLog([rec(1)])}{"truncated"\n`;
-  const store = stubChrome({ record: logRecord(onDisk), fileText: onDisk });
-  store[LOG_STORAGE_KEY] = [rec(1)];
-
-  await recordCapture(rec(2), { force: true });
-  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
 });

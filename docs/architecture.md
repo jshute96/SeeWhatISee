@@ -261,13 +261,10 @@ Every record has `timestamp` and `url`, plus optional fields:
   `history-<timestamp>.json` beside `log.json`). It never rewrites or drops a
   record already there.
 - When the extension can't tell what is on disk, it **doesn't write**
-  — the capture fails right there and the user is asked: a dialog over
-  the Capture page, or (for a context-menu / hotkey capture, which has
-  no page of its own) the ordinary "Capture failed" page with the same
-  dialog on top. Retry runs the append again, Overwrite forces it,
-  Cancel drops the record (its files stay on disk). Nothing about the
-  failure is stored — the next capture re-detects the condition on its
-  own if it still holds.
+  — the capture fails right there, with a message saying what to fix
+  (an unreadable `log.json`, or a line in it that isn't a record). The
+  capture's files stay on disk; its record is dropped. Nothing about
+  the failure is stored — capturing again after the fix is the retry.
 - `watch.sh` is resilient to the whole `~/Downloads/SeeWhatISee/`
   directory not existing yet (it `mkdir -p`s on startup and polls for
   `log.json` to appear), so `/see-what-i-see-watch` can be launched

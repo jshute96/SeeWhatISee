@@ -19,11 +19,10 @@
 //     still `exists` — which is how a failed read is told apart from a
 //     deleted file.
 //
-// When we can't tell what is on disk, we refuse to write and hand the
-// decision to the user (`LogWriteBlockedError`) rather than
-// clobbering. See `docs/log-consistency.md` for the full design.
+// When we can't tell what is on disk, we refuse to write: the capture
+// fails (`LogWriteFailedError`) with a message saying what to fix,
+// rather than clobbering. See `docs/log-consistency.md`.
 
-import { type CaptureRecord } from './types.js';
 import {
   type LogFileRecordLookup,
   canReadFiles,
@@ -35,60 +34,37 @@ import {
 } from './downloads.js';
 import { FileAccessRequiredError } from './file-access.js';
 
-/** Why we declined to write `log.json`. */
-export type LogSyncBlockedReason =
-  /** The record says the file is there, but reading it failed. */
-  | 'unreadable'
-  /** We read it, but some of its lines aren't records we can rewrite. */
-  | 'corrupt-file';
-
 /**
- * Thrown by `recordCapture` when the reconcile can't account for what
- * `log.json` holds. Deliberately a plain point-in-time failure with no
- * stored state behind it: the capture's files are on disk, `record` is
- * carried on the error so a prompt can offer Retry / Overwrite right
- * then, and dismissing the prompt simply drops the record. Nothing is
- * remembered — a later capture re-detects the same condition on its
- * own if it still holds.
- */
-export class LogWriteBlockedError extends Error {
-  constructor(
-    readonly reason: LogSyncBlockedReason,
-    readonly record: CaptureRecord,
-    readonly directory?: string,
-  ) {
-    super("Saved this capture's files, but couldn't update the capture log.");
-    this.name = 'LogWriteBlockedError';
-  }
-}
-
-/**
- * Thrown by `recordCapture` when the reconcile allowed the write but
- * Chrome couldn't complete it — the target is a directory, the disk is
- * full, and so on. Chrome's download bubble shows a bare "Something
- * went wrong"; this is what tells the user it was their capture log.
+ * Thrown by `recordCapture` when `log.json` couldn't be updated: the
+ * reconcile couldn't account for the file (unreadable, or holding
+ * lines that aren't records), or Chrome couldn't complete the write
+ * (the target is a directory, the disk is full). Chrome's download
+ * bubble shows a bare "Something went wrong" for the latter; this is
+ * what tells the user it was their capture log, and what to do.
  *
- * Like `LogWriteBlockedError`, nothing is stored — but this isn't a
- * decision for the user to make, so it reports as a plain capture
- * failure rather than opening the Retry / Overwrite prompt: there is
- * nothing to overwrite *with*. The record is dropped with it; the
- * capture's files stay on disk, unreferenced.
+ * A plain point-in-time failure: nothing is stored, the record is
+ * dropped, and the capture's files stay on disk, unreferenced. Every
+ * case is one the user resolves outside the extension (fix or delete
+ * the file, free up disk), so there is no prompt — capturing again
+ * afterwards is the retry. `problem` completes the sentence "Saved
+ * this capture's files, but …".
  */
 export class LogWriteFailedError extends Error {
-  constructor(reason: string) {
-    super(`Saved this capture's files, but couldn't write log.json: ${reason}.`);
+  constructor(problem: string) {
+    super(`Saved this capture's files, but ${problem}`);
     this.name = 'LogWriteFailedError';
   }
 }
+
+/** What to tell the user when `log.json` needs fixing by hand. */
+export const FIX_LOG_FILE_ADVICE = 'Fix or delete the file, then capture again.';
 
 /** What the reconcile decided about the file on disk. */
 export type LogFileState =
   /** We read it. Its contents replace the in-storage log. */
   | { kind: 'contents'; text: string; directory: string }
   /** No file. Start a new log from this capture. */
-  | { kind: 'fresh' }
-  /** We can't tell what's on disk — don't write; ask the user. */
-  | { kind: 'blocked'; reason: LogSyncBlockedReason; directory?: string };
+  | { kind: 'fresh' };
 
 /**
  * Work out what `log.json` holds, so the caller knows what to append
@@ -104,8 +80,8 @@ export type LogFileState =
  *    make from a download record — that is what makes hand-deleted
  *    rows stay deleted.
  * 3. **A failed read** is either a deleted file (start fresh) or
- *    something in the way (block); the download record's re-checked
- *    `exists` tells the two apart.
+ *    something in the way (fail, naming the file); the download
+ *    record's re-checked `exists` tells the two apart.
  */
 export async function inspectLogFile(): Promise<LogFileState> {
   // Backstop: every entry point has already checked, and flipping the
@@ -136,7 +112,7 @@ async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileS
   // way — so fail now, before deciding anything about the log
   // (principle 4: when we can't tell what's on disk, we don't write).
   if (!directory) directory = await probeCaptureDirectory();
-  if (!directory) throw new LogWriteFailedError("couldn't find the capture directory");
+  if (!directory) throw new LogWriteFailedError("couldn't find the capture directory.");
   const text = await readLogText(directory);
   // Whether its lines are all round-trippable is checked by the
   // caller, which already parses this text — keeping the parser
@@ -145,8 +121,8 @@ async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileS
   // The read failed. If the file is really gone (or there is no
   // record), that *is* the answer: start fresh. Otherwise something we
   // can't explain is in the way. Worth confirming rather than trusting
-  // the record's stale `exists` — prompting a user who simply deleted
-  // their log would be a poor answer.
+  // the record's stale `exists` — failing the capture of a user who
+  // simply deleted their log would be a poor answer.
   if (!await lookup.confirmExists()) return { kind: 'fresh' };
-  return { kind: 'blocked', reason: 'unreadable', directory };
+  throw new LogWriteFailedError(`couldn't read log.json. ${FIX_LOG_FILE_ADVICE}`);
 }

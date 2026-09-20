@@ -87,10 +87,7 @@ import {
   openHistoryPage,
 } from './background/history-page.js';
 import { installOptionsMessageHandlers } from './background/options.js';
-import {
-  installLogSyncMessageHandler,
-  refreshLogFileExistence,
-} from './background/log-sync.js';
+import { refreshLogFileExistence } from './background/log-sync.js';
 import {
   findProviderForTab,
   getAskPin,
@@ -110,7 +107,6 @@ installDetailsMessageHandlers();
 installOptionsMessageHandlers();
 installHistoryMessageHandler();
 installAskMessageHandler();
-installLogSyncMessageHandler();
 // Also on every service-worker wake, not just `onStartup`: `exists` is
 // only re-checked when something asks. Cheap — one `downloads.search`.
 void refreshLogFileExistence();

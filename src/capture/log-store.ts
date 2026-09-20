@@ -8,10 +8,9 @@
 // against disk first (`log-reconcile.ts`) and only ever *adds* its own
 // record to what it finds there. Deleting log.json starts a new log
 // rather than being undone by the next capture, and hand-edited rows
-// survive wherever we can read the file. When we can't tell what is on
-// disk, the capture fails with `LogWriteBlockedError` and the user is
-// asked; when Chrome can't finish the write, it fails with
-// `LogWriteFailedError` — see `docs/log-consistency.md`.
+// survive. When we can't tell what is on disk, or Chrome can't finish
+// the write, the capture fails with `LogWriteFailedError` and a
+// message saying what to fix — see `docs/log-consistency.md`.
 //
 // Entries that age out of that buffer aren't lost: they're flushed
 // in batches to `history-<timestamp>.json` history files beside
@@ -29,15 +28,9 @@ import {
   ArtifactWriteError,
   downloadArtifactComplete,
   listHistoryFiles,
-  peekCaptureDirectory,
   pruneOldLogRecords,
 } from './downloads.js';
-import {
-  type LogFileState,
-  LogWriteBlockedError,
-  LogWriteFailedError,
-  inspectLogFile,
-} from './log-reconcile.js';
+import { FIX_LOG_FILE_ADVICE, LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
 
 export const LOG_STORAGE_KEY = 'captureLog';
 /**
@@ -218,37 +211,45 @@ export function parseLogText(text: string): CaptureRecord[] {
 }
 
 /**
- * `parseLogText`, plus a count of the lines it had to throw away.
+ * `parseLogText`, plus a count of the lines it had to throw away and
+ * the 1-based number of the first one, for the error message.
  *
  * **Skipping a line is only safe for a reader.** The History page
  * displays what parsed and the lost row is merely absent; the
  * reconcile re-serializes what it parsed and writes it back over
  * `log.json`, which would delete the bad lines from the user's file
- * for good. So the reconcile checks this count and refuses to write
- * instead — principle 4 in `docs/log-consistency.md`: when we can't
- * account for what's in the file, we don't write it.
+ * for good. So the reconcile checks this and refuses to write instead
+ * — principle 4 in `docs/log-consistency.md`: when we can't account
+ * for what's in the file, we don't write it.
  */
 export function parseLogLines(
   text: string,
-): { records: CaptureRecord[]; skipped: number } {
+): { records: CaptureRecord[]; skipped: number; firstBadLine: number | null } {
   const records: CaptureRecord[] = [];
   let skipped = 0;
-  for (const line of text.split('\n')) {
+  let firstBadLine: number | null = null;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line.trim()) continue;
+    let ok = false;
     try {
       const parsed: unknown = JSON.parse(line);
+      // Valid JSON that isn't a record object — a bare string or an
+      // array — is still a line we can't round-trip.
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         records.push(parsed as CaptureRecord);
-      } else {
-        // Valid JSON, but not a record object — a bare string or an
-        // array. Still a line we can't round-trip.
-        skipped += 1;
+        ok = true;
       }
     } catch {
+      // Not JSON at all.
+    }
+    if (!ok) {
       skipped += 1;
+      if (firstBadLine === null) firstBadLine = i + 1;
     }
   }
-  return { records, skipped };
+  return { records, skipped, firstBadLine };
 }
 
 /**
@@ -364,43 +365,27 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * - **fresh** — the file is gone, so the log starts over at this
  *   capture and the buffer is discarded. This is what stops a deleted
  *   log from being resurrected.
- * - **blocked** — see below.
  *
  * The storage buffer is only ever *written*, never appended to on
- * its own: what's on disk decides. `opts.force` is the one exception.
+ * its own: what's on disk decides.
  *
- * ## Out of sync
+ * ## Failures
  *
- * A blocked reconcile **throws `LogWriteBlockedError`** before
- * anything is written: no history files, no `log.json`, no storage
- * change. The capture's screenshot / HTML are already on disk, and the
- * record rides on the error so the prompt that catches it can offer
- * Retry (call this again) or Overwrite (call this again with `force`).
- * Nothing about the failure is stored — dismissing the prompt drops
- * the record, and a later capture re-detects the same condition on its
- * own if it still holds. Overwriting on a guess is the one thing we
- * won't do — the file may hold history that exists nowhere else.
+ * Anything that stops `log.json` being updated **throws
+ * `LogWriteFailedError`** with a message saying what to do:
  *
- * ## Force
+ * - the reconcile couldn't read the file;
+ * - the file holds a line that isn't a record — rewriting it would
+ *   delete that line (principle 4 in `docs/log-consistency.md`);
+ * - Chrome couldn't finish the write (a directory in the way, a full
+ *   disk).
  *
- * `opts.force` — the prompt's **Overwrite** button — skips the
- * reconcile entirely and appends to the storage buffer, replacing
- * whatever file we couldn't account for with the browser's copy of the
- * log. The only path that clobbers a file we couldn't read, and only
- * ever on an explicit click.
- *
- * ## Failed write
- *
- * A `log.json` write the reconcile allowed but Chrome couldn't finish
- * (the target is a directory, the disk is full) **throws
- * `LogWriteFailedError`** with Chrome's reason. Storage is left alone:
- * the file is the log and doesn't hold this record, so the browser
- * copy mustn't either — the next capture reads the file back and
- * would drop it anyway.
- * The record is dropped; its artifacts stay on disk, unreferenced,
- * the same residue a cancelled prompt leaves. History files flushed
- * before it stay put with their names still pinned, so the next
- * capture's drain overwrites rather than duplicates them.
+ * Storage is left alone: the file is the log and doesn't hold this
+ * record, so the browser copy mustn't either — the next capture reads
+ * the file back and would drop it anyway. The record is dropped; its
+ * artifacts stay on disk, unreferenced. History files flushed before
+ * it stay put with their names still pinned, so the next capture's
+ * drain overwrites rather than duplicates them.
  *
  * ## Ordering
  *
@@ -440,39 +425,28 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * **Edits `record.timestamp`** on the way in, via `uniqueTimestamp` —
  * a visible side effect on the caller's object, and deliberately so.
  */
-export async function recordCapture(
-  record: CaptureRecord,
-  opts?: { force?: boolean },
-): Promise<number> {
+export async function recordCapture(record: CaptureRecord): Promise<number> {
   return await serializeWrite(async () => {
-    const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
-    const stored: CaptureRecord[] = data[LOG_STORAGE_KEY] ?? [];
-    // Force appends to the buffer as though the file still matched it
-    // — that is what "replace the file with the browser's copy" means.
-    const state: LogFileState | { kind: 'force' } = opts?.force
-      ? { kind: 'force' }
-      : await inspectLogFile();
-    // Nothing written, nothing stored — see "Out of sync" above.
-    if (state.kind === 'blocked') {
-      throw new LogWriteBlockedError(state.reason, record, state.directory);
-    }
+    const state = await inspectLogFile();
     // What we're appending to: the file, or nothing if it's gone.
-    // `stored` only wins on Overwrite.
     let base: CaptureRecord[];
     if (state.kind === 'contents') {
       // Adopting the file means re-serializing it back over itself, so
       // a line we can't parse would be *deleted* from the user's file
       // rather than merely skipped the way a reader skips it. Refuse
       // instead — principle 4: when we can't account for what's in the
-      // file, we don't write it. Overwrite is still offered for a user
-      // who doesn't want the unreadable lines kept.
+      // file, we don't write it — and name the line, since that is
+      // what the user has to go and look at.
       const parsed = parseLogLines(state.text);
-      if (parsed.skipped > 0) {
-        throw new LogWriteBlockedError('corrupt-file', record, state.directory);
+      if (parsed.firstBadLine !== null) {
+        throw new LogWriteFailedError(
+          `log.json has a line that isn't a capture record (line ${parsed.firstBadLine}). `
+            + FIX_LOG_FILE_ADVICE,
+        );
       }
       base = parsed.records;
     } else {
-      base = state.kind === 'fresh' ? [] : stored;
+      base = [];
     }
     uniqueTimestamp(record, base);
     // Never mutated in place: `kept` is reassigned per successful
@@ -505,14 +479,10 @@ export async function recordCapture(
     // `log.json` growing without bound.
     if (kept.length > LOG_MAX_ENTRIES) {
       try {
-        // The reconcile found the directory when it read the file;
-        // Overwrite skipped it, so look it up. (`fresh` has no file
-        // and never flushes: `kept` is one record.)
-        const directory = state.kind === 'contents'
-          ? state.directory
-          : await peekCaptureDirectory();
-        if (directory) {
-          for (const path of await listHistoryFiles(directory)) {
+        // `fresh` has no file and never flushes (`kept` is one
+        // record), so the directory is the one the file was read from.
+        if (state.kind === 'contents') {
+          for (const path of await listHistoryFiles(state.directory)) {
             usedNames.add(path.replace(/^.*[/\\]/, ''));
           }
         }
@@ -607,7 +577,7 @@ export async function recordCapture(
       const reason = err instanceof ArtifactWriteError
         ? err.reason
         : err instanceof Error ? err.message : String(err);
-      throw new LogWriteFailedError(reason);
+      throw new LogWriteFailedError(`couldn't write log.json: ${reason}.`);
     }
     await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
     // This write is now the one true `log.json` record, so the rows

@@ -217,10 +217,11 @@ What it costs:
   * The **More ▸ Clear log history** menu entry is gone. Deleting the
     file is the way to clear the log until a delete-the-files feature
     exists.
-  * If the extension can't tell what's on disk, `log.json` isn't
-    rewritten: the capture's files are saved, and a prompt (on the
-    Capture page, or on an error page for context-menu / hotkey
-    captures) offers Retry / Overwrite / Cancel for that capture.
+  * If the extension can't tell what's on disk (an unreadable
+    `log.json`, or a line in it that isn't a capture record), the
+    file isn't rewritten: the capture's files are saved, the capture
+    reports the problem and what to fix, and capturing again after
+    the fix is the retry.
   * With file reads on, the History page opens from `log.json`
     itself, so a deleted, emptied, or hand-edited file shows as it is
     on disk without waiting for the next capture.

@@ -67,9 +67,9 @@ removed that way never come back.
   required). Without it there is no way to see inside a file.
 
 **4. When we can't tell what's in the files, we don't write them.**
-The capture still succeeds — its screenshot / HTML are saved and its
-record is held in the browser — and the user is asked what to do. We
-never overwrite a file whose contents we couldn't account for.
+The capture fails with a message saying what to fix — its screenshot /
+HTML are already saved, but its record is not logged. We never
+overwrite a file whose contents we couldn't account for.
 
 **5. Nothing here deletes the user's files.** Not `log.json`, not the
 history files, not a capture's own screenshot or HTML. Deleting capture
@@ -132,10 +132,8 @@ landed.
     browser copy mustn't either — the next capture reads the file
     back and would drop it anyway.
   - The record is dropped with the error; the capture's files stay on
-    disk, unreferenced.
-  - Not a prompt: unlike a blocked write there is no decision to
-    make, so it reports as a plain capture failure on the usual
-    surfaces (the Capture page's status line, or the error page).
+    disk, unreferenced. Reported on the usual failure surfaces (the
+    Capture page's status line, or the error page).
   - Chrome's download bubble shows the same failure as a bare
     "Something went wrong"; this is what says it was the log.
 - **Capture-file writes (screenshot / HTML / selection) wait the same
@@ -197,7 +195,7 @@ is how a deleted log came back.
   returns the old one.
 - So a `log.json` deleted this session reads as present. A failed
   read would then be blamed on the file rather than on its absence,
-  and the user prompted for a log they deleted on purpose.
+  and the capture failed over a log the user deleted on purpose.
 
 `startExistsWatch` (`capture/downloads.ts`) closes it: the listener is
 registered *before* the search that triggers the re-check, and
@@ -210,8 +208,9 @@ trusting `exists`.
   positive confirmation to wait for; that cost is unavoidable.
 - So `getLogFileRecord` hands back the record and `confirmExists()`
   *separately*, and the reconcile calls it only where `exists` decides
-  something — a failed read, where the alternative is prompting
-  someone who simply deleted their log. **Not** on a successful read,
+  something — a failed read, where the alternative is failing the
+  capture of someone who simply deleted their log. **Not** on a
+  successful read,
   the common case: the file's contents have already answered
   everything.
 - Skipping it there isn't just an optimization: paying it on every
@@ -252,95 +251,51 @@ Then the read decides everything:
 | Reading the file | What it means | Action |
 |---|---|---|
 | Succeeds, every line parses | This is the log | Take its records, add this capture, write |
-| Succeeds, some line doesn't parse | We can read it but can't rewrite it | **Don't write — prompt** |
+| Succeeds, some line doesn't parse | We can read it but can't rewrite it | **Don't write — fail, naming the line** |
 | Fails, and the download record says the file is gone (or there is no record) | The user deleted it | Start a new log from this capture |
-| Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — prompt** |
+| Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — fail** |
 
 Taking the file's contents wholesale — rather than merging them with
 the browser copy — is the whole point: a row the user deleted from
 `log.json` stays deleted, and an edited row stays edited.
 
-**A line we can't parse blocks the write** (`corrupt-file`), because
-adopting the file means re-serializing it back over itself.
+**A line we can't parse fails the write**, because adopting the file
+means re-serializing it back over itself.
 
 - A *reader* can skip a bad line and lose nothing — the History page
   does exactly that, and the row is merely absent from the table.
 - The reconcile is a writer. Skipping the line and writing the rest
   deletes it from the user's file for good, which principle 4 forbids:
   we couldn't account for it, so we don't write.
-- `parseLogLines` is the counting variant behind it; `parseLogText`
-  stays lenient for the display paths.
-- Overwrite is still offered, for a user who doesn't want the
-  unparseable lines kept.
+- `parseLogLines` is the counting variant behind it, and names the
+  first bad line (1-based, blank lines counted, so it matches an
+  editor's gutter); `parseLogText` stays lenient for the display
+  paths.
 
-## Asking the user
+## Reporting the failure
 
-When the check above can't account for `log.json`, the capture
-**fails right there** with `LogWriteBlockedError` — a point-in-time
-failure like any other.
+When the check above can't account for `log.json` — or Chrome can't
+finish writing it — the capture **fails right there** with
+`LogWriteFailedError`, a point-in-time failure like any other.
 
-- Its screenshot / HTML are already on disk; the unwritten record
-  rides on the error and exists nowhere else.
-- Nothing about the failure is stored. Dismissing the prompt drops the
-  record; if the same condition still holds at the next capture, that
-  capture re-detects it on its own and asks again.
-
-### The answers offered
-
-The dialog — titled "Error while writing capture log", since the
-reasons range wider than "out of sync" — names the file (path in a
-code font), says in one red line what's wrong with it, and lists the
-fixes as lettered options — "(A)", "(B)", "(C)" — under **Options:**
-
-- **(A)** takes one of two shapes, by reason:
-  - `corrupt-file`: **Fix the file** *(Recommended)*, with step 1
-    "Repair or delete the file" and step 2 **Retry**.
-  - `unreadable`: just the **Retry** button — there is no step we can
-    name.
-  - Retry runs the same append again from the top (reconcile, then
-    write), so it also lands after any other fix, such as deleting
-    `log.json` — with the file gone there's nothing left to preserve,
-    so a fresh log starts from this capture. With nothing changed it
-    lands back on the same prompt.
-- **(B) Overwrite log.json.** The same append with the reconcile
-  skipped: the file is replaced with the browser's copy of the log
-  plus this capture, and external edits are lost (the option says so).
-  The one place anything on disk is knowingly discarded, so it takes
-  an explicit click.
-- **(C) Cancel** (the button, Esc, or just closing the page). Abandons
-  the record: the capture's files stay on disk, but it is not in the
-  log.
-
-### Where it's asked
-
-The dialog is one piece of markup in `capture.html` (wired by
-`capture-page/log-sync.ts`, with the round-trip and path text in the
-shared `capture/log-sync-client.ts`), so the
-two surfaces can't drift apart.
-
-- **Capture page** — the save fails and the dialog opens over the page
-  (`capture-page/log-sync.ts`). Retry / Overwrite re-run the whole
-  save — it's idempotent (artifact files re-hit their download caches
-  or rewrite the same pinned names) — so success flows through the
-  page's normal saved path.
-- **Captures from the context menu or a keyboard shortcut** have no
-  page of their own, so the failure opens the same error page any
-  other failed capture opens — `capture.html?error=…` in its "Capture
-  failed" state — with the record carried in a `?logsync=` URL param
-  and the same dialog on top. Retry / Overwrite send the record to
-  the service worker to write (`logSyncWrite`); success closes the
-  tab, and closing the tab is the Cancel gesture. A still-blocked
-  write reopens the dialog; any other failure reports in the error
-  page's own message slot, not in the dialog.
-
-Reusing the failure surface is deliberate:
-
-- The files did get written, but the capture the user asked for isn't
-  in their log — the same outcome as a capture that failed outright,
-  so it gets the same one place to look rather than a second one to
-  learn.
-- The error text is short (the `LogWriteBlockedError` message) because
-  the dialog above it carries the detail.
+- Its screenshot / HTML are already on disk; the record is dropped.
+  Nothing about the failure is stored, and capturing again is the
+  retry.
+- The message says what to do, since every case is one the user
+  resolves outside the extension:
+  - *couldn't read log.json. Fix or delete the file, then capture
+    again.*
+  - *log.json has a line that isn't a capture record (line N). Fix or
+    delete the file, then capture again.*
+  - *couldn't write log.json: download failed (FILE_FAILED).*
+  - *couldn't find the capture directory.*
+- Where it shows is where any capture failure shows: the Capture
+  page's status line, or the `capture.html?error=…` page a
+  context-menu / hotkey capture opens.
+- There used to be a Retry / Overwrite / Cancel dialog here. Its one
+  remaining value once file reads became required was forcing an
+  overwrite without leaving the extension — but a user in this state
+  got there with another tool, and can fix the file with it.
 
 ## Supporting changes
 
@@ -390,10 +345,6 @@ here or it belongs fixed.
 
 ### Deliberate, user-initiated
 
-- **Overwrite.** The prompt's primary button replaces a file we
-  couldn't account for with the browser copy. This is the one place
-  anything on disk is knowingly discarded, and it takes an explicit
-  click on a dialog that says so.
 - **Re-writing a capture file before any record points at it.** Within
   one Capture-page session, the screenshot / HTML / selection keep a
   pinned filename, and a *pre-download* under that name (what the Copy
@@ -424,13 +375,11 @@ here or it belongs fixed.
 
 ### Costs of failing safe
 
-- **A cancelled prompt is a capture outside the log.** Its files are
-  on disk, but no record points at them. That is the deal the prompt
-  states: Retry or Overwrite to log it, Cancel to let it go.
-- **An interrupted `log.json` write is a capture outside the log.**
-  The capture fails with the reason, and the record is stored nowhere
-  — its files stay on disk, unreferenced, the same residue a cancelled
-  prompt leaves. Rare (the write is a tiny local `data:` download).
+- **A failed log write is a capture outside the log.** The capture
+  fails with the reason, and the record is stored nowhere — its files
+  stay on disk, unreferenced. Rare for a write Chrome can't finish
+  (a tiny local `data:` download); otherwise it takes a hand-broken
+  file.
 - **Duplicate records in a history file.** A service worker killed
   after a flush batch lands but before `log.json` is rewritten
   leaves the batch both in the new history file and still in the log;
@@ -464,15 +413,14 @@ here or it belongs fixed.
 
 - `tests/unit/log-reconcile.test.mjs` covers each row of the table
   above, the directory probe, the file-access backstop, and the
-  prompt's Retry / Overwrite paths (`recordCapture` re-run, with and
-  without `force`), driving a faked `chrome.downloads.search` /
+  failure messages, driving a faked `chrome.downloads.search` /
   `fetch` / probe write.
   - Its stub reproduces the **stale `exists`** contract: a `search()`
     returns the old value and fires the `onChanged` delta afterwards.
     That's what makes "a log deleted this session starts fresh, not a
-    prompt" a real test rather than a restatement of the code.
-  - The `corrupt-file` block and `parseLogLines`' skip count are
-    covered here too.
+    failure" a real test rather than a restatement of the code.
+  - The unparseable-line failure and `parseLogLines`' line numbering
+    are covered here too.
 - `tests/unit/log-history-files.test.mjs` covers the failed `log.json`
   write: the capture rejects with `LogWriteFailedError`, storage is
   untouched, and the flushed batch's pinned name survives for the
@@ -494,7 +442,8 @@ here or it belongs fixed.
   wipe alone is no longer a clean slate, because the download record
   outlives it and the next capture reconciles against the file it
   names.
-- **Not covered:** the prompt surfaces themselves. Reaching them
-  end-to-end means engineering a state the reconcile can't account
+- **Not covered end-to-end:** the failure messages on a real page.
+  Reaching them means engineering a state the reconcile can't account
   for, which the harness's real download directory makes awkward. The
-  decisions behind them are unit-tested; the dialogs are not.
+  decisions and messages are unit-tested; the surfaces are the same
+  ones every other capture failure uses.

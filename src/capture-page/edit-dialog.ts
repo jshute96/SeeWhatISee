@@ -573,8 +573,8 @@ export function initEditDialogs(context: EditDialogContext): void {
 }
 
 /**
- * Whether any modal dialog is up — an Edit dialog, the log-sync
- * prompt, or the file-access dialog. The page-wide shortcut handlers
+ * Whether any modal dialog is up — an Edit dialog or the file-access
+ * dialog. The page-wide shortcut handlers
  * suspend themselves on this, so Alt+C behind a modal can't "click"
  * the Capture button the user can't see. Every dialog on this page
  * opens with `showModal()`, which is what `:modal` matches.

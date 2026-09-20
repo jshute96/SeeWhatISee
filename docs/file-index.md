@@ -222,7 +222,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, the restorable-capture push, and the Reopen relay |
-| `src/background/log-sync.ts` | SW side of the out-of-sync log prompt — the `logSyncWrite` (Retry / Overwrite) handler and the `log.json` existence re-check |
+| `src/background/log-sync.ts` | The `log.json` download-record existence re-check run on every service-worker load |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
@@ -247,10 +247,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
-| `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; the blocked / failed write errors |
+| `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; `LogWriteFailedError` |
 | `src/capture/file-access.ts` | The required "Allow access to file URLs" toggle — `requireFileAccess` gate, its error, and the settings-page opener |
 | `src/capture/file-access-dialog.ts` | The "file access required" dialog the Capture and History pages open when the toggle is off |
-| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip |
 | `src/capture/watch-status.ts` | Watch-script stop protocol — reads the watch session's `.watch-status.json`, writes the `watch-stop.json` request |
 | `src/capture/target-tab.ts` | Picks which tab a capture targets — prefers the gesture's own tab over Chrome's unreliable last-focused-window bookkeeping |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
@@ -267,7 +266,6 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour plus slide-up-to-fit placement (re-run on resize) for the Capture column's Zoom and More… popovers |
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
-| `src/capture-page/log-sync.ts` | The Capture page's out-of-sync log dialog — `showLogSyncDialog` for failed saves, plus the error page's `?logsync=` wiring |
 | `src/capture-page/undo-scope.ts` | `initUndoScope(ctx)` — routes `Ctrl+Z` / `Ctrl+Y` to the image edits or the prompt's text undo, by the half of the page the user last worked in |
 | `src/capture-page/watch-status.ts` | `initWatchStatus(ctx)` — the running-watch indicator with its Stop and Pause buttons, refreshed when the page comes back to the front |
 | `src/capture-page/pills.ts` | Capture-page Image / HTML / Selection size pills — `initPills(ctx)`, per-pill refreshers + `setScreenshotErrored`, `formatBytes`, `composeImageBadgeText`; image pill includes live cropped-dim updates from a crop drag |
@@ -390,7 +388,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback, probe last resort |
 | `tests/unit/list-history-files.test.mjs` | Unit tests for `listHistoryFiles` — parsing Chrome's `file://` directory listing for `history-*.json` names |
-| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the directory probe, the stale-`exists` re-check, and the Retry / Overwrite flush |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the directory probe, the stale-`exists` re-check, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
@@ -415,7 +413,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `testing.md` | Playwright + devtools-console patterns for testing the extension |
 | `smart-paste.md` | Rich-text paste on the Capture page — modes, `cleanCopiedHtml`, `shouldPasteAsText`, build wiring |
 | `history-page.md` | History page — data source, columns, `file://` link degradations, search |
-| `log-consistency.md` | Disk-authoritative capture log — reconcile states, the directory probe, out-of-sync prompt |
+| `log-consistency.md` | Disk-authoritative capture log — reconcile states, the directory probe, how failures are reported |
 | `options-and-settings.md` | Stored toolbar defaults + Capture-page Save defaults: storage shapes, dispatch, tooltip, Options page layout/wire |
 | `ask-on-web.md` | "Ask AI" flow — Capture-page UI, provider registry, send flow, injected runtime, ProseMirror notes, diagnostics |
 | `ask-widget.md` | In-page status / recovery widget — UI, theming, per-item orchestration, cross-world bridge, storage record, retry / cancel-and-replace |

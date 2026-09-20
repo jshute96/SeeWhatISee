@@ -1,6 +1,5 @@
 import { noSelectionContentMessage } from '../capture/types.js';
 import type { GestureTab } from '../capture/target-tab.js';
-import { LogWriteBlockedError } from '../capture/log-reconcile.js';
 import { requireFileAccess } from '../capture/file-access.js';
 import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
@@ -116,15 +115,7 @@ export async function reportCaptureError(
   // someone debugging will look for. `console.info` because the
   // failure is already handled via the error page.
   console.info('[SeeWhatISee] capture failed:', err);
-  let url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
-  // A blocked log write carries its capture record along in the URL,
-  // so the error page can offer Retry / Overwrite for it. The record
-  // lives nowhere else — closing the tab abandons it, which is the
-  // Cancel gesture.
-  if (err instanceof LogWriteBlockedError) {
-    const payload = { reason: err.reason, directory: err.directory, record: err.record };
-    url += `&logsync=${encodeURIComponent(JSON.stringify(payload))}`;
-  }
+  const url = `${chrome.runtime.getURL(ERROR_PAGE_PATH)}?error=${encodeURIComponent(message)}`;
   try {
     await createTabWithPlacement({ url, ...(await tabPlacement(opener)) });
   } catch (e) {
@@ -166,10 +157,7 @@ async function errorTabOpener(
  * with it off the action isn't run at all — every action, whether or
  * not it touches a file, so the extension has one answer to "why did
  * nothing happen" rather than a per-action mix — and the error page
- * opens with the dialog that explains the toggle. That includes a capture
- * whose files were saved but whose `log.json` write was blocked
- * (`LogWriteBlockedError`) — the same page, with the out-of-sync
- * dialog on top of it.
+ * opens with the dialog that explains the toggle.
  *
  * Used by every user-initiated capture path (toolbar click,
  * hotkey, context-menu entries). Paths that have their own

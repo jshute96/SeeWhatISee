@@ -633,7 +633,7 @@ export async function recordDetailedCapture(opts: SaveDetailedOptions): Promise<
     record.skipInWatcher = true;
   }
 
-  await recordCapture(record, { force: opts.forceLog });
+  await recordCapture(record);
 
   return record;
 }

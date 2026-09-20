@@ -571,11 +571,4 @@ export interface SaveDetailedOptions {
    * watchers pass the capture over.
    */
   skipInWatcher?: boolean;
-  /**
-   * True when this save is the out-of-sync dialog's **Overwrite**:
-   * skip the `log.json` reconcile and replace the file with the
-   * browser's copy of the log plus this record. Never set on a plain
-   * save.
-   */
-  forceLog?: boolean;
 }
