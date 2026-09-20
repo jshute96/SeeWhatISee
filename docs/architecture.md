@@ -242,27 +242,31 @@ Every record has `timestamp` and `url`, plus optional fields:
 
 ### Storage model
 
-- **`log.json` on disk is authoritative; `chrome.storage.local` is a
-  cache.** The downloads API can only write whole files, so every
-  capture still rewrites the file — but it reconciles against what is
-  there first. See [log-consistency.md](log-consistency.md) for the
-  full state table.
+- **`log.json` on disk is the log, and the only copy of it.** The
+  downloads API can only write whole files, so every capture rewrites
+  the file — as read, plus one line. See
+  [log-consistency.md](log-consistency.md).
+  - Extension storage holds no records: only the cached capture
+    directory, the pinned history-file names, and a session note of
+    the last capture's filenames (what the Copy-last-… entries copy,
+    and the History page's cue to re-read).
 - Deleting `log.json` starts a new log. The next capture notices (the
   read fails, and the download record's re-checked `exists` confirms
-  the file is gone) and drops the buffer instead of putting the old
+  the file is gone) and starts over instead of putting the old
   records back.
   - Deleting or editing individual rows sticks too. Reading the file
     is what makes that possible, which is why "Allow access to file
     URLs" is required (`chrome-extension.md`).
   - The history files are untouched either way, and the History page
     still offers them.
-- A capture only ever **adds** one record to what's on disk (plus the
+- A capture only ever **adds** one line to what's on disk (plus the
   flush into history files, which moves older records into a
-  `history-<timestamp>.json` beside `log.json`). It never rewrites or drops a
-  record already there.
-- When the extension can't tell what is on disk, it **doesn't write**
-  — the capture fails right there, with a message saying what to fix
-  (an unreadable `log.json`, or a line in it that isn't a record). The
+  `history-<timestamp>.json` beside `log.json`). It never rewrites or
+  drops a line already there — a hand edit keeps its formatting, and a
+  line that isn't a record rides along until a flush drops it, as
+  every reader already skips it.
+- When the extension can't read `log.json`, it **doesn't write** — the
+  capture fails right there, with a message saying what to fix. The
   capture's files stay on disk; its record is dropped. Nothing about
   the failure is stored — capturing again after the fix is the retry.
 - `watch.sh` is resilient to the whole `~/Downloads/SeeWhatISee/`
@@ -270,25 +274,20 @@ Every record has `timestamp` and `url`, plus optional fields:
   `log.json` to appear), so `/see-what-i-see-watch` can be launched
   before any capture.
 - To browse the log, use the top-level **History** context-menu
-  entry — a table view that opens from `log.json` itself when file
-  reads allow, with the `captureLog` cache as fallback. See
+  entry — a table view that reads `log.json` itself. See
   [history-page.md](history-page.md).
-- There is no "clear history" menu entry. Clearing the cache alone
-  would be undone by the next reconcile, and deleting the user's
-  files is a separate feature that hasn't been built yet; deleting
+- There is no "clear history" menu entry. Deleting the user's files
+  is a separate feature that hasn't been built yet; deleting
   `log.json` by hand is the supported gesture in the meantime.
-  `SeeWhatISee.clearCaptureLog()` from the service-worker devtools
-  console empties the buffer only, and exists for tests.
-- The in-storage log is capped at 100 entries; without a cap,
-  rewriting the whole file on every capture would be quadratic in
-  capture count.
+- `log.json` is capped at 100 entries; without a cap, rewriting the
+  whole file on every capture would be quadratic in capture count.
 
 ### History files
 
-- Entries aging out of the 100-entry buffer are **not** discarded.
+- Entries aging out of the 100-entry `log.json` are **not** discarded.
   Once the log goes over the cap, the oldest 50 are written to a
   **history file** — `history-<timestamp>.json` beside `log.json` —
-  and dropped from storage.
+  and dropped from it.
 - So the full capture history lives on disk while no single write
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.
@@ -323,13 +322,14 @@ Every record has `timestamp` and `url`, plus optional fields:
     its catch-up window shrinks to as few as 51 records right
     after a flush. An older timestamp falls back to plain watching
     (with a warning), same as it always did.
-- An entry leaves storage only after the history file holding it is
+- An entry leaves `log.json` only after the history file holding it is
   written, one batch at a time, so nothing is trimmed out from under a
   write that didn't happen.
   - A failed history-file write is **not** a failed capture: the move
-    is abandoned, everything not yet moved stays in storage (the new
-    record included), and the next capture retries. Rejecting would
-    orphan the screenshot already on disk and lose the record.
+    is abandoned, everything not yet moved stays in `log.json` (the
+    new record appended as usual), and the next capture retries.
+    Rejecting would orphan the screenshot already on disk and lose
+    the record.
   - A batch's chosen name is recorded in `chrome.storage.local`
     (`pendingHistoryFiles`) *before* the file is written, and the
     retry reuses it — so a capture that writes the file and then dies
@@ -338,10 +338,9 @@ Every record has `timestamp` and `url`, plus optional fields:
     the batch is out of the log for good.
   - A new history file never takes a name one on disk already uses —
     see [log-consistency.md](log-consistency.md).
-- **Nothing in the extension deletes the history files.** A `log.json`
-  the user deletes takes the browser copy with it, but the history
-  files stay on disk (deleting user files isn't something the
-  extension does) and the History page can still load them.
+- **Nothing in the extension deletes the history files.** Deleting
+  `log.json` leaves them on disk (deleting user files isn't something
+  the extension does) and the History page can still load them.
 
 ## Permissions
 

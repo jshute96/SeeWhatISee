@@ -1,9 +1,8 @@
 # History page
 
-A table view over the capture log. Opens from `log.json` itself when
-file reads allow — the file is the authoritative log — falling back to
-the `captureLog` cache in `chrome.storage.local` (see
-[architecture.md](architecture.md) for the log itself).
+A table view over the capture log. Reads `log.json` itself — the file
+is the log, and the only copy of it (see
+[architecture.md](architecture.md)).
 
 - Read-only with respect to the log. Its row actions —
   [Restore](#restore-from-a-row) and [Reopen](#reopen-from-a-row) —
@@ -33,7 +32,7 @@ Two entry points, both landing on `openHistoryPage()` in
 
 `openHistoryPage()` focuses an already-open History tab (and its
 window) rather than stacking a second one — the page is a read-only
-view that live-updates from storage, and the header button sits on
+view that live-updates as captures land, and the header button sits on
 pages the user bounces between.
 
 Finding that tab is less obvious than it looks:
@@ -63,52 +62,37 @@ Finding that tab is less obvious than it looks:
 
 ## Data source
 
-- Renders from `log.json` (a `file://` fetch), `chrome.storage.local`,
-  and `chrome.downloads.search`. All are available to any extension
-  page, so no service-worker round-trip is needed to draw the table.
-  (The SW is involved only in *opening* the page — see above.)
-- **On open, the file wins.** With file reads on and a known capture
-  directory, the page reads `log.json` itself (`loadRecordsFromLog`):
-  - The cache can be behind the file — storage wiped by a reinstall or
-    cleared site data, the file edited or restored by hand — until the
-    next capture's reconcile repairs it. Opening the page is exactly
-    when fresh state is worth having.
-  - A read that fails usually means the file isn't there; that *is*
-    the log's state, so the page shows an empty log rather than ghost
-    rows for a log the user deleted.
-  - "Usually", so the failure is disambiguated with a `file://` fetch
-    of the *directory*: readable directory, unreadable `log.json` →
-    the file is gone; unreadable directory (stale cached directory,
-    passing failure) → the reads are what's broken, and the page falls
-    back to the cache instead of hiding real records.
+- Renders from `log.json` (a `file://` fetch) and
+  `chrome.downloads.search` (the `(deleted)` markers). Both are
+  available to any extension page, so no service-worker round-trip is
+  needed to draw the table. (The SW is involved only in *opening* the
+  page — see above.)
+- **The file is the log**, so the page reads `log.json` itself
+  (`loadRecordsFromLog`) — on open and again whenever a capture lands:
+  - A read that fails means the file isn't there; that *is* the log's
+    state, so the page shows an empty log rather than an error.
+  - With no known directory nothing has been captured on this
+    profile, and the page shows its empty state.
   - History files are discovered independently, so a deleted or
     emptied `log.json` still offers **Load older captures**.
-  - The page never writes the repaired truth back to storage —
-    repairing the cache stays with the capture path's reconcile, so
-    there is no second writer to race it.
-- With no known directory the cache is the best available view and
-  the page uses it as before.
+  - The page only displays; the capture path is the only writer.
 - Loaded as a **module** script (unlike `options.ts`, a classic
-  script) so it can import the storage key from `capture/log-store.js`
-  and the directory / path helpers from `capture/downloads.js` instead
-  of restating them.
+  script) so it can import the session-note key from
+  `capture/log-store.js` and the directory / path helpers from
+  `capture/downloads.js` instead of restating them.
 - `imageUrl` (the source-image URL on image-context and Upload
   captures) is deliberately not shown or searched — the Page column
   carries the captured tab's URL. Such a record can therefore show
   *N/A* under Page while still holding an `imageUrl`.
 - Records come out oldest-first (append order) and are reversed for
   display — newest at the top.
-- A `chrome.storage.onChanged` listener re-reads the log **from
-  storage**, so a capture taken while the tab sits open updates it in
-  place.
-  - Storage is exact there, not a shortcut: the capture awaited its
-    `log.json` write to completion *before* setting the key
-    (`recordCapture`'s file-first ordering), so cache and file are
-    equal at that moment — re-reading the file would only race the
-    next capture. (Exception: an interrupted write still sets the key;
-    the next capture's reconcile rebuilds from the file.)
-  - An event also disowns any page-open disk read still in flight
-    (`recordsGeneration`) — the event's cache is the fresher state.
+- A `chrome.storage.onChanged` listener on the session note
+  `recordCapture` leaves (`lastCaptureFiles`) re-reads `log.json`, so
+  a capture taken while the tab sits open updates it in place.
+  - The note is written only after the `log.json` write completed
+    (`recordCapture`'s ordering), so the re-read sees the new record.
+  - A read still in flight when a newer one starts is discarded
+    (`recordsGeneration`) — the newer read is the fresher state.
 - The log `log-store.ts` writes is capped at 100 entries, so the live
   view never has to paginate (a hand-edited `log.json` can exceed the
   cap; the page just renders it all). Older captures are loaded on
@@ -116,7 +100,7 @@ Finding that tab is less obvious than it looks:
 
 ### Older captures
 
-- Captures that age out of storage move into **history files** —
+- Captures that age out of `log.json` move into **history files** —
   `history-<timestamp>.json`, beside `log.json` (see
   [architecture.md → History files](architecture.md#history-files)).
   The page reads them back so the table can cover the whole history,
@@ -172,7 +156,7 @@ Finding that tab is less obvious than it looks:
     in the toolbar.
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
-- Merging is a plain concatenation: the storage log, then each history
+- Merging is a plain concatenation: `log.json`, then each history
   file's records, files in `listHistoryFiles()` order (newest first
   by the timestamp in each filename, which is the moment that file was
   written). No sort; dedup only on exact record text.
@@ -187,12 +171,12 @@ Finding that tab is less obvious than it looks:
     - `uniqueTimestamp` gives every save its own timestamp, so no two
       records the log *writes* can collide here. What's left is one
       record reaching the page twice: a batch that reached a history file
-      while the service worker died before the matching storage write
-      sits in both sources the page merges.
+      while the service worker died before the matching `log.json`
+      trim sits in both sources the page merges.
     - Global, not adjacent-only: the copies land on opposite sides of
-      the storage / history-file boundary.
-    - `serializeRecord` supplies the key, not `JSON.stringify` —
-      `chrome.storage.local` doesn't preserve key order, so only a
+      the log / history-file boundary.
+    - `serializeRecord` supplies the key, not `JSON.stringify` — a
+      hand-edited record can carry its keys in any order, so only a
       canonical field order compares equal.
     - **Nothing looser.** Keying on `timestamp` shipped a bug: one
       session's six saves (`…-733.png`, `…-733-1.png`, …) collapsed to
@@ -205,9 +189,9 @@ Finding that tab is less obvious than it looks:
     failing the file: these sit in the user's Downloads folder where
     they can be edited or truncated.
 - A capture taken while the tab is open can itself trigger a flush. The
-  storage listener re-reads the history-file list, and re-reads the files
-  too if the user already opted in — otherwise records would appear to
-  vanish as they aged out of storage.
+  capture-landed listener re-reads the history-file list, and re-reads
+  the files too if the user already opted in — otherwise records would
+  appear to vanish as they aged out of `log.json`.
   - The re-list is one directory-listing fetch per capture while the
     tab sits open — accepted: it's small next to the capture's own
     file writes, and only an open History tab pays it.
@@ -359,7 +343,7 @@ capture](capture-page.md#restore-last-capture)) — the tooltip says so.
   button on the wrong row among a session's several saves. Same
   reasoning as `dedupeRecords`; see [Older captures](#older-captures).
 - Rows from history files are matched too. The key is computed per rendered
-  record, so a restorable capture that has aged out of storage still
+  record, so a restorable capture that has aged out of `log.json` still
   gets its button once the history files are loaded.
 
 ### Plumbing
@@ -635,6 +619,6 @@ never touched.
   - The `title` sits on a wrapper `<span>`, not the button: Chrome
     delivers no mouse events to a disabled control, so a tooltip on
     the button would vanish in the state that needs explaining.
-  - The storage listener retries `loadCaptureDir()` while the
+  - The capture-landed listener retries `loadCaptureDir()` while the
     directory is still unresolved, so the first capture taken with the
     page open enables the button without a reload.

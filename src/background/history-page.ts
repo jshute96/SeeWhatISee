@@ -91,7 +91,7 @@ async function historyTabAlive(tabId: number): Promise<boolean> {
  *
  * Reuses an already-open History tab (focusing its window too) instead
  * of stacking a second one: the page is a read-only view that
- * live-updates from storage, so two copies is never what the user
+ * live-updates as captures land, so two copies is never what the user
  * wanted — and the History button is on pages the user bounces between,
  * which would otherwise pile up tabs fast.
  */

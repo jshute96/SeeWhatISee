@@ -1,6 +1,13 @@
 import { test, expect } from '../fixtures/extension';
 import { waitForCaptureQuota } from '../fixtures/capture-quota';
-import { verifyCapture, type CaptureResult, resetCaptureState } from '../fixtures/files';
+import fs from 'node:fs';
+import {
+  verifyCapture,
+  type CaptureResult,
+  resetCaptureState,
+  seedCaptureLogText,
+  waitForDownloadPath,
+} from '../fixtures/files';
 
 // Filename format: screenshot-YYYYMMDD-HHMMSS-mmm.png — bare basename,
 // no subdir prefix (the `log.json` resolves it against its own
@@ -21,10 +28,8 @@ test('captures the visible tab and writes png + log file', async ({
   getServiceWorker,
 }) => {
   // Start from a clean capture log so the line-count assertions on
-  // log.json are deterministic — chrome.storage.local persists across
-  // tests in the same worker, and writeJsonFile re-renders the log
-  // from storage on every capture, so leftover entries from earlier
-  // tests would inflate the count.
+  // log.json are deterministic — the file persists across tests in
+  // the same worker, and every capture appends to it.
   const sw0 = await getServiceWorker();
   await resetCaptureState(sw0);
 
@@ -173,7 +178,7 @@ test('delayed capture records the new URL after a same-tab navigation', async ({
   await page.close();
 });
 
-test('deleting log.json starts a fresh log instead of resurrecting the buffer', async ({
+test('deleting log.json starts a fresh log instead of resurrecting the old one', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
@@ -214,18 +219,12 @@ test('deleting log.json starts a fresh log instead of resurrecting the buffer', 
   });
   const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
   expect(log2).toHaveLength(2);
-  // Storage still holds both — that's the buffer we're proving does
-  // *not* come back.
-  const sw3 = await getServiceWorker();
-  const buffered = await sw3.evaluate(
-    async () => ((await chrome.storage.local.get('captureLog')).captureLog as unknown[]).length,
-  );
-  expect(buffered).toBe(2);
 
   // Delete log.json the way a user would, via the download record.
   // `chrome.downloads.removeFile` is Chrome deleting its own file, so
   // the record's `exists` flips immediately — no waiting on the
   // delayed re-check a deletion outside the browser would need.
+  const sw3 = await getServiceWorker();
   await sw3.evaluate(async () => {
     const [item] = await chrome.downloads.search({
       filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]log\\.json$',
@@ -247,7 +246,7 @@ test('deleting log.json starts a fresh log instead of resurrecting the buffer', 
   });
 
   // `[]` as the baseline asserts length 1: the two pre-deletion
-  // entries are gone from the file *and* from storage.
+  // entries are gone.
   const log3 = await verifyCapture(sw4, result3, GREEN, []);
   expect(log3).toHaveLength(1);
   expect(log3[0].screenshot?.filename).toBe(result3.filename);
@@ -255,63 +254,44 @@ test('deleting log.json starts a fresh log instead of resurrecting the buffer', 
   await page.close();
 });
 
-test('a storage wipe is healed from log.json rather than truncating it', async ({
+test('a capture appends to log.json without rewriting what is there', async ({
   extensionContext,
   fixtureServer,
   getServiceWorker,
 }) => {
-  // The other side of disk authority: when the buffer loses its
-  // contents (an extension reinstall, or cleared site data) the file
-  // is what puts them back — the next capture must not truncate
-  // log.json to the one record storage still knows about.
-  //
-  // Chrome grants file access to a `--load-extension` build, so the
-  // reconcile reads `log.json` back here just as it does for a user.
+  // The file is the log, and the append is verbatim: a hand-edited
+  // record keeps its formatting, a line that isn't a record at all is
+  // left where it is, and a missing trailing newline is supplied so
+  // the new record starts on its own line.
   const sw0 = await getServiceWorker();
   await resetCaptureState(sw0);
+  const edited = '{ "timestamp": "2026-01-01T00:00:00.000Z",  "title": "hand edited" }';
+  const junk = 'not a record';
+  await seedCaptureLogText(sw0, `${edited}\n${junk}`);
 
   const page = await extensionContext.newPage();
   await page.goto(`${fixtureServer.baseUrl}/purple.html`);
   await page.bringToFront();
 
   const sw1 = await getServiceWorker();
-  const result1 = await sw1.evaluate(async () => {
+  const result = await sw1.evaluate(async () => {
     const api = (self as unknown as {
       SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
     }).SeeWhatISee;
     return api.captureVisible();
   });
-  const log1 = await verifyCapture(sw1, result1, PURPLE, []);
-
-  // Wipe only the buffer, leaving log.json and its download record.
-  const sw2 = await getServiceWorker();
-  await sw2.evaluate(() => chrome.storage.local.remove('captureLog'));
-
-  await page.goto(`${fixtureServer.baseUrl}/orange.html`);
-  await page.bringToFront();
-  await waitForCaptureQuota(sw2);
-  const result2 = await sw2.evaluate(async () => {
-    const api = (self as unknown as {
-      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
-    }).SeeWhatISee;
-    return api.captureVisible();
-  });
-
-  // Both records are in the file: the purple one came back from disk,
-  // not from storage, which had forgotten it.
-  const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
-  expect(log2).toHaveLength(2);
-  expect(log2[0].screenshot?.filename).toBe(result1.filename);
-
-  // And the buffer is repopulated from the file, so the History page
-  // and the Copy-last-… entries see the whole log again.
-  const sw3 = await getServiceWorker();
-  const buffered = await sw3.evaluate(
-    async () => ((await chrome.storage.local.get('captureLog')).captureLog as unknown[]).length,
-  );
-  expect(buffered).toBe(2);
+  const logPath = await waitForDownloadPath(sw1, result.logDownloadId);
+  const lines = fs.readFileSync(logPath, 'utf8').split('\n');
+  // Both seeded lines untouched, then the new record, then the
+  // terminator.
+  expect(lines[0]).toBe(edited);
+  expect(lines[1]).toBe(junk);
+  expect(JSON.parse(lines[2]).screenshot?.filename).toBe(result.filename);
+  expect(lines[3]).toBe('');
+  expect(lines).toHaveLength(4);
 
   await page.close();
+  await resetCaptureState(sw1);
 });
 
 test('delayed capture records the new tab URL after a tab switch', async ({

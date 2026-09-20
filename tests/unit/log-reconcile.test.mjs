@@ -54,6 +54,7 @@ function stubChrome({
   removed = [];
   erased = [];
   const store = {};
+  const session = {};
   let nextId = 1;
   const changeListeners = [];
   // Flipped by the first `search({id})`, i.e. by the poll inside
@@ -71,6 +72,10 @@ function stubChrome({
         get: async (key) => (key in store ? { [key]: structuredClone(store[key]) } : {}),
         set: async (obj) => Object.assign(store, obj),
         remove: async (key) => { delete store[key]; },
+      },
+      session: {
+        get: async (key) => (key in session ? { [key]: structuredClone(session[key]) } : {}),
+        set: async (obj) => Object.assign(session, obj),
       },
     },
     extension: { isAllowedFileSchemeAccess: async () => fileAccess },
@@ -129,6 +134,8 @@ function stubChrome({
     if (fileText === null) throw new TypeError('Failed to fetch');
     return { ok: true, text: async () => fileText };
   };
+  // The session note `recordCapture` leaves, for the tests to check.
+  Object.defineProperty(store, 'lastCaptureFiles', { get: () => session.lastCaptureFiles });
   return store;
 }
 
@@ -151,7 +158,7 @@ stubChrome();
 const { inspectLogFile, LogWriteFailedError } =
   await import('../../dist/capture/log-reconcile.js');
 const { FileAccessRequiredError } = await import('../../dist/capture/file-access.js');
-const { recordCapture, serializeLog, parseLogLines, LOG_STORAGE_KEY } =
+const { recordCapture, serializeLog, parseLogText, appendLogLine } =
   await import('../../dist/capture/log-store.js');
 const { _setExistsRecheckTimeoutForTest } =
   await import('../../dist/capture/downloads.js');
@@ -257,45 +264,38 @@ test('without the file-access toggle the reconcile refuses to guess', async () =
 
 test('a deleted log.json makes the next capture start over, not resurrect', async () => {
   const store = stubChrome({ record: { ...logRecord('x'), exists: false } });
-  store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
   await recordCapture(rec(3));
-  assert.deepEqual(store[LOG_STORAGE_KEY].map((r) => r.screenshot.filename), ['shot-3.png']);
   const log = writes.filter((w) => w.filename.endsWith('log.json')).pop();
   assert.equal(log.body, serializeLog([rec(3)]));
+  // And the note says which files the capture wrote.
+  assert.deepEqual(store.lastCaptureFiles, { timestamp: rec(3).timestamp, screenshot: 'shot-3.png' });
 });
 
 test('a failed capture leaves everything untouched', async () => {
   const store = stubChrome({ record: logRecord(serializeLog([rec(1), rec(2)])), fileText: null });
-  store[LOG_STORAGE_KEY] = [];
   await assert.rejects(recordCapture(rec(3)), LogWriteFailedError);
-  // Point-in-time failure: no file written, no storage change, no
-  // state left behind for anything to clean up later.
+  // Point-in-time failure: no file written, no note left, no state
+  // left behind for anything to clean up later.
   assert.equal(writes.length, 0, 'log.json must not be overwritten');
-  assert.deepEqual(store[LOG_STORAGE_KEY], []);
+  assert.equal(store.lastCaptureFiles, undefined);
 });
 
-test('the file decides, not the buffer', async () => {
-  // A buffer row the file doesn't have (rec(2)) stays gone: the user
-  // deleted it from the file, and the file is the log.
-  const store = stubChrome(onDisk([rec(1)]));
-  store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
-
+test('the append keeps the file as it was, plus one line', async () => {
+  // Hand-edited formatting and a line that isn't a record at all both
+  // survive byte for byte: the file is the log, and the append only
+  // adds to it. The bad line is skipped for the timestamp check, as
+  // every reader skips it.
+  const text = `{ "timestamp": "2026-01-01T00:00:01.000Z" , "title": "edited" }\nnot a record\n`;
+  stubChrome({ record: logRecord(text), fileText: text });
   await recordCapture(rec(3));
-  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(3)]));
-  assert.deepEqual(
-    store[LOG_STORAGE_KEY].map((r) => r.screenshot.filename),
-    ['shot-1.png', 'shot-3.png'],
-  );
+  assert.equal(writes.at(-1).body, `${text}${serializeLog([rec(3)])}`);
 });
 
-test('capturing again after deleting log.json starts a fresh log', async () => {
-  // The "delete the file" remedy: with it gone there is nothing left
-  // to preserve, so the next capture becomes the new log.
-  const store = stubChrome({ record: { ...logRecord('x'), exists: false } });
-  store[LOG_STORAGE_KEY] = [rec(1), rec(2)];
-  await recordCapture(rec(3));
-  assert.equal(writes.at(-1).body, serializeLog([rec(3)]));
-  assert.deepEqual(store[LOG_STORAGE_KEY], [rec(3)]);
+test('a file missing its trailing newline gets one before the new record', async () => {
+  const text = serializeLog([rec(1)]).trimEnd();
+  stubChrome({ record: logRecord(text), fileText: text });
+  await recordCapture(rec(2));
+  assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
 });
 
 // ── stale `DownloadItem.exists` ──────────────────────────────────────
@@ -311,69 +311,48 @@ test('capturing again after deleting log.json starts a fresh log', async () => {
 test('a log.json deleted this session starts fresh, not a failure', async () => {
   // The record still says `exists: true`; only the re-check knows the
   // file is gone.
-  const stored = [rec(1), rec(2)];
-  const store = stubChrome({
-    record: logRecord(serializeLog(stored)),
+  stubChrome({
+    record: logRecord(serializeLog([rec(1), rec(2)])),
     fileText: null,
     existsAfterRecheck: false,
   });
-  store[LOG_STORAGE_KEY] = stored;
 
   await recordCapture(rec(3));
   // Fresh, not append: the deleted log stays deleted and the new one
   // holds only the capture that just happened.
   assert.equal(writes.at(-1).body, serializeLog([rec(3)]));
-  assert.deepEqual(store[LOG_STORAGE_KEY], [rec(3)]);
 });
 
 test('no re-check delta leaves the record trusted', async () => {
   // A failed read with the record standing: fail, since the file is
   // there and we can't see into it.
-  const store = stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
-  store[LOG_STORAGE_KEY] = [rec(1)];
+  stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
   await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
 });
 
 test('a re-check confirming the file fails the same way', async () => {
-  const store = stubChrome({
+  stubChrome({
     record: logRecord(serializeLog([rec(1)])),
     fileText: null,
     existsAfterRecheck: true,
   });
-  store[LOG_STORAGE_KEY] = [rec(1)];
   await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
 });
 
-// ── a file we can read but can't rewrite ─────────────────────────────
+// ── lines that aren't records ────────────────────────────────────────
 
-test('parseLogLines counts what it had to drop, and names the first', () => {
+test('parseLogText skips what it cannot read', () => {
   const good = serializeLog([rec(1)]);
-  assert.deepEqual(parseLogLines(good).skipped, 0);
-  assert.equal(parseLogLines(good).firstBadLine, null);
-  assert.equal(parseLogLines(good).records.length, 1);
-  // Unparseable, and valid-JSON-but-not-a-record. Both are lines a
-  // rewrite would destroy.
-  assert.equal(parseLogLines(`${good}{"broken"\n`).skipped, 1);
-  assert.equal(parseLogLines(`${good}"a string"\n`).skipped, 1);
-  assert.equal(parseLogLines(`${good}[1,2]\n`).skipped, 1);
-  // 1-based, counting blank lines, so it matches an editor's gutter.
-  assert.equal(parseLogLines(`${good}\n{"broken"\n`).firstBadLine, 3);
+  assert.equal(parseLogText(good).length, 1);
+  // Unparseable, and valid-JSON-but-not-a-record. Both are skipped,
+  // by every reader and by the writer's timestamp check alike.
+  assert.equal(parseLogText(`${good}{"broken"\n`).length, 1);
+  assert.equal(parseLogText(`${good}"a string"\n`).length, 1);
+  assert.equal(parseLogText(`${good}[1,2]\n`).length, 1);
 });
 
-test('a log.json with unparseable lines fails instead of dropping them', async () => {
-  // Reading works, so the file would normally be adopted wholesale —
-  // but adopting it means re-serializing it back over itself, which
-  // would delete the line we couldn't parse.
-  const onDisk = `${serializeLog([rec(1)])}{"truncated"\n`;
-  const store = stubChrome({ record: logRecord(onDisk), fileText: onDisk });
-  store[LOG_STORAGE_KEY] = [rec(1)];
-
-  await assert.rejects(recordCapture(rec(2)), (err) => {
-    assert.ok(err instanceof LogWriteFailedError);
-    assert.match(err.message, /isn't a capture record \(line 2\)\. Fix or delete the file/);
-    return true;
-  });
-  // Nothing written and nothing stored — the bad line is still there.
-  assert.equal(writes.length, 0);
-  assert.deepEqual(store[LOG_STORAGE_KEY], [rec(1)]);
+test('appendLogLine adds one terminated line and nothing else', () => {
+  assert.equal(appendLogLine('', 'x'), 'x\n');
+  assert.equal(appendLogLine('a\n', 'x'), 'a\nx\n');
+  assert.equal(appendLogLine('a', 'x'), 'a\nx\n');
 });

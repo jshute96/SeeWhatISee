@@ -10,12 +10,11 @@ import {
   findProviderForTab,
   getAskPin,
 } from '../ask/index.js';
-import { type CaptureRecord } from '../capture/types.js';
 import {
   getCaptureDirectory,
   joinCapturePath,
 } from '../capture/downloads.js';
-import { LOG_STORAGE_KEY } from '../capture/log-store.js';
+import { LAST_CAPTURE_FILES_KEY, type LastCaptureFiles } from '../capture/log-store.js';
 import { getLastCapture } from './last-capture.js';
 import {
   CAPTURE_ACTIONS,
@@ -395,29 +394,30 @@ export async function refreshActionTooltip(): Promise<void> {
 // ───────────────────── More-submenu item helpers ─────────────────────
 
 /**
- * Read the most recent capture record from chrome.storage.local. Used
- * to drive both the Copy-last-… menu enable state and the actual copy
- * action when one is clicked.
+ * The filenames of the most recent capture, from the session note
+ * `recordCapture` leaves. Drives both the Copy-last-… menu enable
+ * state and the actual copy action when one is clicked. `undefined`
+ * before the first capture of this browser session — the entries only
+ * make sense right after a capture, so nothing older is looked up.
  */
-async function getLatestCaptureRecord(): Promise<CaptureRecord | undefined> {
-  const data = await chrome.storage.local.get(LOG_STORAGE_KEY);
-  const log = (data[LOG_STORAGE_KEY] as CaptureRecord[] | undefined) ?? [];
-  return log[log.length - 1];
+async function getLastCaptureFiles(): Promise<LastCaptureFiles | undefined> {
+  const data = await chrome.storage.session.get(LAST_CAPTURE_FILES_KEY);
+  return data[LAST_CAPTURE_FILES_KEY] as LastCaptureFiles | undefined;
 }
 
 /**
- * Toggle `enabled` on the two Copy-last-… menu entries to match the
- * most recent capture record. Called on install/startup, and from a
- * `chrome.storage.onChanged` listener so every capture (and the Clear
- * log history action) refreshes the state without explicit plumbing
- * between capture.ts and background.ts.
+ * Toggle `enabled` on the Copy-last-… menu entries to match the most
+ * recent capture. Called on install/startup, and from a
+ * `chrome.storage.onChanged` listener so every capture refreshes the
+ * state without explicit plumbing between capture.ts and
+ * background.ts.
  *
  * `chrome.contextMenus.update` rejects if the menu isn't installed yet
  * — harmless during the first install pass before the items have been
  * created — so we swallow the error.
  */
 export async function refreshCopyMenuState(): Promise<void> {
-  const r = await getLatestCaptureRecord();
+  const r = await getLastCaptureFiles();
   // Same suppression pattern as the default-setter helpers: updating a
   // not-yet-created menu id throws `No item with id "…"`; harmless
   // during first install before the items exist.
@@ -517,33 +517,32 @@ async function copyToClipboard(text: string): Promise<void> {
 
 // The `if (!r) ...` / `if (!r.screenshot) ...` branches below are
 // defensive — under normal use the menu items are greyed out (so the
-// click can't fire), but the user can still hit a small race window
-// if the log is cleared between the
-// `refreshCopyMenuState` storage callback firing and Chrome rendering
-// the new enabled state. Splitting the two messages keeps the
+// click can't fire), but the note lives in session storage and a
+// browser restart empties it while the menu stays rendered enabled
+// until `onStartup` refreshes it. Splitting the two messages keeps the
 // "ERROR: …" tooltip line legible in either case.
 export async function copyLastScreenshotFilename(): Promise<void> {
-  const r = await getLatestCaptureRecord();
-  if (!r) throw new Error('No captures in the log to copy from');
+  const r = await getLastCaptureFiles();
+  if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.screenshot) throw new Error('Latest capture has no screenshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.screenshot.filename));
+  await copyToClipboard(joinCapturePath(dir, r.screenshot));
 }
 
 export async function copyLastHtmlFilename(): Promise<void> {
-  const r = await getLatestCaptureRecord();
-  if (!r) throw new Error('No captures in the log to copy from');
+  const r = await getLastCaptureFiles();
+  if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.contents.filename));
+  await copyToClipboard(joinCapturePath(dir, r.contents));
 }
 
 export async function copyLastSelectionFilename(): Promise<void> {
-  const r = await getLatestCaptureRecord();
-  if (!r) throw new Error('No captures in the log to copy from');
+  const r = await getLastCaptureFiles();
+  if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.selection) throw new Error('Latest capture has no selection to copy');
   const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.selection.filename));
+  await copyToClipboard(joinCapturePath(dir, r.selection));
 }
 
 /**

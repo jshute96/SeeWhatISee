@@ -17,7 +17,7 @@ import {
   downloadScreenshot,
   downloadSelection,
 } from './capture/downloads.js';
-import { clearCaptureLog, LOG_STORAGE_KEY } from './capture/log-store.js';
+import { LAST_CAPTURE_FILES_KEY } from './capture/log-store.js';
 import {
   captureImageAsScreenshot,
   captureImageToMemory,
@@ -203,12 +203,11 @@ chrome.runtime.onStartup.addListener(() => {
   void refreshLogFileExistence();
 });
 
-// React to capture-log changes so the Copy-last-… menu entries
-// flip enabled state without explicit plumbing from capture.ts.
-// Covers every code path that mutates the log: each capture's
-// `recordCapture`, and `clearCaptureLog` (which removes the key).
+// React to each capture landing so the Copy-last-… menu entries flip
+// enabled state without explicit plumbing from capture.ts:
+// `recordCapture` notes the capture's filenames in session storage.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[LOG_STORAGE_KEY]) {
+  if (area === 'session' && changes[LAST_CAPTURE_FILES_KEY]) {
     void refreshCopyMenuState();
   }
   // Pin entry's title depends on the `askPin` session-storage key:
@@ -450,7 +449,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   restoreLastCapture,
   captureImageAsScreenshot,
   captureImageToMemory,
-  clearCaptureLog,
   openHistoryPage,
   openUploadCapturePage,
   copyLastScreenshotFilename,

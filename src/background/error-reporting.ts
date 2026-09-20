@@ -70,9 +70,10 @@ export function friendlyErrorMessage(err: unknown): string {
     return `${raw} — the selection didn't include anything in this format.`;
   }
 
-  // Copy-last-… entries fired with an empty log.
-  if (raw === 'No captures in the log to copy from') {
-    return "No captures yet. Save a screenshot or HTML first, then try Copy last.";
+  // Copy-last-… entries fired before any capture this browser session
+  // (the filenames they copy live in session storage).
+  if (raw === 'No capture this browser session to copy from') {
+    return 'No captures yet this browser session. Save a screenshot or HTML first, then try Copy last.';
   }
   // The sibling `Latest capture has no <kind> to copy` strings (no
   // screenshot / no HTML snapshot / no selection) read fine on

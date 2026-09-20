@@ -20,7 +20,7 @@
 
 import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { resetCaptureState } from '../fixtures/files';
+import { readCaptureLog, resetCaptureState } from '../fixtures/files';
 import {
   SCREENSHOT_PATTERN,
   installButtonClickSpy,
@@ -158,10 +158,7 @@ test('default click action set to save-screenshot: handleActionClick takes a dir
 
   // The screenshot should have landed via the direct path.
   const sw2 = await getServiceWorker();
-  const stored = await sw2.evaluate(async () => {
-    return await chrome.storage.local.get('captureLog');
-  });
-  const log = (stored.captureLog ?? []) as { screenshot?: { filename: string } }[];
+  const log = (await readCaptureLog(sw2)) as { screenshot?: { filename: string } }[];
   expect(log.length).toBeGreaterThan(0);
   expect(log[log.length - 1].screenshot?.filename).toMatch(SCREENSHOT_PATTERN);
 
@@ -307,10 +304,9 @@ test('setDefaultWithoutSelectionId updates the toolbar tooltip to match', async 
 // Shared setup pattern: each test clears `chrome.storage.local`,
 // pins the two click defaults it cares about, seeds a selection on
 // the opener page via `seedSelection`, and then drives
-// `handleActionClick` from the SW. Assertions read the in-memory
-// log (`chrome.storage.local.get('captureLog')`) rather than
-// log.json — no need for the download-spy setup that the Capture
-// page flow uses, since we only care about what was recorded.
+// `handleActionClick` from the SW. Assertions read `log.json` back
+// (`readCaptureLog`) — no need for the download-spy setup that the
+// Capture page flow uses, since we only care about what was recorded.
 
 type ClickApi = {
   handleActionClick: () => Promise<void>;
@@ -377,8 +373,7 @@ type LogRecord = {
 };
 
 async function latestLogRecord(sw: Worker): Promise<LogRecord | undefined> {
-  const stored = await sw.evaluate(() => chrome.storage.local.get('captureLog'));
-  const log = (stored.captureLog ?? []) as LogRecord[];
+  const log = (await readCaptureLog(sw)) as LogRecord[];
   return log[log.length - 1];
 }
 
@@ -1109,12 +1104,12 @@ test('getDefaultWithSelectionId: migrates legacy action ids to the current names
 
 // ─── copyLastSelectionFilename ───────────────────────────────────
 
-test('copyLastSelectionFilename: throws when no capture in the log', async ({
+test('copyLastSelectionFilename: throws when nothing was captured this session', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
   const err = await sw.evaluate(async () => {
-    await chrome.storage.local.clear();
+    await chrome.storage.session.remove('lastCaptureFiles');
     try {
       await (
         self as unknown as {
@@ -1126,7 +1121,7 @@ test('copyLastSelectionFilename: throws when no capture in the log', async ({
       return e instanceof Error ? e.message : String(e);
     }
   });
-  expect(err).toBe('No captures in the log to copy from');
+  expect(err).toBe('No capture this browser session to copy from');
 });
 
 test('copyLastSelectionFilename: throws when latest record has no selection', async ({
@@ -1134,16 +1129,13 @@ test('copyLastSelectionFilename: throws when latest record has no selection', as
 }) => {
   const sw = await getServiceWorker();
   const err = await sw.evaluate(async () => {
-    await chrome.storage.local.clear();
-    // Seed a screenshot-only record — the latest has no selection.
-    await chrome.storage.local.set({
-      captureLog: [
-        {
-          timestamp: '2026-04-21T12:00:00.000Z',
-          url: 'https://example.test/',
-          screenshot: { filename: 'screenshot-20260421-120000-000.png' },
-        },
-      ],
+    // Seed a screenshot-only last capture — it has no selection. The
+    // Copy-last-… entries read the session note, not the log.
+    await chrome.storage.session.set({
+      lastCaptureFiles: {
+        timestamp: '2026-04-21T12:00:00.000Z',
+        screenshot: 'screenshot-20260421-120000-000.png',
+      },
     });
     try {
       await (
@@ -1175,15 +1167,11 @@ test('copyLastSelectionFilename: forwards the selection filename to the offscree
   const sw = await getServiceWorker();
   try {
     const forwarded = await sw.evaluate(async () => {
-      await chrome.storage.local.clear();
-      await chrome.storage.local.set({
-        captureLog: [
-          {
-            timestamp: '2026-04-21T12:00:00.000Z',
-            url: 'https://example.test/',
-            selection: { filename: 'selection-20260421-120000-000.md', format: 'markdown' },
-          },
-        ],
+      await chrome.storage.session.set({
+        lastCaptureFiles: {
+          timestamp: '2026-04-21T12:00:00.000Z',
+          selection: 'selection-20260421-120000-000.md',
+        },
       });
 
       interface Spy {

@@ -12,6 +12,7 @@
 import { type Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { openDetailsFlow } from './details-helpers';
+import { resetCaptureState, seedCaptureLog } from '../fixtures/files';
 
 interface GateApi {
   runWithErrorReporting: (fn: () => Promise<unknown>) => Promise<void>;
@@ -126,9 +127,9 @@ test('the History page shows the file-access dialog and loads nothing', async ({
   // History button opens the page directly — so the page has to
   // enforce the toggle itself.
   const sw = await getServiceWorker();
-  await sw.evaluate(() => chrome.storage.local.set({ captureLog: [
+  await seedCaptureLog(sw, [
     { timestamp: '2026-01-02T03:04:05.000Z', url: 'https://example.com/a', title: 'A' },
-  ] }));
+  ]);
   const page = await extensionContext.newPage();
   await blockFileAccess(page);
   await page.goto(`chrome-extension://${extensionId}/history.html`);
@@ -137,7 +138,7 @@ test('the History page shows the file-access dialog and loads nothing', async ({
   // rendered and the count line stays empty.
   await expect(page.locator('#rows tr')).toHaveCount(0);
   await expect(page.locator('#count')).toBeEmpty();
-  await sw.evaluate(() => chrome.storage.local.remove('captureLog'));
+  await resetCaptureState(sw);
 });
 
 test('no dialog with the toggle on', async ({ extensionContext, extensionId }) => {

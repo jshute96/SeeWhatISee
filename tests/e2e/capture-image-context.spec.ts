@@ -36,7 +36,7 @@ import {
   seedSelection,
   SCREENSHOT_PATTERN,
 } from './details-helpers';
-import { waitForDownloadPath, resetCaptureState } from '../fixtures/files';
+import { readCaptureLog, waitForDownloadPath, resetCaptureState } from '../fixtures/files';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RED_PIXEL_PATH = path.resolve(__dirname, '../fixtures/pages/red-pixel.png');
@@ -415,7 +415,7 @@ test('image flow: fetch failure on a 404 image URL throws + writes no record', a
   await openerPage.bringToFront();
 
   const sw = await getServiceWorker();
-  const { errorMessage, recordCount } = await sw.evaluate(async (badUrl) => {
+  const { errorMessage } = await sw.evaluate(async (badUrl) => {
     const [active] = await chrome.tabs.query({
       active: true,
       lastFocusedWindow: true,
@@ -436,10 +436,9 @@ test('image flow: fetch failure on a 404 image URL throws + writes no record', a
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
-    const data = await chrome.storage.local.get('captureLog');
-    const log = (data.captureLog as unknown[] | undefined) ?? [];
-    return { errorMessage, recordCount: log.length };
+    return { errorMessage };
   }, `${fixtureServer.baseUrl}/definitely-not-a-real-image.png`);
+  const recordCount = (await readCaptureLog(sw)).length;
 
   // The image fetch reported an error envelope from the page; the SW
   // re-throws so the toolbar error channel surfaces it.

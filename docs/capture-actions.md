@@ -333,12 +333,13 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
     resort; see `log-consistency.md`). The separator (`/` vs `\`)
     reuses whatever `getCaptureDirectory` returned so the result
     is OS-native and paste-ready in a shell or file manager.
-  - Each entry is greyed out (`enabled: false`) when the most
-    recent record in `chrome.storage.local` doesn't carry the
-    matching field. A storage `onChanged` listener on
-    `LOG_STORAGE_KEY` keeps the enable state in sync after every
-    capture and whenever the log empties (no plumbing from
-    `capture.ts` to `background.ts`).
+  - Each entry is greyed out (`enabled: false`) when the last
+    capture of this browser session didn't write the matching file
+    — read from the `lastCaptureFiles` note in
+    `chrome.storage.session`, not from the log. A storage
+    `onChanged` listener on that key keeps the enable state in sync
+    after every capture (no plumbing from `capture.ts` to
+    `background.ts`).
   - Clipboard write goes through an offscreen document
     (`offscreen.html` + `offscreen.ts`) because MV3 service
     workers can't access `navigator.clipboard`. The document is
@@ -379,13 +380,9 @@ the menu back to Chrome's `ACTION_MENU_TOP_LEVEL_LIMIT`.
 This submenu used to end with a **Clear log history** entry, removed
 when `log.json` on disk became the authoritative capture log:
 
-- Clearing the browser's cached copy would simply be undone by the
-  next capture, and deleting the user's files isn't something the
-  extension does.
+- Deleting the user's files isn't something the extension does.
 - Deleting `log.json` is what clears the log for now; a real
-  delete-the-files feature is still to come.
-- `SeeWhatISee.clearCaptureLog()` remains on the devtools console
-  object, and now empties the cached copy only. See
+  delete-the-files feature is still to come. See
   [log-consistency.md](log-consistency.md).
 
 ### Top-level item cap

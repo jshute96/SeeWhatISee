@@ -1,7 +1,7 @@
-# Log consistency: disk vs. browser storage
+# Log consistency: the file is the log
 
-**Status: implemented.** `src/capture/log-reconcile.ts` owns the state
-machine below; `recordCapture` in `log-store.ts` acts on it.
+**Status: implemented.** `src/capture/log-reconcile.ts` finds and
+reads the file; `recordCapture` in `log-store.ts` writes it.
 
 ## Why it changed
 
@@ -19,57 +19,59 @@ The previous model made `chrome.storage.local` authoritative and
   screenshot / HTML file behind, so "clear" didn't clear — and the
   next capture refilled `log.json` anyway.
 
-## The two copies
+There is no browser copy any more. What survives in extension storage
+is bookkeeping, not records: the cached capture directory, the pinned
+history-file names, and a session note of the last capture's
+filenames.
 
-Naming them once, because the rest of this doc leans on the
-distinction:
+## The files
 
-- **The files** — `log.json` and the **history files** beside it, in
-  the user's capture directory. These *are* the capture log.
-  - A history file is named `history-<timestamp>.json` for the moment
-    it was written — not for any record inside it — and holds a batch
-    of older records that no longer fit in `log.json`. They
-    accumulate; nothing rewrites one once it's written, with one
-    deliberate exception: a retried flush overwrites the file its
-    abandoned attempt left behind (see
-    [architecture.md → History files](architecture.md#history-files)).
-- **The browser copy** — the same records cached in
-  `chrome.storage.local`. It exists because an extension can only
-  write whole files, never append to one, and because the History
-  page and the Copy-last-filename actions want the recent records
-  without a file read.
+- **`log.json`** — the capture log: one JSON record per line, newest
+  last, in the user's capture directory.
+- **The history files** beside it. A history file is named
+  `history-<timestamp>.json` for the moment it was written — not for
+  any record inside it — and holds a batch of older records that no
+  longer fit in `log.json`. They accumulate; nothing rewrites one once
+  it's written, with one deliberate exception: a retried flush
+  overwrites the file its abandoned attempt left behind (see
+  [architecture.md → History files](architecture.md#history-files)).
+- **The session note** (`lastCaptureFiles` in `chrome.storage.session`)
+  — the filenames of the most recent capture, written after its
+  record lands. It is what the toolbar's Copy-last-… entries copy,
+  and (via `storage.onChanged`) how an open History page learns a
+  capture landed. Not a copy of any record.
 
 ## Principles
 
-**1. The files are the log. The browser copy is only a cache.**
-Where they disagree, the files win, and the cache is rebuilt from
-them.
+**1. The file is the log, and the only copy of it.** Every reader —
+the History page, the Python script, the MCP server — reads the file,
+and every capture reads it back before writing it.
 
 **2. A capture only ever *adds*.** All a capture does to the files is
-put one more record into them. It never rewrites or removes a record
-that is already there.
+put one more line on the end. It never rewrites or removes a line
+that is already there — not even one that isn't a record.
 
 - The one rearrangement allowed: once `log.json` grows past its cap,
   the oldest records move into a history file beside it. They are
   still on disk, in the same directory, and the History page and
-  `SeeWhatISee.py` read both.
+  `SeeWhatISee.py` read both. That rewrite keeps records only; lines
+  that aren't records are dropped, as every reader has been dropping
+  them.
 
 **3. What the user does to the files always wins.** Deleting
 `log.json`, deleting the whole capture directory, deleting rows out of
 the file, editing rows — none of it is ever undone, and records
 removed that way never come back.
 
-- Deleting `log.json` therefore *starts a new log*. It doesn't get
-  refilled from the browser copy.
+- Deleting `log.json` therefore *starts a new log*.
 - Honoring an edit means reading the file, which is why "Allow
   access to file URLs" is required
   (`docs/chrome-extension.md` → "Allow access to file URLs" is
   required). Without it there is no way to see inside a file.
 
-**4. When we can't tell what's in the files, we don't write them.**
-The capture fails with a message saying what to fix — its screenshot /
-HTML are already saved, but its record is not logged. We never
-overwrite a file whose contents we couldn't account for.
+**4. When we can't read the file, we don't write it.** The capture
+fails with a message saying what to fix — its screenshot / HTML are
+already saved, but its record is not logged.
 
 **5. Nothing here deletes the user's files.** Not `log.json`, not the
 history files, not a capture's own screenshot or HTML. Deleting capture
@@ -105,17 +107,14 @@ is what a read is keyed on.
 
 ## Write ordering
 
-A capture writes any history files first, then `log.json`, then
-updates the browser copy — each step only after the one before it has
-landed.
+A capture writes any history files first, then `log.json`, then the
+session note — each step only after the one before it has landed.
 
 - The service worker can be killed between any two steps, so the order
-  decides what a half-finished capture leaves behind. **The file
-  running ahead of the browser copy is the recoverable direction**:
-  the next capture reads the file and the copy catches up. The
-  reverse — a record in the browser that reached no file — is what
-  the ordering avoids; a write Chrome can't finish fails the capture
-  instead (below).
+  decides what a half-finished capture leaves behind: a history file
+  with no matching trim is retried by the next capture (see the pinned
+  names), and the note is only ever written for a record that reached
+  the file.
 - **Every write is awaited to *completion*, not merely to the download
   starting.** `chrome.downloads.download` resolves the moment the write
   begins, so without the wait the ordering would be nominal only.
@@ -128,9 +127,6 @@ landed.
 - **A `log.json` write that doesn't land fails the capture**
   (`LogWriteFailedError`, message naming the file and Chrome's error
   code).
-  - Storage is left alone: the file doesn't hold the record, so the
-    browser copy mustn't either — the next capture reads the file
-    back and would drop it anyway.
   - The record is dropped with the error; the capture's files stay on
     disk, unreferenced. Reported on the usual failure surfaces (the
     Capture page's status line, or the error page).
@@ -250,32 +246,37 @@ Then the read decides everything:
 
 | Reading the file | What it means | Action |
 |---|---|---|
-| Succeeds, every line parses | This is the log | Take its records, add this capture, write |
-| Succeeds, some line doesn't parse | We can read it but can't rewrite it | **Don't write — fail, naming the line** |
+| Succeeds | This is the log | Append this capture's line to it and write |
 | Fails, and the download record says the file is gone (or there is no record) | The user deleted it | Start a new log from this capture |
 | Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — fail** |
 
-Taking the file's contents wholesale — rather than merging them with
-the browser copy — is the whole point: a row the user deleted from
-`log.json` stays deleted, and an edited row stays edited.
+### The append is verbatim
 
-**A line we can't parse fails the write**, because adopting the file
-means re-serializing it back over itself.
+The steady-state write is the file's text as read, plus one line
+(`appendLogLine`, `log-store.ts`). Nothing already there is
+re-serialized.
 
-- A *reader* can skip a bad line and lose nothing — the History page
-  does exactly that, and the row is merely absent from the table.
-- The reconcile is a writer. Skipping the line and writing the rest
-  deletes it from the user's file for good, which principle 4 forbids:
-  we couldn't account for it, so we don't write.
-- `parseLogLines` is the counting variant behind it, and names the
-  first bad line (1-based, blank lines counted, so it matches an
-  editor's gutter); `parseLogText` stays lenient for the display
-  paths.
+- A hand-edited row keeps its edit *and* its formatting.
+- A line that isn't a record — a truncated write, a stray paste — is
+  left where it is. Every reader skips such lines (`parseLogText`,
+  the Python script, the MCP server), so nothing is lost by carrying
+  one, and nothing is gained by refusing to write around it.
+- The file's records are parsed only to keep the new timestamp unique
+  and to count them against the cap.
+- A file missing its trailing newline gets one, so the new record
+  can't run onto the previous line.
+
+The one write that does re-serialize `log.json` is a flush (records
+moving to a history file), which has to drop lines from it anyway;
+non-record lines go with them.
+
+- A flush that was due but landed no history file takes the verbatim
+  path instead — nothing left the log, so nothing needs rewriting.
 
 ## Reporting the failure
 
-When the check above can't account for `log.json` — or Chrome can't
-finish writing it — the capture **fails right there** with
+When `log.json` can't be read — or Chrome can't finish writing it —
+the capture **fails right there** with
 `LogWriteFailedError`, a point-in-time failure like any other.
 
 - Its screenshot / HTML are already on disk; the record is dropped.
@@ -285,8 +286,6 @@ finish writing it — the capture **fails right there** with
   resolves outside the extension:
   - *couldn't read log.json. Fix or delete the file, then capture
     again.*
-  - *log.json has a line that isn't a capture record (line N). Fix or
-    delete the file, then capture again.*
   - *couldn't write log.json: download failed (FILE_FAILED).*
   - *couldn't find the capture directory.*
 - Where it shows is where any capture failure shows: the Capture
@@ -329,13 +328,13 @@ finish writing it — the capture **fails right there** with
   `file://` — the same index the History page uses — so a history
   file Chrome has no download record for is still seen.
 - **The toolbar's More submenu used to carry a *Clear log history*
-  entry**, which wiped the browser copy and truncated `log.json` to
-  zero bytes. It was removed with this change: under principle 1 that
-  only clears a cache, and under principle 5 it isn't ours to do.
-  Deleting `log.json` is the gesture that clears the log until a
-  delete-the-files feature exists. `clearCaptureLog()` survives for
-  tests and the service-worker console, and now empties the browser
-  copy only.
+  entry**, which truncated `log.json` to zero bytes. It was removed:
+  under principle 5 it isn't ours to do. Deleting `log.json` is the
+  gesture that clears the log until a delete-the-files feature exists.
+- **The Copy-last-… menu entries** read the session note, not the log:
+  the entries only make sense right after a capture, so the note
+  needn't outlive the browser session, and the log needn't be parsed
+  for them.
 
 ## Where the principles bend
 
@@ -365,8 +364,7 @@ here or it belongs fixed.
   with the record gone (download history cleared) there is nothing to
   ask, and the read failure reads as a deleted file — the capture
   starts a fresh log over one that may still be there. Needs both a
-  cleared download history and a file that exists but can't be read;
-  the History page would show the same file as unreadable.
+  cleared download history and a file that exists but can't be read.
 - **A capture directory that isn't ours.** Pointing Chrome's download
   directory somewhere that already contains a `SeeWhatISee/log.json`
   written by another profile or a script reads as *the* log: its
@@ -377,9 +375,9 @@ here or it belongs fixed.
 
 - **A failed log write is a capture outside the log.** The capture
   fails with the reason, and the record is stored nowhere — its files
-  stay on disk, unreferenced. Rare for a write Chrome can't finish
-  (a tiny local `data:` download); otherwise it takes a hand-broken
-  file.
+  stay on disk, unreferenced. Rare: a write Chrome can't finish (a
+  tiny local `data:` download), or a file that exists but can't be
+  read.
 - **Duplicate records in a history file.** A service worker killed
   after a flush batch lands but before `log.json` is rewritten
   leaves the batch both in the new history file and still in the log;
@@ -399,13 +397,11 @@ here or it belongs fixed.
   disk and the History page still reads them, so the older history is
   still there — deleting the whole directory is what clears
   everything. The History page shows the deletion immediately: it
-  opens from the file itself, not the browser copy — see
-  `docs/history-page.md` → Data source.
-- Deleting `log.json` also drops whatever the browser copy still held
-  that the file had. Correct: those records were in the file the user
-  deleted.
+  reads the file — see `docs/history-page.md` → Data source.
 - Deleting individual rows sticks — they are not brought back. Edits
-  to rows stick the same way.
+  to rows stick the same way, formatting included.
+- A line that isn't a record stays in `log.json` until the next flush
+  carries it away; nothing displays it.
 - Clearing Chrome's download history changes nothing: the cached
   directory still says where to read, and the file is what's read.
 
@@ -419,16 +415,17 @@ here or it belongs fixed.
     returns the old value and fires the `onChanged` delta afterwards.
     That's what makes "a log deleted this session starts fresh, not a
     failure" a real test rather than a restatement of the code.
-  - The unparseable-line failure and `parseLogLines`' line numbering
-    are covered here too.
+  - The verbatim append — an edited line and a non-record line kept
+    byte for byte, a missing terminator supplied — is covered here
+    too.
 - `tests/unit/log-history-files.test.mjs` covers the failed `log.json`
-  write: the capture rejects with `LogWriteFailedError`, storage is
-  untouched, and the flushed batch's pinned name survives for the
+  write: the capture rejects with `LogWriteFailedError`, no session
+  note is left, and the flushed batch's pinned name survives for the
   retry.
 - `tests/e2e/screenshot.spec.ts` covers the two headline behaviors
   end-to-end: deleting `log.json` starts a fresh log instead of
-  bringing the old records back, and a browser copy that has lost its
-  contents is rebuilt from the file rather than truncating it.
+  bringing the old records back, and a capture appends to a
+  hand-edited file without rewriting what's there.
 - **The e2e harness had to change for any of this to be testable.**
   Playwright renames every download to a UUID under its artifacts
   directory, so the extension's path-based lookups — capture
@@ -437,13 +434,13 @@ here or it belongs fixed.
   in the profile's Preferences and sends `Browser.setDownloadBehavior
   { behavior: 'default' }` over CDP after launch, so files land under
   their real names in a per-worker temp directory.
-- `resetCaptureState` (`tests/fixtures/files.ts`) replaces the bare
-  `chrome.storage.local.clear()` tests used to open with: a storage
-  wipe alone is no longer a clean slate, because the download record
-  outlives it and the next capture reconciles against the file it
-  names.
+- `resetCaptureState` (`tests/fixtures/files.ts`) deletes the capture
+  files and their download records as well as extension storage:
+  the file is the log, so a storage wipe alone clears nothing.
+  `seedCaptureLog` / `seedCaptureLogText` write a `log.json` for a
+  test to start from, and `readCaptureLog` reads it back.
 - **Not covered end-to-end:** the failure messages on a real page.
-  Reaching them means engineering a state the reconcile can't account
-  for, which the harness's real download directory makes awkward. The
+  Reaching them means making `log.json` unreadable or unwritable,
+  which the harness's real download directory makes awkward. The
   decisions and messages are unit-tested; the surfaces are the same
   ones every other capture failure uses.

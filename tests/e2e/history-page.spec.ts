@@ -1,29 +1,19 @@
 // Tests for the History page (`history.html` / `history.ts`) — the
 // table view over the capture log.
 //
-// The page opens from `log.json` when it can, but with no capture
-// directory to resolve (see the reset below) it falls back to reading
-// the `captureLog` cache in `chrome.storage.local` directly (no SW
-// round-trip) — so the tests seed synthetic records through the
-// service worker rather than running real captures. That keeps them fast and lets us cover the
-// mixed shapes a real log holds — screenshot-only, HTML+selection,
-// missing URL/title, long prompt — without orchestrating one capture
-// per case.
+// The page reads `log.json` itself, so most tests here seed a
+// synthetic log file through `seedCaptureLog` rather than running real
+// captures. That keeps them fast and lets us cover the mixed shapes a
+// real log holds — screenshot-only, HTML+selection, missing URL/title,
+// long prompt — without orchestrating one capture per case.
 //
-// Not covered here: anything that needs real files on disk. These
-// tests seed the log directly and never run a capture, so there is no
-// cached directory or download record for `peekCaptureDirectory()` to
-// resolve against —
-// the page falls back from reading `log.json` to the seeded storage
-// cache (the disk-first open is covered by `log-history-files.spec.ts`),
-// and every file-backed cell renders its no-directory fallback (bare
-// filename / unlinked label), which is what these tests assert. For
-// the same reason `chrome.downloads` knows nothing about the seeded
-// filenames, so the `(deleted)` markers never fire.
+// The seeded filenames name no real files, so thumbnails fall back to
+// the filename and `chrome.downloads` knows nothing about them (the
+// `(deleted)` markers never fire). Anything that needs real files on
+// disk runs a real capture instead.
 //
-// *Load older captures* with something to load is out of reach for the
-// same reason: with no capture there is no directory for
-// `listHistoryFiles()` to read. Both the flushing and loading the flushed file back are
+// *Load older captures* with something to load is out of reach here:
+// no history file is ever seeded. Both the flushing and loading the flushed file back are
 // covered by `log-history-files.spec.ts` (which does run a capture)
 // and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
 // control hidden, and the plain empty-log notice — is covered below.
@@ -31,7 +21,7 @@
 import { stat } from 'node:fs/promises';
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { resetCaptureState } from '../fixtures/files';
+import { readCaptureLog, resetCaptureState, seedCaptureLog } from '../fixtures/files';
 import {
   configureAndCapture,
   dragRect,
@@ -75,11 +65,16 @@ const SEED: SeededRecord[] = [
   },
 ];
 
+/**
+ * Seed `log.json` and leave the session note a real capture would,
+ * which is what an open History page re-reads on. The note's
+ * timestamp only has to differ from the last one.
+ */
 async function seedLog(sw: Worker, records: SeededRecord[]): Promise<void> {
-  await sw.evaluate(
-    (recs) => chrome.storage.local.set({ captureLog: recs }),
-    records,
-  );
+  await seedCaptureLog(sw, records as unknown as Record<string, unknown>[]);
+  await sw.evaluate(() => chrome.storage.session.set({
+    lastCaptureFiles: { timestamp: new Date().toISOString() },
+  }));
 }
 
 async function openHistory(page: Page, extensionId: string): Promise<void> {
@@ -89,19 +84,11 @@ async function openHistory(page: Page, extensionId: string): Promise<void> {
   await expect(page.locator('#count')).not.toBeEmpty();
 }
 
-// A full reset, not just the log key: the worker's profile is shared
-// across spec files, and leftover downloads from one that captures
-// for real (`log-history-files.spec.ts`) would give
-// `peekCaptureDirectory()` a directory to resolve — flipping these
-// tests from the seeded cache they assert against to whatever
-// `log.json` is (or isn't) on disk.
+// A full reset: the worker's profile is shared across spec files, and
+// leftover files from one that captures for real would show up in the
+// log these tests seed.
 test.beforeEach(async ({ getServiceWorker }) => {
   await resetCaptureState(await getServiceWorker());
-});
-
-test.afterEach(async ({ getServiceWorker }) => {
-  const sw = await getServiceWorker();
-  await sw.evaluate(() => chrome.storage.local.remove('captureLog'));
 });
 
 test('renders the log newest-first with per-column fallbacks', async ({
@@ -120,9 +107,9 @@ test('renders the log newest-first with per-column fallbacks', async ({
   await expect(page.locator('#count')).toHaveText('3 captures');
 
   // The noun agrees with the count it follows.
-  await sw.evaluate(() => chrome.storage.local.set({ captureLog: [
+  await seedLog(sw, [
     { timestamp: '2026-01-02T03:04:05.000Z', url: 'https://example.com/solo', title: 'Solo' },
-  ] }));
+  ]);
   await expect(page.locator('#count')).toHaveText('1 capture');
   await seedLog(sw, SEED);
   await expect(page.locator('#count')).toHaveText('3 captures');
@@ -133,11 +120,9 @@ test('renders the log newest-first with per-column fallbacks', async ({
   await expect(rows.nth(2).locator('.page-cell .title')).toHaveText('Alpha page');
 
   // Row 0 has a screenshot but no URL/title → Page cell falls back to N/A.
-  // The screenshot cell names the file: this harness has never run a
-  // real capture, so there's no `log.json` download record to derive
-  // the capture directory from and the cell degrades from a thumbnail
-  // to the bare filename (same path a user hits before their first
-  // capture).
+  // The screenshot cell names the file: the seeded filename points
+  // at nothing on disk, so the thumbnail fails to load and the cell
+  // degrades to the bare filename inside its link.
   await expect(rows.nth(0).locator('.shot-cell')).toHaveText(
     'screenshot-20260104-030405-000.png',
   );
@@ -208,7 +193,6 @@ test('shows the empty state with no log, and picks up a later capture', async ({
   getServiceWorker,
 }) => {
   const sw = await getServiceWorker();
-  await sw.evaluate(() => chrome.storage.local.remove('captureLog'));
 
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/history.html`);
@@ -497,13 +481,6 @@ test('the Snapshots directory tooltip explains the disabled state', async ({
   await page.close();
 });
 
-// The enabled case needs a resolvable capture directory, which this
-// harness can't produce even from a real capture: Playwright rewrites
-// every download into its own artifacts directory, so the `log.json`
-// record's path doesn't end in `SeeWhatISee/log.json` and
-// `peekCaptureDirectory()`'s directory search never matches it (see
-// the file header). So this covers the button's presence, its place at the
-// end of the toolbar row, and the no-directory state.
 test('the Snapshots directory button sits at the end of the toolbar', async ({
   extensionContext,
   extensionId,
@@ -514,9 +491,13 @@ test('the Snapshots directory button sits at the end of the toolbar', async ({
   const page = await extensionContext.newPage();
   await openHistory(page, extensionId);
 
+  // Seeding wrote a real `log.json`, so the capture directory resolves
+  // and the button is live, with the path in its tooltip.
   const btn = page.locator('#snapshots-dir');
   await expect(btn).toHaveText('Snapshots directory');
-  await expect(btn).toBeDisabled();
+  await expect(btn).toBeEnabled();
+  await expect(page.locator('#snapshots-dir-wrap'))
+    .toHaveAttribute('title', /SeeWhatISee/);
 
   const toolbar = await page.locator('.toolbar').boundingBox();
   const box = await btn.boundingBox();
@@ -625,19 +606,14 @@ test('the Restore button lands on the restorable row, not the newest', async ({
   // entry produces: a log record with no Capture-page session behind
   // it, so nothing promoted and it can't be the restorable one.
   const sw = await getServiceWorker();
-  const log = await sw.evaluate(async () => {
-    const data = await chrome.storage.local.get('captureLog');
-    return (data.captureLog ?? []) as unknown[];
-  });
+  const log = await readCaptureLog(sw);
   expect(log).toHaveLength(1);
-  await sw.evaluate((existing) => chrome.storage.local.set({
-    captureLog: [...existing, {
-      timestamp: '2026-06-07T08:09:10.000Z',
-      screenshot: { filename: 'screenshot-20260607-080910-000.png' },
-      url: 'https://example.com/newer',
-      title: 'Newer quick capture',
-    }],
-  }), log);
+  await seedLog(sw, [...(log as unknown as SeededRecord[]), {
+    timestamp: '2026-06-07T08:09:10.000Z',
+    screenshot: { filename: 'screenshot-20260607-080910-000.png' },
+    url: 'https://example.com/newer',
+    title: 'Newer quick capture',
+  }]);
 
   // Newest first, so the quick capture leads — and the button stays
   // put on the row below it rather than following the top of the table.
@@ -713,10 +689,9 @@ test('Reopen re-opens an older capture from its saved files', async ({
   await expect(rows.nth(0).locator('.date-cell .reopen-btn')).toHaveText('Reopen');
 
   // The record we're about to reopen, so we can compare against it.
-  const before = await sw.evaluate(async () => {
-    const data = await chrome.storage.local.get('captureLog');
-    return (data.captureLog ?? []) as { timestamp: string; screenshot?: { filename: string } }[];
-  });
+  const before = (await readCaptureLog(sw)) as {
+    timestamp: string; screenshot?: { filename: string };
+  }[];
   expect(before).toHaveLength(1);
 
   const reopened = extensionContext.waitForEvent('page', {
@@ -769,14 +744,11 @@ test('Reopen keeps the baked-in flags and reuses files until they are edited', a
   });
 
   const sw = await getServiceWorker();
-  const readLog = () => sw.evaluate(async () => {
-    const data = await chrome.storage.local.get('captureLog');
-    return (data.captureLog ?? []) as {
-      timestamp: string;
-      prompt?: string;
-      screenshot?: { filename: string; hasHighlights?: true };
-    }[];
-  });
+  const readLog = async () => (await readCaptureLog(sw)) as {
+    timestamp: string;
+    prompt?: string;
+    screenshot?: { filename: string; hasHighlights?: true };
+  }[];
   const original = (await readLog())[0];
   expect(original.screenshot?.hasHighlights).toBe(true);
   const fileSize = async (name: string): Promise<number> => {

@@ -246,7 +246,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
-| `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
+| `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the `history-*.json` files older records move into, and the last-capture session note |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; `LogWriteFailedError` |
 | `src/capture/file-access.ts` | The required "Allow access to file URLs" toggle — `requireFileAccess` gate, its error, and the settings-page opener |
 | `src/capture/file-access-dialog.ts` | The "file access required" dialog the Capture and History pages open when the toggle is off |
@@ -299,7 +299,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/manual/mouse-wheel-zoom-lab.html` | Manual page for tuning wheel / pinch zoom on real hardware — logs raw wheel events, runs candidate heuristics side by side |
 | `tests/fixtures/extension.ts` | Playwright fixtures: persistent Chromium context (real temp download dir, so capture paths resolve), fixture HTTP server, `getServiceWorker()`, auto hooks |
 | `tests/fixtures/capture-quota.ts` | Smart pre-test wait + auto-retry for `chrome.tabs.captureVisibleTab`'s 2/sec quota; replaces the unconditional 600ms sleep |
-| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying captures against `log.json`, and seeding / resetting the capture log |
+| `tests/fixtures/files.ts` | Test helpers for resolving downloads, sampling PNG pixels, verifying captures against `log.json`, and seeding / reading / resetting the capture log |
 | `tests/fixtures/pages/{purple,green,orange}.html` | Solid-color fixture pages used for pixel-verifiable screenshot tests |
 | `tests/fixtures/pages/gradient.html` | Multi-stop linear-gradient page — used by the large-screenshot-recompress e2e to produce a capture where JPEG clearly beats PNG |
 | `tests/fixtures/pages/shrink-target.html` | Grey page with a single centered black 50%×50% block — deterministic content for the Shrink e2e tests |
@@ -388,7 +388,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback, probe last resort |
 | `tests/unit/list-history-files.test.mjs` | Unit tests for `listHistoryFiles` — parsing Chrome's `file://` directory listing for `history-*.json` names |
-| `tests/unit/log-reconcile.test.mjs` | Unit tests for the disk-vs-storage reconcile decisions, the directory probe, the stale-`exists` re-check, and the failure messages |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, the directory probe, the stale-`exists` re-check, the verbatim append, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |

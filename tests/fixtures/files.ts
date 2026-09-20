@@ -139,9 +139,9 @@ export async function verifyHtmlCapture(
     ...(result.title ? { title: result.title } : {}),
   };
 
-  const logLines = fs.readFileSync(logPath, 'utf8').split('\n');
-  expect(logLines[logLines.length - 1]).toBe('');
-  const logRecords: CaptureRecord[] = logLines.slice(0, -1).map((l) => JSON.parse(l));
+  const logText = fs.readFileSync(logPath, 'utf8');
+  expect(logText.endsWith('\n')).toBe(true);
+  const logRecords = parseLogFileText(logText) as unknown as CaptureRecord[];
   expect(logRecords[logRecords.length - 1]).toEqual(expectedRecord);
 
   if (prevLogRecords !== undefined) {
@@ -206,11 +206,9 @@ export async function verifyCapture(
   };
 
   // log.json: NDJSON. Always check the trailing newline + last record.
-  // The .split('\n') of a file ending in '\n' has '' as its last
-  // element; everything before that is the actual records.
-  const logLines = fs.readFileSync(logPath, 'utf8').split('\n');
-  expect(logLines[logLines.length - 1]).toBe('');
-  const logRecords: CaptureRecord[] = logLines.slice(0, -1).map((l) => JSON.parse(l));
+  const logText = fs.readFileSync(logPath, 'utf8');
+  expect(logText.endsWith('\n')).toBe(true);
+  const logRecords = parseLogFileText(logText) as unknown as CaptureRecord[];
   expect(logRecords[logRecords.length - 1]).toEqual(expectedRecord);
 
   if (prevLogRecords !== undefined) {
@@ -223,16 +221,12 @@ export async function verifyCapture(
 
 /**
  * Put the extension back to a genuine clean slate: no capture files on
- * disk, no download records of them, and no capture log in storage.
+ * disk, no download records of them, and none of the log's storage
+ * (the cached capture directory, the pinned history-file names, the
+ * last-capture note).
  *
- * Clearing `chrome.storage.local` alone is *not* a clean slate any
- * more. The log on disk is authoritative, so the next capture would
- * find a `log.json` that disagrees with an empty buffer, decline to
- * overwrite it, and ask the user what to do (see
- * `docs/log-consistency.md`) — the download record outlives the
- * storage wipe and is exactly what the reconcile consults.
- *
- * Erasing the records as well as the files also keeps this
+ * The log is the file, so the files and their download records are
+ * what matter. Erasing the records as well as the files keeps this
  * deterministic: `DownloadItem.exists` only refreshes on a delayed
  * re-check, so a test that deleted the file but left the record would
  * race that round-trip. No record at all has no such lag.
@@ -258,42 +252,83 @@ export async function resetCaptureState(sw: Worker): Promise<void> {
       } catch { /* already erased */ }
     }
     await chrome.storage.local.clear();
+    // Only the log's own note. The rest of session storage — the
+    // Capture-page sessions, `lastCapture`, the annotation clipboard —
+    // belongs to flows a test may be in the middle of.
+    await chrome.storage.session.remove('lastCaptureFiles');
   });
 }
 
 /**
- * Seed a capture log that the extension will actually believe: both
- * the `chrome.storage.local` buffer *and* `log.json` on disk.
+ * The records in a log file's text, oldest first. Lines that aren't
+ * records are skipped, as every reader (and the extension's own
+ * append) skips them — so a test that seeds a junk line doesn't trip
+ * the next one's assertions.
+ */
+export function parseLogFileText(text: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // Not a record; skipped like every reader does.
+    }
+  }
+  return out;
+}
+
+/**
+ * The records in `log.json` on disk, oldest first, or `[]` when there
+ * is no log — read the way the extension reads it, via the download
+ * record's path.
+ */
+export async function readCaptureLog(sw: Worker): Promise<Record<string, unknown>[]> {
+  const logPath = await sw.evaluate(async () => {
+    const items = await chrome.downloads.search({
+      filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]log\\.json$',
+      orderBy: ['-startTime'],
+    });
+    const ours = items.find((i) => i.byExtensionId === chrome.runtime.id && i.state === 'complete');
+    return ours?.filename ?? null;
+  });
+  if (!logPath || !fs.existsSync(logPath)) return [];
+  return parseLogFileText(fs.readFileSync(logPath, 'utf8'));
+}
+
+/**
+ * Seed `log.json` on disk with `records` — the log is the file, so
+ * this is the only seeding there is. Written through the extension's
+ * own download path so the download record (and the cached capture
+ * directory) exist the way they would after a real capture.
  *
- * Storage alone isn't enough any more. The file is authoritative, so a
- * capture on top of a storage-only seed reads an absent `log.json`,
- * concludes the log was deleted, and starts over — discarding the
- * seed. See `docs/log-consistency.md`.
- *
- * The records are serialized here the same way `serializeLog` does it
- * (one JSON object per line, trailing newline, keys in the order
- * given), so the reconcile sees a file that matches the buffer.
+ * The records are serialized the way `serializeLog` does it (one JSON
+ * object per line, trailing newline, keys in the order given).
  */
 export async function seedCaptureLog(
   sw: Worker,
   records: Record<string, unknown>[],
 ): Promise<void> {
-  const id = await sw.evaluate(async (recs) => {
-    await chrome.storage.local.set({ captureLog: recs });
-    // Matches `serializeLog`, empty list included: it renders as the
-    // empty string, not a bare newline. Seeding `'\n'` for `[]` would
-    // put a phantom byte in the file, and the reconcile — which
-    // compares the file's recorded size against the buffer — would
-    // read that as tampering and block the next capture.
-    const text = recs.length === 0
-      ? ''
-      : recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  // Matches `serializeLog`, empty list included: it renders as the
+  // empty string, not a bare newline.
+  const text = records.length === 0
+    ? ''
+    : records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  await seedCaptureLogText(sw, text);
+}
+
+/**
+ * `seedCaptureLog` for arbitrary file contents — a hand-edited or
+ * partly broken log, which the append is expected to preserve.
+ */
+export async function seedCaptureLogText(sw: Worker, text: string): Promise<void> {
+  const id = await sw.evaluate(async (body) => {
     return await chrome.downloads.download({
-      url: `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
+      url: `data:application/json;charset=utf-8,${encodeURIComponent(body)}`,
       filename: 'SeeWhatISee/log.json',
       conflictAction: 'overwrite',
     });
-  }, records);
+  }, text);
   // The reconcile only trusts a *completed* record, so let the write
   // land before the test captures on top of it.
   await waitForDownloadPath(sw, id);

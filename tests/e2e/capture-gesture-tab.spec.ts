@@ -20,7 +20,7 @@
 // switches to during the countdown.
 
 import { test, expect } from '../fixtures/extension';
-import { resetCaptureState } from '../fixtures/files';
+import { readCaptureLog, resetCaptureState } from '../fixtures/files';
 
 // The SW surface these tests drive. Every `sw.evaluate` body has to
 // reach it inline — Playwright ships the function source across, so a
@@ -109,10 +109,7 @@ test('toolbar click records the gesture tab\'s URL, not the last-focused window\
     );
   }, gestureTabId);
 
-  const log = await sw.evaluate(async () => {
-    const stored = await chrome.storage.local.get('captureLog');
-    return (stored.captureLog ?? []) as { url?: string }[];
-  });
+  const log = (await readCaptureLog(sw)) as { url?: string }[];
   expect(log.length).toBeGreaterThan(0);
   expect(log[log.length - 1].url).toBe(`${fixtureServer.baseUrl}/purple.html`);
 
@@ -221,10 +218,7 @@ test('a delayed capture still follows focus to a window opened during the countd
   // The countdown ended with the *new* window focused, so that's what
   // the capture should describe — following focus is what the delay
   // is for.
-  const log = await sw.evaluate(async () => {
-    const stored = await chrome.storage.local.get('captureLog');
-    return (stored.captureLog ?? []) as { url?: string }[];
-  });
+  const log = (await readCaptureLog(sw)) as { url?: string }[];
   expect(log.length).toBeGreaterThan(0);
   expect(log[log.length - 1].url).toBe(`${fixtureServer.baseUrl}/green.html`);
 

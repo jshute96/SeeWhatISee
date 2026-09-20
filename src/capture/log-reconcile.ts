@@ -1,11 +1,11 @@
-// Reconciling the on-disk `log.json` with the in-storage capture log.
+// Finding and reading the on-disk `log.json` before a capture appends
+// to it.
 //
-// The rule this module implements: **disk is authoritative, and
-// `chrome.storage.local` is a cache**. Before any capture overwrites
-// `log.json`, we read what is actually on disk and let that decide
-// what the log should be — so deleting or hand-editing the file is a
-// supported gesture rather than something a later capture silently
-// undoes.
+// The rule this module implements: **the file is the log, and the
+// only copy of it**. Before any capture overwrites `log.json`, we read
+// what is actually on disk and append to that — so deleting or
+// hand-editing the file is a supported gesture rather than something
+// a later capture silently undoes.
 //
 // Reading needs the user's "Allow access to file URLs" toggle, which
 // the extension requires (`file-access.ts`): every entry point checks
@@ -36,9 +36,9 @@ import { FileAccessRequiredError } from './file-access.js';
 
 /**
  * Thrown by `recordCapture` when `log.json` couldn't be updated: the
- * reconcile couldn't account for the file (unreadable, or holding
- * lines that aren't records), or Chrome couldn't complete the write
- * (the target is a directory, the disk is full). Chrome's download
+ * file couldn't be read, no capture directory could be found, or
+ * Chrome couldn't complete the write (the target is a directory, the
+ * disk is full). Chrome's download
  * bubble shows a bare "Something went wrong" for the latter; this is
  * what tells the user it was their capture log, and what to do.
  *
@@ -57,11 +57,11 @@ export class LogWriteFailedError extends Error {
 }
 
 /** What to tell the user when `log.json` needs fixing by hand. */
-export const FIX_LOG_FILE_ADVICE = 'Fix or delete the file, then capture again.';
+const FIX_LOG_FILE_ADVICE = 'Fix or delete the file, then capture again.';
 
 /** What the reconcile decided about the file on disk. */
 export type LogFileState =
-  /** We read it. Its contents replace the in-storage log. */
+  /** We read it. Its text is what the capture appends to. */
   | { kind: 'contents'; text: string; directory: string }
   /** No file. Start a new log from this capture. */
   | { kind: 'fresh' };
@@ -114,9 +114,9 @@ async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileS
   if (!directory) directory = await probeCaptureDirectory();
   if (!directory) throw new LogWriteFailedError("couldn't find the capture directory.");
   const text = await readLogText(directory);
-  // Whether its lines are all round-trippable is checked by the
-  // caller, which already parses this text — keeping the parser
-  // dependency pointing log-store → log-reconcile, not both ways.
+  // Not parsed here: the caller appends to the text as it is and only
+  // parses for the timestamp check — keeping the parser dependency
+  // pointing log-store → log-reconcile, not both ways.
   if (text !== null) return { kind: 'contents', text, directory };
   // The read failed. If the file is really gone (or there is no
   // record), that *is* the answer: start fresh. Otherwise something we

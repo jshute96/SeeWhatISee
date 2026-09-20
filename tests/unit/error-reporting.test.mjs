@@ -44,9 +44,9 @@ test('rewrites: per-format "No selection X content" family', () => {
   }
 });
 
-test('rewrites: "No captures in the log to copy from"', () => {
-  const out = friendlyErrorMessage(new Error('No captures in the log to copy from'));
-  assert.match(out, /No captures yet/);
+test('rewrites: "No capture this browser session to copy from"', () => {
+  const out = friendlyErrorMessage(new Error('No capture this browser session to copy from'));
+  assert.match(out, /No captures yet this browser session/);
   assert.match(out, /Save a screenshot or HTML/);
 });
 

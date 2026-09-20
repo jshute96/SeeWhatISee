@@ -1,9 +1,9 @@
 // Unit tests for the capture log's history file flushing — `recordCapture`
-// flushing the oldest entries into `history-<timestamp>.json` once the
-// in-storage buffer goes over its cap, plus the `parseLogText` reader
-// the History page uses to read those files back.
+// flushing the oldest entries into `history-<timestamp>.json` once
+// `log.json` goes over its cap, plus the `parseLogText` reader the
+// History page uses to read those files back.
 //
-// `chrome.storage.local` and `chrome.downloads` are stubbed. The
+// `chrome.storage`, `chrome.downloads` and `fetch` are stubbed. The
 // download stub records the `filename` / decoded body of every write,
 // which is what the assertions inspect: the point of these tests is
 // *which* records land in *which* file, not the plumbing that gets
@@ -38,20 +38,31 @@ let writes = [];
  */
 function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   writes = [];
-  const store = { captureLog: existing };
+  const store = {};
+  const session = {};
   let nextId = 1;
   /** Id of the most recent `log.json` write, for the record below. */
   let lastLogId = 0;
+  /** What `log.json` holds right now: the last write, else the seed. */
+  const logText = () => {
+    const last = lastLogWrite();
+    return last ? last.body : serializeLog(existing);
+  };
+  // The log lives in the file, so the handle's `captureLog` is a view
+  // of the file as it stands — what the tests assert against.
+  Object.defineProperty(store, 'captureLog', { get: () => parseLogText(logText()) });
+  Object.defineProperty(store, 'lastCaptureFiles', { get: () => session.lastCaptureFiles });
   globalThis.chrome = {
     runtime: { id: EXT_ID },
     storage: {
       local: {
-        // Cloned on the way out, like the real API: `recordCapture`
-        // splices the array it gets back, and sharing the stored one
-        // would hide a failed write's rollback.
         get: async (key) => (key in store ? { [key]: structuredClone(store[key]) } : {}),
         set: async (obj) => Object.assign(store, obj),
         remove: async (key) => { delete store[key]; },
+      },
+      session: {
+        get: async (key) => (key in session ? { [key]: structuredClone(session[key]) } : {}),
+        set: async (obj) => Object.assign(session, obj),
       },
     },
     extension: { isAllowedFileSchemeAccess: async () => true },
@@ -92,10 +103,7 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   };
   globalThis.fetch = async (url) => {
     if (String(url).endsWith('/log.json')) {
-      // Whatever we last wrote *is* what's on disk. Before the first
-      // write, the seeded storage is what the file would hold.
-      const last = lastLogWrite();
-      return { ok: true, text: async () => last ? last.body : serializeLog(store.captureLog ?? []) };
+      return { ok: true, text: async () => logText() };
     }
     // The directory listing: Chrome's generated page names each file
     // twice (display text and href); one mention is enough here.
@@ -106,7 +114,7 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
 }
 
 stubChrome();
-const { recordCapture, parseLogText, serializeLog, dedupeRecords } =
+const { recordCapture, parseLogText, serializeLog, serializeRecord, appendLogLine, dedupeRecords } =
   await import('../../dist/capture/log-store.js');
 const { _setExistsRecheckTimeoutForTest } =
   await import('../../dist/capture/downloads.js');
@@ -171,8 +179,6 @@ test('crossing the cap flushes the oldest half to a history file', async () => {
   assert.equal(store.captureLog.length, 51);
   assert.equal(store.captureLog[0].screenshot.filename, 'shot-50.png');
   assert.equal(store.captureLog[50].screenshot.filename, 'shot-100.png');
-  // ...and `log.json` matches storage exactly.
-  assert.deepEqual(parseLogText(lastLogWrite().body), store.captureLog);
 });
 
 test('the history file is named for when it was written, not for a record', async () => {
@@ -288,16 +294,21 @@ test('a failed history file write keeps every entry, including the new one', asy
   assert.ok(logId > 0);
   assert.equal(historyFileWrites().length, 0);
   // Nothing moved out means nothing trimmed — the log simply sits one
-  // over its cap until the next capture retries the flush.
+  // over its cap until the next capture retries the flush. And nothing
+  // moved out means nothing rewritten: the file is the seed, byte for
+  // byte, plus the new line.
   assert.equal(store.captureLog.length, 101);
   assert.equal(store.captureLog[100].screenshot.filename, 'shot-100.png');
-  assert.deepEqual(parseLogText(lastLogWrite().body), store.captureLog);
+  assert.equal(
+    lastLogWrite().body,
+    appendLogLine(serializeLog(Array.from({ length: 100 }, (_, i) => rec(i))), serializeRecord(rec(100))),
+  );
 });
 
 test('a mid-drain failure keeps what it could not move out, and no more', async () => {
   // Three batches due; the second write fails. Batch 1 is on disk, so
-  // its entries are gone from storage; batches 2-3 stay put. Nothing
-  // may end up in both places.
+  // its entries are gone from `log.json`; batches 2-3 stay put.
+  // Nothing may end up in both places.
   const store = stubChrome(Array.from({ length: 200 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
   let historyFileCalls = 0;
@@ -316,15 +327,15 @@ test('a mid-drain failure keeps what it could not move out, and no more', async 
   // 201 total - the 50 that reached disk.
   assert.equal(store.captureLog.length, 151);
   assert.equal(store.captureLog[0].screenshot.filename, 'shot-50.png');
-  // No overlap between the history file and what's still in storage.
-  const inStorage = new Set(store.captureLog.map((r) => serializeLog([r])));
-  assert.ok(movedOut.every((r) => !inStorage.has(serializeLog([r]))));
+  // No overlap between the history file and what's still in the log.
+  const inLog = new Set(store.captureLog.map((r) => serializeLog([r])));
+  assert.ok(movedOut.every((r) => !inLog.has(serializeLog([r]))));
 });
 
 // Records that share a `timestamp` and differ only in their screenshot
 // filename. `recordCapture` no longer produces these — `uniqueTimestamp`
-// pulls them apart — so these fixtures are seeded straight into storage.
-// They pin the readers: nothing may treat the timestamp as a record's
+// pulls them apart — so these fixtures are built by hand. They pin
+// the readers: nothing may treat the timestamp as a record's
 // identity, since doing so silently drops real captures.
 
 /**
@@ -425,7 +436,7 @@ test('a stamp far ahead of the clock is ignored rather than followed', async () 
     `${stamp} should come off the clock, not from ${bogus}`);
 });
 
-test('a failed log.json write fails the capture, stores nothing, and keeps the pins', async () => {
+test('a failed log.json write fails the capture, notes nothing, and keeps the pins', async () => {
   // The other half of the crash window: the history file lands, but
   // `log.json` is never trimmed. Disk is authoritative, so the next
   // capture adopts the untrimmed log and re-derives the same batch —
@@ -437,9 +448,8 @@ test('a failed log.json write fails the capture, stores nothing, and keeps the p
   // throw there propagates out of `recordCapture` before any of the
   // cleanup runs. The window that matters is the write *completing*
   // — a failure there must reach the user as a capture failure
-  // naming the file, and must leave storage matching the file on
-  // disk (untrimmed, without this record) rather than running ahead
-  // of it.
+  // naming the file, and must not leave the session note that says
+  // the capture was logged.
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
   const realSearch = chrome.downloads.search;
@@ -466,7 +476,7 @@ test('a failed log.json write fails the capture, stores nothing, and keeps the p
   });
   chrome.downloads.download = realDownload;
   chrome.downloads.search = realSearch;
-  assert.equal(store.captureLog.length, 100, 'storage must not run ahead of the file');
+  assert.equal(store.lastCaptureFiles, undefined, 'no note for a record that never landed');
   const firstName = historyFileWrites()[0].filename;
   const pins = Object.values(store.pendingHistoryFiles ?? {});
   assert.equal(pins.length, 1, 'the pin must survive an unwritten log.json');
@@ -480,7 +490,7 @@ test('a failed log.json write fails the capture, stores nothing, and keeps the p
 // loses real captures.
 
 test('dedupeRecords drops an exact repeat, keeping the first', async () => {
-  // A record the page loaded from a history file and from storage both.
+  // A record the page loaded from a history file and from `log.json` both.
   const a = rec(1);
   const resent = JSON.parse(JSON.stringify(a));
   const out = dedupeRecords([a, rec(2), resent]);
@@ -496,18 +506,17 @@ test('dedupeRecords keeps same-timestamp records that differ at all', async () =
   assert.equal(out.length, 6);
 });
 
-test('dedupeRecords ignores key order from the storage round-trip', async () => {
-  // `chrome.storage.local` doesn't promise key order, so the same
-  // record can come back shaped differently than the copy in a file.
-  // `serializeRecord`'s canonical order is what makes them compare
-  // equal; raw JSON.stringify would not.
+test('dedupeRecords ignores key order', async () => {
+  // A hand-edited or script-written record can carry its keys in any
+  // order. `serializeRecord`'s canonical order is what makes two such
+  // copies compare equal; raw JSON.stringify would not.
   const a = { timestamp: '2026-01-01T00:00:00.000Z', prompt: 'hi', url: 'https://e.com' };
   const reordered = { url: 'https://e.com', timestamp: '2026-01-01T00:00:00.000Z', prompt: 'hi' };
   assert.notEqual(JSON.stringify(a), JSON.stringify(reordered));
   assert.equal(dedupeRecords([a, reordered]).length, 1);
 });
 
-test('dedupeRecords spans the storage/history file boundary', async () => {
+test('dedupeRecords spans the log / history file boundary', async () => {
   // The two copies need not be adjacent — a restore can be separated
   // from the original by any number of captures, and by a flush.
   const dup = rec(7);

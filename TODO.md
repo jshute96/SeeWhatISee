@@ -201,8 +201,8 @@ What it costs:
   * README's install steps need this as a required step.
   * `privacy_policy.md` should say what is read (files in the capture
     directory only).
-* **Capture log on disk is authoritative** — `log.json` decides what
-  the log is, and Chrome extension storage is only a cache.
+* **Capture log on disk is the only copy** — `log.json` is the log;
+  Chrome extension storage holds no capture records at all.
   * README's `log.json` section still says the opposite ("the
     authoritative log lives in Chrome extension storage… if deleted,
     it's restored from extension storage on the next capture") and
@@ -217,11 +217,14 @@ What it costs:
   * The **More ▸ Clear log history** menu entry is gone. Deleting the
     file is the way to clear the log until a delete-the-files feature
     exists.
-  * If the extension can't tell what's on disk (an unreadable
-    `log.json`, or a line in it that isn't a capture record), the
-    file isn't rewritten: the capture's files are saved, the capture
-    reports the problem and what to fix, and capturing again after
-    the fix is the retry.
+  * If `log.json` can't be read, it isn't rewritten: the capture's
+    files are saved, the capture reports the problem and what to fix,
+    and capturing again after the fix is the retry.
+  * A capture appends to `log.json` without rewriting what's there:
+    hand edits keep their formatting, and a line that isn't a record
+    is left alone (until the next flush to a history file drops it).
+  * The Copy-last-… menu entries work only after a capture in the
+    current browser session (they no longer read the log).
   * With file reads on, the History page opens from `log.json`
     itself, so a deleted, emptied, or hand-edited file shows as it is
     on disk without waiting for the next capture.

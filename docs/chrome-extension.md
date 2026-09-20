@@ -15,8 +15,8 @@ The background script is an MV3 service worker. That means:
   - Chrome unloads the worker after ~30s of inactivity.
   - Listeners persist across the idle — Chrome re-wakes the
     worker on the next event — but module-level state is lost.
-  - The authoritative capture log therefore lives in
-    `chrome.storage.local`, not in a module-level array.
+  - Anything that has to outlive a wake therefore lives in
+    `chrome.storage`, not in a module-level array.
 - **`await` keeps it alive.** Inside a listener, awaiting a
   promise (including an `await new Promise(r => setTimeout(r, ms))`)
   holds the worker awake for the duration.
@@ -27,16 +27,14 @@ The background script is an MV3 service worker. That means:
     awaiting — the timer fires in a dead worker.
 - **`chrome.downloads.download` resolves on download *start*, not
   completion.**
-  - For our tiny data-URL payloads (PNG + `log.json`) this is
-    effectively immediate.
-  - If we ever see partial files or interleaving in `log.json`,
-    the fix is to wait on `chrome.downloads.onChanged` for
-    `state === 'complete'` before returning. Marked "overkill for
-    v1" inside `saveCapture`.
+  - Every capture-file write therefore polls `chrome.downloads.search`
+    until `state === 'complete'` (`downloadArtifactComplete`,
+    `capture/downloads.ts`), and a write Chrome couldn't finish fails
+    the capture with a message naming the file.
 - **The Chrome downloads API can only write whole files.** No
   append, no edit, no partial overwrite.
-  - `log.json` is therefore a *snapshot* rewritten from
-    `chrome.storage.local` on every capture.
+  - `log.json` is therefore read back and rewritten — as it was,
+    plus one line — on every capture (`docs/log-consistency.md`).
   - The log is capped at 100 entries so the per-capture rewrite
     stays O(1) instead of growing with total capture count.
   - Entries past the cap aren't dropped: they're flushed to
@@ -100,7 +98,9 @@ The manifest declares:
 - `scripting` — for `chrome.scripting.executeScript`, which is
   how we pull `document.documentElement.outerHTML` for HTML
   snapshots.
-- `storage` — the authoritative home of the capture log.
+- `storage` — settings, the cached capture directory, and per-tab
+  Capture-page sessions. Not the capture log: that is `log.json` on
+  disk, and nothing else.
 
 ### "Allow access to file URLs" is required
 
@@ -431,7 +431,7 @@ the Chrome-platform mechanics of building it.
   shortcuts into clusters (`save-defaults` | the non-selection
   capture shortcuts | the delayed-shortcut block | the three
   `save-selection-*` shortcuts) and then fence off the
-  copy-last and clear-log utility rows.
+  copy-last utility rows.
   - **ChromeOS workaround.** ChromeOS sometimes fails to render
     native `type: 'separator'` items in the extension action
     menu. `installContextMenu` in `background/context-menu.ts`

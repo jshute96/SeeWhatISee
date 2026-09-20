@@ -1,21 +1,21 @@
-// Capture log: the `log.json` file on disk, and the
-// chrome.storage.local buffer that backs it.
+// Capture log: the `log.json` file on disk.
 //
 // We can't truly append to log.json from a Chrome extension (the
 // downloads API only writes whole files; the SW has no filesystem
-// access), so every capture rewrites the whole file. But **the file
-// is authoritative and storage is a cache**: each capture reconciles
-// against disk first (`log-reconcile.ts`) and only ever *adds* its own
-// record to what it finds there. Deleting log.json starts a new log
-// rather than being undone by the next capture, and hand-edited rows
-// survive. When we can't tell what is on disk, or Chrome can't finish
+// access), so every capture rewrites the whole file — but **the file
+// is the log, and the only copy of it**: each capture reads it back
+// first (`log-reconcile.ts`) and writes it out again with its own
+// record on the end, byte for byte otherwise. Deleting log.json starts
+// a new log rather than being undone by the next capture, hand-edited
+// rows survive as edited, and lines that aren't records survive too
+// (until a flush). When the file can't be read, or Chrome can't finish
 // the write, the capture fails with `LogWriteFailedError` and a
 // message saying what to fix — see `docs/log-consistency.md`.
 //
-// Entries that age out of that buffer aren't lost: they're flushed
-// in batches to `history-<timestamp>.json` history files beside
-// `log.json`, so the full capture history survives on disk without
-// any single write growing without bound. See "Flushing" below.
+// Entries that age out of `log.json` aren't lost: they're flushed in
+// batches to `history-<timestamp>.json` history files beside it, so
+// the full capture history survives on disk without any single write
+// growing without bound. See "Flushing" below.
 //
 // Also home to `compactTimestamp` — the filename suffix every
 // capture uses to stay unique on disk. Lives here because the log
@@ -30,14 +30,34 @@ import {
   listHistoryFiles,
   pruneOldLogRecords,
 } from './downloads.js';
-import { FIX_LOG_FILE_ADVICE, LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
+import { LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
 
-export const LOG_STORAGE_KEY = 'captureLog';
 /**
- * Cap on the in-storage log, so it doesn't grow unbounded and so
- * rewriting `log.json` on every capture stays cheap (otherwise it's
- * quadratic in the number of captures: each write copies the whole
- * log).
+ * `chrome.storage.session` key holding the filenames of the most
+ * recent capture — what the toolbar's Copy-last-… entries copy, and
+ * the signal (via `storage.onChanged`) that a capture just landed,
+ * which the History page uses to re-read `log.json`.
+ *
+ * Session, not local, on purpose: copying the last filename only
+ * makes sense right after the capture, so it needn't survive a
+ * browser restart — and the log itself lives in the file, nowhere
+ * else.
+ */
+export const LAST_CAPTURE_FILES_KEY = 'lastCaptureFiles';
+
+/** What `LAST_CAPTURE_FILES_KEY` holds. Filenames are bare basenames. */
+export interface LastCaptureFiles {
+  /** The record's timestamp — distinct per capture, so a repeat set still fires `onChanged`. */
+  timestamp: string;
+  screenshot?: string;
+  contents?: string;
+  selection?: string;
+}
+
+/**
+ * Cap on `log.json`, so it doesn't grow unbounded and so rewriting it
+ * on every capture stays cheap (otherwise it's quadratic in the number
+ * of captures: each write copies the whole log).
  *
  * Exported for the tests, which have to seed a full log to reach the
  * flush — hardcoding the number there would turn a deliberate change
@@ -52,7 +72,7 @@ export const LOG_MAX_ENTRIES = 100;
  * capture: a history file write is a whole extra file, so amortising it
  * over 50 captures keeps the steady-state cost of a capture at one
  * `log.json` rewrite. The visible consequence is that once the log has
- * filled, `log.json` (and the History page's in-storage view) holds
+ * filled, `log.json` (and so the History page's live view) holds
  * `LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1` to `LOG_MAX_ENTRIES`
  * entries depending on where in the cycle it is.
  */
@@ -92,9 +112,9 @@ export const PENDING_HISTORY_STORAGE_KEY = 'pendingHistoryFiles';
  * keys the same — but then the retry overwrites the orphan with what
  * the log now says, which is what disk authority wants anyway.
  *
- * `serializeRecord`, not `JSON.stringify`: a record round-tripped
- * through `chrome.storage.local` can come back with its keys
- * reordered, and only canonical field order compares equal. Ends only,
+ * `serializeRecord`, not `JSON.stringify`: a record read back from a
+ * file the user (or a script) has edited can carry its keys in any
+ * order, and only canonical field order compares equal. Ends only,
  * because the key is stored and 50 whole records per pending batch is
  * a lot to spend on this.
  */
@@ -184,17 +204,28 @@ function historyFileName(writtenAt: Date, used: Set<string>): string {
  * `log.json` and the history files use — one `serializeRecord` per
  * line, trailing newline included.
  *
- * Every write of either file goes through here so the two formats
- * can't drift; `parseLogText` is the matching reader.
+ * Used for the history files and for a `log.json` that a flush has to
+ * rewrite; the steady-state append uses `appendLogLine` instead so the
+ * file's existing bytes are kept. `parseLogText` is the matching
+ * reader.
  *
- * An empty list renders as the empty string, not a bare newline: the
- * reconcile compares this against the byte size of the file we last
- * wrote, and a phantom byte would make an empty log look like a file
- * that had been tampered with.
+ * An empty list renders as the empty string, not a bare newline.
  */
 export function serializeLog(records: CaptureRecord[]): string {
   if (records.length === 0) return '';
   return records.map((r) => serializeRecord(r)).join('\n') + '\n';
+}
+
+/**
+ * `text` (the file as it is) with `line` appended as the last line —
+ * the newline-delimited layout `serializeLog` produces, reached
+ * without touching what's already there. Supplies the newline a file
+ * missing its terminator needs, so the new record can't run onto the
+ * previous line and take it down with it.
+ */
+export function appendLogLine(text: string, line: string): string {
+  if (text.length === 0) return `${line}\n`;
+  return `${text.endsWith('\n') ? text : `${text}\n`}${line}\n`;
 }
 
 /**
@@ -204,52 +235,36 @@ export function serializeLog(records: CaptureRecord[]): string {
  * where they can be edited, truncated mid-write, or concatenated. A
  * line that doesn't parse (or parses to something that isn't a record
  * object) is skipped rather than failing the whole file — losing one
- * row beats losing the rest of the history.
+ * row beats losing the rest of the history. Every reader does this,
+ * the Python script and MCP server included, and the writer does too:
+ * the steady-state append keeps such lines in place untouched, and a
+ * flush drops them along with the records it moves out.
  */
 export function parseLogText(text: string): CaptureRecord[] {
-  return parseLogLines(text).records;
-}
-
-/**
- * `parseLogText`, plus a count of the lines it had to throw away and
- * the 1-based number of the first one, for the error message.
- *
- * **Skipping a line is only safe for a reader.** The History page
- * displays what parsed and the lost row is merely absent; the
- * reconcile re-serializes what it parsed and writes it back over
- * `log.json`, which would delete the bad lines from the user's file
- * for good. So the reconcile checks this and refuses to write instead
- * — principle 4 in `docs/log-consistency.md`: when we can't account
- * for what's in the file, we don't write it.
- */
-export function parseLogLines(
-  text: string,
-): { records: CaptureRecord[]; skipped: number; firstBadLine: number | null } {
   const records: CaptureRecord[] = [];
-  let skipped = 0;
-  let firstBadLine: number | null = null;
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let ok = false;
     try {
       const parsed: unknown = JSON.parse(line);
       // Valid JSON that isn't a record object — a bare string or an
-      // array — is still a line we can't round-trip.
+      // array — is skipped the same way.
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         records.push(parsed as CaptureRecord);
-        ok = true;
       }
     } catch {
       // Not JSON at all.
     }
-    if (!ok) {
-      skipped += 1;
-      if (firstBadLine === null) firstBadLine = i + 1;
-    }
   }
-  return { records, skipped, firstBadLine };
+  return records;
+}
+
+/** The session note `recordCapture` leaves for the Copy-last-… entries. */
+function lastCaptureFilesOf(record: CaptureRecord): LastCaptureFiles {
+  const files: LastCaptureFiles = { timestamp: record.timestamp };
+  if (record.screenshot) files.screenshot = record.screenshot.filename;
+  if (record.contents) files.contents = record.contents.filename;
+  if (record.selection) files.selection = record.selection.filename;
+  return files;
 }
 
 /**
@@ -259,15 +274,14 @@ export function parseLogLines(
  *
  * `uniqueTimestamp` gives every save its own timestamp, so no two
  * records the log *writes* can collide here. What's left is one copy
- * of a record reaching the History page twice: the page merges the
- * in-storage log with the history files, and a batch that reached a
- * history file while the service worker died before the matching storage
- * write sits in both.
+ * of a record reaching the History page twice: the page merges
+ * `log.json` with the history files, and a batch that reached a
+ * history file while the service worker died before the matching
+ * `log.json` trim sits in both.
  *
- * `serializeRecord` supplies the key, not `JSON.stringify`: a record
- * round-tripped through `chrome.storage.local` can come back with its
- * keys in a different order than the copy read from a file, and only
- * a canonical field order compares equal.
+ * `serializeRecord` supplies the key, not `JSON.stringify`: two copies
+ * of a record can carry their keys in different orders (one hand-edited
+ * or script-written), and only a canonical field order compares equal.
  *
  * **Exact equality is the whole point.** Anything looser merges the
  * several distinct records one Capture session writes as the user
@@ -281,29 +295,6 @@ export function dedupeRecords(records: CaptureRecord[]): CaptureRecord[] {
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
-}
-
-/**
- * Drop the capture-log buffer in chrome.storage.local. Used by tests
- * between runs, and available from the service-worker console.
- *
- * **Storage-only, and deliberately not a user-facing feature.** Under
- * disk authority, storage is a cache: the next capture reconciles
- * against `log.json` and puts back whatever the file holds, so
- * "clearing" it wouldn't clear anything a user could see. Deleting
- * capture history means deleting files, which will come back as its
- * own feature.
- *
- * Wrapped in `serializeWrite` so it can't interleave with a
- * concurrent `recordCapture()` mid read-modify-write.
- *
- * Leaves `log.json` and the `history-*.json` history files alone: they're
- * the user's files.
- */
-export async function clearCaptureLog(): Promise<void> {
-  await serializeWrite(async () => {
-    await chrome.storage.local.remove(LOG_STORAGE_KEY);
   });
 }
 
@@ -343,12 +334,12 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
 }
 
 /**
- * Append a record to the capture log: reconcile against the file on
- * disk, move whatever the append pushes past the cap into a history
- * file, write `log.json`, then save the result to storage. Returns the
- * `chrome.downloads` id of the `log.json` write, which the tab-capture
- * paths hand back to the Capture page (and tests resolve to an on-disk
- * path).
+ * Append a record to the capture log: read `log.json` back, move
+ * whatever the append pushes past the cap into a history file, write
+ * `log.json`, then note the capture's filenames in session storage.
+ * Returns the `chrome.downloads` id of the `log.json` write, which the
+ * tab-capture paths hand back to the Capture page (and tests resolve
+ * to an on-disk path).
  *
  * The single write path for every capture — screenshot, HTML,
  * selection, URL-only — so the reconcile and flush rules can't
@@ -356,71 +347,71 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  *
  * ## Reconcile
  *
- * `inspectLogFile` decides what we're appending *to*, which is not
- * necessarily what's in storage:
+ * `inspectLogFile` decides what we're appending *to*:
  *
- * - **contents** — we read the file, so it replaces the buffer.
- *   Rows the user deleted by hand stay deleted, and edits survive.
- *   The steady-state case.
+ * - **contents** — the file's text. The steady-state case.
  * - **fresh** — the file is gone, so the log starts over at this
- *   capture and the buffer is discarded. This is what stops a deleted
- *   log from being resurrected.
+ *   capture. This is what stops a deleted log from being resurrected.
  *
- * The storage buffer is only ever *written*, never appended to on
- * its own: what's on disk decides.
+ * ## The append is verbatim
+ *
+ * In the steady state the file is written back as it was, plus one
+ * line. Its records are parsed — leniently, like every reader — only
+ * to keep the new timestamp unique and to count them against the cap.
+ * So a hand-edited row keeps its edit *and* its formatting, and a line
+ * that isn't a record at all is left where it is: every reader skips
+ * it, so nothing is lost by carrying it.
+ *
+ * The one write that re-serializes the file is a flush (below), which
+ * has to drop records from it anyway. Lines that aren't records are
+ * dropped there too — which is what every reader has already been
+ * doing with them.
  *
  * ## Failures
  *
  * Anything that stops `log.json` being updated **throws
- * `LogWriteFailedError`** with a message saying what to do:
- *
- * - the reconcile couldn't read the file;
- * - the file holds a line that isn't a record — rewriting it would
- *   delete that line (principle 4 in `docs/log-consistency.md`);
- * - Chrome couldn't finish the write (a directory in the way, a full
- *   disk).
- *
- * Storage is left alone: the file is the log and doesn't hold this
- * record, so the browser copy mustn't either — the next capture reads
- * the file back and would drop it anyway. The record is dropped; its
- * artifacts stay on disk, unreferenced. History files flushed before
- * it stay put with their names still pinned, so the next capture's
- * drain overwrites rather than duplicates them.
+ * `LogWriteFailedError`** with a message saying what to do: the file
+ * couldn't be read, or Chrome couldn't finish the write (a directory
+ * in the way, a full disk). The record is dropped; its artifacts stay
+ * on disk, unreferenced. History files flushed before it stay put
+ * with their names still pinned, so the next capture's drain
+ * overwrites rather than duplicates them.
  *
  * ## Ordering
  *
- * History files, then `log.json`, then storage. Every step depends on the
- * one before it having landed, and biasing the crash window toward
- * *the file being ahead of storage* is what makes it recoverable: the
- * next reconcile reads the file and heals. The reverse order loses a
- * record whose artifacts are already written.
+ * History files, then `log.json`, then the session note. Each step
+ * waits for the one before it to land, so a worker killed midway
+ * leaves the files consistent: a history file with no matching trim
+ * is retried (see the pins), and the note is only ever set for a
+ * record that reached the file.
  *
  * ## Flushing
  *
  * Once the log exceeds `LOG_MAX_ENTRIES` the oldest
- * `LOG_HISTORY_BATCH` entries are written to their own
- * `history-<timestamp>.json` beside `log.json` and dropped from
- * storage. `while`, not `if`, so a log that starts far over the cap
- * (the cap was lowered, or entries predate flushing) drains in
- * batches instead of one oversized file.
+ * `LOG_HISTORY_BATCH` records are written to their own
+ * `history-<timestamp>.json` beside `log.json` and dropped from it.
+ * `while`, not `if`, so a log that starts far over the cap (the cap
+ * was lowered, or entries predate flushing) drains in batches instead
+ * of one oversized file.
  *
- * **Order matters:** an entry leaves storage only *after* its history
- * file has been written. `kept` advances one batch at a time and only
- * once that batch is on disk, so entries are never trimmed out from
- * under a write that didn't happen.
+ * **Order matters:** a record leaves `log.json` only *after* its
+ * history file has been written. `kept` advances one batch at a time
+ * and only once that batch is on disk, so records are never trimmed
+ * out from under a write that didn't happen.
  *
  * **A failed history file write is not a failed capture.** The capture's
  * screenshot / HTML is already on disk by the time we're called, so
  * rejecting here would leave that file referenced by nothing and lose
- * the record entirely. Instead the flush is abandoned, every entry
- * that hasn't moved — the new record included — stays in storage, and
- * the next capture retries. The log sits over its cap in the meantime,
- * which is the harmless failure. Entries whose batch *did* land are
- * already trimmed, so nothing is written twice.
+ * the record entirely. Instead the flush is abandoned, every record
+ * that hasn't moved — the new one included — stays in `log.json`
+ * (appended verbatim, as if no flush had been due), and the next
+ * capture retries. The log sits over its cap in the meantime, which
+ * is the harmless failure. Records whose batch *did* land are already
+ * trimmed, so nothing is written twice.
  *
- * Goes through `serializeWrite` itself, so callers don't have to: the
- * read-modify-write of the storage key would otherwise race two rapid
- * captures against each other.
+ * Goes through `serializeWrite` itself, so callers don't have to: two
+ * rapid captures would otherwise both read the file before either
+ * wrote it, and the second would drop the first.
  *
  * **Edits `record.timestamp`** on the way in, via `uniqueTimestamp` —
  * a visible side effect on the caller's object, and deliberately so.
@@ -428,26 +419,11 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
 export async function recordCapture(record: CaptureRecord): Promise<number> {
   return await serializeWrite(async () => {
     const state = await inspectLogFile();
-    // What we're appending to: the file, or nothing if it's gone.
-    let base: CaptureRecord[];
-    if (state.kind === 'contents') {
-      // Adopting the file means re-serializing it back over itself, so
-      // a line we can't parse would be *deleted* from the user's file
-      // rather than merely skipped the way a reader skips it. Refuse
-      // instead — principle 4: when we can't account for what's in the
-      // file, we don't write it — and name the line, since that is
-      // what the user has to go and look at.
-      const parsed = parseLogLines(state.text);
-      if (parsed.firstBadLine !== null) {
-        throw new LogWriteFailedError(
-          `log.json has a line that isn't a capture record (line ${parsed.firstBadLine}). `
-            + FIX_LOG_FILE_ADVICE,
-        );
-      }
-      base = parsed.records;
-    } else {
-      base = [];
-    }
+    // What we're appending to: the file's text, or nothing if it's
+    // gone. Parsed leniently — a line that isn't a record is skipped
+    // here exactly as every reader skips it.
+    const text = state.kind === 'contents' ? state.text : '';
+    const base = parseLogText(text);
     uniqueTimestamp(record, base);
     // Never mutated in place: `kept` is reassigned per successful
     // batch, so an abandoned flush leaves a coherent list either way.
@@ -562,31 +538,41 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
       drainClean = false;
       console.info('[SeeWhatISee] history file write failed; retrying next capture:', err);
     }
-    // File first, storage second — see "Ordering" above. Awaited to
-    // completion, not just to the download *starting*, so the ordering
-    // is real: `chrome.downloads.download` resolves the moment the
-    // write begins, which would leave storage able to land first after
-    // all.
-    //
-    // **A write that doesn't land fails the capture** — see "Failed
-    // write" above.
+    // Verbatim append unless a batch actually landed — see "The append
+    // is verbatim" above. `settledKeys`, not `flushed`: the latter
+    // counts attempts (it spaces the names), and a flush whose first
+    // write failed has moved nothing, so the file needs no rewriting.
+    const body = settledKeys.length > 0
+      ? serializeLog(kept)
+      : appendLogLine(text, serializeRecord(record));
+    // Awaited to completion, not just to the download *starting*.
+    // **A write that doesn't land fails the capture** — see
+    // "Failures" above.
     let downloadId: number;
     try {
-      downloadId = await writeJsonFileComplete(LOG_FILE_NAME, serializeLog(kept));
+      downloadId = await writeJsonFileComplete(LOG_FILE_NAME, body);
     } catch (err) {
       const reason = err instanceof ArtifactWriteError
         ? err.reason
         : err instanceof Error ? err.message : String(err);
       throw new LogWriteFailedError(`couldn't write log.json: ${reason}.`);
     }
-    await chrome.storage.local.set({ [LOG_STORAGE_KEY]: kept });
+    // The capture is in the log: say so. This is what the Copy-last-…
+    // menu entries copy, and the History page's cue to re-read the
+    // file. Best-effort — the log is written; a lost note costs a
+    // stale menu entry and an open History tab its live update.
+    try {
+      await chrome.storage.session.set({ [LAST_CAPTURE_FILES_KEY]: lastCaptureFilesOf(record) });
+    } catch (err) {
+      console.info('[SeeWhatISee] could not note the last capture:', err);
+    }
     // This write is now the one true `log.json` record, so the rows
     // every earlier capture left behind — all naming this same file —
     // can go.
     await pruneOldLogRecords(downloadId);
-    // The trimmed log is now both on disk and in storage, so the
-    // batches in `settledKeys` are gone for good and nothing can
-    // re-derive them — their pinned names can go.
+    // The trimmed log is on disk, so the batches in `settledKeys` are
+    // gone for good and nothing can re-derive them — their pinned
+    // names can go.
     //
     // Only reached once the file actually landed: an interrupted write
     // threw above, leaving the untrimmed log on disk — and disk is
@@ -636,12 +622,11 @@ async function writeJsonFileComplete(name: string, text: string): Promise<number
 /**
  * Stringify a CaptureRecord with a stable, explicit key order.
  *
- * `chrome.storage.local` does not guarantee that object key insertion
- * order survives the serialize/deserialize roundtrip, so an entry that
- * comes back out of storage may have its keys in a different order than
- * when we wrote it. To keep log.json grep-friendly and diff-stable, we
- * never just `JSON.stringify(record)`; we rebuild a fresh object with
- * keys in the canonical order at the call site.
+ * A record can reach here in any key order — parsed back from a file
+ * the user or a script edited, or built up field by field. To keep
+ * log.json grep-friendly and diff-stable, we never just
+ * `JSON.stringify(record)`; we rebuild a fresh object with keys in the
+ * canonical order at the call site.
  *
  * `indent` maps directly to JSON.stringify's third argument: 0 for
  * compact NDJSON-style output, 2 for human-readable.
@@ -666,9 +651,8 @@ export function serializeRecord(r: CaptureRecord, indent = 0): string {
   // we only *emit* them when non-empty so an unavailable URL or
   // title is absent from `log.json` rather than serialised as `""`.
   // Keeps the JSON schema honest: presence implies "we have it".
-  // Records persisted in `chrome.storage.local` before these fields
-  // existed surface here as `undefined`; the truthiness check elides
-  // them the same way.
+  // Records written before these fields existed surface here as
+  // `undefined`; the truthiness check elides them the same way.
   if (r.url) ordered.url = r.url;
   if (r.title) ordered.title = r.title;
   // `imageUrl` closes the metadata block, after `url` / `title`. Emitted
@@ -684,9 +668,9 @@ export function serializeRecord(r: CaptureRecord, indent = 0): string {
   return JSON.stringify(ordered, null, indent);
 }
 
-// Simple in-memory mutex: every storage-touching write goes through this
-// promise chain so a second captureVisible() call started before the first
-// finishes its read-modify-write can't lose entries. The chain is reset if
+// Simple in-memory mutex: every log write goes through this promise
+// chain so a second captureVisible() call started before the first
+// finishes its read-modify-write of `log.json` can't lose entries. The chain is reset if
 // the service worker is torn down, but that only happens when there is no
 // in-flight work to lose.
 let writeChain: Promise<unknown> = Promise.resolve();

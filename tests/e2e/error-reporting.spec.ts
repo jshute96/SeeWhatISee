@@ -161,7 +161,7 @@ test('friendly rewrites cover the common throw-site strings', async ({
     ['Failed to retrieve page contents', "Couldn't read this page's contents"],
     ['No text selected', 'No text is selected'],
     ['No selection markdown content', "didn't include anything in this format"],
-    ['No captures in the log to copy from', 'No captures yet'],
+    ['No capture this browser session to copy from', 'No captures yet this browser session'],
   ];
   for (const [raw, expected] of cases) {
     const message = await runAndCaptureErrorMessage(sw, { kind: 'report', raw });
