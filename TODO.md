@@ -192,6 +192,14 @@ What it costs:
   * Gemini's `run_shell_command` allowlist in README needs
     `skills/see-what-i-see-history/scripts/history.sh`.
 
+* **"Allow access to file URLs" is required** — every capture action
+  and extension page checks the toggle first and shows a dialog
+  explaining how to enable it and what it grants (read-only file
+  access; used to append to `log.json` and to show past captures on
+  the History page).
+  * README's install steps need this as a required step.
+  * `privacy_policy.md` should say what is read (files in the capture
+    directory only).
 * **Capture log on disk is authoritative** — `log.json` decides what
   the log is, and Chrome extension storage is only a cache.
   * README's `log.json` section still says the opposite ("the

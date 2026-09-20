@@ -21,12 +21,11 @@ import { type LogSyncBlockedReason } from '../capture/log-reconcile.js';
 import { canReadFiles } from '../capture/downloads.js';
 import {
   type LogSyncPrompt,
-  fileAccessUrl,
   isLogSyncReason,
   logSyncPathText,
-  openFileAccessSettings,
   requestLogSyncWrite,
 } from '../capture/log-sync-client.js';
+import { wireFileAccessLink } from '../capture/file-access.js';
 
 /** What the dialog's buttons should do, chosen by the caller. */
 export interface LogSyncHandlers {
@@ -128,11 +127,7 @@ export function initLogSync(): void {
   const settingsLink = document.getElementById('log-sync-settings') as HTMLAnchorElement;
   const cancelBtn = document.getElementById('log-sync-cancel') as HTMLButtonElement;
 
-  settingsLink.href = fileAccessUrl();
-  settingsLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    openFileAccessSettings();
-  });
+  wireFileAccessLink(settingsLink);
   retryBtn.addEventListener('click', () => handlers?.onRetry());
   overwriteBtn.addEventListener('click', () => handlers?.onOverwrite());
   // Cancel (the button or Esc, which closes a modal <dialog>

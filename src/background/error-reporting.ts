@@ -1,6 +1,7 @@
 import { noSelectionContentMessage } from '../capture/types.js';
 import type { GestureTab } from '../capture/target-tab.js';
 import { LogWriteBlockedError } from '../capture/log-reconcile.js';
+import { requireFileAccess } from '../capture/file-access.js';
 import { tabPlacement, createTabWithPlacement } from './open-tab.js';
 
 // User-visible error reporting for failed captures.
@@ -157,9 +158,15 @@ async function errorTabOpener(
 }
 
 /**
- * Run a capture-like action with unified error reporting. A
+ * Run a user-initiated action with unified error reporting. A
  * successful run is a no-op; a failure opens an error Capture page
- * anchored next to the active source tab. That includes a capture
+ * anchored next to the active source tab.
+ *
+ * Also the gate for the required "Allow access to file URLs" toggle:
+ * with it off the action isn't run at all — every action, whether or
+ * not it touches a file, so the extension has one answer to "why did
+ * nothing happen" rather than a per-action mix — and the error page
+ * opens with the dialog that explains the toggle. That includes a capture
  * whose files were saved but whose `log.json` write was blocked
  * (`LogWriteBlockedError`) — the same page, with the out-of-sync
  * dialog on top of it.
@@ -178,6 +185,13 @@ export async function runWithErrorReporting(
   gestureTab?: GestureTab,
 ): Promise<void> {
   try {
+    // The file-access toggle is required, and this wrapper is where
+    // every user-initiated action passes through — so it's the one
+    // place to check, before any file is written or tab opened. The
+    // error page this reports to shows the explanatory dialog itself
+    // (`capture/file-access-dialog.ts`), so the message is the only
+    // thing that has to travel.
+    await requireFileAccess();
     await fn();
   } catch (err) {
     await reportCaptureError(err, await errorTabOpener(gestureTab));

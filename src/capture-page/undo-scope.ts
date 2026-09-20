@@ -28,7 +28,7 @@ export interface UndoScopeCtx {
   /** Put back the last undone image edit. No button to click, so
    *  unlike undo this is a direct call. */
   redo(): void;
-  anyEditDialogOpen(): boolean;
+  anyModalDialogOpen(): boolean;
   isStaleMode(): boolean;
   isPolylineActive(): boolean;
   endPolylineChain(): void;
@@ -92,7 +92,7 @@ export function initUndoScope(ctx: UndoScopeCtx): void {
     // An edit dialog is its own little world with its own text
     // fields; the no-session error state has no image panel at all.
     // Both hand the key straight back to the browser.
-    if (ctx.anyEditDialogOpen() || ctx.isStaleMode()) return;
+    if (ctx.anyModalDialogOpen() || ctx.isStaleMode()) return;
     if (scope === 'image') {
       e.preventDefault();
       // Mirror what a *mouse* click on Undo does mid-chain: the

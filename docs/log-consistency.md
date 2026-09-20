@@ -184,9 +184,12 @@ below:
 
 - Reading needs the user's "Allow access to file URLs" toggle, which
   is off by default (`chrome.extension.isAllowedFileSchemeAccess`).
-- Reading beats every inference, so it's used whenever available. The
-  record-only route is the **fallback** that keeps everything working
-  without the permission — at the cost of the blind spots it lists.
+- **The toggle is now required**: every entry point checks it before
+  doing anything (`docs/chrome-extension.md` → "Allow access to file
+  URLs" is required), so the record-only route below is unreachable
+  in practice — flipping the toggle restarts the extension. It is
+  slated for removal.
+- Reading beats every inference, so it's used whenever available.
 
 One guard is shared by both routes: **a `log.json` write still in
 flight is waited out, not skipped** (`getLogFileRecord`).

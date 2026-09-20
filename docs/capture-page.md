@@ -2982,6 +2982,15 @@ open/close, so it wires the nav itself).
   - Same pane chrome (`.early-state-pane` class) so the visual
     hierarchy matches the upload-landing and stale-page panes.
 
+## File-access dialog
+
+- Opened by `loadData`'s reveal, in every state the page loads in,
+  when "Allow access to file URLs" is off — the toggle is required.
+  Shared with the History page; see `docs/chrome-extension.md` →
+  "Allow access to file URLs" is required.
+- On the `?error=` page it sits over the "Capture failed" pane a gated
+  service-worker action opened, whose message names the toggle.
+
 ## Out-of-sync log dialog
 
 - A modal shown when a save's `log.json` write was blocked because the

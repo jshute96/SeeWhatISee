@@ -23,7 +23,7 @@
 
 import { attachHtmlAwarePaste } from './capture-page/paste.js';
 import { initAsk } from './capture-page/ask.js';
-import { anyEditDialogOpen, initEditDialogs } from './capture-page/edit-dialog.js';
+import { anyModalDialogOpen, initEditDialogs } from './capture-page/edit-dialog.js';
 import { handleUploadFlow } from './capture-page/upload.js';
 import {
   composeImageBadgeText,
@@ -54,6 +54,7 @@ import {
   showLogSyncDialog,
 } from './capture-page/log-sync.js';
 import { type LogSyncPrompt } from './capture/log-sync-client.js';
+import { showFileAccessDialogIfBlocked } from './capture/file-access-dialog.js';
 import {
   initDrawing,
   imgRect,
@@ -921,13 +922,14 @@ promptInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  // Suspend the page-wide hotkeys while any edit dialog is up —
-  // e.g. Alt+H in the HTML dialog should type `h`, not silently
-  // flip the Save HTML checkbox behind the modal.
+  // Suspend the page-wide hotkeys while any modal is up — e.g.
+  // Alt+H in the HTML dialog should type `h`, not silently flip the
+  // Save HTML checkbox behind it, and Alt+C under the file-access
+  // dialog must not start a save the dialog says can't work.
   // Note: this listener references `askBtn` which is declared
   // further down the file. Safe because the listener fires on user
   // input — long after all top-level `const`s have initialised.
-  if (anyEditDialogOpen()) return;
+  if (anyModalDialogOpen()) return;
   // In the no-session error state every control referenced below is
   // `display:none`. Their `.disabled` flags are still false (we
   // never wired them up), so without this guard Alt+S / Alt+H /
@@ -1379,6 +1381,12 @@ async function loadData(): Promise<void> {
     // are silently ignored on `visibility: hidden` elements, so an
     // earlier `.focus()` (e.g. at module-init time) wouldn't stick.
     promptInput.focus();
+    // After the reveal: a modal over a hidden body is invisible but
+    // still traps input. Covers every state this page loads in — a
+    // live session, the `?error=` page a gated service-worker action
+    // opened, a stale reload — since the toggle is required for all
+    // of them.
+    void showFileAccessDialogIfBlocked();
   }
 }
 
@@ -1495,7 +1503,7 @@ for (const format of SELECTION_FORMATS) {
 // ─── Edit dialogs ─────────────────────────────────────────────────
 //
 // Catalog-driven Edit dialogs live in `capture-page/edit-dialog.ts`.
-// `anyEditDialogOpen()` is re-exposed for the page-wide Alt-shortcut
+// `anyModalDialogOpen()` is re-exposed for the page-wide Alt-shortcut
 // handler above; `initEditDialogs(ctx)` is wired with the other
 // submodule inits at the bottom of this file.
 
@@ -1793,7 +1801,7 @@ initZoom({
   rescaleAfterImageResize,
   panSnapRects,
   snapRadiusPx: SNAP_PX,
-  anyEditDialogOpen,
+  anyModalDialogOpen,
   isStaleMode: () => staleMode,
   autoGrowPrompt,
 });
@@ -1849,7 +1857,7 @@ initUndoScope({
   promptInput,
   undoBtn,
   redo: redoLastEdit,
-  anyEditDialogOpen,
+  anyModalDialogOpen,
   isStaleMode: () => staleMode,
   isPolylineActive,
   endPolylineChain,

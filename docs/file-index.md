@@ -248,7 +248,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the browser copy behind it, and the `history-*.json` files older records move into |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — record checks, `file://` read, uniquify probes; the blocked / failed write errors |
-| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip, settings link |
+| `src/capture/file-access.ts` | The required "Allow access to file URLs" toggle — `requireFileAccess` gate, its error, and the settings-page opener |
+| `src/capture/file-access-dialog.ts` | The "file access required" dialog the Capture and History pages open when the toggle is off |
+| `src/capture/log-sync-client.ts` | Shared page side of the out-of-sync log prompt — path text, the `logSyncWrite` round-trip |
 | `src/capture/watch-status.ts` | Watch-script stop protocol — reads the watch session's `.watch-status.json`, writes the `watch-stop.json` request |
 | `src/capture/target-tab.ts` | Picks which tab a capture targets — prefers the gesture's own tab over Chrome's unreliable last-focused-window bookkeeping |
 | `src/capture/image-source.ts` | Image-source capture paths — `captureImageToMemory`/`captureImageAsScreenshot`/`captureImageTabToMemory`/`probeActiveTabImage`/`fetchImageBytes`, image MIME tables, `imageExtensionFor` |
@@ -261,7 +263,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture-page/ask.ts` | Capture-page Ask flow — `initAsk(ctx)`: split-button label refresh, destination menu, per-provider buttons, payload build, send + pre-send guards (destination kinds/count, text size), cross-tab storage listener |
 | `src/capture-page/zoom.ts` | Capture-page Image fit / Zoom / Pan — `initZoom(ctx)`: Fit + continuous-scale sizing, zoom menu, wheel / pinch / key zoom, drag pan with box snap + arrow-key nudge |
 | `src/capture-page/drawing.ts` | Capture-page highlight overlay — `initDrawing(ctx)`: edits / history / polyline / boxDrag state, snap-to (incl. `panSnapRects` for pan snap), render, drawViewportEdges, Shrink + View cropped + Convert last box (shared target/label rule) + annotation Copy / Paste / Import (More menu), tool palette; bake helpers (`hasBakeableEdits`, `editFlags`, `activeCrop`, `arrowBarbs`, `pctRectToPixels`) and `__seeState` hooks exported for main |
-| `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyEditDialogOpen()` for the page-wide Alt-shortcut suspend |
+| `src/capture-page/edit-dialog.ts` | Capture-page Edit dialogs — `initEditDialogs(ctx)` builds the per-kind catalog (HTML / selection HTML / text / markdown), wires Edit/Preview, Save, Cancel, Download; `anyModalDialogOpen()` for the page-wide Alt-shortcut suspend |
 | `src/capture-page/upload.ts` | Capture-page upload landing — `handleUploadFlow(ctx)`: wires the file picker, validates / decodes / sends `initializeUploadSession`, scrubs `?upload=true` from the URL, hands off to the caller for re-load |
 | `src/capture-page/menu-popover.ts` | `createMenuPopover(...)` — shared open / close / Escape / outside-click behaviour plus slide-up-to-fit placement (re-run on resize) for the Capture column's Zoom and More… popovers |
 | `src/capture-page/menu-keys.ts` | `createMenuKeyNav(...)` — arrow / Home / End / Enter navigation shared by the Zoom, More… and Ask menus, plus `isKeyboardClick` / `isTextEntry` |
@@ -343,7 +345,8 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/copy-button-pressed.spec.ts` | E2E that Copy buttons hold `.pressed` for the async SW + writeText lifetime and clear it (incl. on error) |
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
-| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering a seeded log, opening it, the Restore / Reopen row actions, and what it declines to load with file access off |
+| `tests/e2e/file-access-required.spec.ts` | E2E for the file-access requirement — the service-worker gate, and the dialog on the error and History pages |
+| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering a seeded log, opening it, the Restore / Reopen row actions |
 | `tests/e2e/log-history-files.spec.ts` | E2E for the flush to `history-*.json` and the History page reading the flushed file and `log.json` from disk |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |

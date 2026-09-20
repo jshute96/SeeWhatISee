@@ -102,6 +102,52 @@ The manifest declares:
   snapshots.
 - `storage` — the authoritative home of the capture log.
 
+### "Allow access to file URLs" is required
+
+The one thing the manifest can't ask for. It is a per-extension
+toggle on `chrome://extensions`, off by default for a Web Store
+install, and there is no API to request it — the user flips it.
+
+- What it grants: read-only `fetch('file://…')`. Nothing is written
+  through it; writes still go through `chrome.downloads`.
+- Why we need it: `log.json` on disk is the capture log, and
+  appending to it means reading it first (`docs/log-consistency.md`).
+  The History page reads the same files to show thumbnails and link
+  to captures, and the watch indicator reads the watcher's status
+  file.
+- Enforced in one place per side:
+  - Service worker: `runWithErrorReporting` calls
+    `requireFileAccess()` (`src/capture/file-access.ts`) before the
+    action runs, so a hotkey, context-menu or toolbar action with
+    the toggle off writes nothing and opens the usual
+    `capture.html?error=` page with `FILE_ACCESS_REQUIRED_MESSAGE`.
+    Every action, including ones that don't touch a file (pin
+    toggle, copy-filename): one answer to "why did nothing happen".
+  - Extension pages: the Capture page (every state, including that
+    error page) and the History page open the dialog in
+    `src/capture/file-access-dialog.ts` once they're visible. The
+    History page also loads nothing — it is reachable without the
+    gate (the Options page's History button opens it directly), and
+    drawing its no-reads table under the dialog would be a second,
+    half-working version of the page.
+- The dialog: the title states the requirement, one step names the
+  toggle with an **Extension settings** button that opens the
+  extension's details page in the foreground, then a rule and a
+  short "Explanation" list — read-only access, what the log and the
+  History page use it for, and that files are only ever written via
+  Chrome downloads. No OK / Cancel and Esc is swallowed — the user either leaves
+  or flips the toggle, and flipping it restarts the extension, which
+  closes the page anyway.
+- Built in TypeScript rather than page markup so both pages share
+  one dialog; styles in `shared-styles.css`. Its settings link, the
+  History banner's and the log-sync dialog's are all wired by
+  `wireFileAccessLink`.
+- The Capture page's shortcut handlers suspend on any open modal
+  (`anyModalDialogOpen`), so Alt+C can't start a save from behind it.
+- Unpacked extensions get the toggle on by default, so development
+  never sees the dialog. `tests/e2e/file-access-required.spec.ts`
+  covers it by overriding `isAllowedFileSchemeAccess`.
+
 ### Why not `tabs`
 
 - `chrome.tabs.query` works without it.

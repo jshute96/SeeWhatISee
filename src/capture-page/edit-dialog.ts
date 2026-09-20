@@ -7,7 +7,7 @@
 //
 // Adding a future kind is one entry in `EDIT_KINDS` below plus a
 // pencil button in the markup. `initEditDialogs(ctx)` is the only
-// entry point; `anyEditDialogOpen()` is exposed so the main file's
+// entry point; `anyModalDialogOpen()` is exposed so the main file's
 // page-wide Alt-shortcut handler can suspend its bindings while any
 // dialog is up.
 
@@ -84,8 +84,7 @@ interface EditKindSpec {
 let ctx: EditDialogContext;
 
 // Populated by `bindEditDialog` once the DOM is cloned from the
-// template; insertion order matches `EDIT_KINDS` so
-// `anyEditDialogOpen()` and future iteration see the same order.
+// template; insertion order matches `EDIT_KINDS`.
 const editDialogs: HTMLDialogElement[] = [];
 
 interface EditDialogParts {
@@ -573,6 +572,13 @@ export function initEditDialogs(context: EditDialogContext): void {
   for (const spec of specs) bindEditDialog(spec);
 }
 
-export function anyEditDialogOpen(): boolean {
-  return editDialogs.some((d) => d.open);
+/**
+ * Whether any modal dialog is up — an Edit dialog, the log-sync
+ * prompt, or the file-access dialog. The page-wide shortcut handlers
+ * suspend themselves on this, so Alt+C behind a modal can't "click"
+ * the Capture button the user can't see. Every dialog on this page
+ * opens with `showModal()`, which is what `:modal` matches.
+ */
+export function anyModalDialogOpen(): boolean {
+  return document.querySelector('dialog:modal') !== null;
 }

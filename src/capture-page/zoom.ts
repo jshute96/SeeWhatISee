@@ -146,7 +146,7 @@ export interface ZoomContext {
 
   /** True iff an edit dialog is up — the Alt+± zoom shortcut bails
    *  in that state so the key isn't swallowed mid-edit. */
-  anyEditDialogOpen(): boolean;
+  anyModalDialogOpen(): boolean;
   /** True iff the page is in the no-session error mode — every
    *  Alt-shortcut bails in that state for the same reason as the
    *  main file's Alt-hotkey handler. */
@@ -1020,7 +1020,7 @@ export function initZoom(context: ZoomContext): void {
     if (!isInZoomRegion(e.clientY)) return;
     // Match the keyboard path: a modal edit dialog owns the page, and
     // the stale-capture state has no image worth zooming.
-    if (ctx.anyEditDialogOpen() || ctx.isStaleMode()) return;
+    if (ctx.anyModalDialogOpen() || ctx.isStaleMode()) return;
 
     // Always swallow Ctrl/Cmd+wheel here: the browser default would
     // page-zoom on top of (or instead of) our app zoom, which is
@@ -1060,7 +1060,7 @@ export function initZoom(context: ZoomContext): void {
   // (Alt+S etc. are shift-less), and Alt++ requires Shift on most
   // keyboard layouts.
   document.addEventListener('keydown', (e) => {
-    if (ctx.anyEditDialogOpen()) return;
+    if (ctx.anyModalDialogOpen()) return;
     if (ctx.isStaleMode()) return;
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     let dir: 1 | -1;
@@ -1232,7 +1232,7 @@ export function initZoom(context: ZoomContext): void {
     // can't realistically be in flight behind a modal today, so these
     // are for consistency rather than a live bug — but a future
     // non-modal dialog shouldn't have its arrow keys eaten.
-    if (ctx.anyEditDialogOpen()) return;
+    if (ctx.anyModalDialogOpen()) return;
     if (ctx.isStaleMode()) return;
     if (e.altKey) return;
     let dx = 0;

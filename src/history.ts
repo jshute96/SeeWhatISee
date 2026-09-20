@@ -38,6 +38,7 @@
 // way.
 
 import {
+  canReadFiles,
   listHistoryFiles,
   peekCaptureDirectory,
   getCaptureFileExistence,
@@ -46,6 +47,8 @@ import {
   pathToFileUrl,
   readLogText,
 } from './capture/downloads.js';
+import { wireFileAccessLink } from './capture/file-access.js';
+import { showFileAccessDialog } from './capture/file-access-dialog.js';
 import {
   dedupeRecords,
   LOG_STORAGE_KEY,
@@ -172,36 +175,9 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
-// The "Allow access to file URLs" toggle lives on Chrome's own
-// per-extension details page, not in our Options page — so this jumps
-// straight there.
-//
-// It's a real `<a href>` so the destination shows in the status bar on
-// hover and right-click → Copy link address works, but the navigation
-// itself has to be intercepted: Chrome blocks a page-initiated load of
-// a `chrome://` URL, so the open goes through `chrome.tabs.create`
-// (the same call the Options page's "Edit shortcuts" button makes).
-// The href is assigned here rather than in the markup so it can't
-// drift from the URL we actually open.
-const FILE_ACCESS_URL = `chrome://extensions/?id=${chrome.runtime.id}`;
-fileAccessLink.href = FILE_ACCESS_URL;
-// `click` alone isn't enough. Looking like a real link invites the
-// gestures people use on real links, and the ones that skip `click`
-// would fall through to the blocked `chrome://` href and silently do
-// nothing: middle-click fires `auxclick`, and ctrl/⌘-click expects a
-// *background* tab. Enter/Space do fire `click`, so keyboard is
-// covered by the first handler.
-const openFileAccessPage = (e: MouseEvent, active: boolean): void => {
-  e.preventDefault();
-  void chrome.tabs.create({ url: FILE_ACCESS_URL, active });
-};
-fileAccessLink.addEventListener('click', (e) => {
-  openFileAccessPage(e, !(e.ctrlKey || e.metaKey));
-});
-fileAccessLink.addEventListener('auxclick', (e) => {
-  if (e.button !== 1) return;
-  openFileAccessPage(e, false);
-});
+// The banner's settings link — same wiring as the file-access
+// dialog's, from `capture/file-access.ts`.
+wireFileAccessLink(fileAccessLink);
 
 /**
  * Draw attention to the file-access banner after a click we
@@ -1416,7 +1392,17 @@ void (async () => {
     if (firstRenderDone) render();
   }).catch(() => {});
 
-  fileAccessBlocked = !(await chrome.extension.isAllowedFileSchemeAccess());
+  fileAccessBlocked = !(await canReadFiles());
+  // The toggle is required, so the page loads nothing without it:
+  // the dialog over the empty page is the whole answer, and there is
+  // no dismissing it short of leaving or flipping the toggle. Loading
+  // anyway would draw the degraded no-reads table underneath — a
+  // second, half-working version of the page that the entry points
+  // going through the service worker's gate never show.
+  if (fileAccessBlocked) {
+    showFileAccessDialog();
+    return;
+  }
   await Promise.all([
     loadFileExistence(),
     // Chained, not parallel: both the record load (reading `log.json`

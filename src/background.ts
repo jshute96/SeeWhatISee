@@ -349,9 +349,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   // Open the History page — a table view over the capture log.
   // It can't fail on "no captures yet" (the page renders its own
-  // empty state), but it goes through the same wrapper so an
-  // unexpected tab-create failure still surfaces on the
-  // icon/tooltip channel.
+  // empty state), but it goes through the same wrapper for the
+  // file-access gate and so an unexpected tab-create failure still
+  // surfaces on the icon/tooltip channel.
   if (id === HISTORY_MENU_ID) {
     await runWithErrorReporting(() => openHistoryPage(), tab);
     return;

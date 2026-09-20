@@ -566,6 +566,11 @@ never touched.
 
 ### The file-access banner
 
+**Superseded:** the toggle is required, and with it off the page
+loads nothing and opens the shared "file access required" dialog
+(`docs/chrome-extension.md`) over the empty page. The banner and the
+degraded mode below are unreachable, pending removal.
+
 - Amber banner under the search box (outside the scrolling `<main>`,
   so it can't scroll away from the rows it explains), shrink-wrapped
   to its own text with `width: fit-content`.

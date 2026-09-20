@@ -54,26 +54,6 @@ export async function requestLogSyncWrite(
 }
 
 /**
- * Open the extension's details page, where "Allow access to file URLs"
- * lives. Chrome refuses a page-initiated navigation to `chrome://`, so
- * a link's `href` is only good for hover and copy-link — the actual
- * open has to go through `chrome.tabs.create`.
- *
- * Opened in the foreground: the user is going there to flip the
- * toggle, and a tab that opens behind the prompt looks like nothing
- * happened. The prompt is still waiting when they come back for the
- * follow-up Retry.
- */
-export function openFileAccessSettings(): void {
-  void chrome.tabs.create({ url: fileAccessUrl(), active: true });
-}
-
-/** The extension's own details page — the toggle's home. */
-export function fileAccessUrl(): string {
-  return `chrome://extensions/?id=${chrome.runtime.id}`;
-}
-
-/**
  * The path shown in the dialog's first line ("Capture records are
  * written in …"), rendered in a code font by the dialog. Falls back to
  * the bare filename when the capture directory isn't known.
