@@ -9,10 +9,10 @@
 // *which* records land in *which* file, not the plumbing that gets
 // them there.
 //
-// The `downloads.search` stub reports a `log.json` whose size always
-// matches what we last wrote, which is what puts `recordCapture` on
-// its ordinary append path. The reconcile's other branches — deleted,
-// emptied, mismatched, unreadable — are covered in
+// The `downloads.search` stub reports a completed `log.json` record
+// and `fetch` answers with what was last written, which is what puts
+// `recordCapture` on its ordinary append path. The reconcile's other
+// branches — deleted, unreadable, unknown directory — are covered in
 // `log-reconcile.test.mjs`.
 
 import { test } from 'node:test';
@@ -72,7 +72,7 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
     extension: { isAllowedFileSchemeAccess: async () => true },
     downloads: {
       download: async ({ filename, url }) => {
-        // Undo the `data:` wrapper `writeJsonFile` puts around the text.
+        // Undo the `data:` wrapper `writeJsonFileComplete` puts around the text.
         const body = decodeURIComponent(url.slice(url.indexOf(',') + 1));
         writes.push({ filename, body });
         const id = nextId++;
@@ -455,13 +455,12 @@ test('a failed log.json write fails the capture, notes nothing, and keeps the pi
   // which means the pin has to survive even though the batch *did*
   // leave the kept list on this pass.
   //
-  // Injected at `waitForDownloadComplete`, not at `download`: the
-  // download itself starting is what `writeJsonFile` awaits, and a
-  // throw there propagates out of `recordCapture` before any of the
-  // cleanup runs. The window that matters is the write *completing*
-  // — a failure there must reach the user as a capture failure
-  // naming the file, and must not leave the session note that says
-  // the capture was logged.
+  // Injected at the completion poll (`search({ id })`), not at
+  // `download`: a throw from `download` fails the capture too, but
+  // the window that matters is the write *completing* — a failure
+  // there must reach the user as a capture failure naming the file
+  // and Chrome's error code, and must not leave the session note that
+  // says the capture was logged.
   const store = stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
   const realDownload = chrome.downloads.download;
   const realSearch = chrome.downloads.search;

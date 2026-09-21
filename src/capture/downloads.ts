@@ -497,10 +497,9 @@ export async function canReadFiles(): Promise<boolean> {
  * A missing file resolves non-ok rather than rejecting, which would
  * otherwise read as a successful load of an empty log and quietly
  * discard the user's history. `null` folds together denied (toggle
- * off), missing, and failed — callers that care disambiguate
- * themselves before concluding the file is gone: the reconcile
- * consults the download record, the History page fetches the
- * directory.
+ * off), missing, and failed — the reconcile consults the download
+ * record's re-checked `exists` before concluding the file is gone;
+ * the History page shows an empty log either way.
  */
 export async function readLogText(directory: string): Promise<string | null> {
   return readCaptureFileText(directory, LOG_FILE_NAME);
@@ -660,6 +659,26 @@ export async function getLogFileRecord(): Promise<LogFileRecordLookup> {
     },
     release: () => watch.stop(),
   };
+}
+
+/**
+ * Ask Chrome to re-check whether `log.json` is still there, for the
+ * side effect alone.
+ *
+ * `DownloadItem.exists` is stale until something prompts a re-check,
+ * and `search()` is what prompts it (see `startExistsWatch`). Called
+ * on every service-worker load so a deletion that happened while the
+ * browser was closed is already reflected by the time the next
+ * capture's reconcile asks, instead of costing it the re-check wait.
+ */
+export async function refreshLogFileExistence(): Promise<void> {
+  try {
+    // Release the lookup's `onChanged` watch instead of leaving it
+    // registered.
+    (await getLogFileRecord()).release();
+  } catch (err) {
+    console.info('[SeeWhatISee] log.json existence re-check failed:', err);
+  }
 }
 
 /**

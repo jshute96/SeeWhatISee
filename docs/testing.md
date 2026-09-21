@@ -91,10 +91,11 @@ multi-step drilling behavior.
   invisible to that event.
 - We resolve downloads via `chrome.downloads.search({ id })`
   inside the SW, polling for `state === 'complete'`, then
-  reading the returned `filename` field — which is the actual
-  on-disk path Playwright uses for its download interception
-  storage (typically a UUID under a temp dir, not the path we
-  asked for, but the one we need to read the bytes back).
+  reading the returned `filename` field — the real on-disk path.
+  `tests/fixtures/extension.ts` turns off Playwright's download
+  interception and points Chrome at a per-worker temp directory, so
+  files land under the names the extension asked for (see
+  `log-consistency.md` → Testing).
 
 ### Capturing the SW-opened error tab
 

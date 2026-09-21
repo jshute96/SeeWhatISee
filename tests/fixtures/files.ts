@@ -330,24 +330,25 @@ export async function readCaptureLog(sw: Worker): Promise<Record<string, unknown
  *
  * The records are serialized the way `serializeLog` does it (one JSON
  * object per line, trailing newline, keys in the order given).
+ * Returns the file's on-disk path.
  */
 export async function seedCaptureLog(
   sw: Worker,
   records: Record<string, unknown>[],
-): Promise<void> {
+): Promise<string> {
   // Matches `serializeLog`, empty list included: it renders as the
   // empty string, not a bare newline.
   const text = records.length === 0
     ? ''
     : records.map((r) => JSON.stringify(r)).join('\n') + '\n';
-  await seedCaptureLogText(sw, text);
+  return await seedCaptureLogText(sw, text);
 }
 
 /**
  * `seedCaptureLog` for arbitrary file contents — a hand-edited or
  * partly broken log, which the append is expected to preserve.
  */
-export async function seedCaptureLogText(sw: Worker, text: string): Promise<void> {
+export async function seedCaptureLogText(sw: Worker, text: string): Promise<string> {
   const id = await sw.evaluate(async (body) => {
     return await chrome.downloads.download({
       url: `data:application/json;charset=utf-8,${encodeURIComponent(body)}`,
@@ -357,5 +358,5 @@ export async function seedCaptureLogText(sw: Worker, text: string): Promise<void
   }, text);
   // The reconcile only trusts a *completed* record, so let the write
   // land before the test captures on top of it.
-  await waitForDownloadPath(sw, id);
+  return await waitForDownloadPath(sw, id);
 }

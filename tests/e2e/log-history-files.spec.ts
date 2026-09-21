@@ -10,13 +10,12 @@
 // files back off the filesystem. The other tests close the loop from
 // the History page's side: *Load older captures* finds and reads the
 // flushed file back through the `file://` directory listing, and the
-// page *opens* from `log.json` itself — the cache loses to the file,
-// and a deleted or emptied file renders as the empty log it is.
+// page *opens* from `log.json` itself — a deleted or emptied file
+// renders as the empty log it is.
 //
-// The seeded log is written to **both** `chrome.storage.local` and
-// `log.json` on disk (`seedCaptureLog`). Storage alone would be
-// discarded: the file is authoritative, so a capture on top of a
-// storage-only seed reads an absent `log.json` and starts a new log.
+// The seeded log is written to `log.json` on disk through the
+// extension's own download path (`seedCaptureLog`): the file is the
+// log, and there is nowhere else to seed it.
 
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';

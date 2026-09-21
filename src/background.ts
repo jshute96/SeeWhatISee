@@ -16,6 +16,7 @@ import {
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  refreshLogFileExistence,
 } from './capture/downloads.js';
 import { LAST_CAPTURE_FILES_KEY } from './capture/log-store.js';
 import {
@@ -87,7 +88,6 @@ import {
   openHistoryPage,
 } from './background/history-page.js';
 import { installOptionsMessageHandlers } from './background/options.js';
-import { refreshLogFileExistence } from './background/log-sync.js';
 import {
   findProviderForTab,
   getAskPin,

@@ -1,4 +1,4 @@
-// Unit tests for the disk-vs-storage reconcile — one per row of the
+// Unit tests for the `log.json` reconcile — one per row of the
 // decision table in `docs/log-consistency.md`.
 //
 // Everything the reconcile consults is stubbed: the `log.json`
@@ -65,7 +65,7 @@ function stubChrome({
   // rather than the test paying real time for it.
   let inFlight = inFlightText === null
     ? null
-    : { ...logRecord(inFlightText, 'in_progress'), id: 99 };
+    : { ...logRecord('in_progress'), id: 99 };
   /** Downloads created during the test, so `search({id})` can resolve them. */
   const created = new Map();
   globalThis.chrome = {
@@ -148,12 +148,8 @@ function stubChrome({
   return store;
 }
 
-/**
- * A complete, present `log.json` record. `text` is only for the
- * caller's readability — pairing the record with the file it names —
- * since nothing reads a record's size any more.
- */
-function logRecord(_text, state = 'complete') {
+/** A present `log.json` record — complete unless told otherwise. */
+function logRecord(state = 'complete') {
   return {
     id: 0,
     state,
@@ -184,15 +180,14 @@ function rec(n) {
 /** A `log.json` on disk holding `records`, with a matching record. */
 function onDisk(records) {
   const text = serializeLog(records);
-  return { record: logRecord(text), fileText: text };
+  return { record: logRecord(), fileText: text };
 }
 
 // ── the file itself decides ──────────────────────────────────────────
 
-test('a readable file replaces the buffer, dropped rows included', async () => {
+test('a readable file is the log, as it is', async () => {
   const text = serializeLog([rec(1)]);
-  stubChrome({ record: logRecord(text), fileText: text });
-  // Storage still remembers rec(2); the file says the user removed it.
+  stubChrome({ record: logRecord(), fileText: text });
   const state = await inspectLogFile();
   assert.equal(state.kind, 'contents');
   assert.equal(state.text, text);
@@ -200,13 +195,13 @@ test('a readable file replaces the buffer, dropped rows included', async () => {
 });
 
 test('an unreadable file whose record says it is gone starts fresh', async () => {
-  const gone = { ...logRecord('x'), exists: false };
+  const gone = { ...logRecord(), exists: false };
   stubChrome({ record: gone, fileText: null });
   assert.equal((await inspectLogFile()).kind, 'fresh');
 });
 
 test('an unreadable file the record says is there fails the capture', async () => {
-  stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
+  stubChrome({ record: logRecord(), fileText: null });
   await assert.rejects(inspectLogFile(), (err) => {
     assert.ok(err instanceof LogWriteFailedError);
     assert.match(err.message, /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json\. Fix or delete the file, then capture again\.$/);
@@ -283,11 +278,7 @@ test('a log.json write still in flight is waited out, not read around', async ()
   // landed when the second reconciles. Reading the file at that moment
   // could catch it half-written and adopt the truncation as the log.
   const stored = [rec(1), rec(2)];
-  stubChrome({
-    ...onDisk(stored),
-    record: logRecord(serializeLog([rec(1)])),
-    inFlightText: serializeLog(stored),
-  });
+  stubChrome({ ...onDisk(stored), inFlightText: serializeLog(stored) });
   const state = await inspectLogFile();
   assert.equal(state.kind, 'contents');
   assert.equal(state.text, serializeLog(stored));
@@ -304,7 +295,7 @@ test('without the file-access toggle the reconcile refuses to guess', async () =
 // ── what recordCapture does with those decisions ─────────────────────
 
 test('a deleted log.json makes the next capture start over, not resurrect', async () => {
-  const store = stubChrome({ record: { ...logRecord('x'), exists: false } });
+  const store = stubChrome({ record: { ...logRecord(), exists: false } });
   await recordCapture(rec(3));
   const log = writes.filter((w) => w.filename.endsWith('log.json')).pop();
   assert.equal(log.body, serializeLog([rec(3)]));
@@ -313,7 +304,7 @@ test('a deleted log.json makes the next capture start over, not resurrect', asyn
 });
 
 test('a failed capture leaves everything untouched', async () => {
-  const store = stubChrome({ record: logRecord(serializeLog([rec(1), rec(2)])), fileText: null });
+  const store = stubChrome({ record: logRecord(), fileText: null });
   await assert.rejects(recordCapture(rec(3)), LogWriteFailedError);
   // Point-in-time failure: no file written, no note left, no state
   // left behind for anything to clean up later.
@@ -327,14 +318,14 @@ test('the append keeps the file as it was, plus one line', async () => {
   // adds to it. The bad line is skipped for the timestamp check, as
   // every reader skips it.
   const text = `{ "timestamp": "2026-01-01T00:00:01.000Z" , "title": "edited" }\nnot a record\n`;
-  stubChrome({ record: logRecord(text), fileText: text });
+  stubChrome({ record: logRecord(), fileText: text });
   await recordCapture(rec(3));
   assert.equal(writes.at(-1).body, `${text}${serializeLog([rec(3)])}`);
 });
 
 test('a file missing its trailing newline gets one before the new record', async () => {
   const text = serializeLog([rec(1)]).trimEnd();
-  stubChrome({ record: logRecord(text), fileText: text });
+  stubChrome({ record: logRecord(), fileText: text });
   await recordCapture(rec(2));
   assert.equal(writes.at(-1).body, serializeLog([rec(1), rec(2)]));
 });
@@ -353,7 +344,7 @@ test('a log.json deleted this session starts fresh, not a failure', async () => 
   // The record still says `exists: true`; only the re-check knows the
   // file is gone.
   stubChrome({
-    record: logRecord(serializeLog([rec(1), rec(2)])),
+    record: logRecord(),
     fileText: null,
     existsAfterRecheck: false,
   });
@@ -367,13 +358,13 @@ test('a log.json deleted this session starts fresh, not a failure', async () => 
 test('no re-check delta leaves the record trusted', async () => {
   // A failed read with the record standing: fail, since the file is
   // there and we can't see into it.
-  stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
+  stubChrome({ record: logRecord(), fileText: null });
   await assert.rejects(recordCapture(rec(2)), /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json/);
 });
 
 test('a re-check confirming the file fails the same way', async () => {
   stubChrome({
-    record: logRecord(serializeLog([rec(1)])),
+    record: logRecord(),
     fileText: null,
     existsAfterRecheck: true,
   });

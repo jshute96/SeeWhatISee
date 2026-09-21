@@ -342,7 +342,7 @@ the capture **fails right there** with
     log writes, history-file flushes — refresh the cache when they
     land inside `SeeWhatISee/`, so the cache tracks a download root
     the user has since moved.
-- **`refreshLogFileExistence`** (`src/background/log-sync.ts`) runs a
+- **`refreshLogFileExistence`** (`src/capture/downloads.ts`) runs a
   `downloads.search` for `log.json` on every service-worker load, which
   gets Chrome re-checking early rather than leaving it to the first
   failed read. The reconcile doesn't depend on it having finished; see
@@ -435,13 +435,6 @@ here or it belongs fixed.
   above, the unknown-directory first write (landed, deflected, and
   failed), the file-access backstop, and the failure messages,
   driving a faked `chrome.downloads` / `fetch`.
-- `tests/unit/capture-directory.test.mjs` covers the landing check: a
-  write that lands under another name or outside `SeeWhatISee/` is a
-  failed write, and only writes inside it refresh the cache.
-- `tests/e2e/more-captures.spec.ts` drives the first-write path in real
-  Chrome: with download history erased and the cache dropped, a
-  URL-only capture appends to an existing log (the deflected copy
-  cleaned up) or starts one.
   - Its stub reproduces the **stale `exists`** contract: a `search()`
     returns the old value and fires the `onChanged` delta afterwards.
     That's what makes "a log deleted this session starts fresh, not a
@@ -449,14 +442,24 @@ here or it belongs fixed.
   - The verbatim append — an edited line and a non-record line kept
     byte for byte, a missing terminator supplied — is covered here
     too.
+- `tests/unit/capture-directory.test.mjs` covers the landing check: a
+  write that lands under another name or outside `SeeWhatISee/` is a
+  failed write, and only writes inside it refresh the cache.
+- `tests/e2e/more-captures.spec.ts` drives the first-write path in real
+  Chrome: with download history erased and the cache dropped, a
+  URL-only capture appends to an existing log (the deflected copy
+  cleaned up) or starts one.
 - `tests/unit/log-history-files.test.mjs` covers the failed `log.json`
   write: the capture rejects with `LogWriteFailedError`, no session
   note is left, and the flushed batch's pinned name survives for the
   retry.
-- `tests/e2e/screenshot.spec.ts` covers the two headline behaviors
+- `tests/e2e/screenshot.spec.ts` covers the headline behaviors
   end-to-end: deleting `log.json` starts a fresh log instead of
-  bringing the old records back, and a capture appends to a
-  hand-edited file without rewriting what's there.
+  bringing the old records back — once deleted through
+  `chrome.downloads.removeFile`, and once deleted on the filesystem
+  (pinned as an expected failure: real Chrome doesn't re-check
+  `exists` on `search()`, see the test's comment) — and a capture
+  appends to a hand-edited file without rewriting what's there.
 - **The e2e harness had to change for any of this to be testable.**
   Playwright renames every download to a UUID under its artifacts
   directory, so the extension's path-based lookups — capture

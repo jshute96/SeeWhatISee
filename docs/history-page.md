@@ -207,19 +207,12 @@ Finding that tab is less obvious than it looks:
 - The "No captures in the log yet" notice is suppressed while unread
   history files exist — after `log.json` is deleted on a long-running
   install it would sit directly above an offer to load 40 files.
-- Emptying the log also drops the history-file rows already loaded into the
-  tab, so the page reflects that instead of leaving hundreds of rows
-  under an emptied log. The history files are untouched, so the button
-  just offers them again.
-  - A read still in flight when that happens is disowned via a
-    generation counter — merging its results afterwards would put the
-    cleared rows straight back on screen.
-- Not covered by the page's own e2e tests: they seed the log directly
-  and never run a capture, so there is no capture directory to list
-  and no download records to fall back on — both discovery routes come
-  up empty. `log-history-files.spec.ts` (which does capture) covers
-  both sides for real: the flush writing the file, and the button
-  loading it back through the directory listing.
+- The page's own e2e tests (`history-page.spec.ts`) seed `log.json`
+  and never capture, so they never produce a history file; they only
+  check the control stays hidden with none. `log-history-files.spec.ts`
+  (which does capture) covers both sides for real: the flush writing
+  the file, and the button loading it back through the directory
+  listing.
 
 ## Layout
 

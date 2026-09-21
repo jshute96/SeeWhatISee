@@ -17,13 +17,12 @@
 // through the service worker. Everything it needs — `storage.local`
 // and `downloads.search` — is available to any extension page.
 //
-// **Older captures.** `chrome.storage.local` only buffers the most
-// recent captures; older ones are flushed to `history-*.json` files
-// beside `log.json` (see `capture/log-store.ts`). They are found by
-// listing the capture directory over `file://` (`listHistoryFiles`)
-// and read back on demand, appended after the `log.json` records —
-// the reads are opt-in per visit rather than something the page does
-// on load.
+// **Older captures.** `log.json` holds only the most recent captures;
+// older ones are flushed to `history-*.json` files beside it (see
+// `capture/log-store.ts`). They are found by listing the capture
+// directory over `file://` (`listHistoryFiles`) and read back on
+// demand, appended after the `log.json` records — the reads are
+// opt-in per visit rather than something the page does on load.
 //
 // **File access.** The saved screenshots / HTML / selection files live
 // on disk under `<downloads>/SeeWhatISee/`, and every read here — the
@@ -321,11 +320,11 @@ let mergedRecords: CaptureRecord[] = [];
  * **Dedup is exact-match only**, via `dedupeRecords`. Every save gets
  * its own timestamp, so what it's left catching is one record arriving
  * from both sources merged here — a batch that reached a history file
- * while the service worker died before the matching storage write.
+ * while the service worker died before the matching `log.json` trim.
  * Anything looser — keying on `timestamp` — merges the distinct
  * records of a single editing session and drops real captures; that
  * shipped once already.
- * The two copies land on opposite sides of the storage/history file
+ * The two copies land on opposite sides of the log / history-file
  * boundary, so the pass is global rather than adjacent-only.
  */
 function rebuildMerged(): void {

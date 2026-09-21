@@ -294,6 +294,59 @@ test('a capture appends to log.json without rewriting what is there', async ({
   await resetCaptureState(sw1);
 });
 
+test('deleting log.json outside the browser also starts a fresh log', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  // The deletion test above goes through `chrome.downloads.removeFile`,
+  // so the record's `exists` is right straight away. A user deletes
+  // the file in a file manager, and then the record keeps saying the
+  // file is there: the reconcile's `confirmExists` waits for a
+  // re-check delta that `chrome.downloads.search` was believed to
+  // trigger, and the unit tests stub it that way.
+  //
+  // **Known failure.** Real Chrome never re-checks `exists` on a
+  // `search()` (probed: 40 searches over 4s after an `fs.rmSync`, no
+  // change, no delta), so the capture fails with "couldn't read
+  // log.json" instead of starting fresh. Pinned with `test.fail` until
+  // the reconcile stops relying on `DownloadItem.exists`; drop the
+  // annotation with that fix.
+  test.fail(true, 'chrome.downloads.search does not re-check DownloadItem.exists');
+  const sw0 = await getServiceWorker();
+  await resetCaptureState(sw0);
+  const logPath = await seedCaptureLogText(
+    sw0,
+    '{"timestamp":"2026-01-01T00:00:00.000Z","title":"about to be deleted"}\n',
+  );
+  fs.rmSync(logPath);
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  try {
+    const result = await sw.evaluate(async () => {
+      const api = (self as unknown as {
+        SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+      }).SeeWhatISee;
+      return api.captureVisible();
+    });
+    // `[]` as the baseline asserts length 1: the seeded record is gone
+    // for good, and the capture didn't fail over a file the user
+    // deleted on purpose.
+    const log = await verifyCapture(sw, result, PURPLE, []);
+    expect(log).toHaveLength(1);
+  } finally {
+    // Unconditional: while this is an expected failure, the capture
+    // throws and would otherwise leave the deleted-log state behind
+    // for the next test's capture to trip over.
+    await page.close();
+    await resetCaptureState(sw);
+  }
+});
+
 test('delayed capture records the new tab URL after a tab switch', async ({
   extensionContext,
   fixtureServer,

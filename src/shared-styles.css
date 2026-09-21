@@ -149,9 +149,8 @@
 
 /*
  * The "file access required" dialog (`capture/file-access-dialog.ts`),
- * shared by the Capture and History pages. Same proportions as the
- * Capture page's log-sync dialog: a short explanation, not an
- * editor. The settings link is an <a class="btn">, so it gets the
+ * shared by the Capture and History pages: a short explanation, not
+ * an editor. The settings link is an <a class="btn">, so it gets the
  * button chrome and a text-decoration reset here.
  */
 dialog.file-access-dialog {

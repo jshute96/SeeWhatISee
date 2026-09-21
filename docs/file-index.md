@@ -222,7 +222,6 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
 | `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, the restorable-capture push, and the Reopen relay |
-| `src/background/log-sync.ts` | The `log.json` download-record existence re-check run on every service-worker load |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
