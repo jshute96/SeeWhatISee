@@ -827,8 +827,9 @@ export async function reopenCapture(
 ): Promise<void> {
   const directory = await peekCaptureDirectory();
   if (!directory) {
+    // Shown after "Couldn't reopen this capture: " on the History page.
     throw new Error(
-      'Could not find the capture directory, so there is nothing to reopen from.',
+      "the capture directory couldn't be found, so there is nothing to reopen from.",
     );
   }
   // Records come from `log.json`, which is a file in the user's
@@ -846,6 +847,10 @@ export async function reopenCapture(
     !name.includes('/') && !name.includes('\\') && name !== LOG_FILE_NAME;
   const fileUrl = (name: string): string | null =>
     (readable(name) ? pathToFileUrl(joinCapturePath(directory, name)) : null);
+  // Named by full path, as every file read/write failure is, so the
+  // user knows where to look.
+  const unreadable = (name: string): string =>
+    `Couldn't read ${joinCapturePath(directory, name)}.`;
   const now = new Date();
   const ts = compactTimestamp(now);
 
@@ -894,7 +899,7 @@ export async function reopenCapture(
     if (Object.keys(flags).length > 0) capture.bakedScreenshotFlags = flags;
   }
   if (record.screenshot && !image) {
-    capture.screenshotError = `Could not read ${record.screenshot.filename}.`;
+    capture.screenshotError = unreadable(record.screenshot.filename);
   } else if (!record.screenshot) {
     // Nothing to read and nothing wrong — the original capture simply
     // didn't save an image. The quiet channel, not `screenshotError`:
@@ -910,7 +915,7 @@ export async function reopenCapture(
     capture.html = html;
     capture.contentsFilename = record.contents!.filename;
   } else if (record.contents) {
-    capture.htmlError = `Could not read ${record.contents.filename}.`;
+    capture.htmlError = unreadable(record.contents.filename);
   } else {
     // Quietly disabled rather than flagged, same as the image flows:
     // an HTML-less capture isn't a failure to surface.
@@ -924,7 +929,7 @@ export async function reopenCapture(
     const selUrl = fileUrl(record.selection.filename);
     selectionBody = selUrl ? await readCaptureText(selUrl) : null;
     if (selectionBody === null) {
-      capture.selectionError = `Could not read ${record.selection.filename}.`;
+      capture.selectionError = unreadable(record.selection.filename);
     } else {
       capture.selections = { html: '', text: '', markdown: '' };
       capture.selections[record.selection.format] = selectionBody;

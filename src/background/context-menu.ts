@@ -551,7 +551,7 @@ export async function copyLastSelectionFilename(): Promise<void> {
  */
 async function captureFilePath(name: string): Promise<string> {
   const dir = await peekCaptureDirectory();
-  if (!dir) throw new Error('Could not find the capture directory');
+  if (!dir) throw new Error("Couldn't find the capture directory");
   return joinCapturePath(dir, name);
 }
 

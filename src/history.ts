@@ -415,7 +415,7 @@ function restoreFromRow(btn: HTMLButtonElement): void {
       console.info('[SeeWhatISee] history: restore failed:', err);
       restoreInFlight = false;
       btn.disabled = false;
-      btn.title = `Could not restore this capture: ${
+      btn.title = `Couldn't restore this capture: ${
         err instanceof Error ? err.message : String(err)}`;
     }
   })();
@@ -476,7 +476,7 @@ function reopenFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
       // Expected-and-handled: the reason goes in the tooltip. Not
       // `console.error` — Chrome promotes that onto the Errors page.
       console.info('[SeeWhatISee] history: reopen failed:', err);
-      btn.title = `Could not reopen this capture: ${
+      btn.title = `Couldn't reopen this capture: ${
         err instanceof Error ? err.message : String(err)}`;
     } finally {
       btn.disabled = false;
@@ -907,15 +907,15 @@ async function loadHistoryFileList(): Promise<void> {
  * its comment for why timestamp order is the wrong order here).
  *
  * **Per-file outcomes.** A file that reads is merged and marked read
- * even if others failed, and the count of failures is returned. One
+ * even if others failed, and the paths that failed are returned. One
  * dead file (deleted between the listing and the read) must not veto
  * the history files that *are* readable — and it wouldn't heal on
  * retry, so all-or-nothing would lock the rest of the history out for
  * the session.
  */
-async function loadHistoryFiles(): Promise<number> {
+async function loadHistoryFiles(): Promise<string[]> {
   const pending = unloadedHistoryFiles();
-  if (pending.length === 0) return 0;
+  if (pending.length === 0) return [];
   const results = await Promise.allSettled(pending.map(async (path) => {
     // A missing file can resolve non-ok — and that would otherwise look
     // like a successful read of an empty history file, silently dropping 50
@@ -926,10 +926,10 @@ async function loadHistoryFiles(): Promise<number> {
     return await res.text();
   }));
 
-  let failed = 0;
+  const failed: string[] = [];
   results.forEach((result, i) => {
     if (result.status === 'rejected') {
-      failed += 1;
+      failed.push(pending[i]);
       return;
     }
     // Reversed to match the page's newest-first order, the same way
@@ -956,16 +956,22 @@ async function loadHistoryFilesInteractively(): Promise<void> {
     // The newly-loaded rows reference files we haven't asked about
     // yet, so refresh the "(deleted)" map alongside them.
     await loadFileExistence();
-    if (failed > 0) {
+    if (failed.length > 0) {
       // Anything readable has already been merged in; this names what
       // is still missing rather than implying the whole load failed.
-      const files = `${failed} history ${failed === 1 ? 'file' : 'files'}`;
-      historyFileError = `Could not read ${files}.`;
+      // Named, not counted, so the user knows where to look — but a
+      // directory that went away fails every file at once, and the
+      // note is one inline span, so the list is capped.
+      const shown = failed.slice(0, 3).join(', ');
+      const more = failed.length - 3;
+      historyFileError = more > 0
+        ? `Couldn't read ${shown}, and ${more} more.`
+        : `Couldn't read ${shown}.`;
     }
   } catch {
     // `loadHistoryFiles` reports per-file failures through its return
     // value, so reaching here means the read itself broke.
-    historyFileError = 'Could not read the history files.';
+    historyFileError = "Couldn't read the history files.";
   }
   historyFileLoading = false;
   render();

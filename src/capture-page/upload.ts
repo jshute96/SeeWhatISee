@@ -81,7 +81,7 @@ export async function handleUploadFlow(ctx: UploadContext): Promise<void> {
 
     const reader = new FileReader();
     reader.onerror = () => {
-      showError('Could not read file. Try again.');
+      showError(`Couldn't read ${file.name}. Try again.`);
       resetInput();
     };
     reader.onload = async () => {

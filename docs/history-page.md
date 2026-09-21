@@ -123,9 +123,9 @@ Finding that tab is less obvious than it looks:
     `LOG_MAX_ENTRIES - LOG_HISTORY_BATCH + 1` to `LOG_MAX_ENTRIES`
     depending on where the flush cycle is, so any single number would
     be wrong half the time.
-  - The text next to it is failure-only ("Could not read N history
-    files."), in error red and `role="status"` so it doesn't read as
-    more grey metadata next to the capture count.
+  - The text next to it is failure-only ("Couldn't read
+    <the files' paths>."), in error red and `role="status"` so it
+    doesn't read as more grey metadata next to the capture count.
   - Opt-in rather than automatic: a long history is a lot of rows to
     render for a user who only wanted the recent ones.
   - One click loads *all* remaining files. A batch is 50 captures, so
@@ -196,7 +196,8 @@ Finding that tab is less obvious than it looks:
     tab sits open — accepted: it's small next to the capture's own
     file writes, and only an open History tab pays it.
 - Failures are **per file**: whatever read is merged and marked read,
-  and the note reports how many didn't.
+  and the note names the files that didn't (the first few, plus a
+  count when there are more).
   - All-or-nothing would let one dead file — deleted between the
     listing and the read — veto every other history file, permanently,
     since retrying wouldn't heal it.
