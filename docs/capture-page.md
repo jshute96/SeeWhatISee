@@ -244,6 +244,11 @@ referenced from this doc live in
 - URL row: monospace blue link, followed inline by a 22px Copy URL
   button matching the per-row `.copy-btn` chrome elsewhere on the
   page.
+- Title row falls back to the URL when no title was captured, and
+  to "(Unknown URL and title)" when both are missing — Chrome
+  withholds them on `chrome://` and extension pages for some entry
+  points (see issue #34). No capture path arrives with a
+  deliberately blank URL.
 - When the captured URL isn't linkable (empty, or a non-http(s)
   scheme like `chrome://` / `file://` / `data:`) both rows lose
   their `href` and render as plain black text; the URL row's blue

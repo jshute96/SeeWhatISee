@@ -1105,11 +1105,14 @@ async function loadData(): Promise<void> {
     capturedUrl = response.url;
     // Title falls back to the URL when no title was captured (covers
     // restricted pages, scrape failures, and the rare untitled tab).
-    // The native `title` attribute mirrors the displayed text so
-    // hovering an ellipsised row reveals the full string. The hover
-    // tooltip on the URL row stays the URL itself even when the title
-    // is showing the URL — readers expect the URL there.
-    const titleText = response.title || response.url || '(no URL)';
+    // When both are missing, Chrome withheld them — no capture path
+    // arrives here with a deliberately blank URL — so the label says
+    // "unknown" rather than implying the page had none. The native
+    // `title` attribute mirrors the displayed text so hovering an
+    // ellipsised row reveals the full string. The hover tooltip on
+    // the URL row stays the URL itself even when the title is
+    // showing the URL — readers expect the URL there.
+    const titleText = response.title || response.url || '(Unknown URL and title)';
     capturedTitleLink.textContent = titleText;
     capturedTitleLink.title = titleText;
     capturedUrlText.textContent = response.url;
