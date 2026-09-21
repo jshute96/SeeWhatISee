@@ -24,12 +24,19 @@
 // rather than clobbering. See `docs/log-consistency.md`.
 
 import {
+  ArtifactWriteError,
+  LOG_FILE_NAME,
   type LogFileRecordLookup,
+  basename,
   canReadFiles,
+  describeCaptureFile,
+  discardDownload,
+  downloadArtifactUniquely,
   getLogFileRecord,
+  joinCapturePath,
+  jsonDataUrl,
   parentDirectory,
   peekCaptureDirectory,
-  probeCaptureDirectory,
   readLogText,
 } from './downloads.js';
 import { FileAccessRequiredError } from './file-access.js';
@@ -56,15 +63,22 @@ export class LogWriteFailedError extends Error {
   }
 }
 
-/** What to tell the user when `log.json` needs fixing by hand. */
-const FIX_LOG_FILE_ADVICE = 'Fix or delete the file, then capture again.';
+/** The problem when `log.json` at `path` needs fixing by hand. */
+function unreadableLogProblem(path: string): string {
+  return `couldn't read ${path}. Fix or delete the file, then capture again.`;
+}
 
 /** What the reconcile decided about the file on disk. */
 export type LogFileState =
   /** We read it. Its text is what the capture appends to. */
   | { kind: 'contents'; text: string; directory: string }
   /** No file. Start a new log from this capture. */
-  | { kind: 'fresh' };
+  | { kind: 'fresh' }
+  /**
+   * Nothing knows where captures land, so the file can't be read.
+   * The caller resolves this with `claimNewLog`.
+   */
+  | { kind: 'unknown-directory' };
 
 /**
  * Work out what `log.json` holds, so the caller knows what to append
@@ -72,10 +86,10 @@ export type LogFileState =
  *
  * 1. **Find the directory.** Reading needs a path, and the user's
  *    download directory isn't exposed by any API — so it comes from
- *    the `log.json` download record, the cached capture directory, or
- *    as a last resort a throwaway probe write. If even that fails, the
- *    capture fails: a probe that timed out says nothing about whether
- *    a log is there, and guessing "no" would overwrite one.
+ *    the `log.json` download record or the cached capture directory.
+ *    When neither knows, the answer is `unknown-directory`: nothing
+ *    can be read, and the caller learns the directory from its own
+ *    write instead (`claimNewLog`).
  * 2. **Read the file.** Its contents beat every inference we could
  *    make from a download record — that is what makes hand-deleted
  *    rows stay deleted.
@@ -100,19 +114,12 @@ export async function inspectLogFile(): Promise<LogFileState> {
 
 async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileState> {
   const record = lookup.record;
-  // Swallow lookup failures: an unknown directory degrades to the
-  // probe below, and must never fail the capture.
-  let directory = record?.filename
+  // Swallow lookup failures: an unknown directory is a state the
+  // caller handles, and must never fail the capture by itself.
+  const directory = record?.filename
     ? parentDirectory(record.filename)
     : await peekCaptureDirectory().catch(() => null);
-  // Nothing knows where the files go — the first capture on a profile
-  // with no download records, and one that wrote no files of its own.
-  // Worth one throwaway write to find out. If even that fails we know
-  // nothing, and a `log.json` write would most likely fail the same
-  // way — so fail now, before deciding anything about the log
-  // (principle 4: when we can't tell what's on disk, we don't write).
-  if (!directory) directory = await probeCaptureDirectory();
-  if (!directory) throw new LogWriteFailedError("couldn't find the capture directory.");
+  if (!directory) return { kind: 'unknown-directory' };
   const text = await readLogText(directory);
   // Not parsed here: the caller appends to the text as it is and only
   // parses for the timestamp check — keeping the parser dependency
@@ -124,5 +131,77 @@ async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileS
   // the record's stale `exists` — failing the capture of a user who
   // simply deleted their log would be a poor answer.
   if (!await lookup.confirmExists()) return { kind: 'fresh' };
-  throw new LogWriteFailedError(`couldn't read log.json. ${FIX_LOG_FILE_ADVICE}`);
+  throw new LogWriteFailedError(unreadableLogProblem(joinCapturePath(directory, LOG_FILE_NAME)));
+}
+
+/** What `claimNewLog` found out. */
+export type ClaimedLog =
+  /** No log existed: `line` is now the whole of `log.json`. */
+  | { kind: 'written'; downloadId: number }
+  /** A log was already there; this is what it holds. */
+  | Extract<LogFileState, { kind: 'contents' }>;
+
+/**
+ * Start `log.json` when nothing knows where it would be — the first
+ * capture on a profile with no download history, or one whose
+ * history and extension storage have both been cleared.
+ *
+ * There is no API that says where downloads go, so the only way to
+ * learn the directory is to write something. Rather than a throwaway
+ * probe file, write the log itself, with `conflictAction: 'uniquify'`
+ * so an existing file can't be clobbered:
+ *
+ * - It lands as `log.json` → there was no log. This capture is
+ *   recorded and the directory is now cached (`waitForDownloadComplete`
+ *   remembers it). One write, no cleanup.
+ * - It lands as `log (1).json` → a log was there after all, and the
+ *   landing path says where. The stray copy is deleted and the log is
+ *   read from that directory. The caller appends to that text.
+ *
+ * `line` is the record as it would be appended, newline included. In
+ * the second case its timestamp hasn't been checked against the
+ * existing records yet, so the caller redoes that from the contents —
+ * which is why the deflected copy is discarded rather than kept.
+ *
+ * A write that fails, or lands outside a `SeeWhatISee/` directory,
+ * fails the capture (`LogWriteFailedError`): nothing was learned, and
+ * guessing "no log" would overwrite one. So does a deflected write
+ * whose log then can't be read: the deflection is proof a file is
+ * there, so unlike the no-record row of `decideLogFileState` this
+ * can't be a deleted log — and overwriting it would lose it.
+ */
+export async function claimNewLog(line: string): Promise<ClaimedLog> {
+  let landed: { id: number; path: string };
+  try {
+    landed = await downloadArtifactUniquely(LOG_FILE_NAME, jsonDataUrl(line));
+  } catch (err) {
+    throw new LogWriteFailedError(await logWriteProblem(err));
+  }
+  if (basename(landed.path) === LOG_FILE_NAME) {
+    return { kind: 'written', downloadId: landed.id };
+  }
+  // Read from the path in hand rather than re-running the lookup: the
+  // lookup would depend on the cache write `waitForDownloadComplete`
+  // fires off without awaiting, and on a download record the discard
+  // below erases.
+  const directory = parentDirectory(landed.path);
+  const text = await readLogText(directory);
+  await discardDownload(landed.id);
+  if (text === null) {
+    throw new LogWriteFailedError(unreadableLogProblem(joinCapturePath(directory, LOG_FILE_NAME)));
+  }
+  return { kind: 'contents', text, directory };
+}
+
+/**
+ * The problem to report for a failed `log.json` write: the file by
+ * its path and the download helper's own reason when it is one of its
+ * errors (they're kept apart on it for exactly this), else whatever
+ * the error says.
+ */
+export async function logWriteProblem(err: unknown): Promise<string> {
+  if (err instanceof ArtifactWriteError) return `couldn't write ${err.path}: ${err.reason}`;
+  const path = await describeCaptureFile(LOG_FILE_NAME);
+  const reason = err instanceof Error ? err.message : String(err);
+  return `couldn't write ${path}: ${reason}.`;
 }

@@ -260,6 +260,32 @@ export async function resetCaptureState(sw: Worker): Promise<void> {
 }
 
 /**
+ * Make the extension forget where captures land, leaving the files
+ * alone: every download record of ours is erased and the cached
+ * directory dropped. What a profile looks like after the user clears
+ * Chrome's download history — the state that sends the next capture
+ * through `claimNewLog`. Returns the directory, for the test to look
+ * in afterwards; `null` when nothing has been written yet.
+ */
+export async function forgetCaptureDirectory(sw: Worker): Promise<string | null> {
+  return await sw.evaluate(async () => {
+    const items = await chrome.downloads.search({
+      filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]',
+    });
+    let directory: string | null = null;
+    for (const item of items) {
+      if (item.byExtensionId !== chrome.runtime.id) continue;
+      if (item.filename) directory = item.filename.replace(/[/\\][^/\\]+$/, '');
+      try {
+        await chrome.downloads.erase({ id: item.id });
+      } catch { /* already erased */ }
+    }
+    await chrome.storage.local.remove('captureDirectory');
+    return directory;
+  });
+}
+
+/**
  * The records in a log file's text, oldest first. Lines that aren't
  * records are skipped, as every reader (and the extension's own
  * append) skips them — so a test that seeds a junk line doesn't trip

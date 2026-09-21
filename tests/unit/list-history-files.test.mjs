@@ -49,7 +49,7 @@ test('finds history files, ignores everything else, sorts newest first', async (
     row('history-20260101-120000-000.json'),
     row('history-20260302-080910-123.json'),
     row('log.json'),
-    row('probe-1787669008.json'),
+    row('log (1).json'),
     row('shot with space.png'),
     row('screenshot-20260101-120000-000.png'),
   ]));

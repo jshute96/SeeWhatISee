@@ -136,6 +136,17 @@ session note — each step only after the one before it has landed.
   way** (`downloadArtifactComplete`, `downloads.ts`), and a failure
   there fails the capture *before* the log is touched — so a record
   never points at a file Chrome didn't write.
+- **A write that lands somewhere else is a failed write too.**
+  - When Chrome can't create the path it was given (the `SeeWhatISee/`
+    folder isn't writable) it doesn't error: it ignores `saveAs:
+    false`, shows its Save As dialog, and the file lands wherever that
+    defaults to — the Downloads root. There is no option to turn this
+    off.
+  - A completed write whose path isn't `…/SeeWhatISee/<the name asked
+    for>` is reported as failed, naming where the file went. The stray
+    file is left where the user put it.
+  - A cancelled dialog is an interrupted download, reported the
+    ordinary way.
 
 ### Pruning the older `log.json` records
 
@@ -224,23 +235,25 @@ directory isn't exposed by any API, so the path comes from the
 (`peekCaptureDirectory`) — and normally one of those knows: this
 capture's own screenshot / HTML were written moments ago.
 
-Failing both, one throwaway write answers it — the **directory
-probe**:
+Failing both, nothing can be read — and the only way to learn the
+directory is to write something. So the capture writes the log
+itself, **without overwriting** (`claimNewLog`, `log-reconcile.ts`;
+`conflictAction: 'uniquify'`):
 
-- Writes a throwaway `probe-<epoch-ms>.json`, takes the completed
-  download's path minus the filename as the directory, then deletes
-  both the file and its download record.
-- The name can't collide with anything, matches neither `log.json` nor
-  the `history-*.json` pattern any reader looks for, and is never
-  displayed — so even a failed cleanup is inert.
-- Deliberately *not* a zero-byte `log.json`: if no file were there,
-  that would leave an empty log behind, which the next read would
-  adopt.
+- It lands as `log.json` → there was no log. This capture is
+  recorded, and the completed write's path caches the directory. One
+  write, no cleanup.
+- It lands as `log (1).json` → a log was there after all. The copy
+  is deleted (file and download record), and the log is read the
+  ordinary way, which now knows the directory. The rest is the
+  normal append.
 - Needing it is rare: only a capture that writes no files of its own
   (a URL-only capture) on a profile with no download records and no
-  cached directory. If the probe itself fails, the capture fails
-  (`LogWriteFailedError`): a probe that timed out says nothing about
-  whether a log is there, and guessing "no" would overwrite one.
+  cached directory. If the write fails, or lands outside a
+  `SeeWhatISee/` directory, the capture fails (`LogWriteFailedError`):
+  nothing was learned, and guessing "no log" would overwrite one.
+- Why not a throwaway probe file: this is one write instead of two in
+  the common (no log) case, and nothing needs cleaning up.
 
 Then the read decides everything:
 
@@ -248,6 +261,7 @@ Then the read decides everything:
 |---|---|---|
 | Succeeds | This is the log | Append this capture's line to it and write |
 | Fails, and the download record says the file is gone (or there is no record) | The user deleted it | Start a new log from this capture |
+| Fails, after the first write was deflected by the file | It is there but unreadable, whatever the records say | Fail; the message names the file |
 | Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — fail** |
 
 ### The append is verbatim
@@ -283,11 +297,22 @@ the capture **fails right there** with
   Nothing about the failure is stored, and capturing again is the
   retry.
 - The message says what to do, since every case is one the user
-  resolves outside the extension:
-  - *couldn't read log.json. Fix or delete the file, then capture
+  resolves outside the extension. `<log>` is the file's full path
+  when the directory is known, else `Downloads/SeeWhatISee/log.json`
+  (`describeCaptureFile`, `downloads.ts`):
+  - *couldn't read `<log>`. Fix or delete the file, then capture
     again.*
-  - *couldn't write log.json: download failed (FILE_FAILED).*
-  - *couldn't find the capture directory.*
+  - *couldn't write `<log>`: download failed (FILE_FAILED).*
+  - *couldn't write `<log>`: Chrome saved it to /…/Downloads/log.json
+    instead. (Is the SeeWhatISee folder writable?)*
+  - *couldn't write `<log>`: the download did not finish.* — also
+    what a Save As dialog left open looks like from here: the
+    completion wait gives up after a few seconds, and a file saved
+    from the dialog after that lands unwatched.
+- Each reason is a sentence of its own, so a message reads as
+  "Couldn't write `<path>`: Reason. (Aside.)" whichever reason it
+  carries. Capture-file failures (`ArtifactWriteError`) name the file
+  the same way.
 - Where it shows is where any capture failure shows: the Capture
   page's status line, or the `capture.html?error=…` page a
   context-menu / hotkey capture opens.
@@ -302,20 +327,19 @@ the capture **fails right there** with
   cache-first:
   - `peekCaptureDirectory()` checks the `chrome.storage.local` cache
     (key `captureDirectory`), then download history; it never writes a
-    file, and returns `null` when neither knows. Used by the History
-    page load, the watch indicator, and the reconcile — where the
-    answer names the directory `log.json` is *read* from.
-  - `getCaptureDirectory()` adds a throwaway probe download as a last
-    resort, so it can answer — and create the directory — even after
-    download history is cleared. It throws only when that probe fails.
+    file, and returns `null` when neither knows. Every reader uses it
+    — the History page load, reopen, the watch indicator, the copy-last
+    menu items, and the reconcile — and treats `null` as "nothing
+    captured yet". Only the capture write itself learns the directory
+    by writing (`claimNewLog`, above).
   - The download-history match is structural: our extension's download
     (`byExtensionId` guards against a stray `/tmp/SeeWhatISee/`),
     landing directly inside a directory named `SeeWhatISee/`. Any
     artifact matches, not just `log.json`. A Save-as-dialog write
     lands wherever the user chose and so doesn't match, unless they
     picked a folder literally named `SeeWhatISee`.
-  - Writes awaited through `waitForDownloadComplete` — log writes,
-    history-file flushes, the probes — refresh the cache when they
+  - Writes awaited through `waitForDownloadComplete` — capture files,
+    log writes, history-file flushes — refresh the cache when they
     land inside `SeeWhatISee/`, so the cache tracks a download root
     the user has since moved.
 - **`refreshLogFileExistence`** (`src/background/log-sync.ts`) runs a
@@ -383,9 +407,9 @@ here or it belongs fixed.
   leaves the batch both in the new history file and still in the log;
   the retried flush writes it again under a new name. Additive,
   never lossy, and the History page's exact-match dedupe hides it.
-- **A stray probe file.** The directory probe's `probe-*.json` is
-  deleted immediately, but if that delete fails the file stays. It
-  matches nothing any reader looks for.
+- **A stray `log (1).json`.** A deflected first write (see "Finding
+  the file") is deleted immediately; if that delete fails the copy
+  stays. It matches nothing any reader looks for.
 - **A failed read waits out the re-check timeout.** The only route
   that consults `exists` (see
   [Waiting for the existence re-check](#waiting-for-the-existence-re-check)),
@@ -408,9 +432,16 @@ here or it belongs fixed.
 ## Testing
 
 - `tests/unit/log-reconcile.test.mjs` covers each row of the table
-  above, the directory probe, the file-access backstop, and the
-  failure messages, driving a faked `chrome.downloads.search` /
-  `fetch` / probe write.
+  above, the unknown-directory first write (landed, deflected, and
+  failed), the file-access backstop, and the failure messages,
+  driving a faked `chrome.downloads` / `fetch`.
+- `tests/unit/capture-directory.test.mjs` covers the landing check: a
+  write that lands under another name or outside `SeeWhatISee/` is a
+  failed write, and only writes inside it refresh the cache.
+- `tests/e2e/more-captures.spec.ts` drives the first-write path in real
+  Chrome: with download history erased and the cache dropped, a
+  URL-only capture appends to an existing log (the deflected copy
+  cleaned up) or starts one.
   - Its stub reproduces the **stale `exists`** contract: a `search()`
     returns the old value and fires the `onChanged` delta afterwards.
     That's what makes "a log deleted this session starts fresh, not a

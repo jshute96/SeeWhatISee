@@ -19,6 +19,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const EXT_ID = 'our-extension-id';
+/** Where the stub lands every write. */
+const DIR = '/d/SeeWhatISee';
 
 /** Captured `chrome.downloads.download` calls, newest last. */
 let writes = [];
@@ -43,6 +45,8 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
   let nextId = 1;
   /** Id of the most recent `log.json` write, for the record below. */
   let lastLogId = 0;
+  /** Where each write landed, by download id. */
+  const landed = new Map();
   /** What `log.json` holds right now: the last write, else the seed. */
   const logText = () => {
     const last = lastLogWrite();
@@ -72,18 +76,26 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
         const body = decodeURIComponent(url.slice(url.indexOf(',') + 1));
         writes.push({ filename, body });
         const id = nextId++;
+        // Every write lands where it was aimed, under an absolute path
+        // the landing check accepts.
+        landed.set(id, `${DIR}/${filename.replace(/^.*\//, '')}`);
         if (filename.endsWith('log.json')) lastLogId = id;
         return id;
       },
-      search: async () => {
-        // Every query is the `log.json` lookup — the record that names
-        // the directory the reconcile reads from.
+      search: async (query) => {
+        // By id: the completion poll behind `waitForDownloadComplete`.
+        if (query.id !== undefined) {
+          const filename = landed.get(query.id);
+          return filename ? [{ id: query.id, state: 'complete', filename }] : [];
+        }
+        // Otherwise the `log.json` lookup — the record that names the
+        // directory the reconcile reads from.
         return [{
           // The id of the write that produced it, so the post-write
           // prune recognizes this as the record it just created —
           // otherwise it would bail before touching the stub at all.
           id: lastLogId,
-          filename: `SeeWhatISee/log.json`,
+          filename: `${DIR}/log.json`,
           byExtensionId: EXT_ID,
           state: 'complete',
           exists: true,
@@ -471,7 +483,7 @@ test('a failed log.json write fails the capture, notes nothing, and keeps the pi
   };
   await assert.rejects(recordCapture(rec(100)), (err) => {
     assert.equal(err.name, 'LogWriteFailedError');
-    assert.match(err.message, /couldn't write log\.json: download failed \(FILE_FAILED\)/);
+    assert.match(err.message, /couldn't write \/d\/SeeWhatISee\/log\.json: download failed \(FILE_FAILED\)\.$/);
     return true;
   });
   chrome.downloads.download = realDownload;

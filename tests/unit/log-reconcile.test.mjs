@@ -29,9 +29,11 @@ let erased = [];
  *   default — it's required, and the one test that turns it off
  *   checks the backstop.
  * - `otherRecord`: a non-log capture file, which is how the directory
- *   is normally known without probing.
- * - `probeFails`: whether the directory probe's throwaway write
- *   fails, i.e. no capture directory can be found or made.
+ *   is normally known before the log is written.
+ * - `claimFails`: whether the first `log.json` write on an unknown
+ *   directory (`claimNewLog`'s uniquify write) fails.
+ * - `deflect`: force that write to land as `log (1).json` even with
+ *   no readable `fileText` — a log that is there but can't be read.
  * - `inFlightText`: a `log.json` write that has started but not
  *   finished, holding this text once it lands. It shadows `record`,
  *   which stands for the write before it.
@@ -46,7 +48,8 @@ function stubChrome({
   fileText = null,
   fileAccess = true,
   otherRecord = null,
-  probeFails = false,
+  claimFails = false,
+  deflect = false,
   inFlightText = null,
   existsAfterRecheck = null,
 } = {}) {
@@ -80,14 +83,20 @@ function stubChrome({
     },
     extension: { isAllowedFileSchemeAccess: async () => fileAccess },
     downloads: {
-      download: async ({ filename, url }) => {
-        if (probeFails && /\/probe-\d+\.json$/.test(filename)) {
+      download: async ({ filename, url, conflictAction }) => {
+        if (claimFails && conflictAction === 'uniquify') {
           throw new Error('download failed');
         }
         const id = nextId++;
         const body = decodeURIComponent(url.slice(url.indexOf(',') + 1));
-        const landed = filename.replace(/^.*\//, '');
-        writes.push({ filename, body, landed });
+        let landed = filename.replace(/^.*\//, '');
+        // What Chrome does for `'uniquify'` when the file is there:
+        // picks a sibling name instead. `fileText` stands in for "a
+        // file is there".
+        if (conflictAction === 'uniquify' && (deflect || fileText !== null)) {
+          landed = landed.replace(/\.json$/, ' (1).json');
+        }
+        writes.push({ filename, body, landed, conflictAction });
         created.set(id, `${DIR}/${landed}`);
         return id;
       },
@@ -200,41 +209,73 @@ test('an unreadable file the record says is there fails the capture', async () =
   stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
   await assert.rejects(inspectLogFile(), (err) => {
     assert.ok(err instanceof LogWriteFailedError);
-    assert.match(err.message, /couldn't read log\.json\. Fix or delete the file/);
+    assert.match(err.message, /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json\. Fix or delete the file, then capture again\.$/);
     return true;
   });
 });
 
-test('with no record to locate it, the directory is probed and the file read', async () => {
+test('with nothing to locate the file, the reconcile says so rather than guessing', async () => {
+  stubChrome({ record: null, fileText: serializeLog([rec(1)]) });
+  assert.equal((await inspectLogFile()).kind, 'unknown-directory');
+  assert.equal(writes.length, 0);
+});
+
+test('an unknown directory: the first write is deflected, then the file is read and appended to', async () => {
+  // Download history cleared but the log still there. Writing
+  // `log.json` without overwriting lands as `log (1).json`, which says
+  // a log exists and where; that copy is discarded and the real one
+  // appended to.
   const text = serializeLog([rec(1)]);
   stubChrome({ record: null, fileText: text });
-  const state = await inspectLogFile();
-  assert.equal(state.kind, 'contents');
-  // The throwaway probe went out under a name nothing else reads, and
-  // was cleaned up both on disk and in the download history.
-  assert.match(writes[0].filename, /\/probe-\d+\.json$/);
-  assert.equal(removed.length, 1);
-  assert.equal(erased.length, 1);
+  await recordCapture(rec(3));
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].conflictAction, 'uniquify');
+  assert.equal(writes[0].landed, 'log (1).json');
+  assert.equal(removed.length, 1, 'the deflected copy is deleted');
+  assert.equal(erased.length, 1, '…and its download record dropped');
+  assert.equal(writes[1].conflictAction, 'overwrite');
+  assert.equal(writes[1].body, `${text}${serializeLog([rec(3)])}`);
 });
 
-test('no record and no readable file: fresh, with nothing to ask', async () => {
-  // Download history cleared and the file gone (or never written): the
-  // probe finds the directory, the read fails, and with no record
-  // there is nothing to consult about whether a file is there.
-  stubChrome({ record: null, fileText: null });
-  assert.equal((await inspectLogFile()).kind, 'fresh');
-});
-
-test('no directory at all fails the capture rather than guessing', async () => {
-  // Nothing knows where captures go and the probe can't find out. A
-  // probe that timed out says nothing about whether a log is there,
-  // so this can't be "fresh" — that would overwrite one.
-  stubChrome({ record: null, fileText: null, probeFails: true });
-  await assert.rejects(inspectLogFile(), (err) => {
+test('a deflected first write whose log then cannot be read fails, not overwrites', async () => {
+  // The deflection proves a file is there, so a failed read can't be
+  // "the user deleted it" — and there is no record to ask. Writing
+  // over it would lose the log the write was deflected by.
+  const store = stubChrome({ record: null, fileText: null, deflect: true });
+  await assert.rejects(recordCapture(rec(3)), (err) => {
     assert.equal(err.name, 'LogWriteFailedError');
-    assert.match(err.message, /capture directory/);
+    assert.match(err.message, /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json\. Fix or delete the file, then capture again\.$/);
     return true;
   });
+  assert.equal(writes.length, 1, 'only the deflected write');
+  assert.equal(removed.length, 1, 'the deflected copy is still cleaned up');
+  assert.equal(store.lastCaptureFiles, undefined);
+});
+
+test('an unknown directory with no log: the first write is the log', async () => {
+  // A profile that has never captured. One write, no cleanup, and the
+  // capture is recorded by it.
+  const store = stubChrome({ record: null, fileText: null });
+  await recordCapture(rec(3));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].conflictAction, 'uniquify');
+  assert.equal(writes[0].landed, 'log.json');
+  assert.equal(writes[0].body, serializeLog([rec(3)]));
+  assert.equal(removed.length, 0);
+  assert.deepEqual(store.lastCaptureFiles, { timestamp: rec(3).timestamp, screenshot: 'shot-3.png' });
+});
+
+test('an unknown directory whose first write fails is a failed capture', async () => {
+  // Nothing knows where captures go and the write to find out fails.
+  // That says nothing about whether a log is there, so this can't be
+  // "fresh" — and there is nothing to overwrite it with anyway.
+  const store = stubChrome({ record: null, fileText: null, claimFails: true });
+  await assert.rejects(recordCapture(rec(3)), (err) => {
+    assert.equal(err.name, 'LogWriteFailedError');
+    assert.match(err.message, /couldn't write Downloads\/SeeWhatISee\/log\.json: download failed\.$/);
+    return true;
+  });
+  assert.equal(store.lastCaptureFiles, undefined);
 });
 
 test('a log.json write still in flight is waited out, not read around', async () => {
@@ -327,7 +368,7 @@ test('no re-check delta leaves the record trusted', async () => {
   // A failed read with the record standing: fail, since the file is
   // there and we can't see into it.
   stubChrome({ record: logRecord(serializeLog([rec(1)])), fileText: null });
-  await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
+  await assert.rejects(recordCapture(rec(2)), /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json/);
 });
 
 test('a re-check confirming the file fails the same way', async () => {
@@ -336,7 +377,7 @@ test('a re-check confirming the file fails the same way', async () => {
     fileText: null,
     existsAfterRecheck: true,
   });
-  await assert.rejects(recordCapture(rec(2)), /couldn't read log\.json/);
+  await assert.rejects(recordCapture(rec(2)), /couldn't read \/home\/user\/Downloads\/SeeWhatISee\/log\.json/);
 });
 
 // ── lines that aren't records ────────────────────────────────────────

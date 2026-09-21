@@ -27,6 +27,7 @@
 import {
   downloadArtifact,
   eraseDownloadRecord,
+  jsonDataUrl,
   peekCaptureDirectory,
   readCaptureFileText,
   waitForDownloadComplete,
@@ -73,9 +74,9 @@ export interface WatchStatus {
  * a stop already requested — because the caller does the same thing
  * with all of them: show nothing.
  *
- * `peekCaptureDirectory` rather than `getCaptureDirectory`: this runs
- * whenever the page comes back to the front, and a passive check must
- * never write a probe file to find out where to look.
+ * An unknown directory means no watch: this runs whenever the page
+ * comes back to the front, and a passive check must never write a
+ * file to find out where to look.
  */
 export async function readWatchStatus(): Promise<WatchStatus | null> {
   const status = await readPublishedSession();
@@ -170,10 +171,7 @@ export async function requestWatchStop(status: WatchStatus): Promise<void> {
     requestedAt: new Date().toISOString(),
     pid: status.pid,
   })}\n`;
-  const id = await downloadArtifact(
-    WATCH_STOP_FILE,
-    `data:application/json;charset=utf-8,${encodeURIComponent(payload)}`,
-  );
+  const id = await downloadArtifact(WATCH_STOP_FILE, jsonDataUrl(payload));
   // Take the row back out of Chrome's download list once it has
   // landed. This is a message to a script, not something the user
   // downloaded, and the watcher deletes the file moments later —

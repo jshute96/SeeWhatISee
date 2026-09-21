@@ -847,12 +847,10 @@ function render(): void {
 
 async function loadCaptureDir(): Promise<void> {
   try {
-    // Peek, not get: the cache / download-history lookup is free, but
-    // `getCaptureDirectory`'s probe-download fallback writes a file,
-    // which merely opening this page shouldn't do. `null` — nothing
-    // captured yet — is expected on a fresh install, and the empty
-    // state already says so; rows (if any exist without a resolvable
-    // directory) simply render without links.
+    // The cache / download-history lookup is free; nothing here
+    // writes a file to learn the directory, which merely opening this
+    // page shouldn't do. `null` — nothing captured yet — is expected
+    // on a fresh install, and the empty state already says so.
     captureDir = await peekCaptureDirectory();
   } catch {
     captureDir = null;

@@ -11,7 +11,14 @@
 import fs from 'node:fs';
 import type { Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
-import { type CaptureRecord, waitForDownloadPath, resetCaptureState } from '../fixtures/files';
+import {
+  type CaptureRecord,
+  forgetCaptureDirectory,
+  parseLogFileText,
+  resetCaptureState,
+  seedCaptureLogText,
+  waitForDownloadPath,
+} from '../fixtures/files';
 
 const SCREENSHOT_PATTERN = /^screenshot-\d{8}-\d{6}-\d{3}\.png$/;
 const CONTENTS_PATTERN = /^contents-\d{8}-\d{6}-\d{3}\.html$/;
@@ -102,13 +109,10 @@ test('captureUrlOnly records url + timestamp only, no files', async ({
     interface SpyState { __seeDl?: { id: number; name: string }[] }
     return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
   });
-  // `probe-*.json` is the reconcile's throwaway directory probe (it
-  // deletes itself); it fires here because a URL-only capture writes no
-  // artifact to locate the capture directory from. Everything else must
-  // be the log file — a URL-only capture writes no capture files.
-  const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
-  expect(written.length).toBeGreaterThan(0);
-  expect(written.every((n) => n.endsWith('log.json'))).toBe(true);
+  // Everything written must be the log file — a URL-only capture
+  // writes no capture files.
+  expect(names.length).toBeGreaterThan(0);
+  expect(names.every((n) => n.endsWith('log.json'))).toBe(true);
 
   await page.close();
 });
@@ -230,15 +234,87 @@ test('captureUrlOnly: htmlError is ignored — URL-only record still lands', asy
     interface SpyState { __seeDl?: { id: number; name: string }[] }
     return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
   });
-  // `probe-*.json` is the reconcile's throwaway directory probe (it
-  // deletes itself); it fires here because a URL-only capture writes no
-  // artifact to locate the capture directory from. Everything else must
-  // be the log file — a URL-only capture writes no capture files.
-  const written = names.filter((n) => !/probe-\d+\.json$/.test(n));
-  expect(written.length).toBeGreaterThan(0);
-  expect(written.every((n) => n.endsWith('log.json'))).toBe(true);
+  // Everything written must be the log file — a URL-only capture
+  // writes no capture files.
+  expect(names.length).toBeGreaterThan(0);
+  expect(names.every((n) => n.endsWith('log.json'))).toBe(true);
 
   await page.close();
+});
+
+// A URL-only capture writes no file before `log.json`, so with the
+// capture directory forgotten (download history cleared, cache
+// dropped) it is the one capture that has to learn the directory from
+// the log write itself — `claimNewLog`, in `log-reconcile.ts`.
+
+test('captureUrlOnly with the directory forgotten: an existing log is appended to, not overwritten', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await resetCaptureState(sw0);
+  const seeded = '{"timestamp":"2026-01-01T00:00:00.000Z","title":"already here"}';
+  await seedCaptureLogText(sw0, `${seeded}\n`);
+  const directory = await forgetCaptureDirectory(sw0);
+  expect(directory).not.toBeNull();
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  await runWithSpy(sw, 'captureUrlOnly');
+
+  // The first write, aimed at `log.json` without overwriting, was
+  // deflected by the existing file; the second is the real append.
+  const names = await sw.evaluate(() => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
+  });
+  expect(names).toEqual(['SeeWhatISee/log.json', 'SeeWhatISee/log.json']);
+
+  const lines = fs.readFileSync(`${directory}/log.json`, 'utf8').trimEnd().split('\n');
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toBe(seeded);
+  expect(JSON.parse(lines[1]).url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+  // The deflected copy was cleaned up, not left beside the log.
+  expect(fs.readdirSync(directory!).filter((n) => /^log.*\.json$/.test(n))).toEqual(['log.json']);
+
+  await page.close();
+  await resetCaptureState(sw);
+});
+
+test('captureUrlOnly with nothing known: the first write starts the log', async ({
+  extensionContext,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw0 = await getServiceWorker();
+  await resetCaptureState(sw0);
+  await forgetCaptureDirectory(sw0);
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+
+  const sw = await getServiceWorker();
+  await runWithSpy(sw, 'captureUrlOnly');
+
+  // One write, and it is the log.
+  const logPath = await findCapturedDownload(sw, 'log.json');
+  const names = await sw.evaluate(() => {
+    interface SpyState { __seeDl?: { id: number; name: string }[] }
+    return ((self as unknown as SpyState).__seeDl ?? []).map((d) => d.name);
+  });
+  expect(names).toEqual(['SeeWhatISee/log.json']);
+  expect(logPath).toMatch(/[/\\]SeeWhatISee[/\\]log\.json$/);
+  const records = parseLogFileText(fs.readFileSync(logPath, 'utf8'));
+  expect(records).toHaveLength(1);
+  expect(records[0].url).toBe(`${fixtureServer.baseUrl}/purple.html`);
+
+  await page.close();
+  await resetCaptureState(sw);
 });
 
 test('captureAll: htmlError is re-thrown so the toolbar error channel surfaces it', async ({

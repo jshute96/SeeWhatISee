@@ -1,12 +1,12 @@
 // Unit tests for capture-directory discovery — the
 // `chrome.storage.local` cache in front of the download-history
-// lookup, and the probe-download last resort.
+// lookup — and for the landing check on completed writes.
 //
 // The contract under test: `peekCaptureDirectory` never writes a file
-// (cache → download history → null), `getCaptureDirectory` may fall
-// back to one throwaway probe download, and every completed write
-// that lands directly inside `SeeWhatISee/` refreshes the cache via
-// `waitForDownloadComplete`.
+// (cache → download history → null); every completed write that lands
+// directly inside `SeeWhatISee/` refreshes the cache via
+// `waitForDownloadComplete`; a write that lands anywhere else, or
+// under another name, is reported as a failed write.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,9 +39,9 @@ function stubChrome({ records = [] } = {}) {
       },
     },
     downloads: {
-      download: async ({ filename }) => {
+      download: async ({ filename, conflictAction }) => {
         const id = nextId++;
-        downloadCalls.push(filename);
+        downloadCalls.push({ filename, conflictAction });
         created.set(id, `${DIR}/${filename.replace(/^.*\//, '')}`);
         return id;
       },
@@ -67,7 +67,8 @@ function record(filename) {
 stubChrome();
 const {
   CAPTURE_DIR_STORAGE_KEY,
-  getCaptureDirectory,
+  downloadArtifactComplete,
+  downloadArtifactUniquely,
   peekCaptureDirectory,
   waitForDownloadComplete,
 } = await import('../../dist/capture/downloads.js');
@@ -98,30 +99,52 @@ test('peek skips another extension’s records and never writes a file', async (
   assert.ok(!(CAPTURE_DIR_STORAGE_KEY in store));
 });
 
-test('get falls back to a probe download and caches its landing spot', async () => {
+test('a complete write that lands under another name is a failed write', async () => {
+  stubChrome();
+  chrome.downloads.search = async (query) => {
+    searchCalls.push(query);
+    return [{ id: query.id, state: 'complete', filename: `${DIR}/shot (1).png` }];
+  };
+  await assert.rejects(
+    downloadArtifactComplete('shot.png', 'data:,x'),
+    /Couldn't write \/home\/user\/Downloads\/SeeWhatISee\/shot\.png: Chrome saved it as .*shot \(1\)\.png instead\.$/,
+  );
+});
+
+test('a complete write that lands outside SeeWhatISee/ is a failed write', async () => {
   const store = stubChrome();
-  assert.equal(await getCaptureDirectory(), DIR);
-  // One throwaway write, into our subdirectory, under the probe name
-  // that nothing else matches.
+  // What Chrome does when the folder isn't writable: shows Save As and
+  // lands the file in the Downloads root.
+  chrome.downloads.search = async (query) => {
+    searchCalls.push(query);
+    return [{ id: query.id, state: 'complete', filename: '/home/user/Downloads/shot.png' }];
+  };
+  await assert.rejects(
+    downloadArtifactComplete('shot.png', 'data:,x'),
+    /Couldn't write Downloads\/SeeWhatISee\/shot\.png: Chrome saved it to \/home\/user\/Downloads\/shot\.png instead\. \(Is the SeeWhatISee folder writable\?\)$/,
+  );
+  await settle();
+  assert.ok(!(CAPTURE_DIR_STORAGE_KEY in store));
+});
+
+test('a uniquify write reports where it landed and caches the directory', async () => {
+  const store = stubChrome();
+  const landed = await downloadArtifactUniquely('log.json', 'data:,x');
   assert.equal(downloadCalls.length, 1);
-  assert.match(downloadCalls[0], /^SeeWhatISee\/probe-.*\.json$/);
+  assert.deepEqual(downloadCalls[0], { filename: 'SeeWhatISee/log.json', conflictAction: 'uniquify' });
+  assert.equal(landed.path, `${DIR}/log.json`);
   await settle();
   assert.equal(store[CAPTURE_DIR_STORAGE_KEY], DIR);
 });
 
-test('get throws when nothing is known and the probe cannot run', async () => {
+test('a uniquify write deflected to a sibling name is still a landing', async () => {
   stubChrome();
-  chrome.downloads.download = async () => {
-    throw new Error('downloads blocked');
+  chrome.downloads.search = async (query) => {
+    searchCalls.push(query);
+    return [{ id: query.id, state: 'complete', filename: `${DIR}/log (1).json` }];
   };
-  await assert.rejects(getCaptureDirectory(), /Could not locate/);
-});
-
-test('get prefers the cache and skips the probe', async () => {
-  const store = stubChrome();
-  store[CAPTURE_DIR_STORAGE_KEY] = DIR;
-  assert.equal(await getCaptureDirectory(), DIR);
-  assert.equal(downloadCalls.length, 0);
+  const landed = await downloadArtifactUniquely('log.json', 'data:,x');
+  assert.equal(landed.path, `${DIR}/log (1).json`);
 });
 
 test('a completed write inside SeeWhatISee/ refreshes the cache', async () => {

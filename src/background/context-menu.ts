@@ -11,8 +11,8 @@ import {
   getAskPin,
 } from '../ask/index.js';
 import {
-  getCaptureDirectory,
   joinCapturePath,
+  peekCaptureDirectory,
 } from '../capture/downloads.js';
 import { LAST_CAPTURE_FILES_KEY, type LastCaptureFiles } from '../capture/log-store.js';
 import { getLastCapture } from './last-capture.js';
@@ -525,24 +525,34 @@ export async function copyLastScreenshotFilename(): Promise<void> {
   const r = await getLastCaptureFiles();
   if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.screenshot) throw new Error('Latest capture has no screenshot to copy');
-  const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.screenshot));
+  await copyToClipboard(await captureFilePath(r.screenshot));
 }
 
 export async function copyLastHtmlFilename(): Promise<void> {
   const r = await getLastCaptureFiles();
   if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.contents) throw new Error('Latest capture has no HTML snapshot to copy');
-  const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.contents));
+  await copyToClipboard(await captureFilePath(r.contents));
 }
 
 export async function copyLastSelectionFilename(): Promise<void> {
   const r = await getLastCaptureFiles();
   if (!r) throw new Error('No capture this browser session to copy from');
   if (!r.selection) throw new Error('Latest capture has no selection to copy');
-  const dir = await getCaptureDirectory();
-  await copyToClipboard(joinCapturePath(dir, r.selection));
+  await copyToClipboard(await captureFilePath(r.selection));
+}
+
+/**
+ * The absolute path of a capture file, for the clipboard. The
+ * directory is always known by the time a copy-last entry is enabled
+ * — the capture that set the session note wrote `log.json`, which
+ * cached it — so the error is a backstop for a wiped storage cache
+ * plus cleared download history, and nothing writes to recover.
+ */
+async function captureFilePath(name: string): Promise<string> {
+  const dir = await peekCaptureDirectory();
+  if (!dir) throw new Error('Could not find the capture directory');
+  return joinCapturePath(dir, name);
 }
 
 /**

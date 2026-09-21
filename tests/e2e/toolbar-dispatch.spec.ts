@@ -1157,7 +1157,7 @@ test('copyLastSelectionFilename: forwards the selection filename to the offscree
   // Intercept the three chrome.* calls that `copyLastSelectionFilename`
   // depends on so the test can read the payload handed to the
   // offscreen document without needing a real capture to have
-  // written log.json (which is what `getCaptureDirectory` normally
+  // written log.json (which is what `peekCaptureDirectory` normally
   // looks up via `chrome.downloads.search`), and without needing
   // the offscreen doc to actually execute `execCommand('copy')`.
   //
@@ -1187,7 +1187,7 @@ test('copyLastSelectionFilename: forwards the selection filename to the offscree
 
       // Fake the download-history lookup: return a single synthetic
       // log.json entry with byExtensionId = our id, so
-      // `getCaptureDirectory` accepts it and strips to a directory.
+      // `peekCaptureDirectory` accepts it and strips to a directory.
       (chrome.downloads as { search: typeof chrome.downloads.search }).search =
         (async () => [
           {

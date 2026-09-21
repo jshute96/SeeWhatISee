@@ -31,6 +31,12 @@ The background script is an MV3 service worker. That means:
     until `state === 'complete'` (`downloadArtifactComplete`,
     `capture/downloads.ts`), and a write Chrome couldn't finish fails
     the capture with a message naming the file.
+- **An unwritable target folder means a Save As dialog, not an
+  error.** Chrome ignores `saveAs: false` and lands the file wherever
+  the dialog defaults to; there is no option to disable this.
+  - The completed path is checked against the one asked for, and a
+    write that landed elsewhere is reported as failed (see
+    `docs/log-consistency.md` → Write ordering).
 - **The Chrome downloads API can only write whole files.** No
   append, no edit, no partial overwrite.
   - `log.json` is therefore read back and rewritten — as it was,

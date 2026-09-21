@@ -25,12 +25,18 @@ import { type CaptureRecord } from './types.js';
 import {
   HISTORY_FILE_PREFIX,
   LOG_FILE_NAME,
-  ArtifactWriteError,
+  basename,
   downloadArtifactComplete,
+  jsonDataUrl,
   listHistoryFiles,
   pruneOldLogRecords,
 } from './downloads.js';
-import { LogWriteFailedError, inspectLogFile } from './log-reconcile.js';
+import {
+  LogWriteFailedError,
+  claimNewLog,
+  inspectLogFile,
+  logWriteProblem,
+} from './log-reconcile.js';
 
 /**
  * `chrome.storage.session` key holding the filenames of the most
@@ -352,6 +358,13 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  * - **contents** — the file's text. The steady-state case.
  * - **fresh** — the file is gone, so the log starts over at this
  *   capture. This is what stops a deleted log from being resurrected.
+ * - **unknown-directory** — nothing knows where the file would be
+ *   (a profile that has never written a capture file). `claimNewLog`
+ *   writes this record as a new `log.json` without overwriting: if
+ *   that lands, the capture is recorded and the directory learned in
+ *   one write; if a log was there after all, Chrome deflects the
+ *   write to a sibling name, which is discarded, and the append goes
+ *   on from the file's contents as usual.
  *
  * ## The append is verbatim
  *
@@ -418,7 +431,17 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  */
 export async function recordCapture(record: CaptureRecord): Promise<number> {
   return await serializeWrite(async () => {
-    const state = await inspectLogFile();
+    let state = await inspectLogFile();
+    if (state.kind === 'unknown-directory') {
+      // Nothing to append to yet — the record's timestamp is already
+      // unique in an empty log, so it can be serialized as is.
+      const claimed = await claimNewLog(appendLogLine('', serializeRecord(record)));
+      if (claimed.kind === 'written') {
+        await noteRecorded(record, claimed.downloadId);
+        return claimed.downloadId;
+      }
+      state = claimed;
+    }
     // What we're appending to: the file's text, or nothing if it's
     // gone. Parsed leniently — a line that isn't a record is skipped
     // here exactly as every reader skips it.
@@ -459,7 +482,7 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
         // record), so the directory is the one the file was read from.
         if (state.kind === 'contents') {
           for (const path of await listHistoryFiles(state.directory)) {
-            usedNames.add(path.replace(/^.*[/\\]/, ''));
+            usedNames.add(basename(path));
           }
         }
       } catch (err) {
@@ -552,24 +575,9 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
     try {
       downloadId = await writeJsonFileComplete(LOG_FILE_NAME, body);
     } catch (err) {
-      const reason = err instanceof ArtifactWriteError
-        ? err.reason
-        : err instanceof Error ? err.message : String(err);
-      throw new LogWriteFailedError(`couldn't write log.json: ${reason}.`);
+      throw new LogWriteFailedError(await logWriteProblem(err));
     }
-    // The capture is in the log: say so. This is what the Copy-last-…
-    // menu entries copy, and the History page's cue to re-read the
-    // file. Best-effort — the log is written; a lost note costs a
-    // stale menu entry and an open History tab its live update.
-    try {
-      await chrome.storage.session.set({ [LAST_CAPTURE_FILES_KEY]: lastCaptureFilesOf(record) });
-    } catch (err) {
-      console.info('[SeeWhatISee] could not note the last capture:', err);
-    }
-    // This write is now the one true `log.json` record, so the rows
-    // every earlier capture left behind — all naming this same file —
-    // can go.
-    await pruneOldLogRecords(downloadId);
+    await noteRecorded(record, downloadId);
     // The trimmed log is on disk, so the batches in `settledKeys` are
     // gone for good and nothing can re-derive them — their pinned
     // names can go.
@@ -598,6 +606,26 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
 }
 
 /**
+ * The steps that follow a `log.json` write that landed, on both write
+ * paths (the ordinary append and `claimNewLog`'s first write).
+ */
+async function noteRecorded(record: CaptureRecord, downloadId: number): Promise<void> {
+  // The capture is in the log: say so. This is what the Copy-last-…
+  // menu entries copy, and the History page's cue to re-read the
+  // file. Best-effort — the log is written; a lost note costs a
+  // stale menu entry and an open History tab its live update.
+  try {
+    await chrome.storage.session.set({ [LAST_CAPTURE_FILES_KEY]: lastCaptureFilesOf(record) });
+  } catch (err) {
+    console.info('[SeeWhatISee] could not note the last capture:', err);
+  }
+  // This write is now the one true `log.json` record, so the rows
+  // every earlier capture left behind — all naming this same file —
+  // can go.
+  await pruneOldLogRecords(downloadId);
+}
+
+/**
  * Write a JSON log file — `log.json` or a `history-*.json` — to the
  * download dir, overwriting any existing file, resolving only once the
  * bytes are on disk and throwing, with a message naming the file, if
@@ -613,10 +641,7 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
  * itself.
  */
 async function writeJsonFileComplete(name: string, text: string): Promise<number> {
-  return downloadArtifactComplete(
-    name,
-    `data:application/json;charset=utf-8,${encodeURIComponent(text)}`,
-  );
+  return downloadArtifactComplete(name, jsonDataUrl(text));
 }
 
 /**

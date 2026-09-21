@@ -513,8 +513,8 @@ never touched.
 - The directory is resolved with the shared `peekCaptureDirectory()`
   helper in `capture/downloads.ts`: the cached directory in
   `chrome.storage.local`, else derived from our download records.
-  Peek rather than `getCaptureDirectory()` because the latter can fall
-  back to a probe download, and opening a page shouldn't write a file.
+  Nothing writes a file to learn the directory — opening a page
+  shouldn't — so `null` here means nothing has been captured yet.
 - Thumbnails are plain `<img src="file://…">`. The browser loads the
   PNG itself; nothing reads the bytes into the extension, so there is
   no size limit to worry about and `loading="lazy"` keeps offscreen
