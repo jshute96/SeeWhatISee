@@ -16,7 +16,6 @@ import {
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
-  refreshLogFileExistence,
 } from './capture/downloads.js';
 import { LAST_CAPTURE_FILES_KEY } from './capture/log-store.js';
 import {
@@ -107,9 +106,6 @@ installDetailsMessageHandlers();
 installOptionsMessageHandlers();
 installHistoryMessageHandler();
 installAskMessageHandler();
-// Also on every service-worker wake, not just `onStartup`: `exists` is
-// only re-checked when something asks. Cheap — one `downloads.search`.
-void refreshLogFileExistence();
 installWidgetStoreCleanup();
 
 chrome.action.onClicked.addListener((tab) => {
@@ -197,10 +193,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   void refreshActionTooltip();
   void refreshCopyMenuState();
-  // `log.json` may have been deleted while the browser was closed.
-  // Asking now means the next capture's reconcile sees a fresh
-  // `exists` instead of a stale "still there".
-  void refreshLogFileExistence();
 });
 
 // React to each capture landing so the Copy-last-… menu entries flip

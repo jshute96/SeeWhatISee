@@ -15,9 +15,11 @@
 // What we can and can't see:
 //
 //   - `fetch('file://…')` gives us the file's real current contents.
-//   - The download record tells us the path, and whether the file
-//     still `exists` — which is how a failed read is told apart from a
-//     deleted file.
+//   - Fetching the directory lists what is in it — which is how a
+//     failed read is told apart from a deleted file.
+//   - The download records only say *where* the directory is
+//     (`peekCaptureDirectory`); nothing about the files is taken from
+//     them.
 //
 // When we can't tell what is on disk, we refuse to write: the capture
 // fails (`LogWriteFailedError`) with a message saying what to fix,
@@ -26,15 +28,14 @@
 import {
   ArtifactWriteError,
   LOG_FILE_NAME,
-  type LogFileRecordLookup,
   basename,
   canReadFiles,
   describeCaptureFile,
   discardDownload,
   downloadArtifactUniquely,
-  getLogFileRecord,
   joinCapturePath,
   jsonDataUrl,
+  listCaptureDirectory,
   parentDirectory,
   peekCaptureDirectory,
   readLogText,
@@ -86,16 +87,15 @@ export type LogFileState =
  *
  * 1. **Find the directory.** Reading needs a path, and the user's
  *    download directory isn't exposed by any API — so it comes from
- *    the `log.json` download record or the cached capture directory.
- *    When neither knows, the answer is `unknown-directory`: nothing
- *    can be read, and the caller learns the directory from its own
- *    write instead (`claimNewLog`).
- * 2. **Read the file.** Its contents beat every inference we could
- *    make from a download record — that is what makes hand-deleted
- *    rows stay deleted.
+ *    the cached capture directory, else our download records
+ *    (`peekCaptureDirectory`). When neither knows, the answer is
+ *    `unknown-directory`: nothing can be read, and the caller learns
+ *    the directory from its own write instead (`claimNewLog`).
+ * 2. **Read the file.** Its contents are the log — that is what makes
+ *    hand-deleted rows stay deleted.
  * 3. **A failed read** is either a deleted file (start fresh) or
- *    something in the way (fail, naming the file); the download
- *    record's re-checked `exists` tells the two apart.
+ *    something in the way (fail, naming the file); listing the
+ *    directory tells the two apart.
  */
 export async function inspectLogFile(): Promise<LogFileState> {
   // Backstop: every entry point has already checked, and flipping the
@@ -103,35 +103,38 @@ export async function inspectLogFile(): Promise<LogFileState> {
   // `fetch` refused for lack of the toggle would otherwise read as a
   // deleted log and start a new one over the user's history.
   if (!(await canReadFiles())) throw new FileAccessRequiredError();
-  const lookup = await getLogFileRecord();
-  try {
-    return await decideLogFileState(lookup);
-  } finally {
-    // Drops the `onChanged` listener whichever branch we left by.
-    lookup.release();
-  }
-}
-
-async function decideLogFileState(lookup: LogFileRecordLookup): Promise<LogFileState> {
-  const record = lookup.record;
   // Swallow lookup failures: an unknown directory is a state the
   // caller handles, and must never fail the capture by itself.
-  const directory = record?.filename
-    ? parentDirectory(record.filename)
-    : await peekCaptureDirectory().catch(() => null);
+  const directory = await peekCaptureDirectory().catch(() => null);
   if (!directory) return { kind: 'unknown-directory' };
   const text = await readLogText(directory);
   // Not parsed here: the caller appends to the text as it is and only
   // parses for the timestamp check — keeping the parser dependency
   // pointing log-store → log-reconcile, not both ways.
   if (text !== null) return { kind: 'contents', text, directory };
-  // The read failed. If the file is really gone (or there is no
-  // record), that *is* the answer: start fresh. Otherwise something we
-  // can't explain is in the way. Worth confirming rather than trusting
-  // the record's stale `exists` — failing the capture of a user who
-  // simply deleted their log would be a poor answer.
-  if (!await lookup.confirmExists()) return { kind: 'fresh' };
+  // The read failed. Ask the filesystem, not the download records:
+  // `DownloadItem.exists` is never refreshed (see
+  // `listCaptureDirectory`), so it would call a log deleted in a file
+  // manager "still there" forever, failing every capture after it.
+  if (!(await logFileListed(directory))) return { kind: 'fresh' };
   throw new LogWriteFailedError(unreadableLogProblem(joinCapturePath(directory, LOG_FILE_NAME)));
+}
+
+/**
+ * Whether `log.json` is in the capture directory's listing. A
+ * directory that can't be listed counts as not holding it: the
+ * expected reason is that the user deleted the whole `SeeWhatISee/`
+ * folder, the other supported way to start over. A folder that is
+ * there but can't be listed while its log can't be read either is an
+ * accepted blind spot (`docs/log-consistency.md` → Where the
+ * principles bend); the toggle being off was ruled out above.
+ */
+async function logFileListed(directory: string): Promise<boolean> {
+  try {
+    return (await listCaptureDirectory(directory)).has(LOG_FILE_NAME);
+  } catch {
+    return false;
+  }
 }
 
 /** What `claimNewLog` found out. */
@@ -167,8 +170,8 @@ export type ClaimedLog =
  * fails the capture (`LogWriteFailedError`): nothing was learned, and
  * guessing "no log" would overwrite one. So does a deflected write
  * whose log then can't be read: the deflection is proof a file is
- * there, so unlike the no-record row of `decideLogFileState` this
- * can't be a deleted log — and overwriting it would lose it.
+ * there, so unlike a failed read in `inspectLogFile` this can't be a
+ * deleted log — and overwriting it would lose it.
  */
 export async function claimNewLog(line: string): Promise<ClaimedLog> {
   let landed: { id: number; path: string };
@@ -180,10 +183,10 @@ export async function claimNewLog(line: string): Promise<ClaimedLog> {
   if (basename(landed.path) === LOG_FILE_NAME) {
     return { kind: 'written', downloadId: landed.id };
   }
-  // Read from the path in hand rather than re-running the lookup: the
-  // lookup would depend on the cache write `waitForDownloadComplete`
-  // fires off without awaiting, and on a download record the discard
-  // below erases.
+  // Read from the path in hand rather than re-running
+  // `peekCaptureDirectory`: that would depend on the cache write
+  // `waitForDownloadComplete` fires off without awaiting, and on a
+  // download record the discard below erases.
   const directory = parentDirectory(landed.path);
   const text = await readLogText(directory);
   await discardDownload(landed.id);

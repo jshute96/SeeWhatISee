@@ -62,10 +62,10 @@ Finding that tab is less obvious than it looks:
 
 ## Data source
 
-- Renders from `log.json` (a `file://` fetch) and
-  `chrome.downloads.search` (the `(deleted)` markers). Both are
-  available to any extension page, so no service-worker round-trip is
-  needed to draw the table. (The SW is involved only in *opening* the
+- Renders from `log.json` and the capture directory's listing (both
+  `file://` fetches; the listing feeds the `(deleted)` markers). Both
+  are available to any extension page, so no service-worker round-trip
+  is needed to draw the table. (The SW is involved only in *opening* the
   page — see above.)
 - **The file is the log**, so the page reads `log.json` itself
   (`loadRecordsFromLog`) — on open and again whenever a capture lands:
@@ -131,9 +131,10 @@ Finding that tab is less obvious than it looks:
   - One click loads *all* remaining files. A batch is 50 captures, so
     paging 50 at a time would be tedious; the search box is the tool
     for narrowing what's on screen.
-- `listHistoryFiles()` (`capture/downloads.ts`) finds the files by
-  fetching the capture directory's `file://` URL and scanning Chrome's
-  generated listing page for `history-….json` names.
+- The page finds the files in the capture directory's `file://`
+  listing (`listCaptureDirectory` + `historyFilesAmong`,
+  `capture/downloads.ts`) — the one listing it reads, shared with the
+  `(deleted)` markers.
   - Sees every file actually present in the capture directory:
     unaffected by cleared download history and by `DownloadQuery`'s
     1000-record default limit, both of which used to silently shrink
@@ -141,8 +142,9 @@ Finding that tab is less obvious than it looks:
     - The trade: it only looks where `peekCaptureDirectory()` points,
       so files stranded in an old downloads location are out of view
       (the download records knew their absolute paths).
-  - The listing markup is a browser internal, so the parse is a loose
-    token scan rather than a row parser (see the source comment).
+  - The listing markup is a browser internal; the parse reads each
+    row's name out of Chrome's `addRow(…)` call (`listCaptureDirectory`,
+    see the source comment).
   - A file that drops off the listing after being read (deleted on
     disk) stays on screen. Losing the listing doesn't make the
     records wrong, and dropping those rows would make captures vanish
@@ -541,38 +543,33 @@ never touched.
 
 ### Deleted files
 
-- `getCaptureFileExistence()` (`capture/downloads.ts`) reads
-  `DownloadItem.exists` for what we've written under `SeeWhatISee/`,
-  giving a bare-filename → still-there map. Chrome's query caps at its
-  default 1000 newest records, so a very long history truncates — into
-  *unknown*, which renders normally.
+- `listCaptureDirectory()` (`capture/downloads.ts`) reads the capture
+  directory's `file://` listing — the same fetch that finds the
+  history files — giving the set of names actually on disk. A record's
+  file that isn't in it is deleted.
 - Needed because an `<img>` error carries no reason and the
-  Files-column links have no load event at all. This is the only
-  signal that works for both columns.
-- A filename **absent** from the map is *unknown*, not deleted — the
-  user can clear their download history without touching the files.
-  Those render as normal links.
-- The newest record wins per filename — `conflictAction: 'overwrite'`
-  leaves several pointing at one path. Only `state: 'complete'` records
-  answer; an in-flight download reports `exists: false`, so if the
-  newest record is still writing the name reads as unknown rather than
-  letting an older record call a live file deleted.
+  Files-column links have no load event at all. The listing is the
+  one signal that works for both columns.
+- The filesystem, not `chrome.downloads`: the download records'
+  `exists` flag is never refreshed after a deletion outside Chrome
+  (see `log-consistency.md` → What we can find out).
+  - An earlier version read that flag and never noticed such
+    deletions.
+- With no listing — no directory yet, or the read failed — nothing is
+  marked deleted: every file renders as a normal link rather than the
+  whole table turning grey on a transient failure.
 - Keyed on the bare filename because `compactTimestamp` makes capture
   filenames unique; `log.json`, the one reused name, is never rendered.
-- A known-deleted file renders as the greyed unlinked label with a
+- A deleted file renders as the greyed unlinked label with a
   `(deleted)` marker on its own line, nested inside that artifact's
   element so a row listing two files says which one is gone. The
   screenshot column skips the `<img>` entirely rather than loading it
   to watch it fail.
-- Refreshed on `chrome.downloads.onChanged` deltas that carry
-  `exists`, so a file deleted while the tab is open updates in place.
-  - Also the delayed half of the read: `exists` can be stale, and it's
-    the `search()` call that prompts Chrome to re-check, with the
-    answer arriving as one of these events.
-  - Coalesced on a 500ms timer. The delta carries only a download id,
-    so we can't cheaply tell our downloads from anyone else's, and one
-    re-check sweeps the directory and rebuilds every row — deleting a
-    folder of captures would otherwise fire one sweep per file.
+- Re-listed when a capture lands, and when the user comes back to the
+  page (window `focus`, or `visibilitychange` to visible) — deleting
+  files happens in a file manager or another tab, so the markers are
+  right by the time they look. Nothing watches the filesystem live;
+  the two return events are coalesced into one listing.
 - "Deleted" is the plain-language reading: strictly, the file is no
   longer at the path we wrote it to, which also covers a move.
 

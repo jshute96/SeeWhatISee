@@ -7,10 +7,10 @@
 // real log holds — screenshot-only, HTML+selection, missing URL/title,
 // long prompt — without orchestrating one capture per case.
 //
-// The seeded filenames name no real files, so thumbnails fall back to
-// the filename and `chrome.downloads` knows nothing about them (the
-// `(deleted)` markers never fire). Anything that needs real files on
-// disk runs a real capture instead.
+// The seeded filenames name no real files, so the directory listing
+// marks every one of them `(deleted)`, with the bare filename in place
+// of a thumbnail. Anything that needs real files on disk runs a real
+// capture instead (`log-history-files.spec.ts`).
 //
 // *Load older captures* with something to load is out of reach here:
 // no history file is ever seeded. Both the flushing and loading the flushed file back are
@@ -120,20 +120,21 @@ test('renders the log newest-first with per-column fallbacks', async ({
   await expect(rows.nth(2).locator('.page-cell .title')).toHaveText('Alpha page');
 
   // Row 0 has a screenshot but no URL/title → Page cell falls back to N/A.
-  // The screenshot cell names the file: the seeded filename points
-  // at nothing on disk, so the thumbnail fails to load and the cell
-  // degrades to the bare filename inside its link.
-  await expect(rows.nth(0).locator('.shot-cell')).toHaveText(
+  // The screenshot cell names the file and marks it: the seeded
+  // filename isn't in the capture directory's listing.
+  await expect(rows.nth(0).locator('.shot-cell .flag')).toContainText(
     'screenshot-20260104-030405-000.png',
   );
+  await expect(rows.nth(0).locator('.shot-cell .deleted-mark')).toHaveText('(deleted)');
   await expect(rows.nth(0).locator('.page-cell .na')).toHaveText('N/A');
 
   // Row 1 saved HTML + a markdown selection but no screenshot and no
   // prompt → two file links, N/A in the screenshot and prompt columns.
-  await expect(rows.nth(1).locator('.files-cell a, .files-cell .flag')).toHaveText([
+  await expect(rows.nth(1).locator('.files-cell .flag')).toContainText([
     'HTML',
     'Selection (md)',
   ]);
+  await expect(rows.nth(1).locator('.files-cell .deleted-mark')).toHaveCount(2);
   await expect(rows.nth(1).locator('.shot-cell .na')).toHaveText('N/A');
   await expect(rows.nth(1).locator('.prompt-cell .na')).toHaveText('N/A');
 

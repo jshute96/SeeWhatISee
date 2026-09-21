@@ -220,10 +220,8 @@ test('deleting log.json starts a fresh log instead of resurrecting the old one',
   const log2 = await verifyCapture(sw2, result2, ORANGE, log1);
   expect(log2).toHaveLength(2);
 
-  // Delete log.json the way a user would, via the download record.
-  // `chrome.downloads.removeFile` is Chrome deleting its own file, so
-  // the record's `exists` flips immediately — no waiting on the
-  // delayed re-check a deletion outside the browser would need.
+  // Delete log.json via the download record. (The next test deletes
+  // it on the filesystem, behind Chrome's back.)
   const sw3 = await getServiceWorker();
   await sw3.evaluate(async () => {
     const [item] = await chrome.downloads.search({
@@ -300,19 +298,12 @@ test('deleting log.json outside the browser also starts a fresh log', async ({
   getServiceWorker,
 }) => {
   // The deletion test above goes through `chrome.downloads.removeFile`,
-  // so the record's `exists` is right straight away. A user deletes
-  // the file in a file manager, and then the record keeps saying the
-  // file is there: the reconcile's `confirmExists` waits for a
-  // re-check delta that `chrome.downloads.search` was believed to
-  // trigger, and the unit tests stub it that way.
-  //
-  // **Known failure.** Real Chrome never re-checks `exists` on a
-  // `search()` (probed: 40 searches over 4s after an `fs.rmSync`, no
-  // change, no delta), so the capture fails with "couldn't read
-  // log.json" instead of starting fresh. Pinned with `test.fail` until
-  // the reconcile stops relying on `DownloadItem.exists`; drop the
-  // annotation with that fix.
-  test.fail(true, 'chrome.downloads.search does not re-check DownloadItem.exists');
+  // which Chrome knows about. A user deletes the file in a file
+  // manager, which nothing in Chrome notices: the download record
+  // keeps saying the file is there (`DownloadItem.exists` is never
+  // re-checked). The reconcile asks the filesystem instead — a
+  // directory listing over `file://` — and this is the test that only
+  // a real Chrome can run.
   const sw0 = await getServiceWorker();
   await resetCaptureState(sw0);
   const logPath = await seedCaptureLogText(
@@ -339,9 +330,6 @@ test('deleting log.json outside the browser also starts a fresh log', async ({
     const log = await verifyCapture(sw, result, PURPLE, []);
     expect(log).toHaveLength(1);
   } finally {
-    // Unconditional: while this is an expected failure, the capture
-    // throws and would otherwise leave the deleted-log state behind
-    // for the next test's capture to trip over.
     await page.close();
     await resetCaptureState(sw);
   }

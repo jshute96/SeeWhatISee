@@ -1,12 +1,13 @@
-// Unit tests for `listHistoryFiles` — finding the `history-*.json`
-// files by fetching the capture directory's `file://` URL and parsing
-// Chrome's generated listing page.
+// Unit tests for reading the capture directory over `file://`:
+// `listCaptureDirectory` (the names in it — the filesystem's answer
+// to "is this file there?") and `listHistoryFiles` (the
+// `history-*.json` files among them, newest first).
 //
 // The listing markup is a browser internal, so the fixture below is a
 // verbatim copy of what Chrome actually serves (captured from a real
-// directory fetch), and the assertions pin the loose-parse contract:
-// tokens collected anywhere in the page, deduplicated, sorted
-// newest-first by the timestamp in the name — and `res.ok` ignored,
+// directory fetch), and the assertions pin the parse contract: one
+// name per `addRow(` call, JSON-unescaped, sorted newest-first by the
+// timestamp in the name for the history files — and `res.ok` ignored,
 // because Chrome hands the listing back with `status: 0`.
 
 import { test } from 'node:test';
@@ -42,7 +43,7 @@ function stubFetch(html) {
 }
 
 globalThis.chrome = { runtime: { id: 'test' } };
-const { listHistoryFiles } = await import('../../dist/capture/downloads.js');
+const { listCaptureDirectory, listHistoryFiles } = await import('../../dist/capture/downloads.js');
 
 test('finds history files, ignores everything else, sorts newest first', async () => {
   stubFetch(listingHtml([
@@ -85,9 +86,41 @@ test('percent-encodes awkward directory paths in the fetch URL', async () => {
   assert.equal(fetchedUrl, 'file:///C:/Users/First%20Last/Downloads/SeeWhatISee');
 });
 
-test('collapses each name appearing twice per row (text and href)', async () => {
-  stubFetch(listingHtml([row('history-20260101-120000-000.json')]));
-  assert.equal((await listHistoryFiles(DIR)).length, 1);
+test('listCaptureDirectory returns every entry by its exact name', async () => {
+  stubFetch(listingHtml([
+    row('log.json'),
+    row('log (1).json'),
+    row('shot with space.png'),
+    row('history-20260101-120000-000.json.crdownload'),
+  ]));
+  const names = await listCaptureDirectory(DIR);
+  assert.deepEqual([...names].sort(), [
+    'history-20260101-120000-000.json.crdownload',
+    'log (1).json',
+    'log.json',
+    'shot with space.png',
+  ]);
+  // Exact names, so a sibling or a partial write can't pass for the
+  // file itself — the question the reconcile asks after a failed read.
+  assert.ok(names.has('log.json'));
+  assert.ok(!names.has('history-20260101-120000-000.json'));
+});
+
+test('listCaptureDirectory undoes the JSON escaping Chrome applies', async () => {
+  // Chrome writes each name as a JSON string literal: a quote or a
+  // non-ASCII character in a filename arrives escaped.
+  stubFetch(listingHtml([
+    `"say \\"hi\\".png","say%20%22hi%22.png",0,0,"0 B",0,""`,
+    `"caf\\u00e9.png","caf%C3%A9.png",0,0,"0 B",0,""`,
+  ]));
+  const names = await listCaptureDirectory(DIR);
+  assert.ok(names.has('say "hi".png'));
+  assert.ok(names.has('café.png'));
+});
+
+test('listCaptureDirectory is empty for a page with no rows', async () => {
+  stubFetch(listingHtml([]));
+  assert.equal((await listCaptureDirectory(DIR)).size, 0);
 });
 
 test('reuses the directory separator for Windows paths', async () => {
@@ -108,4 +141,17 @@ test('a refused read (missing dir, toggle off) rejects for the caller to catch',
     throw new TypeError('Failed to fetch');
   };
   await assert.rejects(listHistoryFiles(DIR), TypeError);
+  await assert.rejects(listCaptureDirectory(DIR), TypeError);
+});
+
+test('the directory is fetched uncached', async () => {
+  // Re-read after every capture, so it has to see the file that just
+  // landed.
+  let init = null;
+  globalThis.fetch = async (_url, opts) => {
+    init = opts;
+    return { ok: false, status: 0, text: async () => listingHtml([]) };
+  };
+  await listCaptureDirectory(DIR);
+  assert.equal(init?.cache, 'no-store');
 });

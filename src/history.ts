@@ -14,13 +14,14 @@
 //
 // Loaded as a module script (unlike `options.ts`) so it can import the
 // log-store / downloads helpers directly instead of round-tripping
-// through the service worker. Everything it needs — `storage.local`
-// and `downloads.search` — is available to any extension page.
+// through the service worker. Everything it needs — `storage.local`,
+// `downloads.search` for the directory, `file://` reads for the rest
+// — is available to any extension page.
 //
 // **Older captures.** `log.json` holds only the most recent captures;
 // older ones are flushed to `history-*.json` files beside it (see
 // `capture/log-store.ts`). They are found by listing the capture
-// directory over `file://` (`listHistoryFiles`) and read back on
+// directory over `file://` (`listCaptureDirectory`) and read back on
 // demand, appended after the `log.json` records — the reads are
 // opt-in per visit rather than something the page does on load.
 //
@@ -33,9 +34,9 @@
 
 import {
   canReadFiles,
-  listHistoryFiles,
+  historyFilesAmong,
+  listCaptureDirectory,
   peekCaptureDirectory,
-  getCaptureFileExistence,
   joinCapturePath,
   pathToFileUrl,
   readLogText,
@@ -247,15 +248,15 @@ let restoreInFlight = false;
  */
 let captureDir: string | null = null;
 /**
- * Bare filename → still on disk, from `chrome.downloads`. A missing
- * key means "unknown" (the user cleared their download history), which
- * renders as a normal link — see `getCaptureFileExistence`.
+ * The capture directory's listing (bare filenames), or `null` when it
+ * couldn't be read — no directory yet, or the listing failed — in
+ * which case nothing is called deleted. See `isDeleted`.
  */
-let fileExists = new Map<string, boolean>();
+let filesOnDisk: Set<string> | null = null;
 
 /**
  * Absolute paths of the `history-*.json` history files, newest first
- * (by the timestamp in each filename — see `listHistoryFiles`).
+ * (by the timestamp in each filename — see `historyFilesAmong`).
  */
 let historyFilePaths: string[] = [];
 /**
@@ -337,12 +338,12 @@ function rebuildMerged(): void {
 }
 
 /**
- * `true` only when Chrome positively tells us the file is gone.
- * Unknown filenames answer `false` so we never label a live capture
- * deleted on the strength of missing information.
+ * `true` only when the directory was listed and the file isn't in it.
+ * With no listing every file answers `false`, so a live capture is
+ * never labelled deleted on the strength of missing information.
  */
 function isDeleted(filename: string): boolean {
-  return fileExists.get(filename) === false;
+  return filesOnDisk !== null && !filesOnDisk.has(filename);
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -541,8 +542,8 @@ function fileUrlFor(filename: string): string | null {
  *
  * - The capture directory never resolved, so there is no `file://` URL
  *   to point at. Renders as the bare label.
- * - Chrome reports the file gone, so a link would 404. Renders with
- *   the `(deleted)` marker.
+ * - The file isn't in the directory, so a link would 404. Renders
+ *   with the `(deleted)` marker.
  *
  * Greyed either way so it doesn't read as a dead link. `label`
  * defaults to the filename (what the Screenshot column shows); the
@@ -564,9 +565,9 @@ function unlinkedFile(filename: string, label = filename): HTMLElement {
     // the artifact's own element so a row listing both an HTML and a
     // selection file can't leave you guessing which one is gone.
     //
-    // "deleted" is the plain-language reading of what Chrome reports —
-    // strictly, the file is no longer at the path we wrote it to,
-    // which also covers a move or a rename.
+    // "deleted" is the plain-language reading — strictly, the file is
+    // no longer at the path we wrote it to, which also covers a move
+    // or a rename.
     const mark = document.createElement('span');
     mark.className = 'deleted-mark';
     mark.textContent = '(deleted)';
@@ -621,8 +622,8 @@ function screenshotCell(r: CaptureRecord): HTMLElement {
   img.loading = 'lazy';
   // A thumbnail that can't load would otherwise render as a
   // broken-image icon with no explanation. Deletion is caught upstream
-  // by `isDeleted`, so what reaches here is a file the download records
-  // don't know about, or a decode failure. Swap just the <img> for the
+  // by `isDeleted`, so what reaches here is a listing that couldn't be
+  // read, or a decode failure. Swap just the <img> for the
   // filename and keep the surrounding <a>: the href is still the one useful thing
   // left on the row, so the user can right-click → Copy link address
   // and open the file another way. The Files column behaves the same
@@ -864,25 +865,26 @@ async function loadCaptureDir(): Promise<void> {
     : `Open the directory where capture files are stored:\n${captureDir}`;
 }
 
-async function loadFileExistence(): Promise<void> {
+/**
+ * Re-read the capture directory's listing — one `file://` fetch that
+ * feeds both the history-file list and the `(deleted)` markers, so
+ * the two never describe different moments. Needs `captureDir`, so
+ * it runs after `loadCaptureDir`.
+ *
+ * A listing that can't be read (unreadable or missing directory) is
+ * the same as an empty directory for the history files — nothing to
+ * offer — but "unknown" for the markers: every file renders normally,
+ * so a transient failure never paints the whole table deleted.
+ */
+async function loadDirectoryListing(): Promise<void> {
   try {
-    fileExists = await getCaptureFileExistence();
+    filesOnDisk = captureDir === null ? null : await listCaptureDirectory(captureDir);
   } catch {
-    // Leave the map empty — every file reads as "unknown", so the page
-    // renders exactly as it did before this check existed.
-    fileExists = new Map();
+    filesOnDisk = null;
   }
-}
-
-async function loadHistoryFileList(): Promise<void> {
-  try {
-    historyFilePaths = captureDir !== null ? await listHistoryFiles(captureDir) : [];
-  } catch {
-    // Unreadable or missing directory — same outcome as having no
-    // history files: the page shows `log.json` and doesn't offer
-    // more.
-    historyFilePaths = [];
-  }
+  historyFilePaths = captureDir !== null && filesOnDisk !== null
+    ? historyFilesAmong(captureDir, filesOnDisk)
+    : [];
   // The merge walks this list, so the rows go stale the moment it
   // changes — a newly-written history file has to take its place among the
   // loaded ones now, not whenever some later load happens to rebuild.
@@ -952,9 +954,9 @@ async function loadHistoryFilesInteractively(): Promise<void> {
   renderOlder();
   try {
     const failed = await loadHistoryFiles();
-    // The newly-loaded rows reference files we haven't asked about
-    // yet, so refresh the "(deleted)" map alongside them.
-    await loadFileExistence();
+    // Refresh the listing alongside the new rows, so a file that went
+    // while the tab sat open is marked on first render.
+    await loadDirectoryListing();
     if (failed.length > 0) {
       // Anything readable has already been merged in; this names what
       // is still missing rather than implying the whole load failed.
@@ -1004,7 +1006,7 @@ function setRecords(list: CaptureRecord[]): void {
  * read finds is the answer: text (even empty) renders as the log, and
  * a failed fetch means the file isn't there — the log's state, so it
  * renders as empty rather than as an error. History files are
- * discovered independently (`loadHistoryFileList`), so a deleted or
+ * discovered independently (`loadDirectoryListing`), so a deleted or
  * emptied `log.json` still offers the older captures for loading.
  *
  * The page only displays; the capture path is the only writer.
@@ -1036,13 +1038,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     // resolvable, so retry that first.
     if (!captureDir) await loadCaptureDir();
     await loadRecordsFromLog();
-    // The new capture's own files won't be in the existence map yet.
-    await loadFileExistence();
-    // A capture can also push the log over its cap and write a new
-    // history file. Pick that up so the button's count stays right —
-    // and read it straight away if the user has already opted in, so
-    // records don't appear to vanish as they age out of `log.json`.
-    await loadHistoryFileList();
+    // The new capture's own files won't be in the listing yet — and
+    // the capture can also have pushed the log over its cap and
+    // written a new history file. Pick both up so the markers and
+    // the button's count stay right; read the new file straight away
+    // if the user has already opted in, so records don't appear to
+    // vanish as they age out of `log.json`.
+    await loadDirectoryListing();
     if (historyFileRecords.size > 0) {
       await loadHistoryFilesInteractively();
       return; // it renders
@@ -1051,29 +1053,29 @@ chrome.storage.onChanged.addListener((changes, area) => {
   })();
 });
 
-// Chrome reports a download's file going missing (or coming back) as
-// an `exists` delta, which is the only live signal for a file deleted
-// while this tab sits open — and the delayed half of the round-trip
-// `getCaptureFileExistence` starts (see its doc comment). Other deltas
-// (progress, state) say nothing about the "(deleted)" markers, so we
-// ignore them.
-//
-// Coalesced because `onChanged` is global: the delta carries only an
-// id, so we can't tell our downloads from anyone else's without
-// tracking every id we've ever written, and a re-check sweeps the
-// whole capture directory and rebuilds every row. Deleting a folder of
-// captures fires one event per file; this collapses the burst into a
-// single sweep.
-let existenceRefresh: ReturnType<typeof setTimeout> | null = null;
-chrome.downloads.onChanged.addListener((delta) => {
-  if (!delta.exists || existenceRefresh !== null) return;
-  existenceRefresh = setTimeout(() => {
-    existenceRefresh = null;
+// There is no live signal for a file deleted while this tab sits open
+// — nothing watches the filesystem (and `chrome.downloads` can't tell
+// either; see `listCaptureDirectory`). Deleting files happens
+// somewhere else — a file manager (window `focus` on the way back) or
+// another tab (`visibilitychange`) — so re-list when the user comes
+// back: one directory fetch per return, and the markers are right by
+// the time they look. Coalesced, since a return can fire both.
+let relistOnReturn: ReturnType<typeof setTimeout> | null = null;
+function relistWhenBack(): void {
+  if (captureDir === null || relistOnReturn !== null) return;
+  relistOnReturn = setTimeout(() => {
+    relistOnReturn = null;
     void (async () => {
-      await loadFileExistence();
-      render();
+      await loadDirectoryListing();
+      // A focus during the initial load would otherwise paint a
+      // partial table the load then repaints.
+      if (firstRenderDone) render();
     })();
-  }, 500);
+  }, 50);
+}
+window.addEventListener('focus', relistWhenBack);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') relistWhenBack();
 });
 
 // ───────────────────── tab identity, for reuse ───────────────────────
@@ -1150,13 +1152,10 @@ void (async () => {
     showFileAccessDialog();
     return;
   }
-  await Promise.all([
-    loadFileExistence(),
-    // Chained, not parallel: both the record load (reading `log.json`
-    // itself when it can) and the history-file listing need the
-    // directory `loadCaptureDir` resolves first.
-    loadCaptureDir().then(() => Promise.all([loadRecordsFromLog(), loadHistoryFileList()])),
-  ]);
+  // Chained, not parallel: both the record load and the directory
+  // listing need the directory `loadCaptureDir` resolves first.
+  await loadCaptureDir();
+  await Promise.all([loadRecordsFromLog(), loadDirectoryListing()]);
   firstRenderDone = true;
   render();
 })();

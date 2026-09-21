@@ -37,6 +37,13 @@ The background script is an MV3 service worker. That means:
   - The completed path is checked against the one asked for, and a
     write that landed elsewhere is reported as failed (see
     `docs/log-consistency.md` → Write ordering).
+- **`DownloadItem.exists` is never refreshed.** The docs imply a
+  `downloads.search` triggers a re-check; in practice a file deleted
+  outside Chrome reads as `exists: true` forever.
+  - So nothing here asks the download records about files: the
+    capture directory is listed over `file://` instead
+    (`listCaptureDirectory`, `capture/downloads.ts`; see
+    `docs/log-consistency.md` → What we can find out).
 - **The Chrome downloads API can only write whole files.** No
   append, no edit, no partial overwrite.
   - `log.json` is therefore read back and rewritten — as it was,

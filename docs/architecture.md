@@ -251,9 +251,8 @@ Every record has `timestamp` and `url`, plus optional fields:
     the last capture's filenames (what the Copy-last-… entries copy,
     and the History page's cue to re-read).
 - Deleting `log.json` starts a new log. The next capture notices (the
-  read fails, and the download record's re-checked `exists` confirms
-  the file is gone) and starts over instead of putting the old
-  records back.
+  read fails, and the directory listing confirms the file is gone)
+  and starts over instead of putting the old records back.
   - Deleting or editing individual rows sticks too. Reading the file
     is what makes that possible, which is why "Allow access to file
     URLs" is required (`chrome-extension.md`).

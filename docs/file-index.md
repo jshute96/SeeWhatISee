@@ -384,10 +384,9 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/ask-settings.test.mjs` | Unit tests for the Ask provider settings normalizer + default-rotation helper |
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
-| `tests/unit/capture-file-existence.test.mjs` | Unit tests for `getCaptureFileExistence` — which capture files read as present, deleted, or unknown |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback — and the landing check on completed writes |
-| `tests/unit/list-history-files.test.mjs` | Unit tests for `listHistoryFiles` — parsing Chrome's `file://` directory listing for `history-*.json` names |
-| `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, the unknown-directory first write, the stale-`exists` re-check, the verbatim append, and the failure messages |
+| `tests/unit/directory-listing.test.mjs` | Unit tests for `listCaptureDirectory` / `listHistoryFiles` — parsing Chrome's `file://` directory listing |
+| `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, deleted-vs-unreadable via the directory listing, the unknown-directory first write, the verbatim append, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |

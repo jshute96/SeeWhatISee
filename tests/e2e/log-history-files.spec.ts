@@ -170,6 +170,55 @@ test('the History page loads the flushed captures back from disk', async ({
   await resetCaptureState(sw);
 });
 
+// The `(deleted)` markers come from the same directory listing. A
+// screenshot deleted on the filesystem — behind Chrome's back, the way
+// a user does it — is marked once the user comes back to the page.
+test('a screenshot deleted on disk is marked (deleted) on the History page', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await resetCaptureState(sw);
+
+  const page = await extensionContext.newPage();
+  await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+  await page.bringToFront();
+  const result = await sw.evaluate(async () => {
+    const api = (self as unknown as {
+      SeeWhatISee: { captureVisible: () => Promise<CaptureResult> };
+    }).SeeWhatISee;
+    return api.captureVisible();
+  });
+  const pngPath = await waitForDownloadPath(sw, result.downloadId);
+  await waitForDownloadPath(sw, result.logDownloadId);
+  await page.close();
+
+  const history = await extensionContext.newPage();
+  await history.goto(`chrome-extension://${extensionId}/history.html`);
+  const shotCell = history.locator('#rows tr').first().locator('.shot-cell');
+  // Live file: a real thumbnail, no marker.
+  await expect(shotCell.locator('img.thumb')).toBeVisible();
+  await expect(shotCell.locator('.deleted-mark')).toHaveCount(0);
+
+  // Delete it the way a user would, then come back. The page re-lists
+  // the directory on window `focus` — the event a return from a file
+  // manager fires. Headless Chrome fires neither `focus` nor
+  // `visibilitychange` on `bringToFront`, so the event is dispatched
+  // by hand: what's under test is that the page re-reads the
+  // filesystem on it, not that Chrome delivers it.
+  fs.rmSync(pngPath);
+  await history.evaluate(() => window.dispatchEvent(new Event('focus')));
+
+  await expect(shotCell.locator('.deleted-mark')).toHaveText('(deleted)');
+  await expect(shotCell.locator('img')).toHaveCount(0);
+  await expect(shotCell.locator('.flag')).toContainText(result.filename);
+
+  await history.close();
+  await resetCaptureState(sw);
+});
+
 // A `log.json` the user emptied or deleted renders as what it is — an
 // empty log. The history files are discovered independently of the
 // log, so the flushed captures must still be one click away either

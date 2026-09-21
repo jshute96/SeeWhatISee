@@ -228,6 +228,10 @@ What it costs:
   * With file reads on, the History page opens from `log.json`
     itself, so a deleted, emptied, or hand-edited file shows as it is
     on disk without waiting for the next capture.
+  * Deleting `log.json` or a capture file in a file manager (not via
+    Chrome) is now noticed: the next capture starts a fresh log, and
+    the History page marks the file `(deleted)` when you return to
+    the tab. Previously only deletions Chrome itself made were seen.
 
 * **History page** — a searchable table of recent captures: date,
   screenshot thumbnail, links to the saved HTML / selection files,

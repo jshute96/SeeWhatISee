@@ -13,8 +13,8 @@
 // returns is the real path: `tests/fixtures/extension.ts` points Chrome
 // at a per-worker temp download directory and turns off Playwright's
 // download interception, precisely so the extension's own path-based
-// lookups (capture directory, `log.json` re-read, file-existence
-// checks) work. So `SeeWhatISee/<filename>` is what lands, and a
+// lookups (capture directory, `log.json` re-read, the directory
+// listing) work. So `SeeWhatISee/<filename>` is what lands, and a
 // re-written file really does overwrite the previous one.
 
 import fs from 'node:fs';
@@ -225,11 +225,9 @@ export async function verifyCapture(
  * (the cached capture directory, the pinned history-file names, the
  * last-capture note).
  *
- * The log is the file, so the files and their download records are
- * what matter. Erasing the records as well as the files keeps this
- * deterministic: `DownloadItem.exists` only refreshes on a delayed
- * re-check, so a test that deleted the file but left the record would
- * race that round-trip. No record at all has no such lag.
+ * The log is the file, so the files are what matter; the records go
+ * too so a later test's directory discovery can't find a path to a
+ * directory this reset emptied.
  *
  * Worker-scoped state, so this matters between tests in one file as
  * much as between files.
@@ -356,7 +354,7 @@ export async function seedCaptureLogText(sw: Worker, text: string): Promise<stri
       conflictAction: 'overwrite',
     });
   }, text);
-  // The reconcile only trusts a *completed* record, so let the write
-  // land before the test captures on top of it.
+  // Let the write land — file on disk, directory cached — before the
+  // test captures on top of it.
   return await waitForDownloadPath(sw, id);
 }

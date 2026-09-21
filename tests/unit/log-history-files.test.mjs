@@ -9,9 +9,9 @@
 // *which* records land in *which* file, not the plumbing that gets
 // them there.
 //
-// The `downloads.search` stub reports a completed `log.json` record
-// and `fetch` answers with what was last written, which is what puts
-// `recordCapture` on its ordinary append path. The reconcile's other
+// The `downloads.search` stub reports a `log.json` record in the
+// capture directory and `fetch` answers with what was last written,
+// which is what puts `recordCapture` on its ordinary append path. The reconcile's other
 // branches — deleted, unreadable, unknown directory — are covered in
 // `log-reconcile.test.mjs`.
 
@@ -88,17 +88,17 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
           const filename = landed.get(query.id);
           return filename ? [{ id: query.id, state: 'complete', filename }] : [];
         }
-        // Otherwise the `log.json` lookup — the record that names the
-        // directory the reconcile reads from.
+        // Otherwise the search behind `peekCaptureDirectory` (on the
+        // first capture, before the cache is warm) and the post-write
+        // prune's `log.json` lookup.
         return [{
-          // The id of the write that produced it, so the post-write
-          // prune recognizes this as the record it just created —
-          // otherwise it would bail before touching the stub at all.
+          // The id of the write that produced it, so the prune
+          // recognizes this as the record it just created — otherwise
+          // it would bail before touching the stub at all.
           id: lastLogId,
           filename: `${DIR}/log.json`,
           byExtensionId: EXT_ID,
           state: 'complete',
-          exists: true,
         }];
       },
       // Every capture prunes the `log.json` rows older than its own
@@ -106,21 +106,16 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
       // one record — the newest write — so nothing is ever older, and
       // this is only here to be found rather than called.
       erase: async () => {},
-      // The reconcile waits briefly for Chrome's existence re-check
-      // before trusting `exists` (see `startExistsWatch`). These tests
-      // never delete anything, so no delta is ever fired — the listener
-      // just has to exist to be registered and removed.
-      onChanged: { addListener: () => {}, removeListener: () => {} },
     },
   };
   globalThis.fetch = async (url) => {
     if (String(url).endsWith('/log.json')) {
       return { ok: true, text: async () => logText() };
     }
-    // The directory listing: Chrome's generated page names each file
-    // twice (display text and href); one mention is enough here.
+    // The directory listing, in the row shape Chrome generates.
     const names = historyFilesOnDisk.map((f) => f.replace(/^.*[/\\]/, ''));
-    return { ok: false, text: async () => names.map((n) => `<a href="${n}">${n}</a>`).join('\n') };
+    const rows = names.map((n) => `<script>addRow(${JSON.stringify(n)},"",0,0,"0 B",0,"");</script>`);
+    return { ok: false, status: 0, text: async () => rows.join('\n') };
   };
   return store;
 }
@@ -128,11 +123,6 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
 stubChrome();
 const { recordCapture, parseLogText, serializeLog, serializeRecord, appendLogLine, dedupeRecords } =
   await import('../../dist/capture/log-store.js');
-const { _setExistsRecheckTimeoutForTest } =
-  await import('../../dist/capture/downloads.js');
-// No delta is ever fired here, so each reconcile would otherwise wait
-// out the full existence-recheck timeout.
-_setExistsRecheckTimeoutForTest(5);
 
 /** A record whose timestamp encodes `n`, so order is checkable. */
 function rec(n) {

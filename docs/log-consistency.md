@@ -91,8 +91,22 @@ of downloads it performed.
 | How | Tells us |
 |---|---|
 | `fetch('file://…/log.json')` | the file's actual current contents |
-| `fetch('file://…/')` on the directory | Chrome's generated listing — how the history files are found |
-| The download record for `log.json` (`chrome.downloads.search`) | its path, and whether it still exists (re-checked on demand) |
+| `fetch('file://…/')` on the directory | Chrome's generated listing — what is in the directory right now (`listCaptureDirectory`) |
+| Our download records (`chrome.downloads.search`) | *where* the capture directory is — nothing else |
+
+**The filesystem is asked about files; the download records are asked
+only for the path.** The records describe what Chrome once wrote,
+not what is on disk now:
+
+- They exist only while the user keeps their download history, and
+  only up to `DownloadQuery`'s default 1000 rows.
+- Their `exists` flag is **never refreshed by a `search()`**, whatever
+  the API docs suggest.
+  - Probed in the e2e harness (2026-09): a file deleted on disk read
+    as `exists: true` indefinitely, with no `onChanged` delta.
+  - An earlier design leaned on that flag to tell a deleted log from
+    an unreadable one, and failed every capture after a log deleted
+    outside Chrome.
 
 A file picker (`<input type="file">`) would also hand us the contents
 and is deliberately not offered: the `File` it returns carries no
@@ -157,12 +171,13 @@ the one just written.
 
 - Records only — the file itself is untouched, and only rows written
   by this extension for `log.json` are considered.
-- Nothing else wants the older rows: `readLogFileRecord` answers from
-  the newest `complete` record, and the rest describe a file that has
-  been overwritten many times since.
+- Nothing wants the older rows: nothing in the extension reads the
+  `log.json` records at all (the directory comes from any of our
+  records, via `peekCaptureDirectory`), and to the user they all
+  describe a file that has been overwritten many times since.
 - Runs only once the new write has landed. Pruning around a write that
-  failed would throw away the last record describing what is actually
-  on disk — the record a failed read consults for `exists`.
+  failed would leave the download list describing a file that isn't
+  there.
 - Strictly *older* records. Every log write is serialized in the
   service worker, so a newer row shouldn't exist here — but should one
   ever appear, it describes the file next, and is left alone.
@@ -183,57 +198,18 @@ required). `inspectLogFile` re-checks as a backstop and throws
 `FileAccessRequiredError` rather than guess — a `fetch` refused for
 lack of the toggle looks exactly like a deleted log.
 
-**A `log.json` write still in flight is waited out, not read around**
-(`getLogFileRecord`).
-
-- `chrome.downloads.download` resolves when the download *starts*, so
-  a capture can return before its `log.json` is on disk — and a
-  second capture right behind it arrives mid-write.
-- The `fetch` could catch a half-written file and adopt it as the log.
-
-### Waiting for the existence re-check
-
-**`DownloadItem.exists` is stale on read**, and taking it at face value
-is how a deleted log came back.
-
-- Chrome doesn't watch the filesystem. `search()` *triggers* an
-  existence re-check, and the refreshed value arrives afterwards as a
-  `downloads.onChanged` delta — the search that triggered it still
-  returns the old one.
-- So a `log.json` deleted this session reads as present. A failed
-  read would then be blamed on the file rather than on its absence,
-  and the capture failed over a log the user deleted on purpose.
-
-`startExistsWatch` (`capture/downloads.ts`) closes it: the listener is
-registered *before* the search that triggers the re-check, and
-`confirmExists()` waits briefly for a delta on our record instead of
-trusting `exists`.
-
-- Registering after the search would race the event.
-- **`onChanged` fires only on a *change*, so a file that is still there
-  produces no event and waits out the timeout in full.** There is no
-  positive confirmation to wait for; that cost is unavoidable.
-- So `getLogFileRecord` hands back the record and `confirmExists()`
-  *separately*, and the reconcile calls it only where `exists` decides
-  something — a failed read, where the alternative is failing the
-  capture of someone who simply deleted their log. **Not** on a
-  successful read,
-  the common case: the file's contents have already answered
-  everything.
-- Skipping it there isn't just an optimization: paying it on every
-  capture put a 200ms-delay capture over the 500ms bound in
-  `html-snapshot.spec.ts`.
-- A record already saying `exists: false` short-circuits — nothing to
-  re-confirm.
-- `_setExistsRecheckTimeoutForTest` keeps the unit tests off the clock.
+No half-written file can be read here: every `log.json` write is
+awaited to completion inside the service worker's serialized write
+chain (`serializeWrite`), so the next capture's read starts only after
+the previous write has landed.
 
 ### Finding the file, then reading it
 
 Reading needs to know *where* the file is. The user's download
-directory isn't exposed by any API, so the path comes from the
-`log.json` download record, else the cached capture directory
-(`peekCaptureDirectory`) — and normally one of those knows: this
-capture's own screenshot / HTML were written moments ago.
+directory isn't exposed by any API, so the path comes from the cached
+capture directory, else our download records (`peekCaptureDirectory`)
+— and normally one of those knows: this capture's own screenshot /
+HTML were written moments ago.
 
 Failing both, nothing can be read — and the only way to learn the
 directory is to write something. So the capture writes the log
@@ -260,9 +236,14 @@ Then the read decides everything:
 | Reading the file | What it means | Action |
 |---|---|---|
 | Succeeds | This is the log | Append this capture's line to it and write |
-| Fails, and the download record says the file is gone (or there is no record) | The user deleted it | Start a new log from this capture |
-| Fails, after the first write was deflected by the file | It is there but unreadable, whatever the records say | Fail; the message names the file |
-| Fails, but the record says the file is there | Something we can't explain is in the way | **Don't write — fail** |
+| Fails, and `log.json` isn't in the directory listing (or the directory can't be listed) | The user deleted it, or the whole folder | Start a new log from this capture |
+| Fails, after the first write was deflected by the file | It is there but unreadable | Fail; the message names the file |
+| Fails, but the listing has it | Something we can't explain is in the way | **Don't write — fail** |
+
+The deleted-vs-unreadable question is answered by listing the
+directory over `file://` (`listCaptureDirectory`, the same read the
+History page uses), never by a download record — see
+[What we can find out](#what-we-can-find-out-about-the-files).
 
 ### The append is verbatim
 
@@ -342,11 +323,6 @@ the capture **fails right there** with
     log writes, history-file flushes — refresh the cache when they
     land inside `SeeWhatISee/`, so the cache tracks a download root
     the user has since moved.
-- **`refreshLogFileExistence`** (`src/capture/downloads.ts`) runs a
-  `downloads.search` for `log.json` on every service-worker load, which
-  gets Chrome re-checking early rather than leaving it to the first
-  failed read. The reconcile doesn't depend on it having finished; see
-  [Waiting for the existence re-check](#waiting-for-the-existence-re-check).
 - **The flush's collision guard** (`recordCapture`, `log-store.ts`)
   seeds the names already taken by listing the capture directory over
   `file://` — the same index the History page uses — so a history
@@ -383,12 +359,11 @@ here or it belongs fixed.
 
 ### Blind spots we accept
 
-- **An unreadable `log.json` with no download record.** A failed read
-  consults the record's `exists` to tell "deleted" from "in the way";
-  with the record gone (download history cleared) there is nothing to
-  ask, and the read failure reads as a deleted file — the capture
-  starts a fresh log over one that may still be there. Needs both a
-  cleared download history and a file that exists but can't be read.
+- **A directory that can't be listed but still holds `log.json`.** A
+  failed read followed by a failed listing reads as "the folder is
+  gone" and starts a fresh log. A folder that exists but can't be
+  listed while its file can't be read either is a permissions state
+  the extension can't do anything useful in anyway.
 - **A capture directory that isn't ours.** Pointing Chrome's download
   directory somewhere that already contains a `SeeWhatISee/log.json`
   written by another profile or a script reads as *the* log: its
@@ -410,10 +385,8 @@ here or it belongs fixed.
 - **A stray `log (1).json`.** A deflected first write (see "Finding
   the file") is deleted immediately; if that delete fails the copy
   stays. It matches nothing any reader looks for.
-- **A failed read waits out the re-check timeout.** The only route
-  that consults `exists` (see
-  [Waiting for the existence re-check](#waiting-for-the-existence-re-check)),
-  so a healthy capture never pays it. Latency, not correctness.
+- **A failed read costs one directory listing.** Only the failed-read
+  route lists the directory; a healthy capture never pays it.
 
 ## Resulting behaviors worth knowing
 
@@ -435,10 +408,6 @@ here or it belongs fixed.
   above, the unknown-directory first write (landed, deflected, and
   failed), the file-access backstop, and the failure messages,
   driving a faked `chrome.downloads` / `fetch`.
-  - Its stub reproduces the **stale `exists`** contract: a `search()`
-    returns the old value and fires the `onChanged` delta afterwards.
-    That's what makes "a log deleted this session starts fresh, not a
-    failure" a real test rather than a restatement of the code.
   - The verbatim append — an edited line and a non-record line kept
     byte for byte, a missing terminator supplied — is covered here
     too.
@@ -457,13 +426,15 @@ here or it belongs fixed.
   end-to-end: deleting `log.json` starts a fresh log instead of
   bringing the old records back — once deleted through
   `chrome.downloads.removeFile`, and once deleted on the filesystem
-  (pinned as an expected failure: real Chrome doesn't re-check
-  `exists` on `search()`, see the test's comment) — and a capture
-  appends to a hand-edited file without rewriting what's there.
+  behind Chrome's back, which only a real browser can show — and a
+  capture appends to a hand-edited file without rewriting what's
+  there.
+- `tests/unit/directory-listing.test.mjs` covers the listing parse
+  against a verbatim copy of Chrome's generated page.
 - **The e2e harness had to change for any of this to be testable.**
   Playwright renames every download to a UUID under its artifacts
   directory, so the extension's path-based lookups — capture
-  directory, `log.json` re-read, file-existence checks — all missed.
+  directory, `log.json` re-read, the directory listing — all missed.
   `tests/fixtures/extension.ts` now seeds `download.default_directory`
   in the profile's Preferences and sends `Browser.setDownloadBehavior
   { behavior: 'default' }` over CDP after launch, so files land under

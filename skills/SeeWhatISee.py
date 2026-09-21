@@ -567,7 +567,7 @@ def history_files(source_dir, log_path):
     order. Only stamp-shaped names (digits and hyphens) count: a
     word-y `history-notes.json` is someone else's file, and would land
     at an arbitrary spot in that order. The extension's directory
-    listing applies the same rule (`HISTORY_FILE_TOKEN`); keep the two
+    listing applies the same rule (`HISTORY_FILE_NAME`); keep the two
     in step.
     """
     try:
