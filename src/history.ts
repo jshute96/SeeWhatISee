@@ -635,20 +635,68 @@ function deleteFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
 const deleteDialog = document.getElementById('delete-dialog') as HTMLDialogElement;
 const deleteDialogFilesIntro = document.getElementById('delete-dialog-files-intro') as HTMLElement;
 const deleteDialogFiles = document.getElementById('delete-dialog-files') as HTMLElement;
+const deleteDialogStatus = document.getElementById('delete-dialog-status') as HTMLElement;
+
+const COPY_PATH_TOOLTIP = 'Copy full filename';
+
+/**
+ * One entry of the Delete dialog's file list: the filename, linked to
+ * the file so it can be looked at before deciding, and a Copy button
+ * that puts its absolute path on the clipboard.
+ *
+ * A file the table already shows as `(deleted)` renders the same way
+ * here (`unlinkedFile`), with no Copy button: there is nothing at the
+ * path to open or to copy it for. So does every file when no capture
+ * directory is known, though the Delete button is disabled then.
+ */
+function deleteDialogFileItem(filename: string): HTMLLIElement {
+  const li = document.createElement('li');
+  const url = fileUrlFor(filename);
+  if (!captureDir || !url || isDeleted(filename)) {
+    li.append(unlinkedFile(filename));
+    return li;
+  }
+  const a = captureFileLink(url, filename);
+  a.textContent = filename;
+  // The visible text is the filename already.
+  a.removeAttribute('title');
+  const path = joinCapturePath(captureDir, filename);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.title = COPY_PATH_TOOLTIP;
+  btn.setAttribute('aria-label', COPY_PATH_TOOLTIP);
+  btn.innerHTML = '<svg aria-hidden="true"><use href="#copy-icon"></use></svg>';
+  btn.addEventListener('click', () => {
+    // Extension pages can write the clipboard directly under a user
+    // gesture. A failure shows in the dialog rather than as an
+    // uncaught rejection. The one failure that happens in practice is
+    // `NotAllowedError` ("Document is not focused"): the filename link
+    // beside this button opens a new tab, so the page can easily have
+    // lost focus by the time the write runs. Say what to do about it.
+    navigator.clipboard.writeText(path).then(
+      () => { deleteDialogStatus.textContent = ''; },
+      (err: unknown) => {
+        deleteDialogStatus.textContent = err instanceof DOMException && err.name === 'NotAllowedError'
+          ? 'Copy failed: the page lost focus; click back in and try again'
+          : `Copy failed: ${err instanceof Error ? err.message : String(err)}`;
+      },
+    );
+  });
+  li.append(a, btn);
+  return li;
+}
 
 /**
  * Ask before deleting, listing the files that will go. A page
- * `<dialog>` rather than `confirm()` so the filenames can be selected
+ * `<dialog>` rather than `confirm()` so the filenames can be opened
  * and copied. Resolves `true` only on the Delete button; Cancel, Esc
  * and Enter (Cancel is the form's default button) all resolve `false`.
  */
 function confirmDelete(files: string[]): Promise<boolean> {
   deleteDialogFilesIntro.hidden = files.length === 0;
-  deleteDialogFiles.replaceChildren(...files.map((f) => {
-    const li = document.createElement('li');
-    li.textContent = f;
-    return li;
-  }));
+  deleteDialogFiles.replaceChildren(...files.map(deleteDialogFileItem));
+  deleteDialogStatus.textContent = '';
   deleteDialog.returnValue = '';
   deleteDialog.showModal();
   return new Promise((resolve) => {

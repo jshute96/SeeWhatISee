@@ -527,9 +527,16 @@ files from disk and takes its record out of the log.
 - Confirmed first, in a page `<dialog>` (`#delete-dialog`) that lists
   the files about to go. Nothing brings a deleted file back, and the
   button is one click from Reopen.
-  - A page dialog rather than `confirm()` so the filenames are
-    selectable text; the browser's prompt renders outside the page and
-    can't be copied from.
+  - A page dialog rather than `confirm()` so the user can look at the
+    files before deciding; the browser's prompt is plain text rendered
+    outside the page.
+  - Each filename is a `file://` link opening the file in a new tab
+    (built by the same `captureFileLink` the table columns use), with a
+    Copy button (Capture-page icon, tooltip "Copy full filename") that
+    puts the absolute path on the clipboard. A clipboard failure shows
+    under the list (`#delete-dialog-status`).
+  - A file the table already marks `(deleted)` is listed the same way
+    (`unlinkedFile`), with no link and no Copy button.
   - Cancel is the form's default button, so Enter and Esc both cancel;
     only the Delete button resolves the confirmation.
 - The click goes to the SW as `deleteCaptureFromHistory` with the

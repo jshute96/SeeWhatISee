@@ -26,8 +26,11 @@ import { readCaptureLog, resetCaptureState, seedCaptureLog } from '../fixtures/f
 import {
   configureAndCapture,
   dragRect,
+  installClipboardSpy,
   openDetailsFlow,
+  readClipboardSpy,
   seedSelection,
+  waitForClipboardWrites,
 } from './details-helpers';
 
 interface SeededRecord {
@@ -983,13 +986,25 @@ test('Delete removes a capture\'s files, tombstones its record, and forgets the 
   await expect(trash).toHaveAttribute('title', /Delete this capture/);
   await expect(rows.nth(0).locator('.row-actions .restore-btn')).toBeVisible();
   await trash.click();
-  // A page dialog, not `confirm()`, so the filenames are selectable text.
+  // A page dialog, not `confirm()`, so the filenames can be opened and copied.
   const dialog = historyPage.locator('#delete-dialog');
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('#delete-dialog-files li')).toHaveText([
     before[0].screenshot!.filename,
     before[0].contents!.filename,
   ]);
+  // Each name links to the file (a look before deciding), and its Copy
+  // button puts the absolute path on the clipboard.
+  const shotItem = dialog.locator('#delete-dialog-files li').nth(0);
+  await expect(shotItem.locator('a')).toHaveAttribute('href', `file://${shot}`);
+  await expect(shotItem.locator('a')).toHaveAttribute('target', '_blank');
+  await installClipboardSpy(historyPage);
+  const copyBtn = shotItem.locator('.copy-btn');
+  await expect(copyBtn).toHaveAttribute('title', 'Copy full filename');
+  await copyBtn.click();
+  await waitForClipboardWrites(historyPage, 1);
+  expect(await readClipboardSpy(historyPage)).toEqual([shot]);
+  await expect(dialog.locator('#delete-dialog-status')).toBeEmpty();
   await dialog.locator('.delete-confirm').click();
 
   // The row goes, the files go, and the log keeps a tombstone in the
@@ -1086,6 +1101,15 @@ test('Delete takes a file another record still names, which then shows deleted',
   await expect(rows.nth(0).locator('.page-cell .title')).toHaveText('First');
   expect(existsSync(`${dir}/${shared}`)).toBe(false);
   await expect(rows.nth(0).locator('.shot-cell .deleted-mark')).toHaveText('(deleted)');
+
+  // Deleting that row too: its prompt shows the gone file the way the
+  // table does, with no link to a 404 and no path worth copying.
+  await rows.nth(0).locator('.delete-btn').click();
+  const item = historyPage.locator('#delete-dialog-files li');
+  await expect(item.locator('.deleted-mark')).toHaveText('(deleted)');
+  await expect(item.locator('a')).toHaveCount(0);
+  await expect(item.locator('.copy-btn')).toHaveCount(0);
+  await historyPage.locator('#delete-dialog .delete-cancel').click();
 
   await historyPage.close();
 });

@@ -331,10 +331,44 @@
     padding-left: 22px;
     font-family: var(--font-mono);
     font-size: 13px;
-    /* Selectable on purpose: copying a filename out is the reason this
-       isn't a `confirm()`. */
+    /* Selectable on purpose: the filenames are meant to be copied out
+       (that, and the links, are why this isn't a `confirm()`). */
     user-select: text;
   }
+  .delete-dialog li .copy-btn {
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+  /* Same icon button as the Capture page's Copy filename buttons. */
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    color: #333;
+    cursor: pointer;
+  }
+  .copy-btn:hover {
+    background: #eee;
+    border-color: #bbb;
+    color: #000;
+  }
+  .copy-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* A failed clipboard write; empty and hidden otherwise. */
+  .delete-dialog-status {
+    margin: -6px 0 12px 0;
+    font-size: 13px;
+    color: #b00020;
+  }
+  .delete-dialog-status:empty { display: none; }
   .delete-dialog-buttons {
     display: flex;
     justify-content: flex-end;
@@ -438,14 +472,30 @@
 </main>
 
 <!-- Confirmation for a row's Delete button. A page dialog rather than
-     `confirm()`, so the filenames in it can be selected and copied;
-     the browser's own prompt renders outside the page and can't be.
-     The list is filled per row by history.ts. -->
+     `confirm()`, so the filenames in it can be opened and copied;
+     the browser's own prompt renders outside the page and can't be. -->
 <dialog id="delete-dialog" class="delete-dialog" aria-labelledby="delete-dialog-title">
+  <!-- Copy icon, the same glyph the Capture page's Copy filename
+       buttons use: two overlapping rounded rects. -->
+  <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+    <defs>
+      <symbol id="copy-icon" viewBox="0 0 24 24">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </symbol>
+    </defs>
+  </svg>
   <form method="dialog">
     <h2 id="delete-dialog-title">Delete this capture?</h2>
     <p id="delete-dialog-files-intro">The following saved files will also be deleted:</p>
+    <!-- Each entry is the filename linked to the file, plus a Copy
+         button for its absolute path; filled per row by history.ts. -->
     <ul id="delete-dialog-files"></ul>
+    <div id="delete-dialog-status" class="delete-dialog-status" role="status"></div>
     <div class="delete-dialog-buttons">
       <!-- `value` is what `dialog.returnValue` reads back. Cancel is
            the form's default button (first in order), so Enter on the
