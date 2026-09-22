@@ -205,19 +205,16 @@ What it costs:
   the History page). Nothing works without it any more: the History
   page's degraded no-access mode and its banner are gone.
   * README's install steps need this as a required step.
-  * `privacy_policy.md` should say what is read (files in the capture
-    directory only).
+  * `privacy_policy.md` is already updated for this.
 * **Capture log on disk is the only copy** — `log.json` is the log;
   Chrome extension storage holds no capture records at all.
   * README's `log.json` section still says the opposite ("the
     authoritative log lives in Chrome extension storage… if deleted,
     it's restored from extension storage on the next capture") and
     needs rewriting on release.
-  * `privacy_policy.md` needs the same rewrite: it describes storage as
-    the authoritative log, points at the removed **More ▸ Clear log
-    history** entry, and says the log is capped at 100 captures with
-    older entries dropped (they go to `history-*.json` files instead —
-    already stale before this change).
+  * `privacy_policy.md` is already rewritten for this (file is the
+    only log, history files, no Clear-log-history entry, History page
+    Delete).
   * Deleting `log.json` starts a new log instead of having the old
     records restored; deleting individual rows sticks.
   * The **More ▸ Clear log history** menu entry is gone. Deleting the
