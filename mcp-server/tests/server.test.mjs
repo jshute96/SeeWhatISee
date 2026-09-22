@@ -1587,3 +1587,112 @@ test('a paused capture does not ring the subscriber doorbell', async () => {
     await ctx.cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Deleted captures (tombstones: `{ timestamp, deleted: true }`)
+// ---------------------------------------------------------------------------
+
+/** What the History page's delete leaves in `log.json`. */
+function tombstone(timestamp) {
+  return { timestamp, deleted: true };
+}
+
+test('get_latest skips a tombstone and reports a log of nothing but them', async () => {
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z', screenshot: { filename: 'kept.png' } }),
+      tombstone('2026-04-08T20:30:05.000Z'),
+    ],
+  });
+  try {
+    const res = await ctx.client.callTool({ name: 'get_latest', arguments: {} });
+    assert.equal(metaRecord(res).timestamp, '2026-04-08T20:30:00.000Z');
+    assert.equal(linkFor(res, 'screenshot').uri, uriFor(ctx.dir, 'kept.png'));
+
+    writeLog(ctx.dir, [tombstone('2026-04-08T20:30:00.000Z')]);
+    await assert.rejects(
+      ctx.client.callTool({ name: 'get_latest', arguments: {} }),
+      /Every capture in .* has been deleted/,
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a cursor naming a tombstone still resolves, and the drain skips tombstones', async () => {
+  // The whole reason the marker keeps its timestamp: a client holding
+  // the deleted record's cursor must still find its place.
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      tombstone('2026-04-08T20:30:09.000Z'),
+      tombstone('2026-04-08T20:30:10.000Z'),
+      record({ timestamp: '2026-04-08T20:30:05.000Z', screenshot: { filename: 'slow.png' } }),
+    ],
+  });
+  try {
+    const payload = JSON.parse(
+      (await ctx.client.readResource({
+        uri: STREAM_URI + '?after=2026-04-08T20:30:09.000Z',
+      })).contents[0].text,
+    );
+    assert.deepEqual(payload.records.map((r) => r.timestamp), ['2026-04-08T20:30:05.000Z']);
+
+    // The bootstrap read (no cursor) hands out the newest live record.
+    writeLog(ctx.dir, [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      tombstone('2026-04-08T20:30:09.000Z'),
+    ]);
+    const boot = JSON.parse(
+      (await ctx.client.readResource({ uri: STREAM_URI })).contents[0].text,
+    );
+    assert.equal(boot.timestamp, '2026-04-08T20:30:00.000Z');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('the watch tool resumes from a cursor whose record was deleted', async () => {
+  // Same cursor rule as the stream, exercised through the tool: a
+  // client resuming `after` a record the user has since deleted must
+  // get what followed it, not the tombstone and not a timeout.
+  const ctx = await setup({
+    records: [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      tombstone('2026-04-08T20:30:05.000Z'),
+      record({ timestamp: '2026-04-08T20:30:09.000Z', screenshot: { filename: 'next.png' } }),
+    ],
+  });
+  try {
+    const res = await ctx.client.callTool({
+      name: 'watch',
+      arguments: { after: '2026-04-08T20:30:05.000Z' },
+    });
+    assert.deepEqual(
+      watchRecords(res).map((r) => r.timestamp),
+      ['2026-04-08T20:30:09.000Z'],
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a deletion does not end a blocking watch', async () => {
+  const ctx = await setup({
+    records: [record({ timestamp: '2026-04-08T20:30:00.000Z' })],
+    watchDefaultTimeoutMs: 400,
+  });
+  try {
+    const pending = ctx.client.callTool({ name: 'watch', arguments: {} });
+    await sleep(50);
+    // A deletion rewrites log.json — the watcher sees a change, and
+    // must not wake its agent for a record that is no longer there.
+    writeLog(ctx.dir, [
+      record({ timestamp: '2026-04-08T20:30:00.000Z' }),
+      tombstone('2026-04-08T20:30:05.000Z'),
+    ]);
+    assert.deepEqual(watchRecords(await pending), []);
+  } finally {
+    await ctx.cleanup();
+  }
+});

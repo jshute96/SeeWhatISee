@@ -120,6 +120,11 @@ What it costs:
 
 ### Pending docs for features not released yet
 
+* **Delete a capture from the History page** — a trash button beside
+  each row's Restore / Reopen deletes that capture's files and its log
+  record (README's History / `log.json` sections). Watchers see a
+  `deleted` tombstone line in `log.json` in the record's place.
+
 * **README's unified skills section documents the whole command set** —
   "Coding agent skills" now says every agent gets `see`, `watch`,
   `stop` and `history`. That's true of the dev tree and of the

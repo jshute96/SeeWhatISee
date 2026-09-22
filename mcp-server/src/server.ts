@@ -152,16 +152,29 @@ export interface CaptureRecord {
   title?: string;
   imageUrl?: string;
   skipInWatcher?: true;
+  deleted?: true;
   [key: string]: unknown;
+}
+
+/**
+ * Records that still describe a capture. A record the user deleted
+ * from the History page is left in `log.json` as a tombstone —
+ * `{ timestamp, deleted: true }` — so that a cursor pointing at it
+ * still resolves; nothing is ever handed one. Filtered *after* a
+ * cursor lookup, never before, for exactly that reason.
+ */
+function present(records: CaptureRecord[]): CaptureRecord[] {
+  return records.filter((r) => r.deleted !== true);
 }
 
 /**
  * Captures the user paused on the Capture page: watching passes them
  * over, everything else (`get_latest`, the file resources) treats them
- * as ordinary records. See `docs/watch-protocol.md`.
+ * as ordinary records. See `docs/watch-protocol.md`. Tombstones are
+ * dropped here too, since a watcher never sees them either.
  */
 function watchable(records: CaptureRecord[]): CaptureRecord[] {
-  return records.filter((r) => r.skipInWatcher !== true);
+  return present(records).filter((r) => r.skipInWatcher !== true);
 }
 
 function readAllRecords(logPath: string): CaptureRecord[] {
@@ -700,14 +713,17 @@ export function createServer(opts: ServerOpts): Server {
 
   function handleGetLatest(args: Record<string, unknown>) {
     const inline = inlineArg(args);
-    const records = readAllRecords(logPath);
+    const all = readAllRecords(logPath);
+    const records = present(all);
     if (records.length === 0) {
       const exists = fileExists(logPath);
       throw new McpError(
         ErrorCode.InvalidRequest,
-        exists
-          ? `${logPath} is empty. No captures yet.`
-          : `${logPath} not found. No captures yet?`,
+        !exists
+          ? `${logPath} not found. No captures yet?`
+          : all.length > 0
+            ? `Every capture in ${logPath} has been deleted.`
+            : `${logPath} is empty. No captures yet.`,
       );
     }
     return { content: recordContent(records[records.length - 1], sourceDir, inline) };

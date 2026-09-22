@@ -36,6 +36,7 @@ This is a **foreground loop: each iteration blocks** on a shell command that doe
   - `prompt` — the user's instruction for this capture.
   - `imageUrl` — URL of a specific image the user captured, inside the page.
   - `skipInWatcher: true` means the user asked watchers to skip this capture.
+  - `deleted: true` marks a capture the user deleted; only its `timestamp` remains. Ignore these records.
 
   A record may have any subset of `screenshot` / `contents` / `selection`, or none of them (meaning the URL and optional `prompt` are the whole payload).
 

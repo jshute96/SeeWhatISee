@@ -212,6 +212,11 @@ Every record has `timestamp` and `url`, plus optional fields:
   page's watcher box before saving. Watchers pass the record over;
   every other reader treats it normally. Omitted when not paused. See
   [`watch-protocol.md` → Pausing](watch-protocol.md#pausing--captures-a-watcher-passes-over).
+- `deleted` — `true` on a **tombstone**, the `{timestamp, deleted}`
+  line left in `log.json` when the user deletes a capture from the
+  History page. Only the timestamp survives, so a watcher's cursor
+  still resolves; every reader skips the record otherwise. See
+  [`log-consistency.md` → Deleting a capture](log-consistency.md#deleting-a-capture).
 
 ### Record shapes by trigger
 

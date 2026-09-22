@@ -281,6 +281,26 @@ test.describe('SeeWhatISee.py history listing', () => {
     expect(run(['--get-latest', '--directory', tmpDir]).exitCode).not.toBe(0);
   });
 
+  test('tombstones are listed by no history action', () => {
+    // A capture deleted from the History page leaves
+    // `{ timestamp, deleted: true }` in log.json (and nothing at all in
+    // a history file); a hand-copied one could sit in either.
+    writeFileOfRecords('history-20260409-120001-000.json', [
+      rec(0, { title: 'Kept' }),
+      { timestamp: '2026-04-09T12:00:01.000Z', deleted: true },
+    ]);
+    writeFileOfRecords('log.json', [
+      rec(2, { title: 'Also kept' }),
+      { timestamp: '2026-04-09T12:00:03.000Z', deleted: true },
+    ]);
+    const all = run(['--all', '--directory', tmpDir]);
+    expect(all.exitCode).toBe(0);
+    expect(parseAll(all.stdout).map((x) => x.title)).toEqual(['Kept', 'Also kept']);
+    // The --limit walk skips them too, without counting them.
+    const limited = run(['--limit', '2', '--directory', tmpDir]);
+    expect(parseAll(limited.stdout).map((x) => x.title)).toEqual(['Kept', 'Also kept']);
+  });
+
   test('a file with no trailing newline does not glue onto the next', () => {
     // These files sit in the user's Downloads folder and can be
     // hand-edited or truncated mid-write.

@@ -26,10 +26,13 @@
 // the page the restorable record's `logKey` (on registration, and
 // again whenever the slot changes) and takes the click back as a
 // message. **Reopen**, on every other row, comes back the same way and
-// for the same reason.
+// for the same reason; **Delete** does too, because its log rewrite
+// must share the SW's serialized write chain with the captures.
 
 import { reopenCapture, restoreLastCapture } from './capture-details.js';
-import { getLastCapture } from './last-capture.js';
+import { clearLastCapture, getLastCapture } from './last-capture.js';
+import { deleteCapture } from '../capture/delete-capture.js';
+import { LAST_CAPTURE_FILES_KEY, serializeRecord } from '../capture/log-store.js';
 import type { CaptureRecord } from '../capture/types.js';
 
 /**
@@ -155,6 +158,34 @@ export async function notifyHistoryPageRestorable(): Promise<void> {
   }
 }
 
+/**
+ * Drop the two session-storage notes that may still describe a
+ * capture just deleted, so nothing offers it back:
+ *
+ * - The `lastCapture` slot, when its `logKey` is this record. *Restore
+ *   last capture* would otherwise re-open the session and, on save,
+ *   write the files and record straight back.
+ * - The `lastCaptureFiles` note, when its timestamp is this record's.
+ *   The Copy-last-… menu entries would otherwise copy paths to files
+ *   that are gone.
+ *
+ * Best-effort: the deletion itself has landed, and either note going
+ * stale costs a menu entry that fails when used.
+ */
+async function forgetDeletedCapture(record: CaptureRecord): Promise<void> {
+  try {
+    const last = await getLastCapture();
+    if (last?.logKey === serializeRecord(record)) await clearLastCapture();
+    const note = await chrome.storage.session.get(LAST_CAPTURE_FILES_KEY);
+    const files = note[LAST_CAPTURE_FILES_KEY] as { timestamp?: unknown } | undefined;
+    if (files?.timestamp === record.timestamp) {
+      await chrome.storage.session.remove(LAST_CAPTURE_FILES_KEY);
+    }
+  } catch (err) {
+    console.info('[SeeWhatISee] could not clear the last-capture notes after a delete:', err);
+  }
+}
+
 export function installHistoryMessageHandler(): void {
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!msg || typeof msg !== 'object' || !('action' in msg)) return false;
@@ -217,6 +248,29 @@ export function installHistoryMessageHandler(): void {
       }
       void reopenCapture(record as CaptureRecord, sender.tab).then(
         () => sendResponse({ ok: true }),
+        (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
+      );
+      return true;
+    }
+
+    // Delete click on a row. SW-side because the log rewrite has to
+    // go through the same `serializeWrite` chain every capture's write
+    // does — the page rewriting `log.json` on its own would race a
+    // capture landing at the same moment. Same trust model as reopen:
+    // the record is the page's parse of the user's own files.
+    if (action === 'deleteCaptureFromHistory') {
+      const record = (msg as { record?: unknown }).record;
+      if (!record || typeof record !== 'object') {
+        sendResponse({ error: 'no record to delete' });
+        return true;
+      }
+      void deleteCapture(record as CaptureRecord).then(
+        async (outcome) => {
+          await forgetDeletedCapture(record as CaptureRecord);
+          return outcome;
+        },
+      ).then(
+        (outcome) => sendResponse({ ok: true, ...outcome }),
         (err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }),
       );
       return true;

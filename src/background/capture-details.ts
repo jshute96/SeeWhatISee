@@ -16,8 +16,8 @@ import {
   downloadHtml,
   downloadScreenshot,
   downloadSelection,
+  isLogFileName,
   joinCapturePath,
-  LOG_FILE_NAME,
   pathToFileUrl,
   peekCaptureDirectory,
   waitForDownloadComplete,
@@ -838,13 +838,14 @@ export async function reopenCapture(
   // followed:
   //   - `../…` would read outside the capture directory (`fetch`
   //     normalizes it), and
-  //   - a bare name that happens to be `log.json` would load the log
-  //     as an artifact body and then, on save, overwrite it — every
-  //     write uses `conflictAction: 'overwrite'`.
+  //   - a bare name that happens to be `log.json` (or a history file)
+  //     would load the log as an artifact body and then, on save,
+  //     overwrite it — every write uses `conflictAction: 'overwrite'`.
   // The threat model is small (whoever edited the log can read those
   // files anyway), but the blast radius of that second one isn't.
+  // `deleteCapture` applies the same rule before deleting a file.
   const readable = (name: string): boolean =>
-    !name.includes('/') && !name.includes('\\') && name !== LOG_FILE_NAME;
+    !name.includes('/') && !name.includes('\\') && !isLogFileName(name);
   const fileUrl = (name: string): string | null =>
     (readable(name) ? pathToFileUrl(joinCapturePath(directory, name)) : null);
   // Named by full path, as every file read/write failure is, so the

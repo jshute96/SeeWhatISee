@@ -1,7 +1,9 @@
 # Log consistency: the file is the log
 
 **Status: implemented.** `src/capture/log-reconcile.ts` finds and
-reads the file; `recordCapture` in `log-store.ts` writes it.
+reads the file; `recordCapture` in `log-store.ts` writes it;
+`deleteCapture` in `delete-capture.ts` is the one path that removes
+anything (see [Deleting a capture](#deleting-a-capture)).
 
 ## Why it changed
 
@@ -73,10 +75,11 @@ removed that way never come back.
 fails with a message saying what to fix — its screenshot / HTML are
 already saved, but its record is not logged.
 
-**5. Nothing here deletes the user's files.** Not `log.json`, not the
-history files, not a capture's own screenshot or HTML. Deleting capture
-history means deleting files, which is the user's to do (and, later, a
-feature of its own).
+**5. Nothing here deletes the user's files unasked.** Not `log.json`,
+not the history files, not a capture's own screenshot or HTML. The one
+exception is the History page's Delete button, which deletes exactly
+the capture the user pointed at — see
+[Deleting a capture](#deleting-a-capture).
 
 The exceptions are all deliberate, and all listed under
 [Where the principles bend](#where-the-principles-bend).
@@ -167,7 +170,8 @@ session note — each step only after the one before it has landed.
 Every capture rewrites the same `log.json`, so Chrome's download list
 would otherwise collect one row per capture, all naming the same file.
 `pruneOldLogRecords` (`downloads.ts`) erases the rows older than
-the one just written.
+the one just written. It takes a filename, so a deletion that rewrites
+a history file tidies that file's rows the same way.
 
 - Records only — the file itself is untouched, and only rows written
   by this extension for `log.json` are considered.
@@ -330,7 +334,8 @@ the capture **fails right there** with
 - **The toolbar's More submenu used to carry a *Clear log history*
   entry**, which truncated `log.json` to zero bytes. It was removed:
   under principle 5 it isn't ours to do. Deleting `log.json` is the
-  gesture that clears the log until a delete-the-files feature exists.
+  gesture that clears the whole log; the History page's Delete button
+  removes one capture at a time.
 - **The Copy-last-… menu entries** read the session note, not the log:
   the entries only make sense right after a capture, so the note
   needn't outlive the browser session, and the log needn't be parsed
@@ -344,6 +349,10 @@ here or it belongs fixed.
 
 ### Deliberate, user-initiated
 
+- **Deleting one capture from the History page.** The one place the
+  extension deletes files and removes a record, and it does both only
+  for the row the user clicked. Spelled out under
+  [Deleting a capture](#deleting-a-capture).
 - **Re-writing a capture file before any record points at it.** Within
   one Capture-page session, the screenshot / HTML / selection keep a
   pinned filename, and a *pre-download* under that name (what the Copy
@@ -388,6 +397,130 @@ here or it belongs fixed.
 - **A failed read costs one directory listing.** Only the failed-read
   route lists the directory; a healthy capture never pays it.
 
+## Deleting a capture
+
+The History page's Delete button (`docs/history-page.md` → Delete
+from a row) runs `deleteCapture` in `src/capture/delete-capture.ts`.
+
+- Order: the capture's files off disk, then its record out of the log
+  files.
+- Files first, on purpose. A record whose files are gone still shows
+  up (as `(deleted)`) and can be deleted again; a file whose record is
+  gone is an orphan nothing will find.
+
+### The files
+
+- Which files: the record's screenshot / HTML / selection, whether or
+  not another record still names one (a reopened capture saved without
+  editing shares its screenshot with the original; the other row then
+  shows `(deleted)`). A name that isn't a bare capture filename is
+  refused, as reopen refuses it.
+- A file the directory listing already lacks is skipped: it's gone,
+  and only its stale download records are left to tidy.
+- How: `chrome.downloads.removeFile` on the download record Chrome
+  holds for that path — the extension has no filesystem API, and this
+  is the one delete it offers. It only works on a file Chrome itself
+  downloaded and still has a record of.
+  - The directory is then re-listed. A file still there — no usable
+    record (download history cleared, a copied profile), or a record
+    Chrome "removed" against without touching the disk — gets a fresh
+    one: an empty file is downloaded over it (`conflictAction:
+    'overwrite'`, awaited to completion like every write), and *that*
+    download is `removeFile`d.
+  - The overwrite lands before the delete, so if that second
+    `removeFile` fails the capture file is left as a zero-byte file,
+    still named by its record. Accepted: the user asked for it to go,
+    and a second click finishes the job.
+- Verified against the filesystem once more: a file still present
+  fails the whole delete before the log is touched.
+
+### The record
+
+- **In `log.json` it becomes a tombstone**: `{"timestamp": …,
+  "deleted": true}`. The line is replaced in place; every other line is
+  kept byte for byte (`parseLogLine` finds the record, the rest is
+  never re-serialized), the same promise the append makes.
+  - The timestamp survives because it is a **cursor**. `--after <ts>`
+    (the Python script), the MCP `watch` tool and the
+    `captures/stream?after=` resource all look the record up by
+    timestamp to resume behind it. A record that vanished would strand
+    every watcher holding it.
+  - Only a deletion writes tombstones, and only into `log.json`.
+    Nothing cursors into a history file, so a record deleted from one
+    is simply dropped. (A later flush can carry a `log.json` tombstone
+    into a history file, where readers skip it the same way.)
+- **Readers skip tombstones** — the History page (`isTombstone`), the
+  Python script's `--get-latest` / `--all` / `--limit` and its watch
+  loop (cursor still advancing past them, like `skipInWatcher`), and
+  the MCP server's `get_latest`, `watch` and stream reads. A `log.json`
+  holding nothing but tombstones reads as "every capture has been
+  deleted", not as empty.
+- **A flush carries tombstones along** like any record: `serializeRecord`
+  emits the flag, so re-serializing `log.json` can't strip it. They
+  count against the cap and take a slot in a batch.
+- A history file the deletion leaves with no records is deleted (the
+  same way a capture file is); an ordinary rewrite otherwise.
+- Every log file is scanned for the record, not only the one the page
+  read it from — the same record can sit in `log.json` *and* a history
+  file (a flush whose `log.json` trim never landed), and the History
+  page's dedup would keep showing the surviving copy.
+- Each rewrite — `log.json` or a history file — is followed by
+  `pruneOldLogRecords` for that filename, as after a capture: the
+  download list keeps one row per file, not one per deletion.
+
+### Download records
+
+- After the log is rewritten, every download record for the deleted
+  files is erased — the ones `removeFile` used, the ones that were
+  stale, and the overwrite download's own. Best-effort, like every
+  record erase.
+
+### Ordering and failure
+
+- Inside `serializeWrite`, so a capture landing mid-delete can't read
+  the file this is about to rewrite and put its own copy back.
+- A file that won't delete stops everything ("`<path>`: still on disk
+  after deleting") with the log untouched. Files already removed stay
+  removed: the row then shows them `(deleted)`, and a second click
+  finishes the job.
+- Every failure is shown under the row on the History page as "Delete
+  failed: `<path>`: `<reason>`" (`docs/history-page.md` → Delete from
+  a row). Full paths, as every file failure names them: the fix is
+  outside the extension. Which step failed decides what is already
+  gone:
+  - Nothing touched yet: "no capture directory is known", "`<dir>`:
+    the directory could not be listed", "`<log file>`: could not be
+    read", "this capture is no longer in the log; reload the page"
+    (the page is stale).
+  - Files partly or wholly gone (the `(deleted)` cells show which):
+    "`<file>`: download-to-overwrite failed (`<Chrome code>`)" and its
+    siblings from `downloadFailureReason`, reworded for the delete
+    (`writeReason`); "`<file>`: removing the download-to-overwrite
+    failed: …"; "`<files>`: still on disk after deleting"; and for the
+    log rewrite "`<log file>`: rewrite failed (`<Chrome code>`)".
+- Afterwards the SW drops the session notes that may still describe
+  the record (`forgetDeletedCapture`, `background/history-page.ts`):
+  the `lastCapture` slot when its `logKey` matches, so *Restore last
+  capture* can't write the capture straight back; and the
+  `lastCaptureFiles` note when its timestamp matches, so the
+  Copy-last-… entries don't hand out paths to deleted files.
+- No capture directory is the one hard failure, as for reopen.
+
+### Testing
+
+- `tests/e2e/history-page.spec.ts` covers the real thing: a captured
+  row deleted (files gone, tombstone written, download records erased),
+  the overwrite fallback for a file Chrome has no record of, a shared
+  file taken (the other row showing `(deleted)`), a record dropped
+  from a history file (and the emptied
+  file removed), and a cancelled prompt.
+- `tests/unit/log-history-files.test.mjs` pins that a flush keeps the
+  `deleted` flag.
+- `tests/e2e/script-watch.spec.ts` / `script-history.spec.ts` and
+  `mcp-server/tests/server.test.mjs` cover the readers: tombstones are
+  never emitted, `--after` a deleted record still resumes, a deletion
+  while watching wakes nobody.
+
 ## Resulting behaviors worth knowing
 
 - Deleting `log.json` starts a clean log. The history files stay on
@@ -397,6 +530,10 @@ here or it belongs fixed.
   reads the file — see `docs/history-page.md` → Data source.
 - Deleting individual rows sticks — they are not brought back. Edits
   to rows stick the same way, formatting included.
+- Deleting a capture from the History page leaves a `deleted`
+  tombstone line in `log.json` where the record was. Nothing displays
+  it; it keeps `--after` cursors working. Removing the line by hand is
+  harmless.
 - A line that isn't a record stays in `log.json` until the next flush
   carries it away; nothing displays it.
 - Clearing Chrome's download history changes nothing: the cached

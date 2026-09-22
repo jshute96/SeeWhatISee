@@ -57,6 +57,15 @@ test('erases the log.json records older than the one being kept', async () => {
   assert.deepEqual(erased.sort((a, b) => a - b), [1, 2]);
 });
 
+test('prunes a history file by name, leaving log.json alone', async () => {
+  const history = (id) => logRecord(id, {
+    filename: '/home/user/Downloads/SeeWhatISee/history-20260101-000000-000.json',
+  });
+  stubChrome([history(6), logRecord(5), history(4), history(3)]);
+  await pruneOldLogRecords(6, 'history-20260101-000000-000.json');
+  assert.deepEqual(erased.sort((a, b) => a - b), [3, 4]);
+});
+
 test('leaves other files and other extensions alone', async () => {
   stubChrome([
     logRecord(9),

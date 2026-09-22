@@ -18,6 +18,7 @@
 // and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
 // control hidden, and the plain empty-log notice — is covered below.
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -914,4 +915,331 @@ test('Reopen greys what a capture never saved, without calling it an error', asy
   await page.close();
   await historyPage.close();
   await openerPage.close();
+});
+
+// ───────────────────────────── Delete ─────────────────────────────
+
+/** Path of `log.json` on disk, via the newest download record for it. */
+async function logPathOf(sw: Worker): Promise<string> {
+  const p = await sw.evaluate(async () => {
+    const items = await chrome.downloads.search({
+      filenameRegex: '[/\\\\]SeeWhatISee[/\\\\]log\\.json$',
+      orderBy: ['-startTime'],
+    });
+    return items.find((i) => i.byExtensionId === chrome.runtime.id)?.filename ?? null;
+  });
+  if (!p) throw new Error('no log.json download record');
+  return p;
+}
+
+/** Chrome's completed download records for the file at `path`. */
+async function downloadRecordsFor(sw: Worker, path: string): Promise<number> {
+  return await sw.evaluate(async (p) => {
+    const items = await chrome.downloads.search({ filename: p });
+    return items.length;
+  }, path);
+}
+
+test('Delete removes a capture\'s files, tombstones its record, and forgets the downloads', async ({
+  extensionContext,
+  extensionId,
+  fixtureServer,
+  getServiceWorker,
+}) => {
+  const { openerPage, capturePage } = await openDetailsFlow(
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+  );
+  await configureAndCapture(capturePage, {
+    saveScreenshot: true,
+    saveHtml: true,
+    prompt: 'delete me',
+  });
+  const sw = await getServiceWorker();
+  const before = (await readCaptureLog(sw)) as {
+    timestamp: string;
+    screenshot?: { filename: string };
+    contents?: { filename: string };
+  }[];
+  expect(before).toHaveLength(1);
+  const logPath = await logPathOf(sw);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  const shot = `${dir}/${before[0].screenshot!.filename}`;
+  const html = `${dir}/${before[0].contents!.filename}`;
+  await expect.poll(() => existsSync(shot)).toBe(true);
+  expect(existsSync(html)).toBe(true);
+  // A real capture leaves Chrome a download record per file.
+  expect(await downloadRecordsFor(sw, shot)).toBeGreaterThan(0);
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(1);
+
+  // The trash button sits beside Restore (this is the restorable row)
+  // and asks first; the prompt names the files it is about to delete.
+  const trash = rows.nth(0).locator('.row-actions .delete-btn');
+  await expect(trash).toHaveAttribute('title', /Delete this capture/);
+  await expect(rows.nth(0).locator('.row-actions .restore-btn')).toBeVisible();
+  await trash.click();
+  // A page dialog, not `confirm()`, so the filenames are selectable text.
+  const dialog = historyPage.locator('#delete-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('#delete-dialog-files li')).toHaveText([
+    before[0].screenshot!.filename,
+    before[0].contents!.filename,
+  ]);
+  await dialog.locator('.delete-confirm').click();
+
+  // The row goes, the files go, and the log keeps a tombstone in the
+  // record's place — timestamp and flag, nothing else.
+  await expect(rows).toHaveCount(0);
+  await expect(historyPage.locator('#empty')).toBeVisible();
+  // This was the restorable row, so the slot behind Restore is cleared
+  // too: a restore would have written the capture straight back. The
+  // Copy-last note goes with it.
+  await expect.poll(() => sw.evaluate(async () => {
+    const s = await chrome.storage.session.get(['lastCapture', 'lastCaptureFiles']);
+    return Object.keys(s).length;
+  })).toBe(0);
+  expect(existsSync(shot)).toBe(false);
+  expect(existsSync(html)).toBe(false);
+  const after = await readCaptureLog(sw);
+  expect(after).toEqual([{ timestamp: before[0].timestamp, deleted: true }]);
+  // Nothing left in Chrome's download list for the deleted files.
+  await expect.poll(() => downloadRecordsFor(sw, shot)).toBe(0);
+  await expect.poll(() => downloadRecordsFor(sw, html)).toBe(0);
+
+  await historyPage.close();
+  await openerPage.close();
+});
+
+test('Delete falls back to writing over a file Chrome has no record of', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // A seeded log naming a file that exists on disk but that Chrome never
+  // downloaded — a copied profile, or a cleared download history.
+  // `removeFile` has nothing to work with, so the delete has to give
+  // Chrome a record by downloading an empty file over it first.
+  const sw = await getServiceWorker();
+  const logPath = await seedCaptureLog(sw, SEED as unknown as Record<string, unknown>[]);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  const orphan = `${dir}/${SEED[2].screenshot!.filename}`;
+  writeFileSync(orphan, 'not really a png');
+  expect(await downloadRecordsFor(sw, orphan)).toBe(0);
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(3);
+  // The file is really there, so this row's screenshot isn't `(deleted)`.
+  await expect(rows.nth(0).locator('.shot-cell .deleted-mark')).toHaveCount(0);
+  await rows.nth(0).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+
+  await expect(rows).toHaveCount(2);
+  expect(existsSync(orphan)).toBe(false);
+  // The overwrite's own download record is gone with the file.
+  await expect.poll(() => downloadRecordsFor(sw, orphan)).toBe(0);
+  const after = (await readCaptureLog(sw)) as { timestamp: string; deleted?: true }[];
+  expect(after.map((r) => r.timestamp)).toEqual(SEED.map((r) => r.timestamp));
+  expect(after[2]).toEqual({ timestamp: SEED[2].timestamp, deleted: true });
+  expect(after[1]).toEqual(SEED[1]);
+  await expect(historyPage.locator('#count')).toHaveText('2 captures');
+
+  await historyPage.close();
+});
+
+test('Delete takes a file another record still names, which then shows deleted', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // Two records sharing one screenshot — what a reopened-but-unedited
+  // capture leaves. Deleting one takes the file; the other row is left
+  // pointing at a file that is gone, and says so.
+  const sw = await getServiceWorker();
+  const shared = 'screenshot-20260105-000000-000.png';
+  const records = [
+    { timestamp: '2026-01-05T00:00:00.000Z', screenshot: { filename: shared },
+      url: 'https://example.com/first', title: 'First' },
+    { timestamp: '2026-01-05T00:00:01.000Z', screenshot: { filename: shared },
+      url: 'https://example.com/second', title: 'Second', prompt: 'reopened' },
+  ];
+  const logPath = await seedCaptureLog(sw, records);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  writeFileSync(`${dir}/${shared}`, 'shared bytes');
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(1).locator('.shot-cell .deleted-mark')).toHaveCount(0);
+  // Newest first: row 0 is "Second".
+  await rows.nth(0).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+
+  await expect(rows).toHaveCount(1);
+  await expect(rows.nth(0).locator('.page-cell .title')).toHaveText('First');
+  expect(existsSync(`${dir}/${shared}`)).toBe(false);
+  await expect(rows.nth(0).locator('.shot-cell .deleted-mark')).toHaveText('(deleted)');
+
+  await historyPage.close();
+});
+
+test('Delete drops a record out of a history file, and the file once it is empty', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const logPath = await seedCaptureLog(sw, [SEED[2]] as unknown as Record<string, unknown>[]);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  // Two history files, seeded straight to disk the way the flush writes
+  // them (one record per line). The older one holds a single record.
+  const older = `${dir}/history-20260101-000000-000.json`;
+  const newer = `${dir}/history-20260102-000000-000.json`;
+  writeFileSync(older, JSON.stringify(SEED[0]) + '\n');
+  // The newer file holds two records, so deleting one rewrites it —
+  // twice, to check the download list keeps only the latest write.
+  const extra = { ...SEED[1], timestamp: '2026-01-03T04:04:05.000Z', title: 'Beta again' };
+  writeFileSync(newer, JSON.stringify(SEED[1]) + '\n' + JSON.stringify(extra) + '\n');
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(1);
+  await historyPage.locator('#load-older').click();
+  await expect(rows).toHaveCount(4);
+  await expect(historyPage.locator('#older')).toBeHidden();
+
+  // The Alpha row (SEED[0]) is the only record in the older file.
+  await rows.nth(3).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+  await expect(rows).toHaveCount(3);
+  await expect.poll(() => existsSync(older)).toBe(false);
+  expect(readFileSync(newer, 'utf8')).toBe(
+    JSON.stringify(SEED[1]) + '\n' + JSON.stringify(extra) + '\n',
+  );
+
+  // Delete "Beta again" out of the newer file: it is rewritten with the
+  // other record kept byte for byte, and Chrome's download list holds
+  // one row for the file, not one per rewrite.
+  await expect(rows.nth(1).locator('.page-cell .title')).toHaveText('Beta again');
+  await rows.nth(1).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+  await expect(rows).toHaveCount(2);
+  expect(readFileSync(newer, 'utf8')).toBe(JSON.stringify(SEED[1]) + '\n');
+  await expect.poll(() => downloadRecordsFor(sw, newer)).toBe(1);
+  // `log.json` wasn't the holder, so it is untouched — no tombstone.
+  expect(await readCaptureLog(sw)).toEqual([SEED[2]]);
+  // The rows that remain are still the ones from both surviving files.
+  await expect(rows.nth(0).locator('.prompt-box')).toHaveText('summarize the gamma report');
+  await expect(rows.nth(1).locator('.page-cell .title')).toHaveText('Beta docs');
+  await expect(historyPage.locator('#older')).toBeHidden();
+
+  await historyPage.close();
+});
+
+test('cancelling the Delete prompt changes nothing', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedCaptureLog(sw, SEED as unknown as Record<string, unknown>[]);
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(3);
+  await rows.nth(0).locator('.delete-btn').click();
+  const dialog = historyPage.locator('#delete-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('.delete-cancel').click();
+  await expect(dialog).toBeHidden();
+  await expect(rows.nth(0).locator('.delete-btn')).toBeEnabled();
+  await expect(rows).toHaveCount(3);
+  // Esc is a cancel too.
+  await rows.nth(0).locator('.delete-btn').click();
+  await expect(dialog).toBeVisible();
+  await historyPage.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(rows).toHaveCount(3);
+  expect(await readCaptureLog(sw)).toEqual(SEED);
+  await historyPage.close();
+});
+
+test('a failed Delete says so under the row, not only in a tooltip', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  await seedCaptureLog(sw, SEED as unknown as Record<string, unknown>[]);
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(3);
+
+  // Pull the log out from under the page: rewritten without the session
+  // note, so the page still shows the old rows. Deleting one of those
+  // can't find the record.
+  await seedCaptureLog(sw, [SEED[0]] as unknown as Record<string, unknown>[]);
+  await rows.nth(0).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+
+  const error = rows.nth(0).locator('.row-error');
+  await expect(error).toContainText('Delete failed: this capture is no longer in the log');
+  await expect(rows.nth(0).locator('.delete-btn')).toBeEnabled();
+  // The message describes the last attempt; backing out of the prompt
+  // isn't an attempt, so it stays.
+  await rows.nth(0).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-cancel').click();
+  await expect(rows.nth(0).locator('.row-error')).toHaveCount(1);
+
+  await historyPage.close();
+});
+
+test('deleting the newest capture keeps the loaded history rows', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // Deleting the capture the session note describes makes the SW remove
+  // that note, which the page's storage listener used to read as "a
+  // capture landed" and start its own re-read, racing the delete's
+  // reload. The loser could render with the history files forgotten but
+  // never re-read, so every older row vanished.
+  const sw = await getServiceWorker();
+  const logPath = await seedCaptureLog(sw, [SEED[2]] as unknown as Record<string, unknown>[]);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  writeFileSync(`${dir}/history-20260101-000000-000.json`,
+    JSON.stringify(SEED[0]) + '\n' + JSON.stringify(SEED[1]) + '\n');
+  await sw.evaluate((ts) => chrome.storage.session.set({
+    lastCaptureFiles: { timestamp: ts, screenshot: 'screenshot-20260104-030405-000.png' },
+  }), SEED[2].timestamp);
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(1);
+  await historyPage.locator('#load-older').click();
+  await expect(rows).toHaveCount(3);
+
+  await rows.nth(0).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator('.page-cell .title')).toHaveText('Beta docs');
+  await expect(rows.nth(1).locator('.page-cell .title')).toHaveText('Alpha page');
+  await expect(historyPage.locator('#older')).toBeHidden();
+  // Settled: still two rows after the dust settles, and the note is gone.
+  await historyPage.waitForTimeout(500);
+  await expect(rows).toHaveCount(2);
+  expect(await sw.evaluate(() => chrome.storage.session.get('lastCaptureFiles')))
+    .toEqual({});
+
+  await historyPage.close();
 });

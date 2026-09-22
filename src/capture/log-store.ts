@@ -249,19 +249,30 @@ export function appendLogLine(text: string, line: string): string {
 export function parseLogText(text: string): CaptureRecord[] {
   const records: CaptureRecord[] = [];
   for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      // Valid JSON that isn't a record object — a bare string or an
-      // array — is skipped the same way.
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        records.push(parsed as CaptureRecord);
-      }
-    } catch {
-      // Not JSON at all.
-    }
+    const record = parseLogLine(line);
+    if (record !== null) records.push(record);
   }
   return records;
+}
+
+/**
+ * One line of a log file as a record, or `null` for a line that isn't
+ * one — blank, not JSON, or valid JSON that isn't an object (a bare
+ * string, an array). The leniency `parseLogText` describes, for a
+ * caller that needs to know *which* lines are records (the deletion
+ * rewrite keeps every other line byte for byte).
+ */
+export function parseLogLine(line: string): CaptureRecord | null {
+  if (!line.trim()) return null;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as CaptureRecord;
+    }
+  } catch {
+    // Not JSON at all.
+  }
+  return null;
 }
 
 /** The session note `recordCapture` leaves for the Copy-last-… entries. */
@@ -637,10 +648,10 @@ async function noteRecorded(record: CaptureRecord, downloadId: number): Promise<
  *
  * Every log write goes through here: the history-file writes, where
  * the next step (rewriting `log.json` without those records) must not
- * happen until the file carrying them has landed, and `log.json`
- * itself.
+ * happen until the file carrying them has landed, `log.json` itself,
+ * and the rewrites a deletion makes (`delete-capture.ts`).
  */
-async function writeJsonFileComplete(name: string, text: string): Promise<number> {
+export async function writeJsonFileComplete(name: string, text: string): Promise<number> {
   return downloadArtifactComplete(name, jsonDataUrl(text));
 }
 
@@ -690,7 +701,31 @@ export function serializeRecord(r: CaptureRecord, indent = 0): string {
   // only who should act on it. Emitted only when true, so an ordinary
   // capture's line is unchanged.
   if (r.skipInWatcher) ordered.skipInWatcher = true;
+  // A tombstone (see `tombstoneRecord`) has to survive every rewrite
+  // of the file it sits in — a flush re-serializes `log.json` through
+  // here, and dropping the flag would turn the marker back into a
+  // record with nothing in it.
+  if (r.deleted) ordered.deleted = true;
   return JSON.stringify(ordered, null, indent);
+}
+
+/**
+ * The placeholder a deleted capture leaves in `log.json`: its
+ * timestamp and the `deleted` flag, nothing else. See
+ * `CaptureRecord.deleted` for why the timestamp is kept at all.
+ */
+export function tombstoneRecord(timestamp: string): CaptureRecord {
+  return { timestamp, url: '', title: '', deleted: true };
+}
+
+/**
+ * True for a tombstone — a record every reader skips when it shows
+ * captures, and every watcher steps over while still advancing its
+ * cursor. Loose on the type because the record was parsed off disk and
+ * can hold anything.
+ */
+export function isTombstone(r: CaptureRecord): boolean {
+  return (r as { deleted?: unknown }).deleted === true;
 }
 
 // Simple in-memory mutex: every log write goes through this promise

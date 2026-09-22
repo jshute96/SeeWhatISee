@@ -408,6 +408,9 @@ watch or stopping it.
 - Only watching honours it. `--get-latest`, `--all` / `--limit`, the
   MCP `get_latest` tool and the History page all show the record like
   any other.
+- Watchers step over a `deleted` tombstone the same way, cursor still
+  advancing — but unlike a paused capture, *every* reader skips those.
+  See [`log-consistency.md` → Deleting a capture](log-consistency.md#deleting-a-capture).
 - Pause is armed per Capture page and sticky: it means "skip the next
   capture", whoever is watching, so a watch replaced by another one
   doesn't clear it.

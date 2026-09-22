@@ -4,9 +4,15 @@ A table view over the capture log. Reads `log.json` itself — the file
 is the log, and the only copy of it (see
 [architecture.md](architecture.md)).
 
-- Read-only with respect to the log. Its row actions —
-  [Restore](#restore-from-a-row) and [Reopen](#reopen-from-a-row) —
-  open a Capture page; neither edits a record.
+- One row per capture, newest first, with the date, a thumbnail,
+  links to the saved files, the page's title and URL, and the prompt.
+- Each row has two buttons under its date:
+  - [Restore](#restore-from-a-row) (on the one row the last capture
+    left) or [Reopen](#reopen-from-a-row) (on every other), which open
+    a Capture page from that capture. Neither touches the log.
+  - [Delete](#delete-from-a-row), a trash icon, which removes the
+    capture's files and its log record. The only action that changes
+    the log; the rewrite runs in the service worker, not the page.
 
 - Files: `src/history.html` + `src/history.ts`.
 
@@ -75,7 +81,12 @@ Finding that tab is less obvious than it looks:
     profile, and the page shows its empty state.
   - History files are discovered independently, so a deleted or
     emptied `log.json` still offers **Load older captures**.
-  - The page only displays; the capture path is the only writer.
+  - The page only displays; the capture path and the Delete action
+    (both service-worker side) are the only writers.
+- Tombstones — the `{ timestamp, deleted }` markers a deletion leaves
+  in `log.json` — are dropped as each file is read (`liveRecords`), so
+  they are neither rendered nor counted. See
+  [Delete from a row](#delete-from-a-row).
 - Loaded as a **module** script (unlike `options.ts`, a classic
   script) so it can import the session-note key from
   `capture/log-store.js` and the directory / path helpers from
@@ -279,7 +290,7 @@ Finding that tab is less obvious than it looks:
 
 | Column | Contents |
 |--------|----------|
-| Date | Local date over local time, from the record's UTC `timestamp`; plus the row's Restore / Reopen button |
+| Date | Local date over local time, from the record's UTC `timestamp`; plus the row's Restore / Reopen button and the Delete (trash) button |
 | Screenshot | Browser-scaled thumbnail of the saved PNG, linked to the full-size file |
 | Files | One link per saved HTML / selection artifact; the selection link names its format |
 | Page | Captured tab's title over its URL (the URL links back to the live page) |
@@ -290,7 +301,8 @@ Finding that tab is less obvious than it looks:
 - Column widths are honoured exactly (`table-layout: fixed`), so each
   narrow column is sized to its widest possible value plus a few px,
   and Prompt absorbs the remaining width.
-  - Date 100px — *12:30:59 PM* is wider than any date line.
+  - Date 114px — the *Restore* button beside the trash button; the
+    widest text line (*12:30:59 PM*) needs less.
   - Files 116px — *Selection (html)*. No `nowrap`, so a wider platform
     UI font wraps the label instead of spilling into Page.
   - Re-measure before changing either; don't eyeball it on a scaled
@@ -501,6 +513,57 @@ never touched.
   session-storage quota without it.
 - No capture directory at all is the one hard failure: the message
   goes to the button's tooltip, like Restore's.
+
+## Delete from a row
+
+A trash button beside Restore / Reopen on every row, tooltip *Delete
+this capture, including all saved files*. It deletes the capture's
+files from disk and takes its record out of the log.
+
+- This section covers the page side only. What happens to the files,
+  the record and the download list is in
+  [log-consistency.md → Deleting a capture](log-consistency.md#deleting-a-capture)
+  (`deleteCapture`, `capture/delete-capture.ts`).
+- Confirmed first, in a page `<dialog>` (`#delete-dialog`) that lists
+  the files about to go. Nothing brings a deleted file back, and the
+  button is one click from Reopen.
+  - A page dialog rather than `confirm()` so the filenames are
+    selectable text; the browser's prompt renders outside the page and
+    can't be copied from.
+  - Cancel is the form's default button, so Enter and Esc both cancel;
+    only the Delete button resolves the confirmation.
+- The click goes to the SW as `deleteCaptureFromHistory` with the
+  parsed record, like Reopen. SW-side because the log rewrite has to
+  sit in the same serialized write chain the captures use — the page
+  rewriting `log.json` itself would race a capture landing at that
+  moment.
+- The button is disabled for the round trip, and the in-flight set
+  (`deletesInFlight`, keyed by `serializeRecord`) survives a re-render
+  the way `restoreInFlight` does.
+- The button is also disabled when no capture directory is known
+  (nothing to list, read or delete; every click would fail), with the
+  reason on a wrapper tooltip as the Snapshots directory button does it.
+- On success the page **re-reads** rather than splicing the row out:
+  `log.json`, the directory listing, and — if the user had loaded them
+  — every history file (`reloadAfterDelete`). The log is the truth
+  about what remains, and the SW doesn't say which file it rewrote.
+  - Re-reading the loaded history files goes through the
+    `unloadedHistoryFiles` path: forgetting their records makes them
+    pending again, and the ordinary loader picks them back up.
+  - If the deleted row was the restorable one, its Restore button is
+    gone with it: the SW clears the `lastCapture` slot as part of the
+    delete.
+- Failure is shown **under the row's buttons** (`.row-error`, in error
+  red, `role="status"`): "Delete failed: `<path>`: `<reason>`". Unlike
+  Restore / Reopen, whose failure is obvious (no page opens), a row
+  that quietly stays put would look like nothing happened, so a
+  tooltip alone isn't enough. The message stays until that row is
+  tried again (`deleteErrors`, keyed like `deletesInFlight`).
+  - The listing is re-read on failure too, so files the SW had already
+    deleted before it failed show as `(deleted)` in their cells; the
+    message doesn't restate that.
+  - The messages themselves are listed under log-consistency.md →
+    Deleting a capture → Ordering and failure.
 
 ## File links and `file://`
 

@@ -200,7 +200,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/options.html` | Extension options page — Ask provider settings, Save-checkbox defaults, Click / Double-click radios per selection state, hotkey display |
 | `src/options.ts` | Controller for `options.html`: fetches state from the SW, renders all sections, multi-line hotkey cells, immediate + delayed action sections, saves via `setOptions` |
 | `src/history.html` | Capture history page — a searchable, newest-first table of captures, recent ones plus older history files |
-| `src/history.ts` | Controller for `history.html`: reads the on-disk log and history files, renders rows, search, Restore / Reopen row actions, toolbar actions |
+| `src/history.ts` | Controller for `history.html`: reads the on-disk log and history files, renders rows, search, Restore / Reopen / Delete row actions, toolbar actions |
 | `src/shared-styles.css` | Styles shared by every extension page — `capture.html`, `options.html`, `history.html` |
 | `src/offscreen.html` | Hidden offscreen document that hosts the clipboard-write helper for the service worker |
 | `src/offscreen.ts` | Receives `offscreen-copy` messages from the SW and writes their text to the clipboard via `execCommand('copy')` |
@@ -221,7 +221,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/background/last-capture.ts` | Single-slot `lastCapture` session-storage — promote-on-close, restore-on-menu-click, quota relief helpers |
 | `src/background/annotation-clipboard.ts` | Session-storage slots behind the Capture page's Copy / Paste / Import annotations items — payload shape, validation, last-closed-capture mirror |
 | `src/background/capture-page-defaults.ts` | Stored Capture-page settings — Save-checkbox defaults, default button, Prompt Enter behavior; shape + normalize/get/set |
-| `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, the restorable-capture push, and the Reopen relay |
+| `src/background/history-page.ts` | SW side of the History page — opening/reusing its tab, its message handlers, the restorable-capture push, and the Reopen / Delete relays |
 | `src/background/options.ts` | SW-side options-page wire — `runtime.onMessage` handlers for `getOptionsData` / `setOptions` |
 
 ### Ask flow, SW side (`src/ask/`)
@@ -246,6 +246,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the `history-*.json` files older records move into, and the last-capture session note |
+| `src/capture/delete-capture.ts` | Deleting one capture from the History page: its files off disk, then a `log.json` tombstone or history-file drop |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; `LogWriteFailedError` |
 | `src/capture/file-access.ts` | The required "Allow access to file URLs" toggle — `requireFileAccess` gate, its error, and the settings-page opener |
 | `src/capture/file-access-dialog.ts` | The "file access required" dialog the Capture and History pages open when the toggle is off |
@@ -343,7 +344,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/webp-png-cache-edit-sync.spec.ts` | E2E regression — WEBP source: repeat-Copy and same-revision multi-Capture keep `.png` ext aligned with on-disk bytes |
 | `tests/e2e/large-screenshot-recompress.spec.ts` | E2E for capture-time PNG→JPEG recompress — JPEG wins on gradient, kept-PNG on solid color, threshold short-circuit |
 | `tests/e2e/file-access-required.spec.ts` | E2E for the file-access requirement — the service-worker gate, and the dialog on the error and History pages |
-| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering a seeded log, opening it, the Restore / Reopen row actions |
+| `tests/e2e/history-page.spec.ts` | E2E for the History page — rendering a seeded log, opening it, the Restore / Reopen / Delete row actions |
 | `tests/e2e/log-history-files.spec.ts` | E2E for the flush to `history-*.json` and the History page reading the flushed file and `log.json` from disk |
 | `tests/e2e/html-size-cap.spec.ts` | E2E for the HTML + selection size caps and compression — cap rejections, multi-MB round-trip, edit-save packing, corrupt-body degradation |
 | `tests/e2e/upload-image.spec.ts` | E2E for the "Upload image to Capture..." entry — landing card, type/decode validation, menu-routing seam, PNG/JPG happy paths, JPG-stays-JPG sticky bake, WEBP→PNG conversion, multi-capture bump regression |
@@ -351,7 +352,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/script-get-latest.spec.ts` | Tests for `SeeWhatISee.py --get-latest` (absolute paths, config file, error cases) |
 | `tests/e2e/script-history.spec.ts` | Tests for `SeeWhatISee.py --all` / `--limit` over log.json + history files, the `--search` / `--filter_site` / `--filter_time` filters, and the `history.sh` wrappers |
 | `tests/e2e/script-copy-to-dir.spec.ts` | Tests for `SeeWhatISee.py --get-latest --copy-to-dir` (file copy + path rewrite to target dir) |
-| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, paused captures, config file, concurrency) |
+| `tests/e2e/script-watch.spec.ts` | Tests for `SeeWhatISee.py --watch` (once/loop, `--after`, `--stop`, stop protocol, sessions across gaps, paused and deleted captures, config file, concurrency) |
 | `tests/e2e/script-validation.spec.ts` | Tests for nonsense flag combinations (`--get-latest --after`, `--catch-up-one --loop`, unknown options) |
 | `tests/e2e/script-combined.spec.ts` | Tests for combined-action ordering (`--stop` → `--get-latest` → `--watch`) and lenient log-missing semantics when `--get-latest` is combined with `--watch` |
 | `tests/e2e/error-reporting.spec.ts` | E2E tests for `reportCaptureError` / `runWithErrorReporting` — spies on `chrome.tabs.create` to verify the Capture-failed page URL and friendly rewrites |
@@ -388,7 +389,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/directory-listing.test.mjs` | Unit tests for `listCaptureDirectory` / `listHistoryFiles` — parsing Chrome's `file://` directory listing |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, deleted-vs-unreadable via the directory listing, the unknown-directory first write, the verbatim append, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
-| `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, and reading them back |
+| `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, tombstones kept, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |

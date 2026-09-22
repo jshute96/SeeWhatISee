@@ -1576,4 +1576,109 @@ test.describe('SeeWhatISee.py --watch paused captures', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain(paused.screenshot);
   });
+
+});
+
+test.describe('SeeWhatISee.py --watch deleted captures', () => {
+  test.setTimeout(30_000);
+
+  /**
+   * Replace a record in log.json with the tombstone the History page's
+   * delete leaves — `{ timestamp, deleted: true }` — rewriting the file
+   * the way the extension does.
+   */
+  function simulateDeletion(dir: string, timestamp: string): void {
+    const logPath = path.join(dir, 'log.json');
+    const lines = fs.readFileSync(logPath, 'utf8').split('\n').map((line) => {
+      if (!line.trim()) return line;
+      const record = JSON.parse(line) as { timestamp: string };
+      return record.timestamp === timestamp
+        ? JSON.stringify({ timestamp, deleted: true })
+        : line;
+    });
+    fs.writeFileSync(logPath, lines.join('\n'));
+  }
+
+  test('--after a deleted record still resumes from its place', () => {
+    // The whole reason the tombstone keeps its timestamp: a watcher
+    // handed the deleted record's timestamp as its cursor must not
+    // fall back to "not found; watching as usual".
+    const r1 = simulateCapture(tmpDir, 1);
+    const wanted = simulateCapture(tmpDir, 2);
+    simulateDeletion(tmpDir, r1.timestamp);
+
+    const r = runWatch(['--after', r1.timestamp, '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('not found');
+    expect(r.stdout).toContain(`${tmpDir}/${wanted.screenshot}`);
+  });
+
+  test('a deletion while watching does not wake the agent', async () => {
+    const r1 = simulateCapture(tmpDir, 1);
+    const watch = startWatch(['--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // Deleting the newest record rewrites the very line the cursor sits
+    // on. The watcher must step over the tombstone, not hand it over,
+    // and not replay anything either.
+    simulateDeletion(tmpDir, r1.timestamp);
+    expect(await waitForExit(watch.proc, 2_000)).toBeNull();
+    expect(watch.output()).not.toContain(r1.screenshot);
+
+    const wanted = simulateCapture(tmpDir, 2);
+    expect(await waitForExit(watch.proc, 5_000)).toBe(0);
+    expect(watch.output()).toContain(wanted.screenshot);
+    expect(watch.output()).not.toContain(r1.screenshot);
+  });
+
+  test('--loop keeps its place when the record under its cursor is deleted', async () => {
+    // The loop's cursor is the last line it emitted. If that record is
+    // deleted in the same rewrite that brings new captures, the line is
+    // gone but its timestamp survives in the tombstone; the cursor must
+    // resume from there and emit *every* newer capture, not just the
+    // last line.
+    const r1 = simulateCapture(tmpDir, 1);
+    const watch = startWatch(['--loop', '--directory', tmpDir]);
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(watch.output()).not.toContain(r1.screenshot);
+
+    const r2 = fakeRecord(2);
+    const r3 = fakeRecord(3);
+    const logPath = path.join(tmpDir, 'log.json');
+    // The tombstone replaces the record in place, as the extension
+    // writes it, with the new captures appended after.
+    const lines = fs.readFileSync(logPath, 'utf8').split('\n')
+      .filter((line) => line.trim())
+      .map((line) => (line.includes(r1.timestamp)
+        ? JSON.stringify({ timestamp: r1.timestamp, deleted: true })
+        : line));
+    fs.writeFileSync(logPath, [...lines, r2.json, r3.json].join('\n') + '\n');
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const out = watch.output();
+    expect(out).toContain(r2.screenshot);
+    expect(out).toContain(r3.screenshot);
+    expect(out).not.toContain(r1.screenshot);
+    watch.kill();
+  });
+
+  test('--get-latest skips trailing tombstones, and says when nothing else is left', () => {
+    // Deleting the last few captures in a row is the common shape:
+    // several tombstones at the tail, the live record behind them.
+    const r0 = fakeRecord(0);
+    const r1 = simulateCapture(tmpDir, 1);
+    const r2 = simulateCapture(tmpDir, 2);
+    simulateDeletion(tmpDir, r1.timestamp);
+    simulateDeletion(tmpDir, r2.timestamp);
+    const r = runAction(['--get-latest', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(r0.screenshot);
+    expect(r.stdout).not.toContain(r1.screenshot);
+    expect(r.stdout).not.toContain(r2.screenshot);
+
+    simulateDeletion(tmpDir, r0.timestamp);
+    const none = runAction(['--get-latest', '--directory', tmpDir]);
+    expect(none.exitCode).not.toBe(0);
+    expect(none.stderr).toContain('has been deleted');
+  });
 });

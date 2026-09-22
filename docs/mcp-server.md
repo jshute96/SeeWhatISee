@@ -424,6 +424,22 @@ What the client sees, since MCP has no exit codes:
 - `get_latest` and the `file://` resources are unaffected — the
   capture is still there for a user who asks for it by hand.
 
+### Deleted captures
+
+- A `deleted` tombstone — what the History page's Delete leaves in
+  `log.json` — is filtered out of everything: `get_latest`, `watch`
+  results, and every stream read. Filtered *after* the cursor lookup,
+  so `?after=<a deleted record's timestamp>` still resolves
+  positionally; that is why the tombstone keeps its timestamp.
+- A `log.json` holding nothing but tombstones makes `get_latest` say
+  "every capture … has been deleted" rather than "empty".
+- A `watch` in flight drains nothing from the rewrite and keeps
+  waiting.
+- The subscriber doorbell keys on the newest watchable record, so
+  deleting an older capture rings nobody. Deleting the *newest* one
+  does ring, and the cursored read that follows comes back empty; one
+  empty wake per such deletion is accepted.
+
 ### Coexisting with a CLI watch
 
 - One watch per capture directory is the protocol's rule, so

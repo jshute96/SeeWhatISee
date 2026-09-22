@@ -7,10 +7,16 @@
 // Nothing here writes to the log; the page is a way to look back at
 // what was captured and jump to the saved files.
 //
-// The one action it offers is *Restore last capture*, on the single
-// row (if any) the restorable capture corresponds to — see
-// `restorableLogKey` below. The SW owns both halves of that; the page
-// only renders the button and forwards the click.
+// Its row actions all go through the SW: *Restore last capture* on
+// the single row (if any) the restorable capture corresponds to (see
+// `restorableLogKey` below), *Reopen* on every other, and *Delete* on
+// each — which is the one that changes the log, and does so SW-side
+// (`capture/delete-capture.ts`) so it shares the write chain with the
+// captures. The page only renders the buttons and forwards the clicks.
+//
+// Tombstones — the `{ timestamp, deleted }` markers a deletion leaves
+// in `log.json` — are dropped as the files are read (`liveRecords`),
+// so nothing below has to know about them.
 //
 // Loaded as a module script (unlike `options.ts`) so it can import the
 // log-store / downloads helpers directly instead of round-tripping
@@ -44,6 +50,7 @@ import {
 import { showFileAccessDialog } from './capture/file-access-dialog.js';
 import {
   dedupeRecords,
+  isTombstone,
   LAST_CAPTURE_FILES_KEY,
   parseLogText,
   serializeRecord,
@@ -275,6 +282,29 @@ let historyFileError = '';
  * this covers a click landing mid-capture as well as a double-click.
  */
 let historyFileLoading = false;
+/**
+ * Set when `loadHistoryFilesInteractively` is asked to run while a run
+ * is already in flight: that run re-reads before it finishes, instead
+ * of the request being dropped. A delete forgets the loaded files and
+ * asks for a re-read at the same moment the storage listener may be
+ * mid-read, and a dropped request there leaves the history rows gone.
+ */
+let historyFileReloadRequested = false;
+/**
+ * Bumped by `forgetHistoryFiles`. A read that started before the bump
+ * is reading files the delete has since rewritten, so its results are
+ * discarded rather than installed as current.
+ */
+let historyFileGeneration = 0;
+
+/**
+ * Drop every loaded history file so the next load reads them all
+ * again, and invalidate any read in flight (see `historyFileGeneration`).
+ */
+function forgetHistoryFiles(): void {
+  historyFileRecords.clear();
+  historyFileGeneration += 1;
+}
 
 /** History files we know about but haven't read yet. */
 function unloadedHistoryFiles(): string[] {
@@ -499,6 +529,8 @@ function reopenFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
  * and URL are often the point.
  */
 function appendRowAction(td: HTMLElement, r: CaptureRecord): void {
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
   const btn = document.createElement('button');
   btn.type = 'button';
   if (isRestorable(r)) {
@@ -516,7 +548,150 @@ function appendRowAction(td: HTMLElement, r: CaptureRecord): void {
     btn.title = REOPEN_TOOLTIP;
     btn.addEventListener('click', () => reopenFromRow(btn, r));
   }
-  td.append(btn);
+  actions.append(btn, deleteButton(r));
+  td.append(actions);
+  // A failed delete says so here, under the buttons, rather than only
+  // in a tooltip: a row that quietly stays put looks like nothing
+  // happened. Kept by key across re-renders until the next attempt.
+  const error = deleteErrors.get(serializeRecord(r));
+  if (error !== undefined) {
+    const note = document.createElement('div');
+    note.className = 'row-error';
+    note.setAttribute('role', 'status');
+    note.textContent = error;
+    td.append(note);
+  }
+}
+
+/** Tooltip on the trash button. */
+const DELETE_TOOLTIP = 'Delete this capture, including all saved files';
+
+/**
+ * Keys (`serializeRecord`) of the rows whose deletion is in flight, so
+ * the button stays disabled across a re-render. Module state for the
+ * same reason as `restoreInFlight`: `render()` rebuilds every row.
+ */
+const deletesInFlight = new Set<string>();
+/**
+ * Failure message of the last delete attempt per row (`serializeRecord`
+ * key), rendered under the row's buttons. Module state for the same
+ * reason as `deletesInFlight`; cleared when that row is tried again.
+ */
+const deleteErrors = new Map<string, string>();
+
+/** Tooltip on the trash button's wrapper while it is disabled for want of a directory. */
+const DELETE_NO_DIR_TOOLTIP = 'Nothing to delete: no capture directory is known yet';
+
+/**
+ * The row's trash button: an icon, since the Date column has room for
+ * one word and Restore / Reopen already spends it.
+ */
+function deleteButton(r: CaptureRecord): HTMLElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn delete-btn';
+  btn.title = DELETE_TOOLTIP;
+  btn.setAttribute('aria-label', 'Delete this capture');
+  btn.disabled = deletesInFlight.has(serializeRecord(r));
+  // With no capture directory there is nothing to list, read or
+  // delete, so the SW would refuse every click; say so up front. The
+  // tooltip goes on a wrapper, as the Snapshots directory button's
+  // does: Chrome shows none for a disabled control.
+  const wrap = document.createElement('span');
+  wrap.className = 'delete-wrap';
+  if (captureDir === null) {
+    btn.disabled = true;
+    wrap.title = DELETE_NO_DIR_TOOLTIP;
+  }
+  wrap.append(btn);
+  // Inline SVG rather than an icon font or image: one path, no extra
+  // fetch, and it takes the button's `color` via `currentColor`.
+  btn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    + '<path fill="currentColor" d="M6 1.5h4a1 1 0 0 1 1 1V3h3v1.5h-1V13a2 2 0 0 1-2 2H5'
+    + 'a2 2 0 0 1-2-2V4.5H2V3h3v-.5a1 1 0 0 1 1-1Zm0 3v8.5h1V4.5H6Zm3 0v8.5h1V4.5H9Z"/>'
+    + '</svg>';
+  btn.addEventListener('click', () => deleteFromRow(btn, r));
+  return wrap;
+}
+
+/**
+ * Delete the row's capture: confirm, hand the record to the SW
+ * (`deleteCapture`), then re-read whatever files it rewrote so the
+ * row leaves the table — the log is the truth about what remains, so
+ * the page re-reads rather than splicing the row out itself.
+ *
+ * Confirmed first because it deletes files, and nothing brings those
+ * back. The dialog names them so the user knows what they're agreeing
+ * to.
+ */
+function deleteFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
+  const files = [r.screenshot?.filename, r.contents?.filename, r.selection?.filename]
+    .filter((f): f is string => typeof f === 'string' && f.length > 0);
+  void confirmDelete(files).then((confirmed) => {
+    if (confirmed) runDelete(btn, r);
+  });
+}
+
+const deleteDialog = document.getElementById('delete-dialog') as HTMLDialogElement;
+const deleteDialogFilesIntro = document.getElementById('delete-dialog-files-intro') as HTMLElement;
+const deleteDialogFiles = document.getElementById('delete-dialog-files') as HTMLElement;
+
+/**
+ * Ask before deleting, listing the files that will go. A page
+ * `<dialog>` rather than `confirm()` so the filenames can be selected
+ * and copied. Resolves `true` only on the Delete button; Cancel, Esc
+ * and Enter (Cancel is the form's default button) all resolve `false`.
+ */
+function confirmDelete(files: string[]): Promise<boolean> {
+  deleteDialogFilesIntro.hidden = files.length === 0;
+  deleteDialogFiles.replaceChildren(...files.map((f) => {
+    const li = document.createElement('li');
+    li.textContent = f;
+    return li;
+  }));
+  deleteDialog.returnValue = '';
+  deleteDialog.showModal();
+  return new Promise((resolve) => {
+    deleteDialog.addEventListener('close', () => {
+      resolve(deleteDialog.returnValue === 'delete');
+    }, { once: true });
+  });
+}
+
+/** The confirmed half of `deleteFromRow`. */
+function runDelete(btn: HTMLButtonElement, r: CaptureRecord): void {
+  const key = serializeRecord(r);
+  deletesInFlight.add(key);
+  btn.disabled = true;
+  // A previous attempt's message describes that attempt, not this one.
+  if (deleteErrors.delete(key)) render();
+  void (async () => {
+    try {
+      const resp = (await chrome.runtime.sendMessage({
+        action: 'deleteCaptureFromHistory',
+        record: r,
+      })) as { ok?: boolean; error?: string } | undefined;
+      if (!resp?.ok) throw new Error(resp?.error ?? 'no reply from the extension');
+      await reloadAfterDelete();
+    } catch (err) {
+      // Expected-and-handled: the reason is rendered under the row's
+      // buttons. Not `console.error` — Chrome promotes that onto the
+      // Errors page.
+      console.info('[SeeWhatISee] history: delete failed:', err);
+      deleteErrors.set(key, `Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+      // The row's files may be gone by now (the SW deletes them before
+      // it rewrites the log), so the re-listing is what turns their
+      // cells `(deleted)`; the render then also re-enables the button
+      // and shows the message. Rendering rather than touching `btn`:
+      // another row's delete can have rebuilt the table meanwhile,
+      // leaving `btn` detached.
+      deletesInFlight.delete(key);
+      await loadDirectoryListing();
+      render();
+    } finally {
+      deletesInFlight.delete(key);
+    }
+  })();
 }
 
 /** A greyed-out "N/A" placeholder for a column with nothing to show. */
@@ -915,6 +1090,7 @@ async function loadDirectoryListing(): Promise<void> {
  * the session.
  */
 async function loadHistoryFiles(): Promise<string[]> {
+  const generation = historyFileGeneration;
   const pending = unloadedHistoryFiles();
   if (pending.length === 0) return [];
   const results = await Promise.allSettled(pending.map(async (path) => {
@@ -922,10 +1098,17 @@ async function loadHistoryFiles(): Promise<string[]> {
     // like a successful read of an empty history file, silently dropping 50
     // captures off the page. `fetchImageInSW` checks `ok` on this same
     // scheme for the same reason.
-    const res = await fetch(pathToFileUrl(path));
+    //
+    // `no-store`, as every other `file://` read here: a delete rewrites
+    // a history file and re-reads it straight away, and a cached hit
+    // would hand back the row that was just removed.
+    const res = await fetch(pathToFileUrl(path), { cache: 'no-store' });
     if (!res.ok) throw new Error(`history file read failed: ${res.status}`);
     return await res.text();
   }));
+  // A delete forgot the files while this was reading them; what was
+  // read is the pre-delete content. The caller's loop reads again.
+  if (generation !== historyFileGeneration) return [];
 
   const failed: string[] = [];
   results.forEach((result, i) => {
@@ -935,7 +1118,7 @@ async function loadHistoryFiles(): Promise<string[]> {
     }
     // Reversed to match the page's newest-first order, the same way
     // `loadRecordsFromLog` reverses the append-ordered file.
-    historyFileRecords.set(pending[i], parseLogText(result.value).reverse());
+    historyFileRecords.set(pending[i], liveRecords(result.value));
   });
   rebuildMerged();
   return failed;
@@ -948,32 +1131,40 @@ async function loadHistoryFiles(): Promise<string[]> {
  * start a second read while one is in flight.
  */
 async function loadHistoryFilesInteractively(): Promise<void> {
-  if (historyFileLoading) return;
-  historyFileLoading = true;
-  historyFileError = '';
-  renderOlder();
-  try {
-    const failed = await loadHistoryFiles();
-    // Refresh the listing alongside the new rows, so a file that went
-    // while the tab sat open is marked on first render.
-    await loadDirectoryListing();
-    if (failed.length > 0) {
-      // Anything readable has already been merged in; this names what
-      // is still missing rather than implying the whole load failed.
-      // Named, not counted, so the user knows where to look — but a
-      // directory that went away fails every file at once, and the
-      // note is one inline span, so the list is capped.
-      const shown = failed.slice(0, 3).join(', ');
-      const more = failed.length - 3;
-      historyFileError = more > 0
-        ? `Couldn't read ${shown}, and ${more} more.`
-        : `Couldn't read ${shown}.`;
-    }
-  } catch {
-    // `loadHistoryFiles` reports per-file failures through its return
-    // value, so reaching here means the read itself broke.
-    historyFileError = "Couldn't read the history files.";
+  // A run in flight picks the request up (see
+  // `historyFileReloadRequested`) rather than this call being dropped.
+  if (historyFileLoading) {
+    historyFileReloadRequested = true;
+    return;
   }
+  historyFileLoading = true;
+  do {
+    historyFileReloadRequested = false;
+    historyFileError = '';
+    renderOlder();
+    try {
+      const failed = await loadHistoryFiles();
+      // Refresh the listing alongside the new rows, so a file that went
+      // while the tab sat open is marked on first render.
+      await loadDirectoryListing();
+      if (failed.length > 0) {
+        // Anything readable has already been merged in; this names what
+        // is still missing rather than implying the whole load failed.
+        // Named, not counted, so the user knows where to look — but a
+        // directory that went away fails every file at once, and the
+        // note is one inline span, so the list is capped.
+        const shown = failed.slice(0, 3).join(', ');
+        const more = failed.length - 3;
+        historyFileError = more > 0
+          ? `Couldn't read ${shown}, and ${more} more.`
+          : `Couldn't read ${shown}.`;
+      }
+    } catch {
+      // `loadHistoryFiles` reports per-file failures through its return
+      // value, so reaching here means the read itself broke.
+      historyFileError = "Couldn't read the history files.";
+    }
+  } while (historyFileReloadRequested);
   historyFileLoading = false;
   render();
 }
@@ -1009,7 +1200,8 @@ function setRecords(list: CaptureRecord[]): void {
  * discovered independently (`loadDirectoryListing`), so a deleted or
  * emptied `log.json` still offers the older captures for loading.
  *
- * The page only displays; the capture path is the only writer.
+ * The page only displays; the capture path and the Delete action, both
+ * service-worker side, are the only writers.
  */
 async function loadRecordsFromLog(): Promise<void> {
   if (captureDir === null) {
@@ -1022,7 +1214,43 @@ async function loadRecordsFromLog(): Promise<void> {
   // landed — so its result is the fresher one; drop this.
   if (generation !== recordsGeneration) return;
   // The file is in append order; newest at the top.
-  setRecords(text === null ? [] : parseLogText(text).reverse());
+  setRecords(text === null ? [] : liveRecords(text));
+}
+
+/**
+ * A log file's records the way the page shows them: newest first, and
+ * without the tombstones a deletion leaves behind — those are cursors
+ * for watchers, not captures.
+ */
+function liveRecords(text: string): CaptureRecord[] {
+  return parseLogText(text).filter((r) => !isTombstone(r)).reverse();
+}
+
+/**
+ * Re-read after a deletion. The SW may have rewritten `log.json`, any
+ * loaded history file, or both — it doesn't say which, and the page
+ * doesn't track which file a row came from — so every file already
+ * read is read again, and the listing with them (the `(deleted)`
+ * markers and the history-file list both changed underneath).
+ *
+ * Re-reading the loaded history files goes through the
+ * `unloadedHistoryFiles` path: forgetting their records makes them
+ * pending, and `loadHistoryFilesInteractively` picks them back up. A
+ * history file the deletion emptied and removed has dropped off the
+ * listing, and so is neither re-read nor kept.
+ */
+async function reloadAfterDelete(): Promise<void> {
+  // `historyFileLoading` too: a load the storage listener started
+  // moments ago hasn't installed anything yet, but the user did opt in.
+  const loaded = historyFileRecords.size > 0 || historyFileLoading;
+  forgetHistoryFiles();
+  await loadRecordsFromLog();
+  await loadDirectoryListing();
+  if (loaded) {
+    await loadHistoryFilesInteractively();
+    return; // it renders
+  }
+  render();
 }
 
 searchInput.addEventListener('input', render);
@@ -1033,6 +1261,10 @@ searchInput.addEventListener('input', render);
 // wholesale.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session' || !(LAST_CAPTURE_FILES_KEY in changes)) return;
+  // The note being *removed* is a delete of the newest capture
+  // (`forgetDeletedCapture`), not a capture landing; the delete's own
+  // reply drives that re-read (`reloadAfterDelete`).
+  if (changes[LAST_CAPTURE_FILES_KEY].newValue === undefined) return;
   void (async () => {
     // A first-ever capture is also what makes the capture directory
     // resolvable, so retry that first.
@@ -1055,7 +1287,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // There is no live signal for a file deleted while this tab sits open
 // — nothing watches the filesystem (and `chrome.downloads` can't tell
-// either; see `listCaptureDirectory`). Deleting files happens
+// either; see `listCaptureDirectory`). Outside the page's own Delete
+// (which re-lists itself), deleting files happens
 // somewhere else — a file manager (window `focus` on the way back) or
 // another tab (`visibilitychange`) — so re-list when the user comes
 // back: one directory fetch per return, and the markers are right by

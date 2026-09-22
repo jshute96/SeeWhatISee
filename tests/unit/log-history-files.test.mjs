@@ -121,8 +121,10 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
 }
 
 stubChrome();
-const { recordCapture, parseLogText, serializeLog, serializeRecord, appendLogLine, dedupeRecords } =
-  await import('../../dist/capture/log-store.js');
+const {
+  recordCapture, parseLogText, serializeLog, serializeRecord, appendLogLine, dedupeRecords,
+  tombstoneRecord, isTombstone,
+} = await import('../../dist/capture/log-store.js');
 
 /** A record whose timestamp encodes `n`, so order is checkable. */
 function rec(n) {
@@ -181,6 +183,27 @@ test('crossing the cap flushes the oldest half to a history file', async () => {
   assert.equal(store.captureLog.length, 51);
   assert.equal(store.captureLog[0].screenshot.filename, 'shot-50.png');
   assert.equal(store.captureLog[50].screenshot.filename, 'shot-100.png');
+});
+
+test('a tombstone survives the flush rewrite', async () => {
+  // A deletion leaves `{ timestamp, deleted }` in log.json; the flush
+  // re-serializes every record it moves or keeps, and must not strip
+  // the flag off — the marker would become a record with nothing in it.
+  const stored = Array.from({ length: 100 }, (_, i) => rec(i));
+  stored[10] = tombstoneRecord(stored[10].timestamp);
+  stored[60] = tombstoneRecord(stored[60].timestamp);
+  const store = stubChrome(stored);
+  await recordCapture(rec(100));
+
+  const movedOut = parseLogText(historyFileWrites()[0].body);
+  assert.equal(movedOut.length, 50);
+  assert.deepEqual(movedOut[10], { timestamp: stored[10].timestamp, deleted: true });
+  assert.ok(isTombstone(movedOut[10]));
+  assert.ok(!isTombstone(movedOut[11]));
+  assert.deepEqual(store.captureLog[10], { timestamp: stored[60].timestamp, deleted: true });
+  // The tombstone is a record: it counts against the cap and takes a
+  // slot in the batch like any other, so the arithmetic above holds.
+  assert.equal(store.captureLog.length, 51);
 });
 
 test('the history file is named for when it was written, not for a record', async () => {

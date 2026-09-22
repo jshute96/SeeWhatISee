@@ -574,6 +574,17 @@ export function historyFilesAmong(directory: string, names: Iterable<string>): s
 const HISTORY_FILE_NAME = new RegExp(`^${HISTORY_FILE_PREFIX}[\\d-]*\\.json$`);
 
 /**
+ * Whether `name` is one of the log files — `log.json` or a history
+ * file — as opposed to a capture file. What a record's `filename` must
+ * never be taken for: a hand-edited record naming `log.json` as its
+ * screenshot would otherwise have the log read as an image, or deleted
+ * as a capture file.
+ */
+export function isLogFileName(name: string): boolean {
+  return name === LOG_FILE_NAME || HISTORY_FILE_NAME.test(name);
+}
+
+/**
  * Join `dir` and `name` using whichever separator `dir` already uses.
  * `chrome.downloads.search` returns OS-native paths — backslashes on
  * Windows, forward slashes elsewhere — so reusing the existing
@@ -597,17 +608,24 @@ export function pathToFileUrl(path: string): string {
   return new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
 }
 
-/** Our own `log.json` download records, newest first. */
-async function ourLogRecords(): Promise<chrome.downloads.DownloadItem[]> {
+/** Our own download records for the capture file `name`, newest first. */
+async function ourRecordsOf(name: string): Promise<chrome.downloads.DownloadItem[]> {
   const items = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${LOG_FILE_NAME.replace('.', '\\.')}$`,
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${escapeRegExp(name)}$`,
     orderBy: ['-startTime'],
   });
   return items.filter((item) => item.byExtensionId === chrome.runtime.id && !!item.filename);
 }
 
+/** `s` with every regex metacharacter escaped, for use in `filenameRegex`. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * Drop the `log.json` download records older than `keepId`.
+ * Drop the download records for the log file `name` — `log.json` by
+ * default, or a `history-*.json` a deletion rewrote — older than
+ * `keepId`.
  *
  * `keepId` is a `DownloadItem.id` — Chrome's own persistent handle for
  * one download, as returned by `chrome.downloads.download`, unique
@@ -616,9 +634,10 @@ async function ourLogRecords(): Promise<chrome.downloads.DownloadItem[]> {
  * it rather than indexing to it, and "older" is decided by the list's
  * `-startTime` order, never by comparing ids.
  *
- * Every capture rewrites the same `log.json`, so without this the
- * user's download history fills up with one row per capture, all
- * pointing at the same file. Only the newest is of any use to the
+ * Every capture rewrites the same `log.json` (and every deletion from
+ * a history file rewrites that file), so without this the user's
+ * download history fills up with one row per write, all pointing at
+ * the same file. Only the newest is of any use to the
  * user; nothing in the extension reads these records — the file
  * itself is read, and the capture directory comes from
  * `peekCaptureDirectory`, which matches any of our download records.
@@ -637,10 +656,10 @@ async function ourLogRecords(): Promise<chrome.downloads.DownloadItem[]> {
  * longer in the list says nothing about which of the rest are older,
  * so that prunes nothing.
  */
-export async function pruneOldLogRecords(keepId: number): Promise<void> {
+export async function pruneOldLogRecords(keepId: number, name = LOG_FILE_NAME): Promise<void> {
   try {
     // Newest first, so everything past the kept record is older.
-    const ours = await ourLogRecords();
+    const ours = await ourRecordsOf(name);
     const keepAt = ours.findIndex((item) => item.id === keepId);
     if (keepAt < 0) return;
     // In parallel: the first prune on an old profile can face every

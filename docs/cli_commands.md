@@ -104,6 +104,12 @@ field on the record. See
   the cursor advances past it and the run keeps waiting, so a
   single-shot iteration doesn't end on one. See
   [`watch-protocol.md` → Pausing](watch-protocol.md#pausing--captures-a-watcher-passes-over).
+- **Deleted captures are stepped over too.** A `deleted` tombstone (the
+  History page's Delete button leaves one in place of the record) is
+  never emitted by any action — not the watch loop, `--after` catch-up,
+  `--get-latest`, or the history listing — but `--after` its timestamp
+  still resumes from its place, which is what it is for. See
+  [`log-consistency.md` → Deleting a capture](log-consistency.md#deleting-a-capture).
 - **The poll loop carries the same cursor.** It wakes on an mtime
   change and emits every line past the last one it emitted.
   - Shift-clicking Capture writes several records well inside one

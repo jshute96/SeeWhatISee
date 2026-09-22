@@ -149,7 +149,8 @@
   /* Date and Files are each sized to their widest possible value plus
      a few px of margin. Measured at this font size, including the
      cell's 10px side padding:
-       - Date: "12:30:59 PM" (wider than any date line) → 94px.
+       - Date: the "Restore" button beside the trash button → 108px
+         ("12:30:59 PM", the widest text line, needs only 94px).
        - Files: "Selection (html)" → 110px. The "(deleted)" marker
          doesn't factor in; it renders on its own line.
      Neither column sets `nowrap`. The measurements above are en-US in
@@ -158,26 +159,32 @@
      m." or "下午12:30:59". Under `table-layout: fixed` an overlong
      `nowrap` value spills visibly into the next column, so wrapping is
      the better failure. */
-  td.date-cell, th.date-cell { width: 100px; }
+  td.date-cell, th.date-cell { width: 114px; }
   td.shot-cell, th.shot-cell { width: var(--thumb-w); }
   td.files-cell, th.files-cell { width: 116px; }
   th.page-cell { width: 30%; }
 
   .date-cell .time { color: #555; }
-  /* The per-row button under the timestamp: "Restore" on the one row
+  /* The per-row buttons under the timestamp: "Restore" on the one row
      the saved last-capture describes (at most one row ever carries
-     it), "Reopen" on every other.
+     it), "Reopen" on every other — and the trash button beside
+     whichever it is.
 
      Sized down from the page's other `.btn`s deliberately: the Date
-     column is 100px wide (80px inside the cell's padding), which
-     "Restore" at 12px plus this padding and border just fits (and
-     "Reopen", the other label this styles, is narrower still). Widen
-     the label or the padding and it will spill into Screenshot —
-     `table-layout: fixed` won't grow the column to take it. */
-  .restore-btn,
-  .reopen-btn {
-    display: block;
+     column is 114px wide (94px inside the cell's padding), which
+     "Restore" at 12px plus this padding and border, the gap, and the
+     trash button just fit (and "Reopen", the other label this styles,
+     is narrower still). Widen a label or the padding and it will spill
+     into Screenshot — `table-layout: fixed` won't grow the column to
+     take it. */
+  .row-actions {
+    display: flex;
+    gap: 4px;
     margin-top: 6px;
+  }
+  .restore-btn,
+  .reopen-btn,
+  .delete-btn {
     padding: 2px 6px;
     font: inherit;
     font-size: 12px;
@@ -185,6 +192,25 @@
     border-radius: 4px;
     background: #f5f5f5;
     cursor: pointer;
+  }
+  /* Icon-only, so the padding is even and the glyph sits centred on
+     the same baseline as the word beside it. */
+  .delete-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 4px;
+    color: #333;
+  }
+  .delete-btn:disabled { cursor: default; color: #999; }
+  /* A failed delete, under the row's buttons. Error red like the
+     history-file note; wraps hard, since the messages carry paths and
+     the Date column is narrow. */
+  .row-error {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: #b00020;
+    word-break: break-word;
   }
   /* The N/A marker used wherever a record has nothing to show for a
      column (no screenshot saved, no prompt entered, unknown URL). */
@@ -279,6 +305,51 @@
     color: #b00020;
   }
 
+  /* The Delete confirmation. Same chrome as the shared file-access
+     dialog (`shared-styles.css`), sized to its filenames. */
+  dialog.delete-dialog {
+    width: fit-content;
+    max-width: 90vw;
+    padding: 16px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #fff;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    color: #333;
+  }
+  dialog.delete-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+  .delete-dialog h2 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .delete-dialog p { margin: 0 0 8px 0; }
+  .delete-dialog ul {
+    margin: 0 0 12px 0;
+    padding-left: 22px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    /* Selectable on purpose: copying a filename out is the reason this
+       isn't a `confirm()`. */
+    user-select: text;
+  }
+  .delete-dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .delete-dialog .btn {
+    padding: 4px 12px;
+    font: inherit;
+    font-size: 13px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+  }
+
   /* Empty / error states shown instead of the table. The top margin
      replaces the padding <main> can't have (see its rule above). */
   .notice {
@@ -365,6 +436,25 @@
     <tbody id="rows"></tbody>
   </table>
 </main>
+
+<!-- Confirmation for a row's Delete button. A page dialog rather than
+     `confirm()`, so the filenames in it can be selected and copied;
+     the browser's own prompt renders outside the page and can't be.
+     The list is filled per row by history.ts. -->
+<dialog id="delete-dialog" class="delete-dialog" aria-labelledby="delete-dialog-title">
+  <form method="dialog">
+    <h2 id="delete-dialog-title">Delete this capture?</h2>
+    <p id="delete-dialog-files-intro">The following saved files will also be deleted:</p>
+    <ul id="delete-dialog-files"></ul>
+    <div class="delete-dialog-buttons">
+      <!-- `value` is what `dialog.returnValue` reads back. Cancel is
+           the form's default button (first in order), so Enter on the
+           open dialog does the safe thing. -->
+      <button type="submit" value="cancel" class="btn delete-cancel">Cancel</button>
+      <button type="submit" value="delete" class="btn delete-confirm">Delete</button>
+    </div>
+  </form>
+</dialog>
 
 <script type="module" src="history.js"></script>
 </body>

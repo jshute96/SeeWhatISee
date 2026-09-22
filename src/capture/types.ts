@@ -252,6 +252,22 @@ export interface CaptureRecord {
    * `docs/watch-protocol.md`.
    */
   skipInWatcher?: true;
+  /**
+   * `true` on a **tombstone**: the placeholder left in `log.json` when
+   * the user deletes a capture from the History page
+   * (`capture/delete-capture.ts`). A tombstone carries only
+   * `timestamp` and this flag — every other field, and the files they
+   * named, are gone.
+   *
+   * It exists so the timestamp keeps working as a cursor: a watcher
+   * resuming `--after` the deleted record still finds its place in
+   * the log. Every reader skips tombstones when showing records
+   * (`isTombstone` in `log-store.ts`); watchers step over them the
+   * way they step over `skipInWatcher`, cursor still advancing.
+   *
+   * Only ever `true`; absent on a live record.
+   */
+  deleted?: true;
 }
 
 export interface CaptureResult extends CaptureRecord {

@@ -531,25 +531,21 @@ def read_records(path):
     return [record for record in map(parse_record, lines) if record is not None]
 
 
-def read_lines(path):
+def read_lines(path, fatal=False):
     """Every non-empty line of a file, in file order.
 
-    Unreadable reads as empty rather than fatal, unlike the readers
-    above: its caller is the poll loop, which holds a cursor and so
-    recovers on the next poll. Anything one-shot wants the error.
+    Unreadable reads as empty by default, unlike the readers above: the
+    poll loop holds a cursor and so recovers on the next poll. A
+    one-shot caller (--get-latest) passes `fatal=True`, since it has no
+    next poll and a log it can't read is an error.
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
             return [line for line in handle.read().splitlines() if line.strip()]
-    except OSError:
+    except OSError as err:
+        if fatal:
+            die("Error: cannot read %s: %s" % (path, err.strerror), 2)
         return []
-
-
-def read_last_line(path):
-    """The last non-empty line of a file, or None."""
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        lines = [line for line in handle.read().splitlines() if line.strip()]
-    return lines[-1] if lines else None
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +848,8 @@ def list_history(opts, emitter, source_dir, log_path):
     if not limit:
         for path in files:
             for record in read_records(path):
+                if deleted_record(record):
+                    continue
                 if matches(record, terms, site, span):
                     emitter.emit(record)
         return
@@ -863,6 +861,8 @@ def list_history(opts, emitter, source_dir, log_path):
     collected = []
     for path in reversed(files):
         for record in reversed(read_records(path)):
+            if deleted_record(record):
+                continue
             if matches(record, terms, site, span):
                 collected.append(record)
                 if len(collected) == limit:
@@ -1372,6 +1372,17 @@ def log_mtime(log_path):
         return None
 
 
+def deleted_record(record):
+    """True for a tombstone: a capture deleted from the History page.
+
+    Deleting leaves `{"timestamp": ..., "deleted": true}` in log.json in
+    the record's place, so a watcher resuming --after that timestamp
+    still finds it. Nothing hands one out: every action skips them, and
+    the watch loop steps over them with its cursor still advancing.
+    """
+    return isinstance(record, dict) and record.get("deleted") is True
+
+
 def skipped_in_watcher(record):
     """True for a capture the user paused on the Capture page.
 
@@ -1422,11 +1433,12 @@ def catch_up(opts, emitter, log_path, lines):
               " as usual" % (opts.after, log_path), file=sys.stderr)
         return False
 
-    # Paused captures are behind the poll loop's cursor by the time we
-    # return, so dropping them here is the whole of it — they are never
-    # emitted and never seen again.
+    # Paused and deleted captures are behind the poll loop's cursor by
+    # the time we return, so dropping them here is the whole of it —
+    # they are never emitted and never seen again.
     pending = [record for record in records[index + 1:]
-               if not skipped_in_watcher(record)]
+               if not skipped_in_watcher(record)
+               and not deleted_record(record)]
     if not pending:
         # Either nothing new, or nothing new the watcher may have. Fall
         # through to the poll loop and keep waiting, which is what a
@@ -1453,16 +1465,29 @@ def lines_after(lines, cursor):
     Scanned backwards so a log that repeats a line (one written before
     timestamps were unique) still advances instead of replaying.
 
-    A cursor that isn't in the log resumes from the newest record. It
-    can't have aged out into a history file from under a live watcher —
-    log.json holds at least 50 records — so this is a log that was
-    rewritten from somewhere else entirely.
+    A line that has gone is looked up again by its `timestamp`: the
+    History page's Delete rewrites the record's line as a tombstone
+    (`{"timestamp": ..., "deleted": true}`) and that keeps the
+    timestamp for exactly this — a cursor on the deleted record still
+    finds its place, and the captures behind it are still emitted.
+
+    A cursor that isn't in the log either way resumes from the newest
+    record. It can't have aged out into a history file from under a
+    live watcher — log.json holds at least 50 records — so this is a
+    log that was rewritten from somewhere else entirely.
     """
     if cursor is None:
         return lines
     for i in range(len(lines) - 1, -1, -1):
         if lines[i] == cursor:
             return lines[i + 1:]
+    record = parse_record(cursor)
+    stamp = record.get("timestamp") if record else None
+    if stamp is not None:
+        for i in range(len(lines) - 1, -1, -1):
+            parsed = parse_record(lines[i])
+            if parsed is not None and parsed.get("timestamp") == stamp:
+                return lines[i + 1:]
     return lines[-1:]
 
 
@@ -1562,11 +1587,12 @@ def watch(opts, emitter, source_dir, log_path):
                 # can't be found skips everything behind it.
                 if record is not None:
                     cursor = line
-                # Paused on the Capture page: step over it. The cursor
-                # has already moved past it, so a single-shot run goes
-                # back to waiting rather than ending on a capture its
-                # agent was told not to see.
-                if skipped_in_watcher(record):
+                # Paused on the Capture page, or deleted from the
+                # History page: step over it. The cursor has already
+                # moved past it, so a single-shot run goes back to
+                # waiting rather than ending on a capture its agent was
+                # told not to see (or one that no longer exists).
+                if skipped_in_watcher(record) or deleted_record(record):
                     continue
                 emitter.emit(record, raw=line)
                 if not opts.loop:
@@ -1586,21 +1612,26 @@ def watch(opts, emitter, source_dir, log_path):
 
 
 def get_latest(opts, emitter, log_path):
-    """Emit the last record in log.json.
+    """Emit the last record in log.json that isn't a tombstone.
 
     Missing or empty is an error on its own, but fine when combined
     with --watch: there the log not existing yet is the normal case.
+    A log holding nothing but tombstones says so rather than "empty".
     """
     if not os.path.isfile(log_path):
         if not opts.watch:
             die("Error: %s not found. No captures yet?" % log_path)
         return
-    line = read_last_line(log_path)
-    if line is None:
-        if not opts.watch:
-            die("Error: %s is empty. No captures yet." % log_path)
-        return
-    emitter.emit(parse_record(line), raw=line)
+    lines = read_lines(log_path, fatal=True)
+    for line in reversed(lines):
+        record = parse_record(line)
+        if not deleted_record(record):
+            emitter.emit(record, raw=line)
+            return
+    if not opts.watch:
+        if lines:
+            die("Error: every capture in %s has been deleted." % log_path)
+        die("Error: %s is empty. No captures yet." % log_path)
 
 
 def main(argv):
