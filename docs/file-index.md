@@ -244,7 +244,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding those files again |
+| `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding and probing those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the `history-*.json` files older records move into, and the last-capture session note |
 | `src/capture/delete-capture.ts` | Deleting one capture from the History page: its files off disk, then a `log.json` tombstone or history-file drop |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; `LogWriteFailedError` |
@@ -387,6 +387,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback — and the landing check on completed writes |
 | `tests/unit/directory-listing.test.mjs` | Unit tests for `listCaptureDirectory` / `listHistoryFiles` — parsing Chrome's `file://` directory listing |
+| `tests/unit/file-probe.test.mjs` | Unit tests for `captureFileExists` / `historyFilesFromDownloads` — what is on disk where the listing is denied |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, deleted-vs-unreadable via the directory listing, the unknown-directory first write, the verbatim append, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
 | `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, tombstones kept, and reading them back |

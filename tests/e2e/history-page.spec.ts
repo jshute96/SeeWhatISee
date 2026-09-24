@@ -1267,3 +1267,165 @@ test('deleting the newest capture keeps the loaded history rows', async ({
 
   await historyPage.close();
 });
+
+// ─── The capture directory can't be listed ───────────────────────
+//
+// ChromeOS denies extensions the `file://` directory listing for
+// `/home/chronos/…/MyFiles/Downloads` while still serving the files
+// inside it (`docs/chrome-extension.md` → "Directory listings can be
+// denied"). Simulated here by rejecting exactly the listing fetch, in
+// both contexts that make one: the page and the service worker.
+
+/**
+ * Make a directory listing fetch reject, as ChromeOS's does, and count
+ * the attempts on `__deniedListings` so a test can prove the patch was
+ * still in place (an idled-out service worker would otherwise take the
+ * listing path and pass for the wrong reason).
+ */
+const DENY_LISTING = (dir: string) => {
+  const orig = fetch;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  g.__deniedListings = 0;
+  g.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('file://') && decodeURIComponent(url).replace(/\/$/, '').endsWith(dir)) {
+      g.__deniedListings += 1;
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    return orig(input, init);
+  };
+};
+
+/** Count `file://` fetches of the capture directory itself. */
+const COUNT_LISTINGS = (dir: string) => {
+  const orig = fetch;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  g.__listings = 0;
+  g.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('file://') && decodeURIComponent(url).replace(/\/$/, '').endsWith(dir)) {
+      g.__listings += 1;
+    }
+    return orig(input, init);
+  };
+};
+
+/** Write a capture file through the SW, so Chrome has a record of it. */
+async function seedCaptureFile(sw: Worker, name: string, text: string): Promise<void> {
+  const id = await sw.evaluate(async ([n, body]) => await chrome.downloads.download({
+    url: `data:application/json;charset=utf-8,${encodeURIComponent(body)}`,
+    filename: `SeeWhatISee/${n}`,
+    conflictAction: 'overwrite',
+  }), [name, text]);
+  await sw.evaluate(async (downloadId) => {
+    for (let i = 0; i < 100; i++) {
+      const [item] = await chrome.downloads.search({ id: downloadId });
+      if (item?.state === 'complete') return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }, id);
+}
+
+test('Delete and older captures still work when the directory cannot be listed', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  const sw = await getServiceWorker();
+  const logPath = await seedCaptureLog(sw, [SEED[2]] as unknown as Record<string, unknown>[]);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  // Written through the SW, so it has a download record: that is all
+  // the fallback has to find it by.
+  const history = 'history-20260101-000000-000.json';
+  await seedCaptureFile(sw, history, JSON.stringify(SEED[0]) + '\n');
+  // A file one of the records names, so the delete has one to remove.
+  writeFileSync(`${dir}/${SEED[0].screenshot!.filename}`, 'png bytes');
+  // Straight to disk, so Chrome has no record of it: the documented
+  // blind spot of the fallback. It stays invisible throughout.
+  const unknown = `history-20251231-000000-000.json`;
+  writeFileSync(`${dir}/${unknown}`, JSON.stringify(SEED[1]) + '\n');
+  await sw.evaluate(DENY_LISTING, dir);
+
+  const historyPage = await extensionContext.newPage();
+  await historyPage.addInitScript(DENY_LISTING, dir);
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await expect(rows).toHaveCount(1);
+
+  // The listing is gone, so the history file is found through the
+  // download records instead.
+  await expect(historyPage.locator('#load-older')).toBeVisible();
+  await historyPage.locator('#load-older').click();
+  await expect(rows).toHaveCount(2);
+  // 2, not 3: the history file Chrome has no record of is not offered.
+  await expect(historyPage.locator('#older')).toBeHidden();
+
+  // Its record deletes: the log files to scan came from the same
+  // fallback, and "is the file still there?" from a probe per file.
+  // The dialog probes too, so the file it lists is a live link.
+  await rows.nth(1).locator('.delete-btn').click();
+  const item = historyPage.locator('#delete-dialog-files li');
+  await expect(item.locator('a')).toHaveText(SEED[0].screenshot!.filename);
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+
+  await expect(rows).toHaveCount(1);
+  expect(existsSync(`${dir}/${SEED[0].screenshot!.filename}`)).toBe(false);
+  // The whole history file went with it: it held nothing else.
+  await expect.poll(() => existsSync(`${dir}/${history}`)).toBe(false);
+  // `log.json` never held that record, so it is untouched.
+  expect(await readCaptureLog(sw)).toEqual([SEED[2]]);
+  // The unseen history file is left exactly as it was: not read, not
+  // rewritten, not deleted.
+  expect(readFileSync(`${dir}/${unknown}`, 'utf8')).toBe(JSON.stringify(SEED[1]) + '\n');
+
+  // The other row's screenshot was never written, and with no listing
+  // to ask, the dialog's own probe says so: no link, no path to copy.
+  await rows.nth(0).locator('.delete-btn').click();
+  const left = historyPage.locator('#delete-dialog-files li');
+  await expect(left.locator('.deleted-mark')).toHaveText('(deleted)');
+  await expect(left.locator('a')).toHaveCount(0);
+  await historyPage.locator('#delete-dialog .delete-cancel').click();
+
+  // Both patches held: had the service worker idled out and lost its
+  // one, the delete would have taken the listing path and this test
+  // would have passed without exercising the fallback at all.
+  expect(await sw.evaluate(() => (globalThis as { __deniedListings?: number }).__deniedListings))
+    .toBeGreaterThan(0);
+  expect(await historyPage.evaluate(() => (window as { __deniedListings?: number })
+    .__deniedListings)).toBeGreaterThan(0);
+
+  await historyPage.close();
+});
+
+test('a delete reads the directory listing a handful of times, not per file', async ({
+  extensionContext,
+  extensionId,
+  getServiceWorker,
+}) => {
+  // The listing is a fetch plus an HTML parse of a directory that can
+  // hold thousands of files, so the delete asks once per round rather
+  // than once per question (`openDirectory`).
+  const sw = await getServiceWorker();
+  const logPath = await seedCaptureLog(sw, SEED as unknown as Record<string, unknown>[]);
+  const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+  writeFileSync(`${dir}/${SEED[1].contents!.filename}`, '<html></html>');
+  writeFileSync(`${dir}/${SEED[1].selection!.filename}`, 'selected');
+  await sw.evaluate(COUNT_LISTINGS, dir);
+
+  const historyPage = await extensionContext.newPage();
+  await openHistory(historyPage, extensionId);
+  const rows = historyPage.locator('#rows tr');
+  await rows.nth(1).locator('.delete-btn').click();
+  await historyPage.locator('#delete-dialog .delete-confirm').click();
+  await expect(rows).toHaveCount(2);
+
+  // One before the removals, one after them, one to confirm. The
+  // emptied-history-file branch would add one more; there are none
+  // here.
+  const listings = await sw.evaluate(() => (globalThis as { __listings?: number }).__listings);
+  expect(listings).toBeLessThanOrEqual(3);
+
+  await historyPage.close();
+});

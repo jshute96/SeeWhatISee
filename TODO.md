@@ -116,6 +116,22 @@ What it costs:
 * Maybe allow pinning any page, so users can inject with copy/paste widget
 * Extensible Ask connectors in options, so users can hook up other pages if they figure out the selectors
 
+## Known issues
+
+* **ChromeOS won't let the extension list the capture directory**
+  ([#35](https://github.com/jshute96/SeeWhatISee/issues/35);
+  `docs/chrome-extension.md` → Directory listings can be denied).
+  Files in it read fine. The fallbacks leave three gaps:
+  * History files Chrome has no download record for are invisible
+    (copied in from another profile, or the user cleared download
+    history). *Load older captures* won't offer them, and a delete
+    won't find a duplicate record in one.
+  * A capture file that exists but can't be read looks deleted, so a
+    delete leaves the file and removes its record.
+  * A failed read of `log.json` always looks like the user deleted
+    it, so the next capture starts a new log over the old one. Only
+    the listing can tell those apart.
+
 ## Documentation
 
 ### Pending docs for features not released yet

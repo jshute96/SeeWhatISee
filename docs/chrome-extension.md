@@ -161,6 +161,40 @@ install, and there is no API to request it — the user flips it.
   never sees the dialog. `tests/e2e/file-access-required.spec.ts`
   covers it by overriding `isAllowedFileSchemeAccess`.
 
+### Directory listings can be denied
+
+The toggle lets us read files. It doesn't always let us list the
+directory they're in.
+
+- **ChromeOS** (seen on Chrome 152): anywhere under
+  `/home/chronos/u-<hash>/MyFiles/Downloads`, fetching a directory
+  fails with `net::ERR_ACCESS_DENIED`, while fetching a file in it
+  works. A Chrome tab still shows the listing, so it looks fine
+  from outside the extension.
+- `file://` fetch results (probed in the e2e harness):
+  - A readable file: `ok`, status 200.
+  - A directory: not `ok`, status 0, with the listing as the body.
+  - A missing file, or one we may not read: rejects with a bare
+    "Failed to fetch". JavaScript can't tell those two apart.
+- Where there's no listing, the extension falls back:
+  - "Is this file there?": fetch the file itself
+    (`captureFileExists`).
+  - "Which history files are there?": the `history-*.json` files
+    Chrome has a download record for, each checked the same way
+    (`historyFilesFromDownloads`). Misses a file Chrome has no
+    record of.
+- Effect on each feature:
+  - History page: *Load older captures* uses the fallback;
+    `(deleted)` markers don't appear
+    (history-page.md → Deleted files).
+  - Deleting a capture: works, via the fallback
+    (log-consistency.md → Deleting a capture).
+  - The log reconcile: **not covered**. It needs to tell a deleted
+    `log.json` from an unreadable one, and only the listing can
+    ([#35](https://github.com/jshute96/SeeWhatISee/issues/35)).
+- Tested in `tests/e2e/history-page.spec.ts`, which fails exactly
+  the listing fetch in both the page and the service worker.
+
 ### Why not `tabs`
 
 - `chrome.tabs.query` works without it.

@@ -40,7 +40,9 @@
 
 import {
   canReadFiles,
+  captureFileExists,
   historyFilesAmong,
+  historyFilesFromDownloads,
   listCaptureDirectory,
   peekCaptureDirectory,
   joinCapturePath,
@@ -266,6 +268,19 @@ let filesOnDisk: Set<string> | null = null;
  * (by the timestamp in each filename — see `historyFilesAmong`).
  */
 let historyFilePaths: string[] = [];
+
+/**
+ * `historyFilePaths` as the download records answered it, where the
+ * directory can't be listed (`historyFilesFromDownloads`), or `null`
+ * before the first such answer. Held because deriving it costs a
+ * `file://` probe per history file, and `loadDirectoryListing` runs on
+ * every capture, every delete and every return to the tab.
+ *
+ * Dropped by `forgetHistoryFiles`, so a delete (which can remove an
+ * emptied history file) and a flush both get a fresh answer.
+ */
+let historyFilesFallback: string[] | null = null;
+
 /**
  * Records read out of each history file we've loaded, keyed by path,
  * each newest-first within its file. Keyed by path rather than
@@ -304,6 +319,7 @@ let historyFileGeneration = 0;
 function forgetHistoryFiles(): void {
   historyFileRecords.clear();
   historyFileGeneration += 1;
+  historyFilesFallback = null;
 }
 
 /** History files we know about but haven't read yet. */
@@ -627,9 +643,25 @@ function deleteButton(r: CaptureRecord): HTMLElement {
 function deleteFromRow(btn: HTMLButtonElement, r: CaptureRecord): void {
   const files = [r.screenshot?.filename, r.contents?.filename, r.selection?.filename]
     .filter((f): f is string => typeof f === 'string' && f.length > 0);
-  void confirmDelete(files).then((confirmed) => {
-    if (confirmed) runDelete(btn, r);
-  });
+  void (async () => {
+    if (await confirmDelete(files, await missingAmong(files))) runDelete(btn, r);
+  })();
+}
+
+/**
+ * Which of `files` are not on disk, for the dialog's list.
+ *
+ * The listing already answers this for the whole table, so the probes
+ * only run when there isn't one: at most three of them, and only on a
+ * click. The table's own markers don't probe: a probe per file there
+ * would be hundreds per render.
+ */
+async function missingAmong(files: string[]): Promise<Set<string>> {
+  if (filesOnDisk !== null) return new Set(files.filter(isDeleted));
+  if (captureDir === null) return new Set();
+  const dir = captureDir;
+  const there = await Promise.all(files.map((name) => captureFileExists(dir, name)));
+  return new Set(files.filter((_, i) => !there[i]));
 }
 
 const deleteDialog = document.getElementById('delete-dialog') as HTMLDialogElement;
@@ -644,16 +676,17 @@ const COPY_PATH_TOOLTIP = 'Copy full filename';
  * the file so it can be looked at before deciding, and a Copy button
  * that puts its absolute path on the clipboard.
  *
- * A file the table already shows as `(deleted)` renders the same way
- * here (`unlinkedFile`), with no Copy button: there is nothing at the
- * path to open or to copy it for. So does every file when no capture
- * directory is known, though the Delete button is disabled then.
+ * A file that isn't on disk (`missing`, what the table shows as
+ * `(deleted)`) renders the same way here (`unlinkedFile`), with no
+ * Copy button: there is nothing at the path to open or to copy it
+ * for. So does every file when no capture directory is known, though
+ * the Delete button is disabled then.
  */
-function deleteDialogFileItem(filename: string): HTMLLIElement {
+function deleteDialogFileItem(filename: string, missing: Set<string>): HTMLLIElement {
   const li = document.createElement('li');
   const url = fileUrlFor(filename);
-  if (!captureDir || !url || isDeleted(filename)) {
-    li.append(unlinkedFile(filename));
+  if (!captureDir || !url || missing.has(filename)) {
+    li.append(unlinkedFile(filename, filename, missing.has(filename)));
     return li;
   }
   const a = captureFileLink(url, filename);
@@ -693,9 +726,9 @@ function deleteDialogFileItem(filename: string): HTMLLIElement {
  * and copied. Resolves `true` only on the Delete button; Cancel, Esc
  * and Enter (Cancel is the form's default button) all resolve `false`.
  */
-function confirmDelete(files: string[]): Promise<boolean> {
+function confirmDelete(files: string[], missing: Set<string>): Promise<boolean> {
   deleteDialogFilesIntro.hidden = files.length === 0;
-  deleteDialogFiles.replaceChildren(...files.map(deleteDialogFileItem));
+  deleteDialogFiles.replaceChildren(...files.map((f) => deleteDialogFileItem(f, missing)));
   deleteDialogStatus.textContent = '';
   deleteDialog.returnValue = '';
   deleteDialog.showModal();
@@ -775,12 +808,18 @@ function fileUrlFor(filename: string): string | null {
  * Not used for a file that merely failed to *load* — there we keep the
  * link, since its href is still worth right-clicking.
  */
-function unlinkedFile(filename: string, label = filename): HTMLElement {
+function unlinkedFile(
+  filename: string,
+  label = filename,
+  // The table asks the listing; the Delete dialog has probed instead
+  // (`missingAmong`), and passes what it found.
+  deleted = isDeleted(filename),
+): HTMLElement {
   const span = document.createElement('span');
   span.className = 'flag';
   span.textContent = label;
   span.title = filename;
-  if (isDeleted(filename)) {
+  if (deleted) {
     // Nested rather than appended to the label text: it renders on its
     // own line (`.deleted-mark` is `display: block`) so the Files
     // column doesn't have to be wide enough for
@@ -1102,12 +1141,32 @@ async function loadCaptureDir(): Promise<void> {
 async function loadDirectoryListing(): Promise<void> {
   try {
     filesOnDisk = captureDir === null ? null : await listCaptureDirectory(captureDir);
-  } catch {
+  } catch (err) {
+    // Expected-and-handled (the table just loses its `(deleted)`
+    // markers), but logged: on ChromeOS this fails every time, and
+    // the silence made that look like "there are no older captures".
+    console.info(`[SeeWhatISee] history: ${captureDir}: the directory could not be listed:`, err);
     filesOnDisk = null;
   }
-  historyFilePaths = captureDir !== null && filesOnDisk !== null
-    ? historyFilesAmong(captureDir, filesOnDisk)
-    : [];
+  if (captureDir === null) {
+    historyFilePaths = [];
+  } else if (filesOnDisk !== null) {
+    historyFilePaths = historyFilesAmong(captureDir, filesOnDisk);
+  } else if (historyFilesFallback !== null) {
+    // Already answered once this page-load. The set only grows when a
+    // flush writes a new file, and re-deriving it costs a `file://`
+    // probe per history file — on every capture, every delete and
+    // every return to the tab. `forgetHistoryFiles` drops it where
+    // that could be wrong.
+    historyFilePaths = historyFilesFallback;
+  } else {
+    // No listing: only the download records also know a history file
+    // was ever written. Weaker (see
+    // `historyFilesFromDownloads`), and only reached when the listing
+    // is denied.
+    historyFilesFallback = await historyFilesFromDownloads(captureDir);
+    historyFilePaths = historyFilesFallback;
+  }
   // The merge walks this list, so the rows go stale the moment it
   // changes — a newly-written history file has to take its place among the
   // loaded ones now, not whenever some later load happens to rebuild.
@@ -1142,10 +1201,12 @@ async function loadHistoryFiles(): Promise<string[]> {
   const pending = unloadedHistoryFiles();
   if (pending.length === 0) return [];
   const results = await Promise.allSettled(pending.map(async (path) => {
-    // A missing file can resolve non-ok — and that would otherwise look
-    // like a successful read of an empty history file, silently dropping 50
-    // captures off the page. `fetchImageInSW` checks `ok` on this same
-    // scheme for the same reason.
+    // `ok` is checked because a *directory* at this path resolves
+    // not-ok with its listing as the body, which would otherwise read
+    // as a successful load of a history file full of nothing, silently
+    // dropping 50 captures off the page. (A missing file rejects.)
+    // `fetchImageInSW` checks `ok` on this same scheme for the same
+    // reason.
     //
     // `no-store`, as every other `file://` read here: a delete rewrites
     // a history file and re-reads it straight away, and a cached hit
@@ -1161,6 +1222,9 @@ async function loadHistoryFiles(): Promise<string[]> {
   const failed: string[] = [];
   results.forEach((result, i) => {
     if (result.status === 'rejected') {
+      // Also shown on the page; logged with the reason, which the
+      // page's note doesn't carry.
+      console.info(`[SeeWhatISee] history: ${pending[i]}: could not be read:`, result.reason);
       failed.push(pending[i]);
       return;
     }
@@ -1324,6 +1388,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     // the button's count stay right; read the new file straight away
     // if the user has already opted in, so records don't appear to
     // vanish as they age out of `log.json`.
+    //
+    // The cached fallback can't know about that new history file, so
+    // drop it first.
+    historyFilesFallback = null;
     await loadDirectoryListing();
     if (historyFileRecords.size > 0) {
       await loadHistoryFilesInteractively();
@@ -1339,8 +1407,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // (which re-lists itself), deleting files happens
 // somewhere else — a file manager (window `focus` on the way back) or
 // another tab (`visibilitychange`) — so re-list when the user comes
-// back: one directory fetch per return, and the markers are right by
-// the time they look. Coalesced, since a return can fire both.
+// back: one directory fetch per return (none at all where the listing
+// is denied and the history-file fallback is already cached), and the
+// markers are right by the time they look. Coalesced, since a return
+// can fire both.
 let relistOnReturn: ReturnType<typeof setTimeout> | null = null;
 function relistWhenBack(): void {
   if (captureDir === null || relistOnReturn !== null) return;

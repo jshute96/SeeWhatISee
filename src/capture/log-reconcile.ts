@@ -132,7 +132,15 @@ export async function inspectLogFile(): Promise<LogFileState> {
 async function logFileListed(directory: string): Promise<boolean> {
   try {
     return (await listCaptureDirectory(directory)).has(LOG_FILE_NAME);
-  } catch {
+  } catch (err) {
+    // This decides whether an unreadable log means "deleted, start
+    // over" or "leave it alone", so a failure here is worth seeing:
+    // where listings are denied (ChromeOS) it is the permanent answer.
+    console.info(
+      `[SeeWhatISee] ${directory}: could not be listed after an unreadable log;`
+      + ' treating the log as gone:',
+      err,
+    );
     return false;
   }
 }

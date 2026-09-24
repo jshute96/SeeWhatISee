@@ -100,7 +100,8 @@ export async function readWatchStatus(): Promise<WatchStatus | null> {
 export async function readPublishedSession(): Promise<WatchStatus | null> {
   const directory = await peekCaptureDirectory();
   if (!directory) return null;
-  const text = await readCaptureFileText(directory, WATCH_STATUS_FILE);
+  // `quiet`: polled, and its absence is the normal answer.
+  const text = await readCaptureFileText(directory, WATCH_STATUS_FILE, { quiet: true });
   return text === null ? null : parseWatchStatus(text, Date.now());
 }
 
@@ -108,7 +109,8 @@ export async function readPublishedSession(): Promise<WatchStatus | null> {
 async function readStopRequestSession(): Promise<string | null> {
   const directory = await peekCaptureDirectory();
   if (!directory) return null;
-  const text = await readCaptureFileText(directory, WATCH_STOP_FILE);
+  // `quiet`, as above: no pending stop request is the usual state.
+  const text = await readCaptureFileText(directory, WATCH_STOP_FILE, { quiet: true });
   if (text === null) return null;
   try {
     const data: unknown = JSON.parse(text);

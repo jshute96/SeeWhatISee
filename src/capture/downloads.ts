@@ -440,12 +440,13 @@ export async function canReadFiles(): Promise<boolean> {
 /**
  * Read `log.json` from `directory`, or `null` if we can't.
  *
- * A missing file resolves non-ok rather than rejecting, which would
- * otherwise read as a successful load of an empty log and quietly
- * discard the user's history. `null` folds together denied (toggle
- * off), missing, and failed — the reconcile lists the directory
- * (`listCaptureDirectory`) before concluding the file is gone; the
- * History page shows an empty log either way.
+ * `null` folds together missing, denied (toggle off) and failed: a
+ * `file://` fetch rejects with a bare "Failed to fetch" for all of
+ * them, and the `net::ERR_*` that would tell them apart never reaches
+ * JavaScript. Concluding "the log is gone" from a `null` alone would
+ * quietly discard the user's history, so the reconcile asks the
+ * directory listing (`listCaptureDirectory`) first; the History page
+ * shows an empty log either way.
  */
 export async function readLogText(directory: string): Promise<string | null> {
   return readCaptureFileText(directory, LOG_FILE_NAME);
@@ -460,17 +461,31 @@ export async function readLogText(directory: string): Promise<string | null> {
  * `no-store` because one caller polls the same path every 250ms while
  * waiting for a watcher to exit; a cached hit there would read as "the
  * file is still present" and report a stop that worked as failed.
+ *
+ * Failures are logged (`console.info`, since every caller handles
+ * them) so a read that quietly went missing is at least findable in
+ * the console. `quiet` turns that off for the pollers above, whose
+ * files are *expected* to be absent and which would otherwise log
+ * several times a second.
  */
 export async function readCaptureFileText(
   directory: string,
   name: string,
+  { quiet = false }: { quiet?: boolean } = {},
 ): Promise<string | null> {
+  const path = joinCapturePath(directory, name);
   try {
-    const res = await fetch(pathToFileUrl(joinCapturePath(directory, name)),
-                            { cache: 'no-store' });
-    if (!res.ok) return null;
+    const res = await fetch(pathToFileUrl(path), { cache: 'no-store' });
+    // A directory resolves not-ok with its listing as the body, so
+    // this check also keeps one from reading as a file.
+    if (!res.ok) {
+      if (!quiet) console.info(`[SeeWhatISee] ${path}: read returned status ${res.status}`);
+      return null;
+    }
     return await res.text();
-  } catch {
+  } catch (err) {
+    // Missing and denied look the same here; see the doc comment.
+    if (!quiet) console.info(`[SeeWhatISee] ${path}: could not be read over file://`, err);
     return null;
   }
 }
@@ -520,6 +535,103 @@ export async function listCaptureDirectory(directory: string): Promise<Set<strin
     }
   }
   return names;
+}
+
+/**
+ * Is `name` a readable file in the capture directory? One `file://`
+ * fetch of the file itself, with the body dropped unread.
+ *
+ * The listing (`listCaptureDirectory`) answers this for the whole
+ * directory in one request, and we use it when we can get one. This
+ * is the per-file fallback for where we can't: **ChromeOS denies
+ * extensions the `file://` directory listing** under
+ * `/home/chronos/…/MyFiles/Downloads` (`ERR_ACCESS_DENIED`) while
+ * still serving the files inside it, so a listing-only answer is
+ * permanently "unknown" there. See `docs/chrome-extension.md` →
+ * "Directory listings can be denied".
+ *
+ * Fetch results (probed in the e2e harness):
+ *
+ * - A readable file resolves `ok`.
+ * - A **directory** resolves not-ok with the listing as its body, so
+ *   checking `ok` also keeps a directory from reading as a file.
+ * - Missing and permission-denied both **reject** with a bare "Failed
+ *   to fetch"; nothing in JavaScript can tell those two apart. So this
+ *   answers a boolean, and callers that need the distinction (the log
+ *   reconcile) can't use it.
+ */
+export async function captureFileExists(directory: string, name: string): Promise<boolean> {
+  const path = joinCapturePath(directory, name);
+  try {
+    const res = await fetch(pathToFileUrl(path), { cache: 'no-store' });
+    // Nothing here wants the bytes, and a screenshot is megabytes.
+    // The answer is taken before the cancel, and the cancel is left to
+    // run on its own: one that rejected would otherwise reach the
+    // catch below and report a file we just read as missing, which a
+    // delete reads as "already gone" and drops the record for.
+    const ok = res.ok;
+    void res.body?.cancel().catch(() => {});
+    return ok;
+  } catch (err) {
+    // Expected on a file that is simply gone, so `info`: this is the
+    // normal answer, not a fault. Logged all the same because a denied
+    // read looks identical, and would be invisible otherwise.
+    console.info(`[SeeWhatISee] ${path}: not readable over file://`, err);
+    return false;
+  }
+}
+
+/**
+ * The `history-*.json` files we have download records for, newest
+ * first, checked against the filesystem one at a time.
+ *
+ * The fallback for a directory we can't list (see
+ * `captureFileExists`). Weaker than the listing, and only ever used
+ * when there is no listing to be had:
+ *
+ * - It sees only files **this extension downloaded**, so a history
+ *   file copied in from another profile is invisible.
+ * - It sees them only while Chrome keeps the record: clearing the
+ *   browser's download history hides every history file from it.
+ *
+ * Each candidate is probed rather than trusted, because
+ * `DownloadItem.exists` is never refreshed (see
+ * `listCaptureDirectory`). Records for files outside `directory` are
+ * dropped: the user can have moved the capture directory, leaving
+ * records from the old one.
+ */
+export async function historyFilesFromDownloads(directory: string): Promise<string[]> {
+  let items: chrome.downloads.DownloadItem[];
+  try {
+    // Any name in our download subdirectory that could be a history
+    // file; `HISTORY_FILE_NAME` below makes the actual call. The
+    // prefix is escaped because it is a literal, the rest is pattern.
+    items = await ourRecordsMatching(`${escapeRegExp(HISTORY_FILE_PREFIX)}[^/\\\\]*\\.json`);
+  } catch (err) {
+    console.info('[SeeWhatISee] could not search the download records for history files:', err);
+    return [];
+  }
+  const names = new Set<string>();
+  for (const item of items) {
+    const name = basename(item.filename);
+    if (HISTORY_FILE_NAME.test(name) && parentDirectory(item.filename) === directory) {
+      names.add(name);
+    }
+  }
+  const present: string[] = [];
+  for (const name of [...names].sort().reverse()) {
+    if (await captureFileExists(directory, name)) present.push(joinCapturePath(directory, name));
+  }
+  // Only when there was something to find: the caller has already said
+  // why it is here, and "none of none" is every load of a profile that
+  // has never flushed.
+  if (names.size > 0) {
+    console.info(
+      `[SeeWhatISee] ${directory}: `
+      + `${present.length} of ${names.size} history files found through the download records`,
+    );
+  }
+  return present;
 }
 
 /**
@@ -610,8 +722,18 @@ export function pathToFileUrl(path: string): string {
 
 /** Our own download records for the capture file `name`, newest first. */
 async function ourRecordsOf(name: string): Promise<chrome.downloads.DownloadItem[]> {
+  return await ourRecordsMatching(escapeRegExp(name));
+}
+
+/**
+ * Our own download records whose filename's last path segment matches
+ * `pattern`, newest first. `pattern` is a regex fragment, so a caller
+ * escapes whatever part of it is a literal (`escapeRegExp`);
+ * `ourRecordsOf` is that exact-name case.
+ */
+async function ourRecordsMatching(pattern: string): Promise<chrome.downloads.DownloadItem[]> {
   const items = await chrome.downloads.search({
-    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${escapeRegExp(name)}$`,
+    filenameRegex: `[/\\\\]${DOWNLOAD_SUBDIR}[/\\\\]${pattern}$`,
     orderBy: ['-startTime'],
   });
   return items.filter((item) => item.byExtensionId === chrome.runtime.id && !!item.filename);

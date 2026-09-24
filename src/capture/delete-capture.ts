@@ -41,7 +41,9 @@ import {
   basename,
   downloadArtifactComplete,
   eraseDownloadRecord,
+  captureFileExists,
   historyFilesAmong,
+  historyFilesFromDownloads,
   isLogFileName,
   joinCapturePath,
   listCaptureDirectory,
@@ -92,9 +94,10 @@ const EMPTY_FILE_DATA_URL = 'data:application/octet-stream;base64,';
  * rewrite and put its own version back over ours.
  *
  * Nothing is written until every file that should go is gone, and the
- * listing (`listCaptureDirectory`, the filesystem's own answer)
- * confirms it — `removeFile` reports success against a stale record
- * too readily to be believed on its own.
+ * filesystem's own answer confirms it — `removeFile` reports success
+ * against a stale record too readily to be believed on its own. That
+ * answer is the directory listing where we can have one and a probe
+ * per file where we can't (`openDirectory`).
  */
 export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcome> {
   return await serializeWrite(async () => {
@@ -103,13 +106,13 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
       throw new Error('no capture directory is known');
     }
     const key = serializeRecord(record);
-    const onDisk = await listDirectory(directory);
+    const disk = await openDirectory(directory);
 
     // Every log file, `log.json` first. Reading them all is what finds
     // a duplicated record.
     const logFiles = [
-      ...(onDisk.has(LOG_FILE_NAME) ? [LOG_FILE_NAME] : []),
-      ...historyFilesAmong(directory, onDisk).map(basename),
+      ...(await disk.has(LOG_FILE_NAME) ? [LOG_FILE_NAME] : []),
+      ...(await disk.historyFiles()).map(basename),
     ];
     const holders: FileHits[] = [];
     for (const name of logFiles) {
@@ -151,18 +154,18 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
       staleRecordIds.push(...records.map((r) => r.id));
       // Already gone from disk (the page showed it `(deleted)`): only
       // the stale download records are left to tidy.
-      if (!onDisk.has(name)) continue;
+      if (!await disk.has(name)) continue;
       await removeFileByRecords(records);
       removedFiles.push(name);
     }
     if (removedFiles.length > 0) {
-      let present = await listDirectory(directory);
-      for (const name of removedFiles) {
-        if (!present.has(name)) continue;
+      // This round has to see the removals above.
+      disk.refresh();
+      for (const name of await disk.stillThere(removedFiles)) {
         staleRecordIds.push(await removeFileByOverwrite(name, joinCapturePath(directory, name)));
       }
-      present = await listDirectory(directory);
-      const remaining = removedFiles.filter((name) => present.has(name));
+      disk.refresh();
+      const remaining = await disk.stillThere(removedFiles);
       if (remaining.length > 0) {
         const paths = remaining.map((name) => joinCapturePath(directory, name));
         throw new Error(`${paths.join(', ')}: still on disk after deleting`);
@@ -195,7 +198,8 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
             const records = await downloadRecordsFor(path);
             await removeFileByRecords(records);
             const ids = records.map((r) => r.id);
-            if ((await listDirectory(directory)).has(holder.name)) {
+            disk.refresh();
+            if (await disk.has(holder.name)) {
               ids.push(await removeFileByOverwrite(holder.name, path));
             }
             for (const id of ids) await eraseDownloadRecord(id);
@@ -216,19 +220,97 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
 }
 
 /**
- * The capture directory's listing, or a message the row can show.
- *
- * Every message thrown here follows the page's "Delete failed: "
- * prefix, in the shape `<path>: <reason>`. Full paths, as every file
- * failure message in the extension gives: the user fixes these
- * outside the extension, and the path is what they need for that.
+ * The delete's questions about the filesystem, answered by whichever
+ * mechanism is available. Answers are read fresh every time: this runs either side
+ * of deleting files, and a cached "still there" would fail the delete
+ * it just completed.
  */
-async function listDirectory(directory: string): Promise<Set<string>> {
-  try {
-    return await listCaptureDirectory(directory);
-  } catch {
-    throw new Error(`${directory}: the directory could not be listed`);
-  }
+interface DirectoryView {
+  /** Is this name a file in the capture directory? */
+  has(name: string): Promise<boolean>;
+  /** Which of `names` are still there. */
+  stillThere(names: string[]): Promise<string[]>;
+  /** Absolute paths of the `history-*.json` files, newest first. */
+  historyFiles(): Promise<string[]>;
+  /** Forget what was read: something on disk just changed. */
+  refresh(): void;
+}
+
+/**
+ * Open a `DirectoryView` over the capture directory.
+ *
+ * Prefers the listing: one request answers for every name, and it sees
+ * files we have no download record for. Falls back to a probe per file
+ * (`captureFileExists`) where the listing is denied, which is
+ * permanent on ChromeOS — see `docs/chrome-extension.md` → "Directory
+ * listings can be denied". The fallback's blind spot is history files
+ * (`historyFilesFromDownloads`): a duplicate record in one we can't
+ * see survives the delete and comes back on reload.
+ *
+ * A listing failure is therefore not fatal here. Failing to *read* a
+ * log file is, and the caller reports that per path.
+ *
+ * Its second blind spot is a file that exists but can't be read: the
+ * probe can't tell that from a file that is gone (see
+ * `captureFileExists`), so the delete takes it for already-deleted,
+ * leaves it on disk and drops its record anyway. Listed in `TODO.md`
+ * → Known issues with the first.
+ *
+ * One answer is read per round: the whole point of the two passes is
+ * to see what deleting the files changed, so `refresh()` is called
+ * between them. Within a round the answer is reused — the listing
+ * covers every name in one request, and the probes are the same
+ * fetches repeated.
+ */
+async function openDirectory(directory: string): Promise<DirectoryView> {
+  let listable = true;
+  let listed: Set<string> | null = null;
+  let probed = new Map<string, boolean>();
+  const listing = async (): Promise<Set<string> | null> => {
+    if (!listable) return null;
+    if (listed !== null) return listed;
+    try {
+      listed = await listCaptureDirectory(directory);
+      return listed;
+    } catch (err) {
+      // Once, not per call: every later call takes the fallback.
+      console.info(
+        `[SeeWhatISee] ${directory}: the directory could not be listed;`
+        + ' falling back to a file:// probe per file:',
+        err,
+      );
+      listable = false;
+      return null;
+    }
+  };
+  const stillThere = async (names: string[]): Promise<string[]> => {
+    const listedNames = await listing();
+    if (listedNames !== null) return names.filter((name) => listedNames.has(name));
+    const present: string[] = [];
+    for (const name of names) {
+      let there = probed.get(name);
+      if (there === undefined) {
+        there = await captureFileExists(directory, name);
+        probed.set(name, there);
+      }
+      if (there) present.push(name);
+    }
+    return present;
+  };
+  return {
+    has: async (name) => (await stillThere([name])).length > 0,
+    stillThere,
+    historyFiles: async () => {
+      const names = await listing();
+      return names !== null
+        ? historyFilesAmong(directory, names)
+        : await historyFilesFromDownloads(directory);
+    },
+    refresh: () => {
+      listed = null;
+      probed = new Map();
+    },
+  };
 }
 
 /**
@@ -311,8 +393,12 @@ async function removeFileByRecords(records: chrome.downloads.DownloadItem[]): Pr
     try {
       await chrome.downloads.removeFile(item.id);
       return;
-    } catch {
-      // Try the next.
+    } catch (err) {
+      // Try the next. Logged even though a delete that then succeeds
+      // is the common case: the overwrite route below fails in the
+      // field, and knowing Chrome had a record it wouldn't act on is
+      // half of that story.
+      console.info(`[SeeWhatISee] removeFile on download ${item.id} failed:`, err);
     }
   }
 }

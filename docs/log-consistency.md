@@ -94,7 +94,8 @@ of downloads it performed.
 | How | Tells us |
 |---|---|
 | `fetch('file://…/log.json')` | the file's actual current contents |
-| `fetch('file://…/')` on the directory | Chrome's generated listing — what is in the directory right now (`listCaptureDirectory`) |
+| `fetch('file://…/')` on the directory | Chrome's generated listing — what is in the directory right now (`listCaptureDirectory`). Denied on ChromeOS (chrome-extension.md → Directory listings can be denied) |
+| `fetch('file://…/<name>')`, body unread | whether that one file is there and readable (`captureFileExists`); used where there's no listing |
 | Our download records (`chrome.downloads.search`) | *where* the capture directory is — nothing else |
 
 **The filesystem is asked about files; the download records are asked
@@ -373,6 +374,11 @@ here or it belongs fixed.
   gone" and starts a fresh log. A folder that exists but can't be
   listed while its file can't be read either is a permissions state
   the extension can't do anything useful in anyway.
+  - Except on **ChromeOS**, where the listing is always denied and
+    reads work. There, any failed read of `log.json` starts a fresh
+    log. Checking the file directly can't help: a missing file and an
+    unreadable one fail the same way. Tracked in `TODO.md` → Known
+    issues.
 - **A capture directory that isn't ours.** Pointing Chrome's download
   directory somewhere that already contains a `SeeWhatISee/log.json`
   written by another profile or a script reads as *the* log: its
@@ -415,13 +421,23 @@ from a row) runs `deleteCapture` in `src/capture/delete-capture.ts`.
   editing shares its screenshot with the original; the other row then
   shows `(deleted)`). A name that isn't a bare capture filename is
   refused, as reopen refuses it.
-- A file the directory listing already lacks is skipped: it's gone,
-  and only its stale download records are left to tidy.
+- A file already gone from disk is skipped; only its stale download
+  records are left to tidy.
+- The delete checks disk with the directory listing. Where the
+  listing is denied (`openDirectory` in `delete-capture.ts`):
+  - Each file is checked by fetching it.
+  - The history files to scan come from the download records, so a
+    duplicate record in one Chrome has no record of survives the
+    delete.
+  - A file that exists but can't be read looks deleted, so it's left
+    on disk while its record goes.
 - How: `chrome.downloads.removeFile` on the download record Chrome
   holds for that path — the extension has no filesystem API, and this
   is the one delete it offers. It only works on a file Chrome itself
   downloaded and still has a record of.
-  - The directory is then re-listed. A file still there — no usable
+  - Disk is then checked again. (One listing or one set of fetches
+    per round: the answer is reused until something is removed.) A
+    file still there — no usable
     record (download history cleared, a copied profile), or a record
     Chrome "removed" against without touching the disk — gets a fresh
     one: an empty file is downloaded over it (`conflictAction:
@@ -488,10 +504,9 @@ from a row) runs `deleteCapture` in `src/capture/delete-capture.ts`.
   a row). Full paths, as every file failure names them: the fix is
   outside the extension. Which step failed decides what is already
   gone:
-  - Nothing touched yet: "no capture directory is known", "`<dir>`:
-    the directory could not be listed", "`<log file>`: could not be
-    read", "this capture is no longer in the log; reload the page"
-    (the page is stale).
+  - Nothing touched yet: "no capture directory is known",
+    "`<log file>`: could not be read", "this capture is no longer in
+    the log; reload the page" (the page is stale).
   - Files partly or wholly gone (the `(deleted)` cells show which):
     "`<file>`: download-to-overwrite failed (`<Chrome code>`)" and its
     siblings from `downloadFailureReason`, reworded for the delete

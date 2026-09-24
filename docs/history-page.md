@@ -156,6 +156,15 @@ Finding that tab is less obvious than it looks:
   - The listing markup is a browser internal; the parse reads each
     row's name out of Chrome's `addRow(…)` call (`listCaptureDirectory`,
     see the source comment).
+  - **Where the listing is denied** (ChromeOS; see
+    chrome-extension.md → Directory listings can be denied), the page
+    offers the history files Chrome has a download record for
+    instead (`historyFilesFromDownloads`). A file Chrome has no
+    record of isn't offered: the limit the listing was brought in to
+    remove.
+    - Worked out once per page load and reused, since it costs a
+      fetch per history file. A capture landing or a delete works it
+      out again.
   - A file that drops off the listing after being read (deleted on
     disk) stays on screen. Losing the listing doesn't make the
     records wrong, and dropping those rows would make captures vanish
@@ -535,8 +544,11 @@ files from disk and takes its record out of the log.
     Copy button (Capture-page icon, tooltip "Copy full filename") that
     puts the absolute path on the clipboard. A clipboard failure shows
     under the list (`#delete-dialog-status`).
-  - A file the table already marks `(deleted)` is listed the same way
+  - A file that isn't on disk shows as `(deleted)`, as in the table
     (`unlinkedFile`), with no link and no Copy button.
+  - Where the listing is denied, the dialog checks the row's files
+    itself (`missingAmong`): at most three fetches, and only on a
+    click.
   - Cancel is the form's default button, so Enter and Esc both cancel;
     only the Delete button resolves the confirmation.
 - The click goes to the SW as `deleteCaptureFromHistory` with the
@@ -625,6 +637,10 @@ files from disk and takes its record out of the log.
   (see `log-consistency.md` → What we can find out).
   - An earlier version read that flag and never noticed such
     deletions.
+- Where the listing is denied, there are no markers. Checking each
+  file instead would be hundreds of fetches per render (up to 100
+  records, up to 3 files each), and the table re-renders on every
+  search keystroke.
 - With no listing — no directory yet, or the read failed — nothing is
   marked deleted: every file renders as a normal link rather than the
   whole table turning grey on a transient failure.
