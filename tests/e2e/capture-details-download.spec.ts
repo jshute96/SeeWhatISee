@@ -70,9 +70,15 @@ test('details: per-row Save buttons trigger saveAs dialog with correct default f
 
   expect(dls[1].filename).toBe('contents.html');
   expect(dls[1].mime).toMatch(/^text\/html/);
+  // Page HTML: doctype, then the `saved from url=` provenance line.
+  expect(dls[1].bytes).toMatch(
+    /^<!DOCTYPE html>\n<!-- saved from url=\(\d{4}\)http[^\n]*purple\.html -->\n<html/,
+  );
 
   expect(dls[2].filename).toBe('selection.html');
   expect(dls[2].mime).toMatch(/^text\/html/);
+  // Selection HTML: doctype only.
+  expect(dls[2].bytes).toMatch(/^<!DOCTYPE html>\n(?!<!--)/);
 
   expect(dls[3].filename).toBe('selection.txt');
   expect(dls[3].mime).toMatch(/^text\/plain/);

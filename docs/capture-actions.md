@@ -81,8 +81,9 @@ Shortcuts that skip the Capture-page dialog round-trip.
   delayed `capture` row.
 - **`save-page-contents` — "Save HTML contents".** Uses
   `chrome.scripting.executeScript` to grab
-  `document.documentElement.outerHTML` from the active tab and
-  saves it as `contents-<timestamp>.html`. The capture is
+  the doctype + `document.documentElement.outerHTML` from the active
+  tab and saves it as `contents-<timestamp>.html` (with a Chrome-style
+  `saved from url=` comment; see architecture.md). The capture is
   recorded in `log.json` just like a screenshot — only the
   filename differs. Requires the `scripting` permission. Takes
   the same optional `delayMs` as `captureVisible` (e.g. via the

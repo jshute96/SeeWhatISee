@@ -513,7 +513,8 @@ export interface BuildInMemoryCaptureInput {
    * for the right-clicked-image path. */
   screenshotExt: string;
   html: string;
-  selectionRaw: { html: string; text: string } | null;
+  /** `doctype` is the page's serialized doctype ('' when it has none). */
+  selectionRaw: { html: string; text: string; doctype: string } | null;
   pageUrl: string;
   pageTitle: string;
   timestamp: Date;

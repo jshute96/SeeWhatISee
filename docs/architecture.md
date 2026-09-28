@@ -105,7 +105,7 @@ listeners. The substantive logic lives in `src/background/`:
   countdown (with a toolbar badge) before the target lookup so the
   user can reposition / hover during the wait.
 - `savePageContents(delayMs?, gestureTab?)` uses
-  `chrome.scripting.executeScript` to grab
+  `chrome.scripting.executeScript` to grab the doctype +
   `document.documentElement.outerHTML` from the target tab and
   saves it as an HTML file. Same delay semantics as
   `captureVisible`.
@@ -141,6 +141,18 @@ Captures are written via `chrome.downloads.download` into
 
 - Screenshots are saved as `screenshot-<timestamp>.png`; HTML
   snapshots as `contents-<timestamp>.html`.
+- HTML snapshots start the way Chrome's "Save page as" does:
+  - The page's own doctype, added back in front of `outerHTML`
+    (`scrape-page-state.ts`). Without it, a browser opens the file in
+    quirks mode (legacy layout rules) and it can render differently.
+  - A `<!-- saved from url=(NNNN)<url> -->` comment, for provenance
+    only (`capture/html-header.ts`). NNNN is the URL length.
+  - Selection HTML (a fragment) gets the page's doctype (if any) but
+    no comment.
+    Blank selection bodies stay blank.
+  - Both are added when the capture is built, so they show in the
+    Edit dialogs and Ask attachments. What the editor shows is what
+    gets saved; deleting the line there keeps it out of the file.
 - The timestamp is `YYYYMMDD-HHMMSS-mmm` (local time, millisecond
   precision) — fine-grained enough that filenames are always
   unique in practice.

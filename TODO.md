@@ -136,6 +136,12 @@ What it costs:
 
 ### Pending docs for features not released yet
 
+* **Saved HTML snapshots keep the page's doctype and say where they
+  came from** — saved HTML files now start like a Chrome-saved page:
+  the page's `<!DOCTYPE>` plus a `<!-- saved from url=... -->` line
+  (visible in Edit HTML, removable there). Selection HTML files get the
+  page's doctype too.
+
 * **Delete a capture from the History page** — a trash button beside
   each row's Restore / Reopen deletes that capture's files and its log
   record (README's History / `log.json` sections). The confirmation

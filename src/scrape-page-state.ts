@@ -47,7 +47,7 @@
 
 export type PageScrapeResult = {
   html: string;
-  selection: { html: string; text: string } | null;
+  selection: { html: string; text: string; doctype: string } | null;
   diag: Record<string, unknown>;
 };
 
@@ -125,8 +125,19 @@ export function scrapePageStateInPage(includeHtml: boolean): PageScrapeResult {
       active && (active as Element & { shadowRoot?: ShadowRoot }).shadowRoot
     ),
   };
-  const pageHtml = includeHtml ? document.documentElement.outerHTML : '';
-  let selection: { html: string; text: string } | null = null;
+  // `outerHTML` covers only the <html> element, so the doctype has to
+  // be added back. Without it a browser opens the saved file in
+  // quirks mode and the layout can differ from the live page. The
+  // serializer reproduces the page's own doctype (including legacy
+  // public/system IDs); pages without one stay without one. The
+  // selection carries it separately, for its saved HTML file.
+  const doctype = document.doctype
+    ? new XMLSerializer().serializeToString(document.doctype)
+    : '';
+  const pageHtml = includeHtml
+    ? (doctype ? doctype + '\n' : '') + document.documentElement.outerHTML
+    : '';
+  let selection: { html: string; text: string; doctype: string } | null = null;
   if (sel && sel.rangeCount > 0) {
     const container = document.createElement('div');
     for (let i = 0; i < sel.rangeCount; i++) {
@@ -140,7 +151,7 @@ export function scrapePageStateInPage(includeHtml: boolean): PageScrapeResult {
     diag.anchorTag = anchorEl?.tagName ?? null;
     diag.anchorClass = anchorEl?.className || null;
     if (html.length > 0 || selStr.length > 0) {
-      selection = { html, text: selStr };
+      selection = { html, text: selStr, doctype };
     }
   }
   return { html: pageHtml, selection, diag };

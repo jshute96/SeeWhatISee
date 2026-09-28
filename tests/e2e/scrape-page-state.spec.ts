@@ -22,6 +22,7 @@
 //   5. `includeHtml: true` returns the page HTML; `false` returns ''.
 
 import { test, expect } from '../fixtures/extension';
+import { DOCTYPE_CASES } from './doctype-cases';
 import { scrapePageStateInPage } from '../../src/scrape-page-state';
 
 test.describe('scrapePageStateInPage', () => {
@@ -167,4 +168,21 @@ test.describe('scrapePageStateInPage', () => {
     expect(withoutHtml.html).toBe('');
     await page.close();
   });
+
+  // The page's own doctype comes through as-is (or not at all), both
+  // on the page HTML and as the selection's `doctype`.
+  for (const { name, doctype } of DOCTYPE_CASES) {
+    test(`doctype: ${name}`, async ({ extensionContext, fixtureServer }) => {
+      const page = await extensionContext.newPage();
+      await page.goto(`${fixtureServer.baseUrl}/purple.html`);
+      await page.setContent(`${doctype}<html><body><p id="p">x</p></body></html>`);
+      await page.evaluate(() => {
+        window.getSelection()!.selectAllChildren(document.getElementById('p')!);
+      });
+      const result = await page.evaluate(scrapePageStateInPage, true);
+      expect(result.html.startsWith(`${doctype ? `${doctype}\n` : ''}<html>`)).toBe(true);
+      expect(result.selection!.doctype).toBe(doctype);
+      await page.close();
+    });
+  }
 });

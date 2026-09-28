@@ -35,6 +35,7 @@
 
 import { selectionMarkdownBody } from './markdown.js';
 import { scrapePageStateInPage, type PageScrapeResult } from './scrape-page-state.js';
+import { addHtmlDoctype, addSavedFromComment } from './capture/html-header.js';
 import { maybeRecompressLargeScreenshot } from './capture/recompress.js';
 import {
   downloadArtifactComplete,
@@ -163,8 +164,8 @@ export async function captureVisible(
 /**
  * Save the full HTML of the tab the gesture happened on.
  *
- * Uses `chrome.scripting.executeScript` to grab
- * `document.documentElement.outerHTML` from the page. The result is
+ * Uses `chrome.scripting.executeScript` to grab the page's doctype +
+ * `document.documentElement.outerHTML`. The result is
  * saved as an HTML file alongside screenshots in the same download
  * directory, and recorded in log.json exactly like a
  * screenshot capture — the only difference is the filename extension.
@@ -182,11 +183,14 @@ export async function savePageContents(
 ): Promise<CaptureResult> {
   const active = await resolveCaptureTab(gestureTab, delayMs, countdownSleep);
 
+  // Shares the page-side serializer with `scrapeTabState` so both
+  // paths produce the same HTML (doctype included).
   const results = await chrome.scripting.executeScript({
     target: { tabId: active.id! },
-    func: () => document.documentElement.outerHTML,
+    func: scrapePageStateInPage,
+    args: [true],
   });
-  const html = results[0]?.result as string;
+  const html = (results[0]?.result as PageScrapeResult | undefined)?.html;
   if (!html) throw new Error('Failed to retrieve page contents');
 
   const now = new Date();
@@ -201,7 +205,10 @@ export async function savePageContents(
   // Save the HTML first, and wait for it to land: the log record is
   // downstream and shouldn't be written if the content itself failed
   // to save.
-  const downloadId = await downloadArtifactComplete(filename, htmlDataUrl(html));
+  const downloadId = await downloadArtifactComplete(
+    filename,
+    htmlDataUrl(addSavedFromComment(html, record.url)),
+  );
 
   const logDownloadId = await recordCapture(record);
 
@@ -260,7 +267,8 @@ export async function scrapeSelection(
     // has to stand alone: pass `pageUrl` so `selectionMarkdownBody`
     // can resolve relative `<a href>` / `<img src>` to absolute URLs
     // when it falls through to `htmlToMarkdown`.
-    html: scraped.selection.html,
+    // (Plus the page's doctype, so the saved file renders the same way.)
+    html: addHtmlDoctype(scraped.selection.html, scraped.selection.doctype),
     text: scraped.selection.text,
     markdown: selectionMarkdownBody(scraped.selection.html, scraped.selection.text, pageUrl),
   };
@@ -465,12 +473,12 @@ export async function scrapeTabState(
   options: { includeHtml: boolean },
 ): Promise<{
   html: string;
-  selectionRaw: { html: string; text: string } | null;
+  selectionRaw: { html: string; text: string; doctype: string } | null;
   htmlError?: string;
   selectionError?: string;
 }> {
   let html = '';
-  let selectionRaw: { html: string; text: string } | null = null;
+  let selectionRaw: { html: string; text: string; doctype: string } | null = null;
   let htmlError: string | undefined;
   let selectionError: string | undefined;
   try {
@@ -509,7 +517,10 @@ export async function scrapeTabState(
 export function buildInMemoryCapture(input: BuildInMemoryCaptureInput): InMemoryCapture {
   const capture: InMemoryCapture = {
     screenshotDataUrl: input.screenshotDataUrl,
-    html: input.html,
+    // Header lines are part of the body the Edit dialog shows (see
+    // `capture/html-header.ts`). Markdown below is derived from the
+    // raw selection, before its doctype is added.
+    html: addSavedFromComment(input.html, input.pageUrl),
     url: input.pageUrl,
     title: input.pageTitle,
     timestamp: input.timestamp.toISOString(),
@@ -519,7 +530,7 @@ export function buildInMemoryCapture(input: BuildInMemoryCaptureInput): InMemory
   };
   if (input.selectionRaw !== null) {
     capture.selections = {
-      html: input.selectionRaw.html,
+      html: addHtmlDoctype(input.selectionRaw.html, input.selectionRaw.doctype),
       text: input.selectionRaw.text,
       markdown: selectionMarkdownBody(
         input.selectionRaw.html,

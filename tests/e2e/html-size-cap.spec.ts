@@ -353,7 +353,11 @@ test.describe('html-size-cap', () => {
     )) as { path?: string; error?: string };
     expect(result.error).toBeUndefined();
     const onDisk = fs.readFileSync(result.path!, 'utf8');
-    expect(onDisk.startsWith('<html')).toBe(true);
+    // Starts like a Chrome-saved page: the page's doctype, then the
+    // `saved from url=` comment.
+    expect(onDisk).toMatch(
+      /^<!DOCTYPE html>\n<!-- saved from url=\(\d{4}\)http[^\n]*purple\.html -->\n<html/,
+    );
     // The filler went in as `textContent`, so it comes back out
     // entity-escaped — which is exactly what the browser serialized
     // and therefore what the file should hold.

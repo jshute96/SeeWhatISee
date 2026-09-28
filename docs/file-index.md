@@ -243,6 +243,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 |------|-------------|
 | `src/capture/types.ts` | Wire-format types and constants shared across the capture pipeline (`CaptureRecord`, `InMemoryCapture`, `SelectionFormat`, `SELECTION_EXTENSIONS`, `noSelectionContentMessage`, …) — imported by `capture.ts`, the sibling submodules, and SW consumers without going through the hub |
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
+| `src/capture/html-header.ts` | Header lines for captured HTML: Chrome's `saved from url=` comment on page HTML, the page's doctype on selection HTML |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
 | `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding and probing those files again |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the `history-*.json` files older records move into, and the last-capture session note |
@@ -310,7 +311,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/fixtures/pages/red-pixel.webp` | 200x200 solid-red WEBP — used by tests that exercise the "non-PNG/JPG source bakes to PNG" branch |
 | `tests/fixtures/pages/corrupt.png` | Text file named `.png` — passes the MIME-prefix check but fails image decode; used by the upload-spec decode-validation test |
 | `tests/e2e/screenshot.spec.ts` | E2E tests for `captureVisible` (basic capture, delay, navigate-during-delay, tab-switch, deleted / wiped log recovery) |
-| `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + log file verification) |
+| `tests/e2e/html-snapshot.spec.ts` | E2E test for `savePageContents` (HTML capture + log file verification) and the doctype / `saved from url=` headers on saved HTML |
 | `tests/e2e/capture-with-details.spec.ts` | E2E for the Capture page flow core — save-option matrix (PNG/HTML/URL combos) and tab positioning/focus-return |
 | `tests/e2e/capture-details-copy.spec.ts` | E2E for the Capture page's copy-filename buttons and per-tab download-cache semantics (including drawing-invalidates-cache) |
 | `tests/e2e/capture-details-edit.spec.ts` | E2E for the edit-html / edit-selection dialogs, Preview toggle / sandboxed iframe, and scrape / screenshot failure UX |
@@ -335,6 +336,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/e2e/capture-zoom.spec.ts` | E2E for zoom sizing (1× = source-CSS-px parity via `naturalSize / DPR`), Fit cap, stroke-width + DPR-stub regressions, continuous wheel / pinch / key zoom with cursor anchoring, arrow-key fine pan, pan snap, Zoom-popover |
 | `tests/e2e/capture-gesture-tab.spec.ts` | E2E that a capture targets the gesture's tab, not the last-focused window's, when the two disagree |
 | `tests/e2e/toolbar-dispatch.spec.ts` | E2E for toolbar click routing — `handleActionClick`, with-selection dispatch, default-id migration, `copyLastSelectionFilename` |
+| `tests/e2e/doctype-cases.ts` | Shared doctype variants (HTML5, none, legacy) for the HTML capture specs |
 | `tests/e2e/details-helpers.ts` | Shared helpers for the Capture page flow specs — flow open, capture submit, editor read/write, clipboard + SW/page download spies |
 | `tests/e2e/scrape-page-state.spec.ts` | Direct coverage for `scrapePageStateInPage` — real / no / CodeMirror-style fake / empty selections, `includeHtml` flag |
 | `tests/e2e/more-captures.spec.ts` | E2E for the More-submenu shortcuts: `captureUrlOnly` (URL-only record) and `captureAll` (PNG + HTML + selection-if-any + record) |
@@ -394,6 +396,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |
+| `tests/unit/html-header.test.mjs` | Unit tests for `src/capture/html-header.ts` — comment placement, length prefix, `--` escaping, selection doctype |
 | `tests/unit/packed-text.test.mjs` | Unit tests for `src/capture/packed-text.ts` — pack/skip thresholds, declining incompressible bodies, UTF-8 round-trip, size helpers |
 | `tests/unit/session-quota.test.mjs` | Unit tests for `src/background/session-quota.ts` — `estimateRecordBytes`, `formatBytes`, `formatQuotaError`, `checkSessionStorageRoom` (with a `chrome.storage.session` stub) |
 | `tests/unit/watch-status.test.mjs` | Unit tests for `src/capture/watch-status.ts` — status-file parsing, lease expiry, the stop request's contents |
