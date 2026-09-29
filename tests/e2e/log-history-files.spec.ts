@@ -18,6 +18,7 @@
 // log, and there is nowhere else to seed it.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { test, expect } from '../fixtures/extension';
 import {
   waitForDownloadPath,
@@ -89,12 +90,20 @@ test('a capture past the cap flushes the oldest entries to a history file', asyn
     .filter((id) => id !== result.logDownloadId && id !== result.downloadId);
 
   const historyFiles: string[] = [];
+  const historyPaths: string[] = [];
   for (const id of otherIds) {
-    const path = await waitForDownloadPath(sw, id);
-    const text = fs.readFileSync(path, 'utf8');
-    if (text.includes(`${SEED_TITLE} 0`)) historyFiles.push(text);
+    const filePath = await waitForDownloadPath(sw, id);
+    const text = fs.readFileSync(filePath, 'utf8');
+    if (text.includes(`${SEED_TITLE} 0`)) {
+      historyFiles.push(text);
+      historyPaths.push(filePath);
+    }
   }
   expect(historyFiles).toHaveLength(1);
+
+  // ---- the history index names it ----------------------------------
+  const indexPath = path.join(path.dirname(logPath), 'history-files.json');
+  expect(JSON.parse(fs.readFileSync(indexPath, 'utf8'))).toEqual([path.basename(historyPaths[0])]);
 
   const movedOut = parseNdjson(historyFiles[0]);
   expect(movedOut).toHaveLength(LOG_HISTORY_BATCH);
@@ -109,7 +118,7 @@ test('a capture past the cap flushes the oldest entries to a history file', asyn
 });
 
 // The read side of the same story: the file the flush wrote comes back
-// through the History page. `listHistoryFiles` finds it by listing the
+// through the History page. `findHistoryFiles` finds it by listing the
 // capture directory over `file://` (the harness grants file access to
 // a `--load-extension` build), so this is the one place *Load older
 // captures* is exercised with something real to load.

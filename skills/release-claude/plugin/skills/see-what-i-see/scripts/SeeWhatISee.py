@@ -14,8 +14,10 @@ files in the source dir that no capture record references.
 
 History spans more than log.json: the extension keeps only the most
 recent captures there and moves older ones into `history-*.json` files
-beside it (see src/capture/log-store.ts). --all reads those history
-files oldest-first and then log.json. --limit N instead walks from
+beside it (see src/capture/log-store.ts), and lists them in
+`history-files.json`, which can also name files elsewhere under the
+source dir. --all reads those history files oldest-first and then
+log.json. --limit N instead walks from
 log.json backwards through them and stops as soon as it has N records,
 so it opens only the files it needs. Either way the emitted
 stream is in capture order, oldest first. --search / --filter_site /
@@ -575,6 +577,52 @@ def read_lines(path, fatal=False):
 # See history_files() for why only stamp-shaped names count.
 HISTORY_FILE_NAME = re.compile(r"history-[\d-]*\.json")
 
+# The history index: a JSON array of history file paths relative to the
+# source dir, written by the extension on every flush. It keeps history
+# files findable where the extension can't list the directory; see
+# docs/log-consistency.md -> "The history index".
+HISTORY_INDEX_FILE = "history-files.json"
+
+
+def history_index_entry(entry):
+    """True if `entry` is a usable history index entry.
+
+    A `.json` path relative to the source dir, `/`-separated. Subdirs
+    are allowed; `..`, `.`, empty segments, a leading `/`, backslashes
+    and `:` are not, so an entry can't point outside the dir (on
+    Windows, `D:x.json` names another drive). No directory may be named
+    SeeWhatISee, and log.json and the index are refused in any case.
+    The extension applies the same rule (`isHistoryIndexEntry` in
+    src/capture/downloads.ts); keep the two in step.
+    """
+    if not isinstance(entry, str) or not entry.endswith(".json"):
+        return False
+    if "\\" in entry or ":" in entry or entry.startswith("/"):
+        return False
+    segs = entry.split("/")
+    if any(seg in ("", ".", "..") for seg in segs):
+        return False
+    if any(seg.lower() == "seewhatisee" for seg in segs[:-1]):
+        return False
+    return entry.lower() not in ("log.json", HISTORY_INDEX_FILE)
+
+
+def history_index(source_dir):
+    """The history index's valid entries, or [] if it's missing or bad.
+
+    Lenient, like every reader here: the file sits in the user's
+    Downloads folder and may be hand-edited.
+    """
+    try:
+        with open(os.path.join(source_dir, HISTORY_INDEX_FILE),
+                  encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [entry for entry in value if history_index_entry(entry)]
+
 
 def history_files(source_dir, log_path):
     """The files holding the capture history, oldest first.
@@ -588,15 +636,22 @@ def history_files(source_dir, log_path):
     at an arbitrary spot in that order. The extension's directory
     listing applies the same rule (`HISTORY_FILE_NAME` in
     src/capture/downloads.ts); keep the two in step.
+
+    The entries of the history index that exist are added to what the
+    scan finds. They sort by file name, not path, so one in a subdir
+    takes its place by stamp; a name that isn't stamp-shaped lands
+    wherever it sorts.
     """
     try:
         names = os.listdir(source_dir)
     except OSError:
         names = []
-    older = [name for name in names
-             if HISTORY_FILE_NAME.fullmatch(name)]
-    older.sort()
-    files = [os.path.join(source_dir, name) for name in older]
+    older = {name for name in names if HISTORY_FILE_NAME.fullmatch(name)}
+    for entry in history_index(source_dir):
+        if os.path.isfile(os.path.join(source_dir, *entry.split("/"))):
+            older.add(entry)
+    ordered = sorted(older, key=lambda entry: (entry.rsplit("/", 1)[-1], entry))
+    files = [os.path.join(source_dir, *entry.split("/")) for entry in ordered]
     if os.path.isfile(log_path):
         files.append(log_path)
     return files
@@ -899,7 +954,7 @@ def list_history(opts, emitter, source_dir, log_path):
 def managed_file(name):
     """True for a file the extension or this script keeps in the source dir
     for its own bookkeeping, rather than a capture's artifact."""
-    return (name == "log.json"
+    return (name in ("log.json", HISTORY_INDEX_FILE)
             or HISTORY_FILE_NAME.fullmatch(name) is not None
             or name in (STATUS_FILE, PID_FILE, STOP_FILE)
             or (name.startswith(STATUS_FILE + ".") and name.endswith(".tmp")))
@@ -931,9 +986,11 @@ def list_unlinked_files(source_dir, log_path):
                         artifact.get("filename"), str):
                     referenced.add(artifact["filename"])
     for name in sorted(names):
-        if name in referenced or managed_file(name):
-            continue
         path = os.path.join(source_dir, name)
+        # `path in files` covers a history file the index lists under a
+        # name of its own.
+        if name in referenced or managed_file(name) or path in files:
+            continue
         if os.path.isfile(path):
             print(path)
 

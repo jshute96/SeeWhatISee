@@ -38,18 +38,20 @@ import { type CaptureRecord } from './types.js';
 import {
   ArtifactWriteError,
   LOG_FILE_NAME,
-  basename,
   downloadArtifactComplete,
   eraseDownloadRecord,
+  HISTORY_INDEX_FILE_NAME,
   captureFileExists,
-  historyFilesAmong,
-  historyFilesFromDownloads,
+  findHistoryFiles,
+  historyIndexEntryOf,
   isLogFileName,
   joinCapturePath,
   listCaptureDirectory,
   peekCaptureDirectory,
   pruneOldLogRecords,
   readCaptureFileText,
+  readHistoryIndex,
+  serializeHistoryIndex,
 } from './downloads.js';
 import {
   parseLogLine,
@@ -112,7 +114,7 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
     // a duplicated record.
     const logFiles = [
       ...(await disk.has(LOG_FILE_NAME) ? [LOG_FILE_NAME] : []),
-      ...(await disk.historyFiles()).map(basename),
+      ...await disk.historyFiles(),
     ];
     const holders: FileHits[] = [];
     for (const name of logFiles) {
@@ -148,7 +150,10 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
     const removedFiles: string[] = [];
     /** Download records to forget once the log no longer names the files. */
     const staleRecordIds: number[] = [];
-    const toDelete = [...new Set(artifactNames(record).filter(isBareCaptureFileName))];
+    // Nor is a history file taken for a capture file: the index can list
+    // one under any name, which `isLogFileName` can't know.
+    const toDelete = [...new Set(artifactNames(record).filter(isBareCaptureFileName))]
+      .filter((name) => !logFiles.includes(name));
     for (const name of toDelete) {
       const records = await downloadRecordsFor(joinCapturePath(directory, name));
       staleRecordIds.push(...records.map((r) => r.id));
@@ -206,6 +211,16 @@ export async function deleteCapture(record: CaptureRecord): Promise<DeleteOutcom
           } catch (err) {
             console.info('[SeeWhatISee] could not delete the emptied history file:', err);
           }
+          // After the file, and only once it is gone: an entry for a
+          // file that is still there keeps it findable.
+          disk.refresh();
+          if (!await disk.has(holder.name)) {
+            try {
+              await dropFromHistoryIndex(directory, holder.name);
+            } catch (err) {
+              console.info('[SeeWhatISee] could not update the history index:', err);
+            }
+          }
         }
       }
     }
@@ -230,7 +245,7 @@ interface DirectoryView {
   has(name: string): Promise<boolean>;
   /** Which of `names` are still there. */
   stillThere(names: string[]): Promise<string[]>;
-  /** Absolute paths of the `history-*.json` files, newest first. */
+  /** The history files (`findHistoryFiles`), relative to the directory, newest first. */
   historyFiles(): Promise<string[]>;
   /** Forget what was read: something on disk just changed. */
   refresh(): void;
@@ -243,18 +258,18 @@ interface DirectoryView {
  * files we have no download record for. Falls back to a probe per file
  * (`captureFileExists`) where the listing is denied, which is
  * permanent on ChromeOS — see `docs/chrome-extension.md` → "Directory
- * listings can be denied". The fallback's blind spot is history files
- * (`historyFilesFromDownloads`): a duplicate record in one we can't
- * see survives the delete and comes back on reload.
+ * listings can be denied". History files come from `findHistoryFiles`
+ * either way, which adds the history index to whichever of the two
+ * it has.
  *
  * A listing failure is therefore not fatal here. Failing to *read* a
  * log file is, and the caller reports that per path.
  *
- * Its second blind spot is a file that exists but can't be read: the
- * probe can't tell that from a file that is gone (see
+ * The fallback's blind spot is a file that exists but can't be read:
+ * the probe can't tell that from a file that is gone (see
  * `captureFileExists`), so the delete takes it for already-deleted,
  * leaves it on disk and drops its record anyway. Listed in `TODO.md`
- * → Known issues with the first.
+ * → Known issues.
  *
  * One answer is read per round: the whole point of the two passes is
  * to see what deleting the files changed, so `refresh()` is called
@@ -285,9 +300,14 @@ async function openDirectory(directory: string): Promise<DirectoryView> {
   };
   const stillThere = async (names: string[]): Promise<string[]> => {
     const listedNames = await listing();
-    if (listedNames !== null) return names.filter((name) => listedNames.has(name));
     const present: string[] = [];
     for (const name of names) {
+      // The listing covers the directory itself; a history file in a
+      // subdirectory (from the history index) is probed either way.
+      if (listedNames !== null && !name.includes('/')) {
+        if (listedNames.has(name)) present.push(name);
+        continue;
+      }
       let there = probed.get(name);
       if (there === undefined) {
         there = await captureFileExists(directory, name);
@@ -300,17 +320,31 @@ async function openDirectory(directory: string): Promise<DirectoryView> {
   return {
     has: async (name) => (await stillThere([name])).length > 0,
     stillThere,
-    historyFiles: async () => {
-      const names = await listing();
-      return names !== null
-        ? historyFilesAmong(directory, names)
-        : await historyFilesFromDownloads(directory);
-    },
+    historyFiles: async () => (await findHistoryFiles(directory, await listing()))
+      .map((path) => historyIndexEntryOf(directory, path)),
     refresh: () => {
       listed = null;
       probed = new Map();
     },
   };
+}
+
+/**
+ * Take a deleted history file out of the history index, so readers
+ * stop probing for it. Best-effort, like the delete of the file
+ * itself: an entry for a file that's gone is skipped by every reader.
+ * An index that can't be read is left alone rather than rewritten
+ * from nothing.
+ */
+async function dropFromHistoryIndex(directory: string, name: string): Promise<void> {
+  const read = await readHistoryIndex(directory);
+  if (read.kind !== 'entries' || !read.entries.includes(name)) return;
+  const entries = read.entries;
+  const downloadId = await writeLogFile(
+    HISTORY_INDEX_FILE_NAME,
+    serializeHistoryIndex(entries.filter((entry) => entry !== name)),
+  );
+  await pruneOldLogRecords(downloadId, HISTORY_INDEX_FILE_NAME);
 }
 
 /**

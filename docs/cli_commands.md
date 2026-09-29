@@ -199,7 +199,10 @@ The backend actions for anything beyond the latest capture. The
 - **What they read.** The whole history, not just `log.json`: the
   extension keeps recent captures there and flushes older batches to
   `history-<timestamp>.json` history files beside it (see
-  [History page](history-page.md)).
+  [History page](history-page.md)). The history index,
+  `history-files.json`, lists them too, and its entries that exist
+  are read along with what the directory scan finds. They can be in
+  a subdirectory or have names of their own.
 - **Order.** History files oldest first, then `log.json` — one JSONL record
   per line, capture order, same path rewriting (and `--copy-to-dir` /
   `--print_selection` handling) as `--get-latest`.
@@ -210,6 +213,8 @@ The backend actions for anything beyond the latest capture. The
     The stamp comes from the clock, not from a record inside the file:
     a record's timestamp is pinned when the capture is taken, so it
     can be older than one already in an earlier file.
+  - The sort is on the file's own name, not its path, so a history
+    file in a subdirectory takes its place by stamp.
 - **Reading only what's needed.** `--limit N` walks the files from the
   newest end and stops as soon as it has N matches, so it never opens
   history files it wouldn't emit from. `--all` reads everything, by
@@ -344,9 +349,10 @@ track of, e.g. ones from before history files existed.
   artifact.
 - Prints every regular file in the source dir that isn't referenced,
   as sorted absolute paths, one per line.
-- Skips the files kept for bookkeeping: `log.json`, history files, and
-  the watch files (`.watch-status.json` and its temp files,
-  `.watch.pid`, `watch-stop.json`).
+- Skips the files kept for bookkeeping: `log.json`, history files
+  (including ones the history index lists under other names), the
+  history index, and the watch files (`.watch-status.json` and its
+  temp files, `.watch.pid`, `watch-stop.json`).
 - Subdirectories are neither listed nor descended into.
 - No `log.json` and no history files is an error (exit 2): every file
   would read as unlinked, which more likely means a wrong directory.

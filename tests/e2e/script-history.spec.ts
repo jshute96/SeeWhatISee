@@ -281,6 +281,36 @@ test.describe('SeeWhatISee.py history listing', () => {
     expect(run(['--get-latest', '--directory', tmpDir]).exitCode).not.toBe(0);
   });
 
+  test('history files named in the index are read too, sorted by file name', () => {
+    // The index can name files the directory scan wouldn't pick up: a
+    // subdirectory, or a name of the user's own. A missing file and an
+    // unsafe path are skipped.
+    fs.mkdirSync(path.join(tmpDir, 'old'));
+    writeFileOfRecords('old/history-20260409-120001-000.json', [rec(0)]);
+    writeFileOfRecords('history-20260409-120002-000.json', [rec(1)]);
+    writeFileOfRecords('mine.json', [rec(2)]);
+    writeFileOfRecords('log.json', [rec(3)]);
+    fs.writeFileSync(path.join(tmpDir, 'history-files.json'), JSON.stringify([
+      'old/history-20260409-120001-000.json',
+      'history-20260409-120002-000.json',
+      'history-20260409-120009-000.json',
+      '../escape.json',
+      'mine.json',
+    ]));
+    const r = run(['--all', '--directory', tmpDir]);
+    expect(r.stderr).toBe('');
+    expect(parseAll(r.stdout).map((x) => x.url)).toEqual([0, 1, 2, 3].map((n) => `http://example.com/page${n}`));
+  });
+
+  test('a malformed index is ignored', () => {
+    writeFileOfRecords('history-20260409-120001-000.json', [rec(0)]);
+    writeFileOfRecords('log.json', [rec(1)]);
+    fs.writeFileSync(path.join(tmpDir, 'history-files.json'), '{not json');
+    const r = run(['--all', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(parseAll(r.stdout)).toHaveLength(2);
+  });
+
   test('tombstones are listed by no history action', () => {
     // A capture deleted from the History page leaves
     // `{ timestamp, deleted: true }` in log.json (and nothing at all in
@@ -985,7 +1015,7 @@ test.describe('SeeWhatISee.py --list-unlinked-files', () => {
       'screenshot-20260400.png', 'contents-0.html', 'screenshot-20260401.png',
       'selection-1.md', 'screenshot-old.png', 'notes.txt', 'history-notes.json',
       '.watch-status.json', '.watch-status.json.123.tmp', '.watch.pid',
-      'watch-stop.json',
+      'watch-stop.json', 'history-files.json',
     ]) touch(name);
     fs.mkdirSync(path.join(tmpDir, 'backup'));
 
@@ -995,6 +1025,31 @@ test.describe('SeeWhatISee.py --list-unlinked-files', () => {
     expect(r.stdout.trim().split('\n')).toEqual(
       ['history-notes.json', 'notes.txt', 'screenshot-old.png']
         .map((name) => path.join(tmpDir, name)));
+  });
+
+  test('a history file the index lists under its own name is not unlinked', () => {
+    writeFileOfRecords('mine.json', [rec(0)]);
+    writeFileOfRecords('log.json', [rec(1)]);
+    fs.writeFileSync(path.join(tmpDir, 'history-files.json'), JSON.stringify(['mine.json']));
+    touch('screenshot-20260400.png');
+    touch('screenshot-20260401.png');
+    const r = run(['--list-unlinked-files', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+  });
+
+  test('files named by a history file in a subdirectory are not unlinked', () => {
+    fs.mkdirSync(path.join(tmpDir, 'old'));
+    writeFileOfRecords('old/history-20260409-120001-000.json', [rec(0)]);
+    writeFileOfRecords('log.json', [rec(1)]);
+    fs.writeFileSync(path.join(tmpDir, 'history-files.json'),
+      JSON.stringify(['old/history-20260409-120001-000.json']));
+    touch('screenshot-20260400.png');
+    touch('screenshot-20260401.png');
+    touch('stray.png');
+    const r = run(['--list-unlinked-files', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.trim()).toBe(path.join(tmpDir, 'stray.png'));
   });
 
   test('prints nothing when every file is referenced', () => {

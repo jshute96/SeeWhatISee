@@ -37,6 +37,9 @@ filenames.
   it's written, with one deliberate exception: a retried flush
   overwrites the file its abandoned attempt left behind (see
   [architecture.md → History files](architecture.md#history-files)).
+- **The history index** (`history-files.json`) — the history files
+  the flushes have written, so they can be found without a directory
+  listing. See [The history index](#the-history-index).
 - **The session note** (`lastCaptureFiles` in `chrome.storage.session`)
   — the filenames of the most recent capture, written after its
   record lands. It is what the toolbar's Copy-last-… entries copy,
@@ -123,10 +126,68 @@ missing.** A cleared download history and a fresh install look
 identical from in here — which is why the directory, not the record,
 is what a read is keyed on.
 
+## The history index
+
+`history-files.json`, beside `log.json`: a JSON array of the history
+files, as paths relative to the capture directory.
+
+- **Why.** Where the directory listing is denied (ChromeOS; see
+  chrome-extension.md → Directory listings can be denied), the only
+  other record of which history files exist is Chrome's download
+  history. Once the user clears it, those files are invisible to
+  *Load older captures* and to a delete's duplicate scan
+  ([#35](https://github.com/jshute96/SeeWhatISee/issues/35)).
+- **Readers take a union** (`findHistoryFiles` in `downloads.ts`):
+  - The History page and a delete: the index plus the listing, or,
+    with no listing, the index plus the download records.
+  - `SeeWhatISee.py`: the index plus its own directory scan.
+  - An entry whose file isn't there is skipped, not an error.
+- **Entries** are `/`-separated relative paths ending in `.json`.
+  - Subdirectories are allowed, so the history could be rearranged
+    later. `..`, `.`, empty segments, a leading `/`, backslashes and
+    `:` are not; an entry can't point outside the directory.
+  - No directory in an entry may be named `SeeWhatISee`: a write
+    landing in one would be taken for the capture directory.
+  - Any name is allowed, so a user can hand-list a file of their own.
+    `log.json` and the index itself are refused, in any case, since
+    Windows and macOS filenames aren't case-sensitive.
+  - A history file in a subdirectory is read, rewritten and deleted
+    like any other. The parts that assumed a file sits directly in
+    the capture directory take a relative path instead:
+    - The landing check (`landedCaptureDirectory`) walks up as many
+      levels as the name has segments.
+    - `joinCapturePath` converts the entry's `/` to the directory's
+      separator, so a Windows path matches Chrome's download records.
+    - A delete probes such a file rather than asking the listing,
+      which only covers the capture directory itself.
+  - Nothing the extension writes goes into a subdirectory on its own;
+    they only appear if the user moves files there and lists them.
+- **Order.** Readers sort by file name, then path, so a
+  `history-<stamp>.json` takes its place by stamp wherever it lives.
+  A name that isn't stamp-shaped lands wherever it sorts. The array's
+  own order doesn't matter.
+- **Written by every flush**, after the history files and before the
+  `log.json` trim (see [Write ordering](#write-ordering)).
+  - Read-modify-write: the old entries stay, in their order, whether
+    or not their files were found. The new files are appended, plus
+    any history file the listing or the download records found that
+    the index was missing.
+  - A failed write is logged and the capture carries on: the history
+    files are on disk, and the next flush adds what was missed.
+  - A malformed index (not a JSON array, most likely a hand edit with
+    a typo) is left alone rather than overwritten. Readers ignore it
+    until it's fixed.
+  - So is an index the listing shows is there but that can't be read.
+- **Only a delete removes an entry**: the one for a history file it
+  emptied and deleted.
+- **Files that predate the index** are only in it if a flush can find
+  them (in the listing, or the download records) when it runs.
+
 ## Write ordering
 
-A capture writes any history files first, then `log.json`, then the
-session note — each step only after the one before it has landed.
+A capture writes any history files first, then the history index, then
+`log.json`, then the session note — each step only after the one
+before it has landed.
 
 - The service worker can be killed between any two steps, so the order
   decides what a half-finished capture leaves behind: a history file
@@ -379,6 +440,15 @@ here or it belongs fixed.
     log. Checking the file directly can't help: a missing file and an
     unreadable one fail the same way. Tracked in `TODO.md` → Known
     issues.
+- **An unreadable history index, where the directory can't be listed.**
+  Missing and unreadable look the same there (with a listing, the
+  flush can tell, and leaves the index alone), so the flush writes a
+  fresh index from the history files it can find. Entries only the
+  old index knew about are lost from it.
+  - Needs the index to exist but fail to read, the download history
+    to have been cleared since those files were written, and a flush
+    in that window.
+  - Nothing better is possible without a way to tell the two apart.
 - **A capture directory that isn't ours.** Pointing Chrome's download
   directory somewhere that already contains a `SeeWhatISee/log.json`
   written by another profile or a script reads as *the* log: its
@@ -426,9 +496,8 @@ from a row) runs `deleteCapture` in `src/capture/delete-capture.ts`.
 - The delete checks disk with the directory listing. Where the
   listing is denied (`openDirectory` in `delete-capture.ts`):
   - Each file is checked by fetching it.
-  - The history files to scan come from the download records, so a
-    duplicate record in one Chrome has no record of survives the
-    delete.
+  - The history files to scan come from the download records and the
+    history index.
   - A file that exists but can't be read looks deleted, so it's left
     on disk while its record goes.
 - How: `chrome.downloads.removeFile` on the download record Chrome
@@ -475,7 +544,8 @@ from a row) runs `deleteCapture` in `src/capture/delete-capture.ts`.
   emits the flag, so re-serializing `log.json` can't strip it. They
   count against the cap and take a slot in a batch.
 - A history file the deletion leaves with no records is deleted (the
-  same way a capture file is); an ordinary rewrite otherwise.
+  same way a capture file is), and its entry leaves the history index;
+  an ordinary rewrite otherwise.
 - Every log file is scanned for the record, not only the one the page
   read it from — the same record can sit in `log.json` *and* a history
   file (a flush whose `log.json` trim never landed), and the History

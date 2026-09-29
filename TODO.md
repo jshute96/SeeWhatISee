@@ -119,13 +119,11 @@ What it costs:
 ## Known issues
 
 * **ChromeOS won't let the extension list the capture directory**
-  ([#35](https://github.com/jshute96/SeeWhatISee/issues/35);
-  `docs/chrome-extension.md` → Directory listings can be denied).
-  Files in it read fine. The fallbacks leave three gaps:
-  * History files Chrome has no download record for are invisible
-    (copied in from another profile, or the user cleared download
-    history). *Load older captures* won't offer them, and a delete
-    won't find a duplicate record in one.
+  (`docs/chrome-extension.md` → Directory listings can be denied).
+  Files in it read fine. The history index (`history-files.json`)
+  fixed the gap that was actually seen, history files going missing
+  ([#35](https://github.com/jshute96/SeeWhatISee/issues/35)). These
+  speculative gaps remain, not seen in practice:
   * A capture file that exists but can't be read looks deleted, so a
     delete leaves the file and removes its record.
   * A failed read of `log.json` always looks like the user deleted
@@ -135,6 +133,10 @@ What it costs:
 ## Documentation
 
 ### Pending docs for features not released yet
+
+* **Older captures stay findable on ChromeOS after clearing download
+  history** — the extension now keeps a `history-files.json` index of
+  its history files in the capture folder.
 
 * **Saved HTML snapshots keep the page's doctype and say where they
   came from** — saved HTML files now start like a Chrome-saved page:

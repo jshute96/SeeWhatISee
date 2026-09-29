@@ -304,6 +304,9 @@ Every record has `timestamp` and `url`, plus optional fields:
   Once the log goes over the cap, the oldest 50 are written to a
   **history file** — `history-<timestamp>.json` beside `log.json` —
   and dropped from it.
+- Each flush also records the new file in the **history index**,
+  `history-files.json`, so the files can be found where the directory
+  can't be listed (log-consistency.md → The history index).
 - So the full capture history lives on disk while no single write
   grows without bound. Steady-state cost per capture is still one
   `log.json` rewrite; the extra file lands once per 50 captures.
@@ -331,9 +334,9 @@ Every record has `timestamp` and `url`, plus optional fields:
     are unaffected.
   - `SeeWhatISee.py --all` / `--limit N` read the history files too,
     so they see the whole history rather than that window. They
-    are globbed from the download dir and read in name order
-    (= chronological), then `log.json` last; `--limit` walks that
-    list from the newest end and stops once it has enough.
+    are globbed from the download dir, plus the index's entries, and
+    read in name order (= chronological), then `log.json` last; `--limit`
+    walks that list from the newest end and stops once it has enough.
   - `SeeWhatISee.py --after TIMESTAMP` replays from `log.json`, so
     its catch-up window shrinks to as few as 51 records right
     after a flush. An older timestamp falls back to plain watching

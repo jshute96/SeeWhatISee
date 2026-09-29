@@ -24,12 +24,19 @@
 import { type CaptureRecord } from './types.js';
 import {
   HISTORY_FILE_PREFIX,
+  HISTORY_INDEX_FILE_NAME,
   LOG_FILE_NAME,
   basename,
   downloadArtifactComplete,
+  findHistoryFiles,
+  historyIndexEntries,
+  historyIndexEntryOf,
   jsonDataUrl,
-  listHistoryFiles,
+  listCaptureDirectory,
   pruneOldLogRecords,
+  readHistoryIndex,
+  serializeHistoryIndex,
+  type HistoryIndexRead,
 } from './downloads.js';
 import {
   LogWriteFailedError,
@@ -403,11 +410,12 @@ function uniqueTimestamp(record: CaptureRecord, stored: CaptureRecord[]): void {
  *
  * ## Ordering
  *
- * History files, then `log.json`, then the session note. Each step
- * waits for the one before it to land, so a worker killed midway
- * leaves the files consistent: a history file with no matching trim
- * is retried (see the pins), and the note is only ever set for a
- * record that reached the file.
+ * History files, then the history index (`updateHistoryIndex`), then
+ * `log.json`, then the session note. Each step waits for the one
+ * before it to land, so a worker killed midway leaves the files
+ * consistent: a history file with no matching trim is retried (see
+ * the pins), and the note is only ever set for a record that reached
+ * the file.
  *
  * ## Flushing
  *
@@ -472,17 +480,22 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
     let mintFrom = now;
     let flushed = 0;
     const usedNames = new Set<string>();
+    // What the index write after the drain starts from, or `null` to
+    // leave the index alone (see `indexBase`); and the history files
+    // found on disk, as index entries (relative to the directory).
+    let indexStart: string[] | null = null;
+    const foundEntries: string[] = [];
     // Names pinned by an earlier capture whose flush wrote the file
     // but didn't get to finish. Empty in the steady state; see
     // `PENDING_HISTORY_STORAGE_KEY`.
     let pendingNames: Record<string, string> = {};
-    // Seeded with the history files already on disk — the directory
-    // listed over `file://`, the same index the History page uses, so
-    // it sees every file present rather than only the ones Chrome
-    // still has download records for. Only paid when a flush is
+    // Seeded with the history files already on disk — the same
+    // answer the History page uses (`findHistoryFiles`): the directory
+    // listed over `file://` where it can be, else our download records,
+    // plus the history index either way. Only paid when a flush is
     // actually about to happen — once per batch, not once per capture.
     //
-    // Its own try/catch, *outside* the write loop's: this listing is
+    // Its own try/catch, *outside* the write loop's: this lookup is
     // only a collision guard, so failing it must not skip the drain.
     // Sharing the loop's catch would leave the log permanently over
     // its cap, with every later capture repeating the same failure and
@@ -492,12 +505,22 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
         // `fresh` has no file and never flushes (`kept` is one
         // record), so the directory is the one the file was read from.
         if (state.kind === 'contents') {
-          for (const path of await listHistoryFiles(state.directory)) {
+          const directory = state.directory;
+          const indexRead = await readHistoryIndex(directory);
+          let listing: Set<string> | null = null;
+          try {
+            listing = await listCaptureDirectory(directory);
+          } catch (err) {
+            console.info('[SeeWhatISee] could not list the capture directory; using the download records:', err);
+          }
+          indexStart = indexBase(indexRead, listing);
+          for (const path of await findHistoryFiles(directory, listing, historyIndexEntries(indexRead))) {
+            foundEntries.push(historyIndexEntryOf(directory, path));
             usedNames.add(basename(path));
           }
         }
       } catch (err) {
-        console.info('[SeeWhatISee] could not list existing history files; names unseeded:', err);
+        console.info('[SeeWhatISee] could not find existing history files; names unseeded:', err);
       }
       // Same "only a guard" reasoning as the listing above: without
       // it a retry writes a second copy of a batch, which is bad, but
@@ -532,6 +555,8 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
     // for batches nothing can re-derive any more — those appear in no
     // `settledKeys` and would otherwise linger forever.
     let drainClean = true;
+    /** The history files this drain wrote, oldest first. */
+    const landedNames: string[] = [];
     try {
       while (kept.length > LOG_MAX_ENTRIES) {
         const batch = kept.slice(0, batchSize);
@@ -563,6 +588,7 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
         await writeJsonFileComplete(name, serializeLog(batch));
         kept = kept.slice(batchSize);
         settledKeys.push(key);
+        landedNames.push(name);
       }
     } catch (err) {
       // Expected-and-handled: the entries stay put and the next
@@ -571,6 +597,9 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
       // an abandoned drain leaves a coherent list either way.
       drainClean = false;
       console.info('[SeeWhatISee] history file write failed; retrying next capture:', err);
+    }
+    if (landedNames.length > 0 && indexStart !== null) {
+      await updateHistoryIndex(indexStart, [...foundEntries].reverse(), landedNames);
     }
     // Verbatim append unless a batch actually landed — see "The append
     // is verbatim" above. `settledKeys`, not `flushed`: the latter
@@ -614,6 +643,71 @@ export async function recordCapture(record: CaptureRecord): Promise<number> {
     }
     return downloadId;
   });
+}
+
+/**
+ * The entries a flush's index write starts from, or `null` to leave the
+ * index alone this time.
+ *
+ * - A readable index: its entries.
+ * - A malformed one: left alone. It is most likely a hand edit with a
+ *   typo, and rewriting it would throw away every entry nothing else
+ *   can find. Readers ignore it until it's fixed.
+ * - An unreadable one the listing shows is there: left alone too, for
+ *   the same reason. The next flush tries again.
+ * - An unreadable one with no listing to say otherwise: taken as
+ *   missing and rebuilt from what was found. That is the first write
+ *   on a fresh profile, but also what an unreadable index gets where
+ *   the directory can't be listed. See `docs/log-consistency.md` →
+ *   "Blind spots we accept".
+ */
+function indexBase(read: HistoryIndexRead, listing: Set<string> | null): string[] | null {
+  if (read.kind === 'entries') return read.entries;
+  if (read.kind === 'malformed') {
+    console.info(`[SeeWhatISee] not updating ${HISTORY_INDEX_FILE_NAME} until it is valid JSON again`);
+    return null;
+  }
+  if (listing?.has(HISTORY_INDEX_FILE_NAME)) {
+    console.info(`[SeeWhatISee] ${HISTORY_INDEX_FILE_NAME} is there but could not be read; not updating it`);
+    return null;
+  }
+  return [];
+}
+
+/**
+ * Add the history files a drain just wrote to the history index
+ * (`HISTORY_INDEX_FILE_NAME`), plus any others it found on disk that
+ * the index was missing. Between the history files and the `log.json`
+ * trim, so the index names a file before its records leave the log.
+ *
+ * - `start` is where the index begins (`indexBase`). Its entries stay,
+ *   in their order, whether or not their files were found: a file
+ *   that failed a probe may only have been unreadable, and only a
+ *   delete takes an entry out.
+ * - Best-effort: the history files are on disk whatever happens here,
+ *   and the next flush adds anything missed, from the listing or the
+ *   download records.
+ */
+async function updateHistoryIndex(
+  start: string[],
+  found: string[],
+  landed: string[],
+): Promise<void> {
+  const entries = [...start];
+  const have = new Set(entries);
+  for (const entry of [...found, ...landed]) {
+    if (!have.has(entry)) {
+      have.add(entry);
+      entries.push(entry);
+    }
+  }
+  try {
+    const id = await writeJsonFileComplete(HISTORY_INDEX_FILE_NAME, serializeHistoryIndex(entries));
+    // One download-list row for the index, as for `log.json`.
+    await pruneOldLogRecords(id, HISTORY_INDEX_FILE_NAME);
+  } catch (err) {
+    console.info('[SeeWhatISee] could not update the history index:', err);
+  }
 }
 
 /**

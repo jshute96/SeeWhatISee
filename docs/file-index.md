@@ -245,7 +245,7 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `src/capture/packed-text.ts` | Transparent gzip+base64 packing for large text bodies bound for session storage — `packText`/`unpackText`, `originalByteLength`/`storedLength`/`isEmptyText`/`isBlankText` |
 | `src/capture/html-header.ts` | Header lines for captured HTML: Chrome's `saved from url=` comment on page HTML, the page's doctype on selection HTML |
 | `src/capture/recompress.ts` | Capture-time PNG→JPEG recompress (`maybeRecompressLargeScreenshot`) + threshold consts + `_setLargeScreenshotThresholdForTest` |
-| `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding and probing those files again |
+| `src/capture/downloads.ts` | Every write that lands a capture file on disk (awaited to completion, failures named), plus the helpers for finding and probing those files again, including the history index |
 | `src/capture/log-store.ts` | The capture log: the `log.json` file on disk, the `history-*.json` files older records move into, and the last-capture session note |
 | `src/capture/delete-capture.ts` | Deleting one capture from the History page: its files off disk, then a `log.json` tombstone or history-file drop |
 | `src/capture/log-reconcile.ts` | Works out what `log.json` holds before a capture overwrites it — the `file://` read, deleted-vs-unreadable; `LogWriteFailedError` |
@@ -388,11 +388,12 @@ Own `package.json` (pnpm workspace), bundled to a single
 | `tests/unit/url-helpers.test.mjs` | Unit tests for `src/url-helpers.ts` — first-segment extraction, 20-char truncation boundary, the bare-suffix fallback |
 | `tests/unit/image-extension.test.mjs` | Unit tests for `imageExtensionFor` — MIME table, URL-pathname fallback, `.unknown` final fallback |
 | `tests/unit/capture-directory.test.mjs` | Unit tests for capture-directory discovery — storage cache, download-history fallback — and the landing check on completed writes |
-| `tests/unit/directory-listing.test.mjs` | Unit tests for `listCaptureDirectory` / `listHistoryFiles` — parsing Chrome's `file://` directory listing |
+| `tests/unit/directory-listing.test.mjs` | Unit tests for `listCaptureDirectory` / `historyFilesAmong` — parsing Chrome's `file://` directory listing |
+| `tests/unit/history-index.test.mjs` | Unit tests for the `history-files.json` index: entry validation, parsing, and `findHistoryFiles`' union with the listing or download records |
 | `tests/unit/file-probe.test.mjs` | Unit tests for `captureFileExists` / `historyFilesFromDownloads` — what is on disk where the listing is denied |
 | `tests/unit/log-reconcile.test.mjs` | Unit tests for reading `log.json` back, deleted-vs-unreadable via the directory listing, the unknown-directory first write, the verbatim append, and the failure messages |
 | `tests/unit/log-record-prune.test.mjs` | Unit tests for erasing the `log.json` download records older than the write that just landed |
-| `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, tombstones kept, and reading them back |
+| `tests/unit/log-history-files.test.mjs` | Unit tests for the flush into `history-*.json` files — which records move, how the files are named, the index update, tombstones kept, and reading them back |
 | `tests/unit/tooltip.test.mjs` | Unit tests for `src/background/tooltip.ts` — `expandFragment`, `combineFragments`, `buildRow`, `saveDefaultsMenuTitle`, full `buildTooltip` |
 | `tests/unit/menu-hint.test.mjs` | Unit tests for `src/background/menu-hint.ts` — `rowScope`, `buildRowGroup`, `buildMenuHint`, plus a sentinel-pin grep against `default-action.ts` |
 | `tests/unit/shrink.test.mjs` | Unit tests for `src/shrink.ts` — solid bg / h-line / gradient / noise tolerance / wall collapse / clamp / patterned interior |

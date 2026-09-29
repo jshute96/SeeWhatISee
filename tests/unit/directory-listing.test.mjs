@@ -1,6 +1,6 @@
 // Unit tests for reading the capture directory over `file://`:
 // `listCaptureDirectory` (the names in it — the filesystem's answer
-// to "is this file there?") and `listHistoryFiles` (the
+// to "is this file there?") and `historyFilesAmong` (the
 // `history-*.json` files among them, newest first).
 //
 // The listing markup is a browser internal, so the fixture below is a
@@ -43,7 +43,12 @@ function stubFetch(html) {
 }
 
 globalThis.chrome = { runtime: { id: 'test' } };
-const { listCaptureDirectory, listHistoryFiles } = await import('../../dist/capture/downloads.js');
+const { listCaptureDirectory, historyFilesAmong } = await import('../../dist/capture/downloads.js');
+
+/** The history files in `dir`'s listing, the way `findHistoryFiles` gets them. */
+async function listHistoryFiles(dir) {
+  return historyFilesAmong(dir, await listCaptureDirectory(dir));
+}
 
 test('finds history files, ignores everything else, sorts newest first', async () => {
   stubFetch(listingHtml([

@@ -41,8 +41,7 @@
 import {
   canReadFiles,
   captureFileExists,
-  historyFilesAmong,
-  historyFilesFromDownloads,
+  findHistoryFiles,
   listCaptureDirectory,
   peekCaptureDirectory,
   joinCapturePath,
@@ -264,17 +263,18 @@ let captureDir: string | null = null;
 let filesOnDisk: Set<string> | null = null;
 
 /**
- * Absolute paths of the `history-*.json` history files, newest first
- * (by the timestamp in each filename — see `historyFilesAmong`).
+ * Absolute paths of the history files, newest first (by the timestamp
+ * in each filename — see `findHistoryFiles`).
  */
 let historyFilePaths: string[] = [];
 
 /**
- * `historyFilePaths` as the download records answered it, where the
- * directory can't be listed (`historyFilesFromDownloads`), or `null`
- * before the first such answer. Held because deriving it costs a
- * `file://` probe per history file, and `loadDirectoryListing` runs on
- * every capture, every delete and every return to the tab.
+ * `historyFilePaths` as found where the directory can't be listed
+ * (from the download records and the history index; see
+ * `findHistoryFiles`), or `null` before the first such answer. Held
+ * because deriving it costs a `file://` probe per history file, and
+ * `loadDirectoryListing` runs on every capture, every delete and every
+ * return to the tab.
  *
  * Dropped by `forgetHistoryFiles`, so a delete (which can remove an
  * emptied history file) and a flush both get a fresh answer.
@@ -1151,7 +1151,8 @@ async function loadDirectoryListing(): Promise<void> {
   if (captureDir === null) {
     historyFilePaths = [];
   } else if (filesOnDisk !== null) {
-    historyFilePaths = historyFilesAmong(captureDir, filesOnDisk);
+    // The listing, plus the history index: one more `file://` read.
+    historyFilePaths = await findHistoryFiles(captureDir, filesOnDisk);
   } else if (historyFilesFallback !== null) {
     // Already answered once this page-load. The set only grows when a
     // flush writes a new file, and re-deriving it costs a `file://`
@@ -1160,11 +1161,10 @@ async function loadDirectoryListing(): Promise<void> {
     // that could be wrong.
     historyFilePaths = historyFilesFallback;
   } else {
-    // No listing: only the download records also know a history file
-    // was ever written. Weaker (see
-    // `historyFilesFromDownloads`), and only reached when the listing
-    // is denied.
-    historyFilesFallback = await historyFilesFromDownloads(captureDir);
+    // No listing: the download records and the history index are what
+    // know a history file was written, each file probed. Only reached
+    // when the listing is denied.
+    historyFilesFallback = await findHistoryFiles(captureDir, null);
     historyFilePaths = historyFilesFallback;
   }
   // The merge walks this list, so the rows go stale the moment it

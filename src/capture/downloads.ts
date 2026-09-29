@@ -44,6 +44,21 @@ export const HISTORY_FILE_PREFIX = 'history-';
 export const LOG_FILE_NAME = 'log.json';
 
 /**
+ * The history index: a JSON array naming every history file the flush
+ * has written, as paths relative to the capture directory. Readers take
+ * the union of it and whatever else finds history files (the directory
+ * listing, or our download records), so a history file stays findable
+ * where the listing is denied (ChromeOS) and the user has cleared
+ * Chrome's download history. See `docs/log-consistency.md` → "The
+ * history index".
+ *
+ * Hyphenated like the other names here, and deliberately not
+ * stamp-shaped, so `HISTORY_FILE_NAME` never takes it for a history
+ * file.
+ */
+export const HISTORY_INDEX_FILE_NAME = 'history-files.json';
+
+/**
  * `chrome.storage.local` key holding the last known capture directory
  * (absolute OS-native path). Storage rather than a module variable so
  * every context (service worker, History page) sees the same answer
@@ -130,9 +145,10 @@ export async function downloadArtifactComplete(filename: string, url: string): P
   // Right folder, different name. Not expected — `'overwrite'` never
   // uniquifies and the names are machine-made — but a record naming
   // a file that isn't there would be just as broken.
-  if (basename(path) !== filename) {
+  if (!path.replace(/\\/g, '/').endsWith(`/${filename}`)) {
     throw new ArtifactWriteError(
-      joinCapturePath(parentDirectory(path), filename),
+      // Never `null`: `downloadArtifactLanded` has already checked it.
+      joinCapturePath(landedCaptureDirectory(path, filename)!, filename),
       `Chrome saved it as ${path} instead.`,
     );
   }
@@ -171,7 +187,7 @@ async function downloadArtifactLanded(
   } catch (err) {
     throw new ArtifactWriteError(await describeCaptureFile(filename), downloadFailureReason(err));
   }
-  if (!isCaptureDirectory(parentDirectory(path))) {
+  if (landedCaptureDirectory(path, filename) === null) {
     throw new ArtifactWriteError(
       await describeCaptureFile(filename),
       `Chrome saved it to ${path} instead. (Is the ${DOWNLOAD_SUBDIR} folder writable?)`,
@@ -406,6 +422,21 @@ export async function peekCaptureDirectory(): Promise<string | null> {
 }
 
 /**
+ * The capture directory a write of `filename` landed in, given the
+ * `path` it landed at, or `null` if that isn't one.
+ *
+ * `filename` is relative to the capture directory and can have
+ * subdirectories (`sub/history-x.json`, from the history index), so
+ * the directory is as many levels up from `path` as `filename` has
+ * segments, not simply `path`'s parent.
+ */
+function landedCaptureDirectory(path: string, filename: string): string | null {
+  let dir = path;
+  for (let i = filename.split('/').length; i > 0; i--) dir = parentDirectory(dir);
+  return isCaptureDirectory(dir) ? dir : null;
+}
+
+/**
  * Whether `dir` is a directory our writes land in: one named
  * `SeeWhatISee`, with a separator before the name so a (never
  * expected) relative path can't match a bare `SeeWhatISee`. The same
@@ -619,7 +650,7 @@ export async function historyFilesFromDownloads(directory: string): Promise<stri
     }
   }
   const present: string[] = [];
-  for (const name of [...names].sort().reverse()) {
+  for (const name of newestFirst([...names])) {
     if (await captureFileExists(directory, name)) present.push(joinCapturePath(directory, name));
   }
   // Only when there was something to find: the caller has already said
@@ -642,9 +673,177 @@ export async function historyFilesFromDownloads(directory: string): Promise<stri
 const LISTING_ROW = /addRow\(("(?:[^"\\]|\\.)*")/g;
 
 /**
- * Absolute paths of the `history-*.json` history files, newest first,
- * found by listing the capture directory. Used by the History page and
- * by the flush's collision guard in `log-store.ts`.
+ * Absolute paths of every history file we can find, newest first: the
+ * ones `listing` holds (or, with no listing, the ones our download
+ * records name), plus every entry in the history index
+ * (`HISTORY_INDEX_FILE_NAME`) that is actually there. The one answer
+ * to "which history files are there" for the History page, a delete's
+ * duplicate scan and the flush.
+ *
+ * - `listing` is the capture directory's, or `null` where it can't be
+ *   listed (`listCaptureDirectory`).
+ * - An index entry at the top level is checked against the listing
+ *   when there is one; anything else (no listing, or an entry in a
+ *   subdirectory the listing doesn't cover) costs a `file://` probe.
+ *   An entry for a file that's gone is left out, not an error: the
+ *   index only ever grows, apart from a delete's own removals.
+ * - `indexed` is the index already read, for a caller that needs it
+ *   anyway (the flush); otherwise it is read here.
+ */
+export async function findHistoryFiles(
+  directory: string,
+  listing: Set<string> | null,
+  indexed?: string[],
+): Promise<string[]> {
+  const entries = indexed ?? historyIndexEntries(await readHistoryIndex(directory));
+  const found = listing !== null
+    ? historyFilesAmong(directory, listing)
+    : await historyFilesFromDownloads(directory);
+  const paths = new Set(found);
+  for (const entry of entries) {
+    const path = joinCapturePath(directory, entry);
+    if (paths.has(path)) continue;
+    const there = listing !== null && !entry.includes('/')
+      ? listing.has(entry)
+      : await captureFileExists(directory, entry);
+    if (there) paths.add(path);
+  }
+  return newestFirst([...paths]);
+}
+
+/**
+ * A path `findHistoryFiles` returned, as an index entry: relative to
+ * `directory`, `/`-separated. `joinCapturePath` builds those paths
+ * with the directory's own separator, so on Windows a subdirectory
+ * entry comes back with a mix of the two.
+ */
+export function historyIndexEntryOf(directory: string, path: string): string {
+  return path.slice(directory.length + 1).replace(/\\/g, '/');
+}
+
+/**
+ * What reading the history index found. The flush treats each kind
+ * differently (`log-store.ts`), and readers just want the entries
+ * (`historyIndexEntries`).
+ *
+ * - `unreadable`: missing, or the read failed. On a profile that has
+ *   never flushed that is simply "not written yet". Only the directory
+ *   listing can tell the two apart, and where it is denied nothing can;
+ *   see `docs/log-consistency.md` → "Blind spots we accept".
+ * - `malformed`: there, but not a JSON array — most likely a hand edit
+ *   with a typo, which a rewrite would throw away.
+ */
+export type HistoryIndexRead =
+  | { kind: 'entries'; entries: string[] }
+  | { kind: 'unreadable' }
+  | { kind: 'malformed' };
+
+/**
+ * Read the history index. Quiet on a failed read: a missing index is
+ * the normal state of most installs, and every History page load
+ * would otherwise log it.
+ */
+export async function readHistoryIndex(directory: string): Promise<HistoryIndexRead> {
+  const text = await readCaptureFileText(directory, HISTORY_INDEX_FILE_NAME, { quiet: true });
+  if (text === null) return { kind: 'unreadable' };
+  const entries = parseHistoryIndex(text);
+  return entries === null ? { kind: 'malformed' } : { kind: 'entries', entries };
+}
+
+/** A read index's entries, or none when it couldn't be used. */
+export function historyIndexEntries(read: HistoryIndexRead): string[] {
+  return read.kind === 'entries' ? read.entries : [];
+}
+
+/**
+ * Parse the history index leniently: it sits in the user's Downloads
+ * folder and may be hand-edited. Anything but a JSON array is `null`
+ * (malformed); an entry that isn't a safe relative path
+ * (`isHistoryIndexEntry`) is skipped, and duplicates collapse.
+ */
+export function parseHistoryIndex(text: string): string[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    console.info(`[SeeWhatISee] ${HISTORY_INDEX_FILE_NAME} is not valid JSON; ignoring it`);
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    console.info(`[SeeWhatISee] ${HISTORY_INDEX_FILE_NAME} is not a JSON array; ignoring it`);
+    return null;
+  }
+  const entries = new Set<string>();
+  for (const entry of value) {
+    if (isHistoryIndexEntry(entry)) {
+      entries.add(entry);
+    } else {
+      console.info(`[SeeWhatISee] ${HISTORY_INDEX_FILE_NAME}: skipping entry`, entry);
+    }
+  }
+  return [...entries];
+}
+
+/**
+ * Whether `entry` is a usable history index entry: a `.json` path
+ * relative to the capture directory, `/`-separated.
+ *
+ * - Subdirectories are allowed, so the history could be rearranged
+ *   into them later; `..`, `.` and empty segments are not, and
+ *   neither is a leading `/`, a backslash or a `:`. An entry can only
+ *   name a file inside the capture directory. (The `:` is for
+ *   Windows, where `D:x.json` names another drive.)
+ * - Any name is allowed, not just `history-<stamp>.json`: a user can
+ *   list a file they copied in under a name of their own.
+ * - `log.json` and the index itself are refused, in any case (Windows
+ *   and macOS filenames aren't case-sensitive). Each is read in its
+ *   own right; an index naming `log.json` would have it read twice,
+ *   and a delete would rewrite it as a history file.
+ * - No directory may be named `SeeWhatISee`: a write landing in one
+ *   would teach `waitForDownloadComplete` the wrong capture directory.
+ *
+ * `SeeWhatISee.py`'s `history_index_entry()` applies the same rule;
+ * keep the two in step.
+ */
+export function isHistoryIndexEntry(entry: unknown): entry is string {
+  if (typeof entry !== 'string' || !entry.endsWith('.json')) return false;
+  if (entry.includes('\\') || entry.includes(':') || entry.startsWith('/')) return false;
+  const segs = entry.split('/');
+  if (segs.some((seg) => seg === '' || seg === '.' || seg === '..')) return false;
+  if (segs.slice(0, -1).some((seg) => seg.toLowerCase() === DOWNLOAD_SUBDIR.toLowerCase())) {
+    return false;
+  }
+  const lower = entry.toLowerCase();
+  return lower !== LOG_FILE_NAME && lower !== HISTORY_INDEX_FILE_NAME;
+}
+
+/**
+ * The history index's text for `entries`: a JSON array, one entry per
+ * line, so a hand edit or a diff reads easily.
+ */
+export function serializeHistoryIndex(entries: string[]): string {
+  return `${JSON.stringify(entries, null, 2)}\n`;
+}
+
+/**
+ * History file paths newest first: by the file's own name, which for
+ * a `history-<stamp>.json` is chronological (see `historyFilesAmong`),
+ * then by the whole path so the order is total. By name rather than
+ * path so a file in a subdirectory sorts among the rest by its stamp.
+ * A name that isn't stamp-shaped (hand-listed in the index) lands
+ * wherever it sorts.
+ */
+function newestFirst(paths: string[]): string[] {
+  return [...paths].sort((a, b) => {
+    const [na, nb] = [basename(a), basename(b)];
+    if (na !== nb) return na < nb ? 1 : -1;
+    return a < b ? 1 : a > b ? -1 : 0;
+  });
+}
+
+/**
+ * Absolute paths of the `history-*.json` history files in a directory
+ * listing, newest first.
  *
  * - Only stamp-shaped names count (`HISTORY_FILE_NAME`): a word-y
  *   `history-notes.json` is someone else's file — and the
@@ -661,39 +860,29 @@ const LISTING_ROW = /addRow\(("(?:[^"\\]|\\.)*")/g;
  *   append order. (The stamps are local time, so a DST fall-back
  *   hour can sort out of order — accepted, it matches the filenames
  *   the user sees.)
- * - Rejects when the directory can't be listed (see
- *   `listCaptureDirectory`), which callers treat as "nothing to offer".
- */
-export async function listHistoryFiles(directory: string): Promise<string[]> {
-  return historyFilesAmong(directory, await listCaptureDirectory(directory));
-}
-
-/**
- * `listHistoryFiles` for a listing already in hand — the History page
- * lists the directory once for both the history files and its
- * `(deleted)` markers, and this keeps the two views from being read
- * at different moments.
+ * - Used for the listing half of `findHistoryFiles`. The History page
+ *   lists the directory once for both the history files and its
+ *   `(deleted)` markers, so the two views describe the same moment.
  */
 export function historyFilesAmong(directory: string, names: Iterable<string>): string[] {
-  return [...names]
+  return newestFirst([...names]
     .filter((n) => HISTORY_FILE_NAME.test(n))
-    .sort()
-    .reverse()
-    .map((name) => joinCapturePath(directory, name));
+    .map((name) => joinCapturePath(directory, name)));
 }
 
 /** A history file's name: the prefix, a digits-and-hyphens stamp, `.json`. */
 const HISTORY_FILE_NAME = new RegExp(`^${HISTORY_FILE_PREFIX}[\\d-]*\\.json$`);
 
 /**
- * Whether `name` is one of the log files — `log.json` or a history
- * file — as opposed to a capture file. What a record's `filename` must
+ * Whether `name` is one of the log files — `log.json`, a history
+ * file or the history index — as opposed to a capture file. What a record's `filename` must
  * never be taken for: a hand-edited record naming `log.json` as its
  * screenshot would otherwise have the log read as an image, or deleted
  * as a capture file.
  */
 export function isLogFileName(name: string): boolean {
-  return name === LOG_FILE_NAME || HISTORY_FILE_NAME.test(name);
+  return name === LOG_FILE_NAME || name === HISTORY_INDEX_FILE_NAME
+    || HISTORY_FILE_NAME.test(name);
 }
 
 /**
@@ -705,7 +894,10 @@ export function isLogFileName(name: string): boolean {
  */
 export function joinCapturePath(dir: string, name: string): string {
   const sep = dir.includes('\\') ? '\\' : '/';
-  return `${dir}${sep}${name}`;
+  // `name` can be a `/`-separated relative path (a history index
+  // entry). Converted too, so a Windows path matches the one Chrome's
+  // download records hold exactly.
+  return `${dir}${sep}${name.replace(/\//g, sep)}`;
 }
 
 /**
@@ -720,9 +912,13 @@ export function pathToFileUrl(path: string): string {
   return new URL(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`).href;
 }
 
-/** Our own download records for the capture file `name`, newest first. */
+/**
+ * Our own download records for the capture file `name`, newest first.
+ * `name` can be a `/`-separated relative path; each `/` matches either
+ * separator, as the rest of the pattern does.
+ */
 async function ourRecordsOf(name: string): Promise<chrome.downloads.DownloadItem[]> {
-  return await ourRecordsMatching(escapeRegExp(name));
+  return await ourRecordsMatching(escapeRegExp(name).replace(/\//g, '[/\\\\]'));
 }
 
 /**
@@ -790,7 +986,7 @@ export async function pruneOldLogRecords(keepId: number, name = LOG_FILE_NAME): 
     // own failures, so one stuck row can't take the rest with it.
     await Promise.all(ours.slice(keepAt + 1).map((item) => eraseDownloadRecord(item.id)));
   } catch (err) {
-    console.info('[SeeWhatISee] could not prune old log.json records:', err);
+    console.info(`[SeeWhatISee] could not prune old ${name} records:`, err);
   }
 }
 

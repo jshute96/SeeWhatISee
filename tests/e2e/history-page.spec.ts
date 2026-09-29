@@ -18,7 +18,7 @@
 // and `tests/unit/log-history-files.test.mjs`. Its *absence* — the
 // control hidden, and the plain empty-log notice — is covered below.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { type Page, type Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -1167,6 +1167,71 @@ test('Delete drops a record out of a history file, and the file once it is empty
 
   await historyPage.close();
 });
+
+// History files the user moved into a subdirectory and listed in the
+// history index (`history-files.json`): loaded like any other, and a
+// delete rewrites or removes them in place. Run with the listing and
+// without it (ChromeOS), since the two find the files differently.
+for (const listing of ['listed', 'unlistable'] as const) {
+  test(`history files in a subdirectory load and delete (${listing})`, async ({
+    extensionContext,
+    extensionId,
+    getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    const logPath = await seedCaptureLog(sw, [SEED[2]] as unknown as Record<string, unknown>[]);
+    const dir = logPath.slice(0, logPath.lastIndexOf('/'));
+    const sub = `${dir}/old`;
+    mkdirSync(sub, { recursive: true });
+    try {
+      // Straight to disk, so Chrome has no record of either file: only
+      // the index knows about them.
+      const single = 'old/history-20260101-000000-000.json';
+      const pair = 'old/history-20260102-000000-000.json';
+      writeFileSync(`${dir}/${single}`, JSON.stringify(SEED[0]) + '\n');
+      const extra = { ...SEED[1], timestamp: '2026-01-03T04:04:05.000Z', title: 'Beta again' };
+      writeFileSync(`${dir}/${pair}`, JSON.stringify(SEED[1]) + '\n' + JSON.stringify(extra) + '\n');
+      const indexPath = `${dir}/history-files.json`;
+      writeFileSync(indexPath, JSON.stringify([single, pair]));
+      if (listing === 'unlistable') await sw.evaluate(DENY_LISTING, dir);
+
+      const historyPage = await extensionContext.newPage();
+      if (listing === 'unlistable') await historyPage.addInitScript(DENY_LISTING, dir);
+      await openHistory(historyPage, extensionId);
+      const rows = historyPage.locator('#rows tr');
+      await expect(rows).toHaveCount(1);
+      await historyPage.locator('#load-older').click();
+      await expect(rows).toHaveCount(4);
+
+      // Out of the two-record file: rewritten in place, the other record
+      // kept byte for byte.
+      await expect(rows.nth(1).locator('.page-cell .title')).toHaveText('Beta again');
+      await rows.nth(1).locator('.delete-btn').click();
+      await historyPage.locator('#delete-dialog .delete-confirm').click();
+      await expect(rows).toHaveCount(3);
+      expect(readFileSync(`${dir}/${pair}`, 'utf8')).toBe(JSON.stringify(SEED[1]) + '\n');
+
+      // The only record in the other file: the file goes, and so does
+      // its index entry.
+      await expect(rows.nth(2).locator('.page-cell .title')).toHaveText('Alpha page');
+      await rows.nth(2).locator('.delete-btn').click();
+      await historyPage.locator('#delete-dialog .delete-confirm').click();
+      await expect(rows).toHaveCount(2);
+      await expect.poll(() => existsSync(`${dir}/${single}`)).toBe(false);
+      expect(JSON.parse(readFileSync(indexPath, 'utf8'))).toEqual([pair]);
+      // `log.json` held neither record.
+      expect(await readCaptureLog(sw)).toEqual([SEED[2]]);
+
+      if (listing === 'unlistable') {
+        expect(await sw.evaluate(() => (globalThis as { __deniedListings?: number })
+          .__deniedListings)).toBeGreaterThan(0);
+      }
+      await historyPage.close();
+    } finally {
+      rmSync(sub, { recursive: true, force: true });
+    }
+  });
+}
 
 test('cancelling the Delete prompt changes nothing', async ({
   extensionContext,

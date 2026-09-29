@@ -127,6 +127,27 @@ test('a complete write that lands outside SeeWhatISee/ is a failed write', async
   assert.ok(!(CAPTURE_DIR_STORAGE_KEY in store));
 });
 
+test('a write into a subdirectory of SeeWhatISee/ lands where it was asked', async () => {
+  // A history file the history index lists in a subdirectory, rewritten
+  // by a delete: the capture directory is two levels up, not one.
+  stubChrome();
+  chrome.downloads.search = async (query) => {
+    searchCalls.push(query);
+    return [{ id: query.id, state: 'complete', filename: `${DIR}/old/history-x.json` }];
+  };
+  assert.equal(typeof await downloadArtifactComplete('old/history-x.json', 'data:,x'), 'number');
+  assert.equal(downloadCalls[0].filename, 'SeeWhatISee/old/history-x.json');
+});
+
+test('a subdirectory write that lands one level up is a failed write', async () => {
+  stubChrome();
+  chrome.downloads.search = async (query) => {
+    searchCalls.push(query);
+    return [{ id: query.id, state: 'complete', filename: `${DIR}/history-x.json` }];
+  };
+  await assert.rejects(downloadArtifactComplete('old/history-x.json', 'data:,x'), /instead/);
+});
+
 test('a uniquify write reports where it landed and caches the directory', async () => {
   const store = stubChrome();
   const landed = await downloadArtifactUniquely('log.json', 'data:,x');

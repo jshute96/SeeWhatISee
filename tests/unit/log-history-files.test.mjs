@@ -31,6 +31,8 @@ let writes = [];
  * store did. `historyFilesOnDisk` seeds absolute paths of
  * `history-*.json` files already in the capture directory — what the
  * flush's collision guard lists before naming a new one.
+ * `historyIndex` is the `history-files.json` entries (or its raw text,
+ * as a string), or `null` for no index file.
  *
  * The reconcile reads `log.json` back over `file://`, so `fetch` is
  * stubbed too: the log URL answers with whatever was last written
@@ -38,7 +40,7 @@ let writes = [];
  * in practice the directory — with a listing naming the seeded
  * history files.
  */
-function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
+function stubChrome(existing = [], { historyFilesOnDisk = [], historyIndex = null } = {}) {
   writes = [];
   const store = {};
   const session = {};
@@ -112,6 +114,11 @@ function stubChrome(existing = [], { historyFilesOnDisk = [] } = {}) {
     if (String(url).endsWith('/log.json')) {
       return { ok: true, text: async () => logText() };
     }
+    if (String(url).endsWith('/history-files.json')) {
+      if (historyIndex === null) throw new TypeError('Failed to fetch');
+      const text = typeof historyIndex === 'string' ? historyIndex : JSON.stringify(historyIndex);
+      return { ok: true, text: async () => text };
+    }
     // The directory listing, in the row shape Chrome generates.
     const names = historyFilesOnDisk.map((f) => f.replace(/^.*[/\\]/, ''));
     const rows = names.map((n) => `<script>addRow(${JSON.stringify(n)},"",0,0,"0 B",0,"");</script>`);
@@ -135,7 +142,18 @@ function rec(n) {
 
 /** The bodies of the `history-*.json` writes, in write order. */
 function historyFileWrites() {
-  return writes.filter((w) => w.filename.includes('/history-'));
+  return writes.filter((w) => w.filename.includes('/history-') && !isIndexWrite(w));
+}
+
+/** Whether a write is the history index, `history-files.json`. */
+function isIndexWrite(w) {
+  return w.filename.endsWith('/history-files.json');
+}
+
+/** The entries of the most recent history index write, or `null` if none. */
+function lastIndex() {
+  const last = writes.filter(isIndexWrite).pop();
+  return last ? JSON.parse(last.body) : null;
 }
 
 /** The most recent `log.json` write. */
@@ -183,6 +201,52 @@ test('crossing the cap flushes the oldest half to a history file', async () => {
   assert.equal(store.captureLog.length, 51);
   assert.equal(store.captureLog[0].screenshot.filename, 'shot-50.png');
   assert.equal(store.captureLog[50].screenshot.filename, 'shot-100.png');
+});
+
+test('a flush adds its history file to the index, before the log.json trim', async () => {
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)));
+  await recordCapture(rec(100));
+  const name = historyFileWrites()[0].filename.replace(/^.*\//, '');
+  assert.deepEqual(lastIndex(), [name]);
+  // The index names the file before its records leave the log.
+  const order = writes.map((w) => w.filename.replace(/^.*\//, ''));
+  assert.ok(order.indexOf('history-files.json') < order.lastIndexOf('log.json'));
+});
+
+test('a flush adds listed history files the index was missing, keeping its own order', async () => {
+  const onDisk = ['history-20250101-000000-000.json', 'history-20250102-000000-000.json'];
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)), {
+    historyFilesOnDisk: onDisk.map((n) => `/d/SeeWhatISee/${n}`),
+    // Hand-edited: a name of its own, and one out of stamp order.
+    historyIndex: ['mine.json', 'history-20250102-000000-000.json'],
+  });
+  await recordCapture(rec(100));
+  const name = historyFileWrites()[0].filename.replace(/^.*\//, '');
+  assert.deepEqual(lastIndex(), [
+    'mine.json', 'history-20250102-000000-000.json', 'history-20250101-000000-000.json', name,
+  ]);
+});
+
+test('a malformed index is left alone rather than overwritten', async () => {
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)), { historyIndex: '["a.json",' });
+  await recordCapture(rec(100));
+  assert.equal(historyFileWrites().length, 1);
+  assert.equal(lastIndex(), null);
+});
+
+test('an unreadable index the listing shows is left alone', async () => {
+  stubChrome(Array.from({ length: 100 }, (_, i) => rec(i)), {
+    historyFilesOnDisk: ['/d/SeeWhatISee/history-files.json'],
+  });
+  await recordCapture(rec(100));
+  assert.equal(historyFileWrites().length, 1);
+  assert.equal(lastIndex(), null);
+});
+
+test('no flush, no index write', async () => {
+  stubChrome([rec(1)]);
+  await recordCapture(rec(2));
+  assert.equal(lastIndex(), null);
 });
 
 test('a tombstone survives the flush rewrite', async () => {

@@ -143,9 +143,10 @@ Finding that tab is less obvious than it looks:
     paging 50 at a time would be tedious; the search box is the tool
     for narrowing what's on screen.
 - The page finds the files in the capture directory's `file://`
-  listing (`listCaptureDirectory` + `historyFilesAmong`,
+  listing (`listCaptureDirectory` + `findHistoryFiles`,
   `capture/downloads.ts`) — the one listing it reads, shared with the
-  `(deleted)` markers.
+  `(deleted)` markers — plus the history index, `history-files.json`
+  (log-consistency.md → The history index).
   - Sees every file actually present in the capture directory:
     unaffected by cleared download history and by `DownloadQuery`'s
     1000-record default limit, both of which used to silently shrink
@@ -158,10 +159,10 @@ Finding that tab is less obvious than it looks:
     see the source comment).
   - **Where the listing is denied** (ChromeOS; see
     chrome-extension.md → Directory listings can be denied), the page
-    offers the history files Chrome has a download record for
-    instead (`historyFilesFromDownloads`). A file Chrome has no
-    record of isn't offered: the limit the listing was brought in to
-    remove.
+    offers the history files Chrome has a download record for,
+    plus the ones in the history index, each checked with a fetch.
+    The index is what keeps a file findable after the user clears
+    download history.
     - Worked out once per page load and reused, since it costs a
       fetch per history file. A capture landing or a delete works it
       out again.
@@ -179,7 +180,7 @@ Finding that tab is less obvious than it looks:
   - Two authored paragraphs toggled by `hidden`, not one whose text is
     swapped, so the copy stays in the markup with the rest of it.
 - Merging is a plain concatenation: `log.json`, then each history
-  file's records, files in `listHistoryFiles()` order (newest first
+  file's records, files in `findHistoryFiles()` order (newest first
   by the timestamp in each filename, which is the moment that file was
   written). No sort; dedup only on exact record text.
   - **Not sorted by `timestamp`.** File order is *append* order, which

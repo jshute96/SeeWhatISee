@@ -180,9 +180,11 @@ directory they're in.
   - "Is this file there?": fetch the file itself
     (`captureFileExists`).
   - "Which history files are there?": the `history-*.json` files
-    Chrome has a download record for, each checked the same way
-    (`historyFilesFromDownloads`). Misses a file Chrome has no
-    record of.
+    Chrome has a download record for, plus the ones in the history
+    index (`history-files.json`), each checked the same way
+    (`findHistoryFiles`). The index is what still knows a file after
+    the user clears download history (log-consistency.md → The
+    history index).
 - Effect on each feature:
   - History page: *Load older captures* uses the fallback;
     `(deleted)` markers don't appear
@@ -190,8 +192,7 @@ directory they're in.
   - Deleting a capture: works, via the fallback
     (log-consistency.md → Deleting a capture).
   - The log reconcile: **not covered**. It needs to tell a deleted
-    `log.json` from an unreadable one, and only the listing can
-    ([#35](https://github.com/jshute96/SeeWhatISee/issues/35)).
+    `log.json` from an unreadable one, and only the listing can.
 - Tested in `tests/e2e/history-page.spec.ts`, which fails exactly
   the listing fetch in both the page and the service worker.
 
