@@ -445,8 +445,8 @@ The scripts:
   stdlib-only Python 3 (no third-party packages, so a skill bundle
   installs by copying files). Actions
   (`--get-latest`, `--all` / `--limit N`, `--watch`, `--stop`) are
-  combinable; options (`--directory`, `--copy-to-dir`,
-  `--no-lockfiles`, `--loop`, `--after`, `--catch-up-one`,
+  combinable, plus a standalone `--list-unlinked-files`; options
+  (`--directory`, `--copy-to-dir`, `--no-lockfiles`, `--loop`, `--after`, `--catch-up-one`,
   `--print_selection`, and `--search` / `--filter_site` /
   `--filter_time` for the history listing) tune behavior.
   Handles directory resolution (config file / `--directory` /

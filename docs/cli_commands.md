@@ -334,6 +334,28 @@ They apply before `--limit` counts, so `--limit N` means "N most recent
   whitespace and stray carriage returns from a hand-edit don't ride
   along into the output.
 
+## Unlinked files (`--list-unlinked-files`)
+
+A maintenance action for finding capture files the history has lost
+track of, e.g. ones from before history files existed.
+
+- Reads every record in `log.json` and the history files and collects
+  the `filename` of each `screenshot` / `contents` / `selection`
+  artifact.
+- Prints every regular file in the source dir that isn't referenced,
+  as sorted absolute paths, one per line.
+- Skips the files kept for bookkeeping: `log.json`, history files, and
+  the watch files (`.watch-status.json` and its temp files,
+  `.watch.pid`, `watch-stop.json`).
+- Subdirectories are neither listed nor descended into.
+- No `log.json` and no history files is an error (exit 2): every file
+  would read as unlinked, which more likely means a wrong directory.
+- A capture still being saved can show up briefly (its file lands
+  before its record, and Chrome's `.crdownload` partials too), so
+  don't act on files from the last few seconds.
+- Only lists; it never deletes. It can't combine with the other
+  actions, filters, `--copy-to-dir` or `--print_selection` (exit 2).
+
 ## `see-what-i-see-history` — scan or search past captures
 
 - **What it does.** Runs the history actions above with whatever

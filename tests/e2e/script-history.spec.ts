@@ -967,3 +967,61 @@ test.describe('history.sh wrappers', () => {
     expect(result.stdout).toContain('--filter_time SPAN');
   });
 });
+
+test.describe('SeeWhatISee.py --list-unlinked-files', () => {
+  function touch(name: string) {
+    fs.writeFileSync(path.join(tmpDir, name), 'x');
+  }
+
+  test('lists files no record references, skipping bookkeeping files', () => {
+    writeFileOfRecords('history-20260409-120001-000.json', [
+      rec(0, { contents: { filename: 'contents-0.html' } }),
+    ]);
+    writeFileOfRecords('log.json', [
+      rec(1, { selection: { filename: 'selection-1.md', format: 'markdown' } }),
+      { timestamp: '2026-04-09T12:00:02.000Z', deleted: true },
+    ]);
+    for (const name of [
+      'screenshot-20260400.png', 'contents-0.html', 'screenshot-20260401.png',
+      'selection-1.md', 'screenshot-old.png', 'notes.txt', 'history-notes.json',
+      '.watch-status.json', '.watch-status.json.123.tmp', '.watch.pid',
+      'watch-stop.json',
+    ]) touch(name);
+    fs.mkdirSync(path.join(tmpDir, 'backup'));
+
+    const r = run(['--list-unlinked-files', '--directory', tmpDir]);
+    expect(r.stderr).toBe('');
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.trim().split('\n')).toEqual(
+      ['history-notes.json', 'notes.txt', 'screenshot-old.png']
+        .map((name) => path.join(tmpDir, name)));
+  });
+
+  test('prints nothing when every file is referenced', () => {
+    writeFileOfRecords('log.json', [rec(1)]);
+    touch('screenshot-20260401.png');
+    const r = run(['--list-unlinked-files', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+  });
+
+  test('errors when there is no history at all', () => {
+    touch('screenshot-20260401.png');
+    const r = run(['--list-unlinked-files', '--directory', tmpDir]);
+    expect(r.exitCode).toBe(2);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('no log.json or history files');
+  });
+
+  test('cannot be combined with other actions', () => {
+    for (const extra of [
+      ['--get-latest'], ['--all'], ['--limit', '3'], ['--watch'], ['--stop'],
+      ['--search', 'x'], ['--filter_site', 'x'], ['--filter_time', 'today'],
+      ['--copy-to-dir', tmpDir], ['--print_selection'],
+    ]) {
+      const r = run(['--list-unlinked-files', ...extra, '--directory', tmpDir]);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain('--list-unlinked-files cannot be combined');
+    }
+  });
+});

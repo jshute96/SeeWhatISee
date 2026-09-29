@@ -492,6 +492,9 @@ scripts/SeeWhatISee.py --help                   # every action and option
 
 A filter with no `--all` / `--limit` shows the 10 most recent matches.
 
+`scripts/SeeWhatISee.py --list-unlinked-files` lists the files in the
+capture directory that no capture in the history refers to.
+
 ### MCP server
 
 `mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as a pnpm workspace, so the root `pnpm install` covers it.
