@@ -48,6 +48,8 @@ Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
     "allowed": [
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see/scripts/copy-last-snapshot.sh)",
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-watch/scripts/watch-and-copy.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-stop/scripts/stop.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-history/scripts/history.sh)",
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh)"
     ]
   }

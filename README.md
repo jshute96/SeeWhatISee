@@ -36,6 +36,7 @@ The *Capture* page:
   - Save capturable elements directly.
   - Upload an image directly to the *Capture* page.
   - Reopen the last *Capture* page after closing it.
+  - Open the [*History* page](#history-page) of past captures.
 - Right-clicking on an image lets you capture that image directly.
 
 #### Capturing selected text
@@ -75,12 +76,32 @@ On this page, you can:
   - **Save** to a file.
 
 - The **More…** menu has extra image actions:
-  - **Shrink last … to fit content** — tighten the most recent box, redaction, or the crop region around its content, stripping whitespace or borders around the outer edges.
+  - **Shrink last drawn box to fit content** — tighten the last box or redaction you drew or edited (or the crop region) around its content, stripping whitespace or borders around the outer edges.
   - **Replace with cropped image** — apply the crop, replacing the current image.
+  - **Convert last drawn box** — change the last box, redaction, or crop into one of the others (for when it was drawn with the wrong tool).
   - **Copy** / **Paste image edits**, and **Import image edits from last capture** — copy a capture's drawings and crop onto another capture of the same size, for lining up before/after screenshots.
 
 > [!TIP]
 > If you add a prompt, the agent will follow it when reading this snapshot, focusing on highlighted areas in the screenshot.
+
+##### Watcher indicator
+
+While an agent is running `/see-what-i-see-watch` (or an MCP watch), the *Capture* page shows **Watcher running** next to the buttons.
+
+- **Pause** — the watcher skips the next capture from this page, so you can save something to the history (or for another agent) without stopping the watch.
+- **Stop** — end the watch.
+
+#### *History* page
+
+A searchable table of recent captures, with screenshot thumbnails, links to the saved files, the page URL and title, and the prompt.
+
+- Open it from the toolbar icon's right-click menu, or the **History** button on the *Capture* and *Options* pages.
+- Search by URL, title, or prompt text.
+- **Load older captures** reads captures beyond the most recent 100.
+- **Reopen** starts a new *Capture* page from a past capture's screenshot, page, prompt and selection. The original capture is left alone.
+- **Restore** on the latest capture reopens its *Capture* page, like *Restore last capture* in the menu.
+- The trash button deletes a capture's files and its log record.
+- **Snapshots directory** opens the capture folder in a new tab.
 
 #### **Ask** buttons — Sending to web chatbots
 
@@ -177,6 +198,10 @@ on each capture. For example,
 - `/see-what-i-see` `What font is the heading on this page?`
 - `/see-what-i-see-watch` `Just report the capture filenames`
 
+A running watch shows on the *Capture* page, which can
+[pause or stop it](#watcher-indicator). Only one watch runs per capture
+directory: starting a new one takes over from the old one.
+
 #### Per-agent differences
 
 - **Gemini CLI** can't run scripts in the background, so watching
@@ -197,12 +222,15 @@ These can be customized to make skills optimized for other tools.
 
 The MCP server [`@see-what-i-see/mcp-server`](https://www.npmjs.com/package/@see-what-i-see/mcp-server) exposes the same operations as the skills above, so they work in any MCP-aware client (Claude Desktop, Cursor, Zed, Continue, etc.) — not just Claude Code, Antigravity and Gemini CLI.
 
-Same two prompts:
+Prompts:
 
 - `see-what-i-see` — read the latest capture
 - `see-what-i-see-watch` — watch for new captures and describe each one
+- `see-what-i-see-stop` — stop a running watch (uses the `stop_watch` tool)
 
-How the prompts surface depends on the client. Claude Code exposes them as `/mcp__see-what-i-see__see-what-i-see` and `/mcp__see-what-i-see__see-what-i-see-watch`; most other clients show MCP prompts in a picker UI.
+An MCP watch shows on the *Capture* page like any other, and follows the same one-watch-per-directory rule.
+
+How the prompts surface depends on the client. Claude Code exposes them as `/mcp__see-what-i-see__see-what-i-see`, `/mcp__see-what-i-see__see-what-i-see-watch` and `/mcp__see-what-i-see__see-what-i-see-stop`; most other clients show MCP prompts in a picker UI.
 
 Some clients support an MCP server's tools but not its prompts. If your client doesn't support these prompts automatically from the MCP server, they are also available as plain skills under [`skills/mcp/`](skills/mcp/) — install those skills and they'll drive the `see-what-i-see` MCP server's tools directly.
 
@@ -213,6 +241,9 @@ See the [npm page](https://www.npmjs.com/package/@see-what-i-see/mcp-server) for
 ### Chrome web store
 
 **[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/seewhatisee/mdfeigicgahogllcdiibkeidfllhddae).**
+
+> [!IMPORTANT]
+> Turn on **Allow access to file URLs** on the extension's **Manage extension** page (`chrome://extensions`, then **Details**). It's required: the extension reads `log.json` to add each capture to it, and reads past capture records from files for the *History* page. File access is read-only. The extension shows how to enable it if it's off.
 
 > [!TIP]
 > Pin the extension on your toolbar using **Pin to toolbar** on the **Manage extension** page, or using the "Extensions" (puzzle piece) toolbar icon.
@@ -276,6 +307,8 @@ Add permissions in `$HOME/.gemini/settings.json` to avoid permission prompts:
     "allowed": [
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see/scripts/copy-last-snapshot.sh)",
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-watch/scripts/watch-and-copy.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-stop/scripts/stop.sh)",
+      "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-history/scripts/history.sh)",
       "run_shell_command($HOME/.gemini/extensions/see-what-i-see/skills/see-what-i-see-xtract/scripts/copy-last-snapshot.sh)"
     ]
   }
@@ -348,10 +381,13 @@ time so multiple saves within one run overwrite in place.
 Newline-delimited JSON (one record per line), grep-friendly history
 of recent captures.
 
-- Capped at the **100 most recent** entries (FIFO eviction).
-- The authoritative log lives in Chrome extension storage; `log.json`
-  is a snapshot rewritten on every capture. If deleted, it's restored
-  from extension storage on the next capture.
+- Holds up to **100 recent** captures. Older records move into
+  `history-<timestamp>.json` files alongside it, which the *History*
+  page and the `/see-what-i-see-history` skill can read.
+- `log.json` is the only copy of the log. Each capture appends to it,
+  so hand edits are kept.
+- Deleting `log.json` clears the log: the next capture starts a new
+  one. The `history-*.json` files stay.
 - Scripts read the last line of `log.json` to get the latest record.
 
 ### `log.json` record schema
@@ -497,7 +533,7 @@ capture directory that no capture in the history refers to.
 
 ### MCP server
 
-`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as a pnpm workspace, so the root `pnpm install` covers it.
+`mcp-server/` holds a TypeScript MCP server that exposes the same captures the skills do (`get_latest`, `watch`, `stop_watch`) plus resources — captured files are readable as `file://` resources (discovered via the `resource_link`s in tool results) and a subscribable stream that pushes notifications when new captures arrive. It's a separate package, wired into the root install as a pnpm workspace, so the root `pnpm install` covers it.
 
 Design doc: `docs/mcp-server.md`.
 
@@ -525,7 +561,7 @@ Register the bundled server with Claude Code (absolute path required):
 claude mcp add see-what-i-see -- node "$(pwd)/mcp-server/dist/seewhatisee-mcp.js"
 ```
 
-Inside any Claude Code session after that, the `get_latest` / `watch` tools are callable directly, captured files are readable as `file://` resources, and the `see-what-i-see` / `see-what-i-see-watch` prompts show up in the slash-command picker.
+Inside any Claude Code session after that, the `get_latest` / `watch` / `stop_watch` tools are callable directly, captured files are readable as `file://` resources, and the `see-what-i-see` / `see-what-i-see-watch` / `see-what-i-see-stop` prompts show up in the slash-command picker.
 
 #### Tests
 
