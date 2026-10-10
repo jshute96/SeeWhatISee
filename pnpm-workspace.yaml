@@ -4,3 +4,5 @@ packages:
 # mcp-server bundle step needs it.
 allowBuilds:
   esbuild: true
+overrides:
+  '@modelcontextprotocol/sdk@>=1.12.0 <1.31.0': ^1.31.0
